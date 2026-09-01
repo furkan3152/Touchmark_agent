@@ -1,0 +1,47 @@
+# === Build artifacts ===
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+
+# === Rust ===
+target/
+
+# === Environment & secrets ===
+.env
+.env.local
+.env.*.local
+*keys.txt
+*-keys.txt
+
+# === Data (databases, CLI identities, caches) ===
+data/
+
+# === Dependencies ===
+node_modules/
+
+# === Test & cache ===
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# === Logs & output ===
+*.log
+dist/
+build/
+
+# === IDE & OS ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Tooling ===
+.superstack/

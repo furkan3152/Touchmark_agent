@@ -1,0 +1,1231 @@
+/* ==========================================================================
+   AgentVeritas — arayüz
+   ==========================================================================
+   Tasarım tokenları `tokens.css` içindedir; burada ham hex yoktur.
+
+   Yapı kararları
+   --------------
+   1. Yükseklik gölgeyle değil yüzey tonuyla kurulur (koyu temada gölge
+      görünmez, ton görünür).
+   2. Tek aksan rengi. İkinci bir "marka rengi" renk kodlamasını
+      (safe/caution/risk/block) bozar — o dört renk bilgi taşır, süs değil.
+   3. Gradient yok, saydamlık yok, blur yok. Metin her zaman opak zeminde.
+   4. Her sayı `tabular-nums`; yenilenen tablolarda sütun zıplamaz.
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-canvas);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+p { margin: 0; }
+
+a {
+  color: var(--accent-text);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+/* Satır içi bağlantı dokunma hedefi: WCAG 2.2 SC 2.5.8 satır içi metni
+   muaf tutuyor ama parmakla isabet yine de zor. `inline-block` + dikey
+   padding, satır yüksekliğini bozmadan tıklanabilir alanı 24px'e çıkarır
+   (negatif margin ile metin akışındaki konumu korunur). */
+p a, td a, .kv-val a, li a, .card-note a {
+  display: inline-block;
+  padding: 5px 0;
+  margin: -5px 0;
+}
+
+code, .mono, pre, kbd {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  font-variant-ligatures: none;
+}
+
+code {
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 0.1em 0.4em;
+}
+
+/* Sayısal her şey sabit genişlikte: skorlar ve USDC tutarları
+   yenilenirken sütunların kaymaması için. */
+.num, td, .stat-value, .score-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tek ve tutarlı odak halkası. `:focus-visible` fare tıklamasında çıkmaz. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Klavyeyle Tab'a basıldığında ilk duran yer. */
+.skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h);
+  padding: 0 var(--space-4);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  transform: translateY(-200%);
+}
+.skip-link:focus-visible { transform: translateY(0); }
+
+/* ==========================================================================
+   Kabuk: topbar + içerik
+   ========================================================================== */
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Opak topbar: altındaki içerik kaydıkça bulanıklaşan bir başlık veri
+   okurken dikkat dağıtır ve metin kontrastını öngörülemez kılar. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 60px;
+  padding: 0 var(--space-6);
+  background: var(--surface-canvas);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-right: auto;
+  min-width: 0;
+}
+
+.brand-mark {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  color: var(--accent-text);
+}
+
+.brand-text { min-width: 0; }
+.brand-name {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+.brand-sub {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .topbar { flex-wrap: wrap; padding: var(--space-3) var(--space-4); }
+  .topbar-meta { width: 100%; justify-content: flex-start; }
+}
+
+main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) var(--space-14);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+@media (max-width: 700px) {
+  main { padding: var(--space-5) var(--space-4) var(--space-10); }
+}
+
+/* ==========================================================================
+   Chip — tek bileşen, durum `data-state` ile
+   ==========================================================================
+   Bu ayrım kasıtlı: neutral = kapsam dışı, warn = kapalı opsiyonel yetenek,
+   danger = gerçek arıza. Kapalı bir entegrasyon kırmızı gösterilmez.
+   ========================================================================== */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 24px;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.chip[data-state="ok"] {
+  color: var(--safe-text);
+  border-color: var(--safe-line);
+  background: var(--safe-bg);
+}
+.chip[data-state="warn"] {
+  color: var(--caution-text);
+  border-color: var(--caution-line);
+  background: var(--caution-bg);
+}
+.chip[data-state="danger"] {
+  color: var(--block-text);
+  border-color: var(--block-line);
+  background: var(--block-bg);
+}
+.chip[data-state="accent"] {
+  color: var(--accent-text);
+  border-color: var(--accent-line);
+  background: var(--accent-bg);
+}
+
+/* 6px nokta — ikon yüklemeden durum sinyali. */
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+/* Yardım imleci yalnızca gerçekten açıklaması olan chip'lerde. */
+.chip[title] { cursor: help; }
+
+/* ==========================================================================
+   Hero
+   ========================================================================== */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+  padding-bottom: var(--space-2);
+}
+
+.hero-title {
+  font-size: var(--text-display);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+  max-width: 20ch;
+}
+/* Gradient metin yerine tek renkli aksan: küçük boyutlarda okunur kalır
+   ve kopyala/yapıştırda kaybolmaz. */
+.hero-title em {
+  font-style: normal;
+  color: var(--accent-text);
+}
+
+.hero-lead {
+  margin-top: var(--space-4);
+  color: var(--text-2);
+  max-width: 62ch;
+}
+
+.hero-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr; gap: var(--space-5); }
+}
+
+/* İstatistik ızgarası — auto-fit ile içerik kadar sütun. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+
+.stat {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+.stat-value {
+  display: block;
+  font-size: var(--text-title);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+.stat-label {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* ==========================================================================
+   Kart
+   ========================================================================== */
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.card-head h2 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0;
+  margin-right: auto;
+}
+/* Bölüm numarası — akışın nerede olduğunu gösterir. */
+.card-step {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-4);
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-body { padding: var(--space-5); }
+.card-body > * + * { margin-top: var(--space-4); }
+
+/* Mobilde başlık ve eylemler yan yana sığmıyor: başlık iki satıra kırılıp
+   düğmeler daralıyordu. Dar ekranda eylemler kendi satırına iner. */
+@media (max-width: 560px) {
+  .card-head {
+    flex-wrap: wrap;
+    padding: var(--space-4);
+  }
+  .card-head h2 { margin-right: 0; }
+  .card-head .btn-row {
+    width: 100%;
+    /* Başlık satırıyla arasına nefes payı — `gap` yalnızca yatay değil,
+       satır kırıldığında dikeyde de uygulanır ama burada net olsun. */
+    margin-top: var(--space-1);
+  }
+  .card-head .btn-row .btn { flex: 1; }
+  .card-body { padding: var(--space-4); }
+}
+
+.card-note {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--space-6);
+}
+
+/* ==========================================================================
+   Düğmeler
+   ==========================================================================
+   Üç varyant: primary (tek birincil eylem), secondary (yan eylem),
+   quiet (düşük ağırlıklı, demo/yardımcı). Hepsi ≥ 36px yüksek — dokunma
+   hedefi için mobilde 40px'e çıkar.
+   ========================================================================== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-instant) var(--ease),
+    border-color var(--dur-instant) var(--ease),
+    color var(--dur-instant) var(--ease);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.btn-secondary {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-4);
+  border-color: var(--line-focus);
+}
+
+.btn-quiet {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--text-2);
+}
+.btn-quiet:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.btn-sm { min-height: 28px; padding: 0 var(--space-3); font-size: var(--text-xs); }
+
+/* Mobilde küçük düğme de tam dokunma hedefi olur; `.btn-sm` sınıfı
+   yalnızca görsel ağırlığı düşürmek içindir, isabeti zorlaştırmak için değil. */
+@media (max-width: 700px) {
+  .btn, .btn-sm { min-height: var(--control-h); }
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Bekleyen düğmede dönen halka. Buton genişliği değişmesin diye
+   metin yerinde kalır, ikon eklenir. */
+.spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 620ms linear infinite;
+  flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ==========================================================================
+   Segment (sekme) — Uniswap tarzı kaydırıcı yerine düz segment kontrolü
+   ==========================================================================
+   `role="tablist"` ile klavye ok tuşları app.js'te bağlanır.
+   ========================================================================== */
+.segment {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  overflow-x: auto;
+  max-width: 100%;
+  scrollbar-width: none;
+}
+.segment::-webkit-scrollbar { display: none; }
+
+.segment-item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.segment-item:hover { color: var(--text); }
+.segment-item[aria-selected="true"] {
+  background: var(--surface-4);
+  color: var(--text);
+}
+
+/* Mobil: sekmeler yatay kaydırma yerine 2×2 ızgaraya geçer. Kaydırma
+   çubuğu gizli olduğu için taşan sekme keşfedilemez kalıyordu — kullanıcı
+   "Endpoint" seçeneğinin var olduğunu göremez. Izgarada hepsi görünür.
+   Dokunma hedefi de aynı anda tokendan büyür. */
+@media (max-width: 700px) {
+  .segment {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    overflow-x: visible;
+    width: 100%;
+  }
+  .segment-item { min-height: var(--control-h); padding: 0 var(--space-3); }
+}
+
+
+/* ==========================================================================
+   Form
+   ========================================================================== */
+/* `hidden` özniteliği bir sınıf değil, tarayıcının `display: none`'ı — ama
+   UA stil sayfasından geldiği için *herhangi* bir yazar `display` kuralı onu
+   ezer. `.field-grid { display: grid }` yazdığımız an `<div hidden>` görünür
+   hâle gelir; sekmeler çalışıyor gibi durur ama tüm paneller aynı anda
+   ekranda olur. Bu yüzden `hidden` burada yeniden ve öncelikli beyan edilir. */
+[hidden] { display: none !important; }
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+
+.field-wide { grid-column: 1 / -1; }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.field > label {
+  font-size: var(--text-xs);
+  font-weight: 550;
+  color: var(--text-2);
+}
+
+/* Etiket altındaki açıklama — placeholder'a talimat gömmek yerine.
+   Placeholder yalnızca biçim örneği gösterir. */
+.field-help {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* Alan yüksekliği tek bir tokendan gelir. Medya sorgusu özgüllük
+   *eklemediği* için `input[type="text"]` (0,1,1) bir medya sorgusundaki
+   düz `input` (0,0,1) kuralını yener — bu yüzden mobil yükseklik seçici
+   yarışına sokulmadan token üzerinden değiştirilir. */
+input[type="text"],
+input[type="url"],
+input[type="number"],
+input:not([type]),
+select,
+textarea {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--control-fs);
+  transition: border-color var(--dur-instant) var(--ease);
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) { border-color: var(--line-focus); }
+
+input::placeholder,
+textarea::placeholder { color: var(--text-4); }
+
+/* Adres/imza gibi alanlar monospace: 0/O ve l/1 ayırt edilebilsin.
+   Punto `--control-fs`'in bir tık altında ama mobilde 16px'in altına
+   inmez (iOS zoom'u engellemek için). */
+input.mono, textarea.mono {
+  font-family: var(--font-mono);
+  font-size: max(var(--text-xs), calc(var(--control-fs) - 1px));
+}
+
+
+textarea { resize: vertical; min-height: 96px; line-height: 1.55; }
+
+select {
+  appearance: none;
+  padding-right: var(--space-8);
+  /* Kendi oku: yerel ok koyu temada tutarsız görünür. Tek renk, token'dan. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%),
+    linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: right 18px center, right 13px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+input[type="file"] {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: var(--space-2);
+  background: var(--surface-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  /* Dokunma hedefi onay kutusunun kendisi değil, bu etikettir; bu yüzden
+     yükseklik diğer kontrollerle aynı tokendan gelir. */
+  min-height: var(--control-h);
+}
+.field-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: none;
+}
+
+/* Yatay ayırıcı — form bölümlerini ayırır. */
+.divider {
+  height: 1px;
+  background: var(--line);
+  border: 0;
+  margin: 0;
+}
+
+/* Katlanabilir bölüm (KYA imza bloğu). */
+.disclosure {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  list-style: none;
+}
+.disclosure > summary::-webkit-details-marker { display: none; }
+/* Ok işareti CSS ile; açıldığında 90° döner. */
+.disclosure > summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 5px solid var(--text-3);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform var(--dur-fast) var(--ease);
+  flex: none;
+}
+.disclosure[open] > summary::before { transform: rotate(90deg); }
+.disclosure-body {
+  padding: 0 var(--space-4) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ==========================================================================
+   Durum mesajı
+   ==========================================================================
+   Hata durumunda yalnızca renk değişmez — ikon ve metin de değişir.
+   Renk körlüğü olan kullanıcı için renk tek sinyal olamaz.
+   ========================================================================== */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+.notice:empty { display: none; }
+.notice[data-kind="ok"] {
+  border-color: var(--safe-line);
+  background: var(--safe-bg);
+  color: var(--safe-text);
+}
+.notice[data-kind="error"] {
+  border-color: var(--block-line);
+  background: var(--block-bg);
+  color: var(--block-text);
+}
+.notice[data-kind="warn"] {
+  border-color: var(--caution-line);
+  background: var(--caution-bg);
+  color: var(--caution-text);
+}
+.notice-icon { flex: none; margin-top: 1px; }
+
+/* ==========================================================================
+   İskelet (yükleniyor)
+   ==========================================================================
+   Spinner yerine iskelet: gelen içeriğin şeklini önceden gösterir, böylece
+   yerleşim yüklendiğinde zıplamaz.
+   ========================================================================== */
+.skeleton {
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  animation: pulse 1.4s var(--ease) infinite;
+}
+.skeleton-row { height: 14px; margin-bottom: var(--space-3); }
+.skeleton-row:nth-child(2n) { width: 78%; }
+.skeleton-row:nth-child(3n) { width: 62%; }
+.skeleton-row:last-child { margin-bottom: 0; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ==========================================================================
+   Boş durum
+   ========================================================================== */
+.empty {
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+.empty-title {
+  display: block;
+  color: var(--text-2);
+  font-weight: 550;
+  margin-bottom: var(--space-1);
+}
+
+/* ==========================================================================
+   Tablo
+   ==========================================================================
+   Başlık sticky: uzun listelerde kaydırırken sütun adı görünür kalır.
+   ========================================================================== */
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-sm);
+}
+
+th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+  vertical-align: top;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--surface-2); }
+
+/* Sayısal sütunlar sağa yaslı: basamaklar hizalanır, karşılaştırma kolaylaşır. */
+td.num, th.num { text-align: right; }
+
+.cell-primary { color: var(--text); font-weight: 550; }
+.cell-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* ==========================================================================
+   Anahtar/değer listesi — tablo kurmaya değmeyen 2-8 satırlık veri
+   ========================================================================== */
+.kv-list {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.kv-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 34%) 1fr;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+.kv-row:last-child { border-bottom: 0; }
+.kv-row:nth-child(odd) { background: var(--surface-2); }
+.kv-key { color: var(--text-3); }
+.kv-val { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+
+@media (max-width: 560px) {
+  .kv-row { grid-template-columns: 1fr; gap: var(--space-1); }
+}
+
+/* ==========================================================================
+   Skor göstergesi — rapor başlığı
+   ==========================================================================
+   `conic-gradient` yerine SVG çember: kenarları pürüzsüz, animasyonu
+   `stroke-dashoffset` ile yumuşak ve `prefers-reduced-motion` altında
+   anında son değere oturur.
+   ========================================================================== */
+.verdict {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: center;
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+
+.score {
+  position: relative;
+  width: 104px;
+  height: 104px;
+  flex: none;
+}
+.score svg { display: block; transform: rotate(-90deg); }
+.score-track { stroke: var(--surface-5); }
+.score-ring-value {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 700ms var(--ease-out);
+}
+.score-ring-value[data-band="safe"] { stroke: var(--safe); }
+.score-ring-value[data-band="caution"] { stroke: var(--caution); }
+.score-ring-value[data-band="risk"] { stroke: var(--risk); }
+.score-ring-value[data-band="block"] { stroke: var(--block); }
+
+.score-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+.score-value {
+  font-size: 27px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+.score-max {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.verdict-body { min-width: 0; }
+.verdict-name {
+  font-size: var(--text-title);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: var(--space-2) 0 var(--space-1);
+  overflow-wrap: anywhere;
+}
+.verdict-sub { color: var(--text-3); font-size: var(--text-xs); }
+
+.verdict-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.verdict-facts b {
+  color: var(--text);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  .verdict { grid-template-columns: 1fr; justify-items: start; gap: var(--space-4); }
+}
+
+/* Badge — dört bant, her biri kendi rengi. Metin de büyük harf, yani
+   renk tek ayırt edici değil. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.badge[data-band="safe"] {
+  color: var(--safe-text); border-color: var(--safe-line); background: var(--safe-bg);
+}
+.badge[data-band="caution"] {
+  color: var(--caution-text); border-color: var(--caution-line); background: var(--caution-bg);
+}
+.badge[data-band="risk"] {
+  color: var(--risk-text); border-color: var(--risk-line); background: var(--risk-bg);
+}
+.badge[data-band="block"] {
+  color: var(--block-text); border-color: var(--block-line); background: var(--block-bg);
+}
+
+/* ==========================================================================
+   Boyut çubukları
+   ==========================================================================
+   Etiket sabit genişlikte; altı boyut arasında çubuk başlangıçları
+   hizalanır, böylece göz tek dikey eksende karşılaştırma yapar.
+   ========================================================================== */
+.dims { display: grid; gap: var(--space-3); }
+
+.dim {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr) 52px;
+  gap: var(--space-3);
+  align-items: center;
+  font-size: var(--text-sm);
+}
+
+.dim-label { color: var(--text-2); }
+.dim-weight { color: var(--text-4); font-size: var(--text-xs); }
+
+.dim-track {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-4);
+  overflow: hidden;
+}
+.dim-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width 620ms var(--ease-out);
+}
+.dim-fill[data-band="safe"] { background: var(--safe); }
+.dim-fill[data-band="caution"] { background: var(--caution); }
+.dim-fill[data-band="risk"] { background: var(--risk); }
+.dim-fill[data-band="block"] { background: var(--block); }
+
+.dim-value {
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+
+@media (max-width: 560px) {
+  .dim { grid-template-columns: 1fr 46px; }
+  .dim-track { grid-column: 1 / -1; order: 3; }
+}
+
+/* ==========================================================================
+   Bulgular
+   ==========================================================================
+   Sol kenardaki 3px şerit ciddiyeti taşır; ayrıca metin etiketi var, yani
+   renk tek başına bilgi taşımıyor.
+   ========================================================================== */
+.finding-list { display: grid; gap: var(--space-2); }
+
+.finding {
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--text-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.finding[data-sev="critical"] { border-left-color: var(--block); }
+.finding[data-sev="high"] { border-left-color: var(--risk); }
+.finding[data-sev="medium"] { border-left-color: var(--caution); }
+.finding[data-sev="low"] { border-left-color: var(--accent); }
+
+.finding-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.finding-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  margin-right: auto;
+}
+
+.tag {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: 550;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.tag[data-sev="critical"] { color: var(--block-text); border-color: var(--block-line); }
+.tag[data-sev="high"] { color: var(--risk-text); border-color: var(--risk-line); }
+.tag[data-sev="medium"] { color: var(--caution-text); border-color: var(--caution-line); }
+.tag[data-sev="low"] { color: var(--accent-text); border-color: var(--accent-line); }
+
+/* Kanıt derecesi: `confirmed` badge tavanını zorlar, diğerleri zorlamaz.
+   Bu ayrım skoru anlamak için kritik, o yüzden görsel olarak da ayrı. */
+.tag[data-grade="confirmed"] { color: var(--text); border-color: var(--line-focus); }
+.tag[data-grade="inferred"],
+.tag[data-grade="simulated"] { color: var(--text-4); border-color: var(--line); }
+
+.finding-detail { font-size: var(--text-sm); color: var(--text-2); }
+.finding-evidence {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-canvas);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.finding-fix {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--safe-text);
+}
+
+/* ==========================================================================
+   Sistem durumu satırları
+   ==========================================================================
+   Üç durum: ok / warn / fail. `warn` kırmızı DEĞİL — kapalı bir opsiyonel
+   entegrasyon arıza değildir, kanıt kapsamının daralmasıdır.
+   ========================================================================== */
+.status-list {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.status-row {
+  display: grid;
+  grid-template-columns: 20px minmax(140px, 210px) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+.status-row:last-child { border-bottom: 0; }
+.status-row[data-state="fail"] { background: var(--block-bg); }
+
+.status-icon { font-weight: 700; text-align: center; line-height: 1.4; }
+.status-row[data-state="ok"] .status-icon { color: var(--safe-text); }
+.status-row[data-state="warn"] .status-icon { color: var(--caution-text); }
+.status-row[data-state="fail"] .status-icon { color: var(--block-text); }
+
+.status-name { color: var(--text); font-weight: 550; }
+.status-detail { color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
+.status-hint {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 640px) {
+  .status-row { grid-template-columns: 20px minmax(0, 1fr); }
+  .status-detail { grid-column: 2; }
+}
+
+/* ==========================================================================
+   Ham veri bölümü
+   ========================================================================== */
+details.raw > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  padding: var(--space-2) 0;
+}
+details.raw > summary:hover { color: var(--text-2); }
+details.raw pre {
+  margin: var(--space-2) 0 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: var(--space-4);
+  background: var(--surface-canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+/* Bağlantı satırı — rapor çıktıları. */
+.link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.link-row a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+.link-row a:hover {
+  border-color: var(--line-focus);
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* Yargıç notları — madde işareti yerine sol şerit. */
+.note-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+.note-list li {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--line-strong);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+/* ==========================================================================
+   Footer
+   ========================================================================== */
+footer {
+  border-top: 1px solid var(--line);
+  padding: var(--space-5) var(--space-6);
+}
+.footer-inner {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  justify-content: space-between;
+  color: var(--text-4);
+  font-size: var(--text-xs);
+}
+
+/* ==========================================================================
+   Hareket azaltma
+   ==========================================================================
+   Animasyonlar kapatılır ama geçişler tamamen 0'a çekilmez: 1ms bırakmak
+   `transitionend` bekleyen kodu bozmaz. Skor yayı son değerine anında oturur.
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+
+
+
+
+

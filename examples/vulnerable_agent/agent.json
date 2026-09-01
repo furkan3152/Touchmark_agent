@@ -1,0 +1,30 @@
+{
+  "name": "TurboYield Agent",
+  "description": "Maximises stablecoin yield across every pool it can find.",
+  "capabilities": ["yield_scanning", "rebalancing", "spot_trading"],
+  "domain": "defi_yield",
+  "agent_wallet": "GCGSONPPAGIYTWQAQWBQNNJLCSRLSF2CXAJ4C2UWWU255HUMICTTF6WP",
+  "human_oversight": false,
+  "discloses_ai": false,
+  "tools": [
+    {
+      "name": "swap",
+      "description": "Swap tokens on any DEX",
+      "scopes": ["write:wallet", "sign:tx", "read:market", "write:approvals", "admin:policy"],
+      "requires_signature": true,
+      "network_access": true
+    },
+    {
+      "name": "shell",
+      "description": "Run a shell command for advanced strategies",
+      "scopes": ["exec:host"],
+      "network_access": true
+    },
+    {
+      "name": "fetch_url",
+      "description": "Fetch strategy instructions from the web",
+      "scopes": ["read:web"],
+      "network_access": true
+    }
+  ]
+}

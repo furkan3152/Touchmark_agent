@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AgentVeritas Stellar · Deep Audit · 2026-08-30</title>
+  <style>
+    :root{--ink:#171924;--muted:#5e6073;--paper:#f2f1f6;--card:#fdfcff;--line:#d8d5e2;--stellar:#342586;--stellar2:#6d55cc;--high:#aa3348;--med:#9a6514;--low:#52637b;--ok:#236c57}
+    *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.58 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body:before{content:"";display:block;height:8px;background:linear-gradient(90deg,var(--stellar),var(--stellar2),#c7bced)}
+    main{width:min(1120px,calc(100% - 36px));margin:44px auto 80px}
+    header{display:grid;grid-template-columns:1.65fr .9fr;gap:28px;align-items:end;border-bottom:1px solid var(--line);padding-bottom:30px}
+    .eyebrow{text-transform:uppercase;letter-spacing:.18em;font-size:12px;color:var(--stellar);font-weight:800}
+    h1{font-family:Georgia,serif;font-size:clamp(38px,6vw,72px);line-height:.98;margin:10px 0 18px;font-weight:500;letter-spacing:-.035em}
+    h2{font:500 30px/1.15 Georgia,serif;margin:0 0 18px} h3{font-size:17px;margin:0 0 7px}
+    p{margin:0 0 12px}.lede{font-size:18px;max-width:740px;color:#37394c}.stamp{background:var(--stellar);color:white;padding:22px;border-radius:3px}
+    .stamp strong{display:block;font:500 28px Georgia,serif;margin-bottom:6px}.stamp small{opacity:.84}
+    section{margin-top:44px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.score,.finding{background:var(--card);border:1px solid var(--line);border-radius:4px}
+    .score{padding:20px}.score b{font:500 36px Georgia,serif;color:var(--stellar)}.score span{display:block;color:var(--muted);font-size:13px}.score.wide{grid-column:span 3;background:#e6e5f0}.score.wide b{color:var(--ok)}
+    .evidence{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}.evidence div{background:var(--card);padding:16px}.evidence strong{display:block;font-size:20px}.evidence span{color:var(--muted);font-size:12px}
+    .finding{display:grid;grid-template-columns:120px 1fr;overflow:hidden;margin-bottom:12px}.sev{padding:20px 16px;color:white;font-weight:800;letter-spacing:.08em;font-size:12px;text-transform:uppercase}.sev.high{background:var(--high)}.sev.medium{background:var(--med)}.sev.low{background:var(--low)}
+    .finding article{padding:18px 22px}.meta{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}.fix{border-left:3px solid var(--stellar2);padding-left:13px;margin-top:12px;color:#35374d}
+    code,pre{font-family:"SFMono-Regular",Consolas,monospace}pre{background:#1c1b2b;color:#f0edf9;padding:15px;overflow:auto;border-radius:3px;font-size:12px;line-height:1.5;margin:12px 0 0}
+    table{width:100%;border-collapse:collapse;background:var(--card)}th,td{text-align:left;border:1px solid var(--line);padding:12px;vertical-align:top}th{background:#e8e6ee;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+    .boundary{padding:22px;background:#fff2d8;border-left:5px solid var(--med)}.done{columns:2;column-gap:32px}.done li{break-inside:avoid;margin:0 0 10px}.footer{color:var(--muted);border-top:1px solid var(--line);padding-top:18px;margin-top:48px}
+    @media(max-width:780px){header,.finding{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.score.wide{grid-column:auto}.evidence{grid-template-columns:1fr 1fr}.done{columns:1}}
+    @media print{body{background:white}main{width:100%;margin:18px}.finding{break-inside:avoid}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><div class="eyebrow">Soroban-native agent validation</div><h1>AgentVeritas<br>Stellar Review</h1><p class="lede">Review of Soroban authorization, SEP selection, event evidence, and production readiness for the independent Stellar product.</p></div>
+    <div class="stamp"><strong>Not ready for mainnet</strong><small>2026-08-30 · Testnet deploy, external-signer agent lifecycle, and native-XLM funded SAC verified; governance and independent audit are missing.</small></div>
+  </header>
+
+  <section>
+    <div class="grid">
+      <div class="score"><b>B</b><span>Security</span></div>
+      <div class="score"><b>B</b><span>Code quality</span></div>
+      <div class="score"><b>B</b><span>Testnet evidence</span></div>
+      <div class="score wide"><b>0 open critical</b><span>No open exploitable criticals found in local review; Testnet and professional audit evidence are still mandatory.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verified evidence</h2>
+    <div class="evidence">
+      <div><strong>213</strong><span>Python tests · full offline run passed</span></div>
+      <div><strong>13</strong><span>Soroban host tests</span></div>
+      <div><strong>2</strong><span>release WASM build</span></div>
+      <div><strong>1</strong><span>native-XLM funded Testnet lifecycle</span></div>
+    </div>
+    <div class="boundary" style="margin-top:16px"><strong>Evidence boundary:</strong> Pinned local/chain WASM parity, successful Testnet transaction/event/state readback, and real 1 XLM settlement have been verified. This is not evidence for USDC, mainnet, production C-account, public availability, or a professional audit.</div>
+  </section>
+
+  <section>
+    <h2>SEP decision</h2>
+    <table><thead><tr><th>Layer</th><th>Selection</th><th>Boundary</th></tr></thead><tbody>
+      <tr><td>Core auth</td><td><code>Address.require_auth</code> + custom AgentRegistry</td><td>G and C transaction authorization; no direct agent-validation SEP.</td></tr>
+      <tr><td>G ownership message</td><td>SEP-53 Final</td><td>A single private-key signature does not prove full control of a multisig account.</td></tr>
+      <tr><td>Web session</td><td>SEP-10 Active / SEP-45 Draft</td><td>G/M and C session flows are separate; full server not yet available.</td></tr>
+      <tr><td>Contract metadata</td><td>SEP-46 / SEP-48 Active</td><td>Build metadata/spec; not deployment evidence.</td></tr>
+      <tr><td>Escrow</td><td>SAC; tracking SEP-41 Draft</td><td>Optional; agent validation works without payment.</td></tr>
+      <tr><td>Anchor/payment</td><td>SEP-24 / SEP-31; SEP-38 Draft</td><td>Isolated module; not a validation trust root.</td></tr>
+    </tbody></table>
+  </section>
+
+  <section>
+    <h2>Open findings</h2>
+    <div class="finding"><div class="sev high">High</div><article><div class="meta">Governance · STL-H01</div><h3>Single admin is a critical trust root</h3><p>Validator/reviewer and escrow fee management are tied to a single address; rotation/recovery policy has not been proven.</p><p class="fix"><strong>Specific fix:</strong> Make the admin a multisig or governance contract; add pending admin + ledger-time delay + accept/cancel event flow.</p><pre>admin.require_auth();
+storage.set(PendingAdmin, (next, activate_at));
+// accept: next.require_auth() + ledger timestamp gate</pre></article></div>
+    <div class="finding"><div class="sev low">Closed</div><article><div class="meta">Release evidence · STL-H02</div><h3>Testnet external-signer lifecycle verified</h3><p>Pinned WASM deploy, register/request/respond/review, and funded escrow transactions have been matched in the manifest via ledger, typed event, and state readback.</p><p class="fix"><strong>Boundary:</strong> This is a Testnet closure; not evidence for hardware signer, production key governance, or mainnet.</p></article></div>
+    <div class="finding"><div class="sev high">High</div><article><div class="meta">Testing · STL-H03</div><h3>No property/fuzz and real C-account negative tests</h3><p>Unit tests verify selected paths; they do not scan the state-space and custom <code>__check_auth</code> behavior.</p><p class="fix"><strong>Specific fix:</strong> Fuzz unique review total, deadline, replay, TTL, and SAC conservation invariants; add wrong context/threshold/replay tests with minimal C-account.</p><pre>review_total == sum(unique_scores)
+fee + provider_payout == funded_amount
+request.validator is immutable
+late submit and complete always fail</pre></article></div>
+    <div class="finding"><div class="sev medium">Medium</div><article><div class="meta">Authentication · STL-M01</div><h3>SEP-45 Draft auth server missing</h3><p>C-account web session cannot be activated without a version-pinned challenge/session server.</p><p class="fix"><strong>Specific fix:</strong> Keep the feature disabled; set up a separate C-account endpoint with specific SEP commit, nonce/domain/network binding, and replay store.</p></article></div>
+    <div class="finding"><div class="sev medium">Medium</div><article><div class="meta">Data operations · STL-M02</div><h3>Missing event retention and ingest SLO evidence</h3><p>Cursor/dedup exist; provider retention gap, cursor loss, and lag are unproven in a live environment.</p><p class="fix"><strong>Specific fix:</strong> Persist the last successful ledger, watermark, and gap list; add backup cursor, lag SLO, retention alarm, and restore drill.</p></article></div>
+    <div class="finding"><div class="sev medium">Medium</div><article><div class="meta">Release · STL-M03</div><h3>Public SEP-1 and independent reproducibility missing</h3><p>Local/chain WASM hash parity with Contract ID exists; published <code>stellar.toml</code> and a second clean environment rebuild record are missing.</p><p class="fix"><strong>Specific fix:</strong> Prove that two clean environments produce the same WASM hash; publish only verified endpoints/contract IDs to SEP-1.</p></article></div>
+    <div class="finding"><div class="sev medium">Medium</div><article><div class="meta">Audit quality · STL-M04</div><h3>No adjudicated Stellar ground truth</h3><p>Intent, security, and Stellar-native scores are not the same target; distance to overall score does not prove auditor accuracy. Slash and ELO movement are disabled for this reason.</p><p class="fix"><strong>Specific fix:</strong> Create a blind adjudication and appeal-final benchmark corpus for Stellar agent/Soroban/SEP findings.</p></article></div>
+    <div class="finding"><div class="sev low">Low</div><article><div class="meta">Supply chain · STL-L01</div><h3>No SBOM/advisory archive</h3><p>Pinned SDK, clippy, and pip check are not known vulnerability scans.</p><p class="fix"><strong>Specific fix:</strong> Add <code>cargo audit</code>, <code>pip-audit</code>, CycloneDX SBOM, and independent WASM hash results to the immutable release bundle.</p></article></div>
+  </section>
+
+  <section>
+    <h2>Strengthened areas</h2>
+    <ul class="done">
+      <li>G/C address and mainnet fail-closed boundary</li><li>SEP-53 Final official test vector</li>
+      <li><code>require_auth</code> and full auth tree tests</li><li>Owner-bound agent and fixed validator</li>
+      <li>Allowlisted reviewer + unique review</li><li>Canonical report hash + zero hash rejection</li>
+      <li>Event/request/hash/tx SUCCESS validation</li><li>Cursor + SQLite idempotency</li>
+      <li>SAC escrow role/deadline/fee snapshot</li><li>Horizon sequence ≠ tx count separation</li>
+      <li>SEP-24/31/38 payment separation</li><li>Private source path mask</li>
+      <li>Full 7/7 authenticated quorum + timeout</li><li>Stellar policy and report v2 hashes</li>
+      <li>Evidence calibration + assurance ceiling</li><li>Finding/assurance drift alarm</li>
+      <li>Private synthesis LLM opt-in</li><li>No slash without ground truth</li>
+      <li>Pinned Testnet deploy + live tx/hash readback</li><li>Agent validation + 1 XLM funded escrow lifecycle</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Release gate</h2>
+    <table><thead><tr><th>Order</th><th>Gate</th><th>Proof of success</th></tr></thead><tbody>
+      <tr><td>1</td><td>Property/C-account tests</td><td>Auth, conservation, replay, TTL, and deadline test logs</td></tr>
+      <tr><td>2</td><td>Governance</td><td>Multisig/rotation state and event readback</td></tr>
+      <tr><td>3</td><td>Operations</td><td>Retention/restore drill, cursor gap, and ingest-lag SLO</td></tr>
+      <tr><td>4</td><td>Public release</td><td>SEP-1, second clean environment rebuild, and immutable SBOM</td></tr>
+      <tr><td>5</td><td>Independent review</td><td>Closed findings + reproducible build + SBOM/advisory</td></tr>
+    </tbody></table>
+  </section>
+
+  <p class="footer">Full technical text: <code>AUDIT_2026-08-30.md</code> · Architectural decision: <code>STELLAR_ARCHITECTURE_DECISION.md</code></p>
+</main>
+</body>
+</html>

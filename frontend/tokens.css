@@ -1,0 +1,152 @@
+/* ==========================================================================
+   AgentVeritas — tasarım tokenları
+   ==========================================================================
+
+   Palet kaynağı: Radix Colors (dark scales). Keyfi hex seçilmedi; Radix
+   ölçekleri algısal olarak eşit adımlıdır ve her ölçekte 11/12 basamağı
+   koyu zeminde AA kontrastını garanti eder. Bu, "skor 84 mü 35 mi" gibi
+   renkle taşınan bilginin okunabilir kalması için gerekli.
+
+   Ölçek seçimi ve gerekçesi:
+     slate   → nötr yüzeyler. Saf gri değil, hafif soğuk; veri yoğun
+               arayüzde gözü yormaz ve indigo aksanla aynı sıcaklıkta kalır.
+     indigo  → tek aksan. Marka + etkileşim. Mor/pembeye kaçmayan,
+               "finans arayüzü" tonunda mavi-menekşe.
+     jade    → olumlu (SAFE, açık entegrasyon, doğrulanmış imza)
+     amber   → dikkat (CAUTION, kapalı opsiyonel entegrasyon, bayat önbellek)
+     orange  → yüksek risk (HIGH_RISK)
+     red     → engel (BLOCKLIST, gerçek arıza)
+
+   Kasıtlı olarak KULLANILMAYANLAR:
+     · backdrop-filter / yarı saydam paneller (glassmorphism)
+     · gradient metin, gradient buton dolgusu
+     · geniş yayılımlı renkli parıltı gölgeleri
+   Koyu temada yükseklik hissi gölgeyle değil, **daha açık yüzey + saç
+   teli kenarlık** ile kurulur; gölge yalnızca gerçekten üstte yüzen
+   katman (popover/dropdown) için ayrılmıştır.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* ---------------------------------------------------------- yüzeyler */
+  /* Yükseklik merdiveni: her adım bir önceki yüzeyin üstünde durur. */
+  --surface-canvas: #0b0c0e;   /* sayfa zemini — slate1'in bir tık altı */
+  --surface-1: #111113;        /* slate1  · kart */
+  --surface-2: #18191b;        /* slate2  · kart içi bölüm, tablo başlığı */
+  --surface-3: #212225;        /* slate3  · input, sekme, kod bloğu */
+  --surface-4: #272a2d;        /* slate4  · hover */
+  --surface-5: #2e3135;        /* slate5  · active / seçili */
+
+  /* ---------------------------------------------------------- kenarlık */
+  --line: #26282c;             /* saç teli — yapıyı ayırır, çizmez */
+  --line-strong: #363a3f;      /* slate6  · vurgulu ayrım */
+  --line-focus: #5a6169;       /* slate8  · hover kenarlığı */
+
+  /* -------------------------------------------------------------- metin */
+  /* Parlaklıklar keyfi seçilmedi: her ton, üzerinde göründüğü **en zorlu**
+     yüzeyde WCAG AA (4.5:1) geçecek şekilde slate ölçeği üzerinde tarandı.
+       --text-3 en zor zemini surface-4 (.card-step) → 4.50
+       --text-4 en zor zemini surface-3 (placeholder) → 4.52
+     Radix slate10/11 arası ara tonlar; hue ramp'ı korunur. */
+  --text: #edeef0;             /* slate12 · başlık, sayı, input değeri */
+  --text-2: #b0b4ba;           /* slate11 · gövde */
+  --text-3: #8c9097;           /* ikincil, etiket, tablo başlığı */
+  --text-4: #848990;           /* placeholder, devre dışı */
+
+
+  /* -------------------------------------------------------------- aksan */
+  /* `--accent-hover` indigo10 değil: indigo10 (#5472e4) üzerinde beyaz metin
+     4.28:1 verir ve AA'yı kaybeder. indigo9→10 rampasında beyazın 4.6'nın
+     üstünde kaldığı en açık ton seçildi. Hover'da kontrast düşmez. */
+  --accent: #3e63dd;           /* indigo9  · dolgu (beyaz metin 5.21:1) */
+  --accent-hover: #4c6ce1;     /* indigo9→10 arası (beyaz metin 4.63:1) */
+  --accent-fg: #ffffff;        /* aksan dolgu üzerindeki metin */
+  --accent-text: #9eb1ff;      /* indigo11 · koyu zeminde okunur metin */
+  --accent-line: #435db1;      /* indigo8  · kenarlık */
+  --accent-bg: #182449;        /* indigo3  · yumuşak zemin */
+
+
+  /* ------------------------------------------------------------ semantik */
+  --safe: #29a383;             /* jade9 */
+  --safe-text: #1fd8a4;        /* jade11 */
+  --safe-line: #2a7e68;        /* jade8 */
+  --safe-bg: #0f2e22;          /* jade3 */
+
+  --caution: #ffc53d;          /* amber9 */
+  --caution-text: #ffca16;     /* amber11 */
+  --caution-line: #8f6424;     /* amber8 */
+  --caution-bg: #302008;       /* amber3 */
+
+  --risk: #f76b15;             /* orange9 */
+  --risk-text: #ffa057;        /* orange11 */
+  --risk-line: #a35829;        /* orange8 */
+  --risk-bg: #331e0b;          /* orange3 */
+
+  --block: #e5484d;            /* red9 */
+  --block-text: #ff9592;       /* red11 */
+  --block-line: #b54548;       /* red8 */
+  --block-bg: #3b1219;         /* red3 */
+
+  /* ------------------------------------------------------------- tipografi */
+  --font-sans: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono",
+    Menlo, Consolas, monospace;
+
+  /* Ölçek 1.25 oranında; gövde 14px çünkü arayüz veri yoğun. */
+  --text-display: clamp(30px, 3.6vw, 40px);
+  --text-title: 19px;
+  --text-body: 14px;
+  --text-sm: 13px;
+  --text-xs: 12px;
+  --text-2xs: 11px;
+
+  /* ---------------------------------------------------------------- ölçüler */
+  /* 4px taban ızgara — tüm boşluklar bunun katı. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-14: 56px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  /* Etkileşimli öğe yüksekliği. Mobilde 40px'e çıkar (parmakla isabet için
+     asgari hedef) ve font 16px olur — daha küçüğü iOS Safari'de alana
+     odaklanınca sayfayı zorla yakınlaştırır. */
+  --control-h: 38px;
+  --control-fs: var(--text-sm);
+
+
+  /* Gölge yalnızca yüzen katman için. Renksiz ve sıkı. */
+  --shadow-overlay: 0 8px 24px -4px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+
+  /* -------------------------------------------------------------- hareket */
+  /* Üç süre kademesi. Daha fazlası tutarsızlık üretir. */
+  --dur-instant: 80ms;   /* renk, kenarlık — anında hissedilmeli */
+  --dur-fast: 140ms;     /* hover, focus, küçük konum */
+  --dur-base: 220ms;     /* açılma/kapanma, yükseklik değişimi */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --content-width: 1200px;
+}
+
+/* Mobil: dokunma hedefleri büyür. Tokenda değiştiriliyor, tek tek
+   seçicilerde değil — böylece özgüllük yarışı çıkmaz. */
+@media (max-width: 700px) {
+  :root {
+    --control-h: 40px;
+    --control-fs: 16px;
+  }
+}
+
