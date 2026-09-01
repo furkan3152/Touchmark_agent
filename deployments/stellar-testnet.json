@@ -1,0 +1,153 @@
+{
+  "schema": "agentveritas.stellar.testnet-deployment.v1",
+  "status": "active_testnet",
+  "deployed_at": "2026-08-30T19:56:22Z",
+  "verified_at": "2026-08-30T20:00:00Z",
+  "network": {
+    "name": "Stellar Testnet",
+    "passphrase": "Test SDF Network ; September 2015",
+    "rpc_url": "https://soroban-testnet.stellar.org",
+    "horizon_url": "https://horizon-testnet.stellar.org",
+    "explorer": "https://stellar.expert/explorer/testnet"
+  },
+  "signing_boundary": {
+    "backend_signing": false,
+    "deployment_signer": "Stellar CLI 27.1.0",
+    "local_cli_config": "data/stellar-cli",
+    "secrets_in_manifest": false
+  },
+  "roles": {
+    "admin_requester_fee_recipient": "GA5G3W7O4TLNONP5EWRPZY3ZU7JXE3KHAZD422RTFA3NV4BPSYNCSI44",
+    "validator_provider": "GA3BZXUARNNXZRLV6LXBH7QPZMP3VTP44MR4P6WG7MQDXRSYRTYGVVXS",
+    "reviewer_evaluator": "GA67WWT74QUHXMKN3V636JVRE3WFJQUOK6R7G54OTGH3ICCDJL3UQLI7",
+    "role_accounts_are_distinct": true
+  },
+  "asset": {
+    "kind": "native_xlm_sac",
+    "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "decimals": 7,
+    "testnet_funded": true,
+    "is_usdc": false,
+    "note": "Funded Testnet proof uses the native XLM Stellar Asset Contract; this is not a USDC settlement claim."
+  },
+  "contracts": {
+    "agent_registry": {
+      "contract_id": "CBBBUECSLXGXVXYMRYK3BCTL3YYBRWDZGW3RNCH5CWKY6KU6UGE576KT",
+      "wasm_path": "target/wasm32v1-none/release/agent_veritas_registry.wasm",
+      "local_wasm_sha256": "e0cdd0c2114a09c886d689da9790865dbf45ceb1ced79b228f15474041683722",
+      "onchain_wasm_sha256": "e0cdd0c2114a09c886d689da9790865dbf45ceb1ced79b228f15474041683722",
+      "hash_match": true,
+      "upload": {
+        "tx_hash": "eb82f9b7628945530c0491d3ea48e50ed914e52804787856463d03c329190273",
+        "ledger": 4419239,
+        "successful": true
+      },
+      "deploy": {
+        "tx_hash": "800a470e7c86c144fe1bb7ef6847b1d6d7bc5ec3c2caf63a47436726105ff18e",
+        "ledger": 4419240,
+        "successful": true
+      }
+    },
+    "audit_escrow": {
+      "contract_id": "CD6Q7DJMM3XR7NIBD7XCGQ34GK6UOA5BBUL7BGP5EMYDZ2ZADV37KH7W",
+      "wasm_path": "target/wasm32v1-none/release/agent_veritas_escrow.wasm",
+      "local_wasm_sha256": "94cde4538cd30ab0030a9e503e657d8868769db75385bac2bd9f4feddb25f206",
+      "onchain_wasm_sha256": "94cde4538cd30ab0030a9e503e657d8868769db75385bac2bd9f4feddb25f206",
+      "hash_match": true,
+      "upload": {
+        "tx_hash": "ba525966971a915e159af293cffcdf343544a357e7a08511720e5dccef5c1f2c",
+        "ledger": 4419241,
+        "successful": true
+      },
+      "deploy": {
+        "tx_hash": "ff4779fbb4b15d9e92fbc63fc4d412391657fdc0f3a88a9d18279855544c96a2",
+        "ledger": 4419242,
+        "successful": true
+      }
+    }
+  },
+  "configuration": {
+    "registry_init": {
+      "tx_hash": "1fa280fc6fc7e06f7794d9b133360da899b8dac54e8f436cf71419bef02c2344",
+      "ledger": 4419250,
+      "successful": true
+    },
+    "validator_grant": {
+      "tx_hash": "86a6ebd6586218587c5ab515a81004a6d4a3a24b7a2721a54f47461296353c8f",
+      "ledger": 4419251,
+      "successful": true,
+      "readback": true
+    },
+    "reviewer_grant": {
+      "tx_hash": "d9f86eacb8b01cab1efa26f43d7e58ffa4bf0d4f1b095155af0f792372003561",
+      "ledger": 4419252,
+      "successful": true,
+      "readback": true
+    },
+    "escrow_init": {
+      "tx_hash": "688ddfda5aa76b21c9dbb140f6812e8436ea1af6a902f829c5ee9ca20330995a",
+      "ledger": 4419253,
+      "successful": true,
+      "fee_bps": 1500,
+      "token_contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+    }
+  },
+  "agent_validation_lifecycle": {
+    "agent_id": "c5ac7797509246b6d74d429b7c6ce6fcce73da46047808592a7c75095fc4f6e0",
+    "request_id": "3b6dde290629c2547656ed151e70ed2160999232267583901acae14e8d19cbb9",
+    "report_hash": "9dd299788aaa5e37416cf153742d08f2d6d45c58e475678c906bc5588d19287c",
+    "transactions": {
+      "register": {"tx_hash": "a66f22f9dd5de9a5ac5abb2902814e28f8a57cee4be2913928ec416d514515d9", "ledger": 4419257, "successful": true},
+      "request": {"tx_hash": "4811008d61fc1f5af20901083c6130ebd6113a2abf92af9a166d7ad25267125b", "ledger": 4419258, "successful": true},
+      "respond": {"tx_hash": "2ef68c34044b7823fe48f3909af3c8fc33c4b0e4058d08c135960212d5c83df1", "ledger": 4419259, "successful": true},
+      "review": {"tx_hash": "3096b13b80a9855dac781f2f935721d9d45255b58de5a0f14b126a562ffe827d", "ledger": 4419260, "successful": true}
+    },
+    "event_ids": {
+      "registered": "0018980564287631360-0000000000",
+      "requested": "0018980568582610944-0000000000",
+      "responded": "0018980572877570048-0000000000",
+      "reviewed": "0018980577172533248-0000000000"
+    },
+    "readback": {
+      "agent_active": true,
+      "validation_state": "Complete",
+      "validator_score": 92,
+      "reviewer_average_score": 89,
+      "validator_role": true,
+      "reviewer_role": true
+    }
+  },
+  "funded_escrow_lifecycle": {
+    "job_id": "5405e31365cb66bbc74042d8e8f44fc90b300a963d7bc105214bbfbac679ae6b",
+    "asset": "native XLM SAC",
+    "amount_stroops": "10000000",
+    "amount_xlm": "1.0000000",
+    "fee_stroops": "1500000",
+    "provider_payout_stroops": "8500000",
+    "transactions": {
+      "create": {"tx_hash": "82cba798b6ca9ea6d1057031336207f9c16435906b12ab2c2bc17f93bb9ba546", "ledger": 4419265, "successful": true},
+      "fund": {"tx_hash": "f719a99e7410c4ade0b61d36eec80ebeecec1c06cefce9db8125ffec8dcc7553", "ledger": 4419266, "successful": true},
+      "submit": {"tx_hash": "aa1fe40f3087e6b47260345fd42f14aba3ef80cf2064c973f050c256374a1bc3", "ledger": 4419267, "successful": true},
+      "complete": {"tx_hash": "cab57e9e3a391f077b0a591cd88722480729d36678eb3f643c9f00cf2bd87af4", "ledger": 4419268, "successful": true}
+    },
+    "event_ids": {
+      "created": "0018980598647373824-0000000000",
+      "funded": "0018980602942353408-0000000001",
+      "submitted": "0018980607237308416-0000000000",
+      "completed": "0018980611532279808-0000000002"
+    },
+    "readback": {
+      "state": "Complete",
+      "score": 94,
+      "conservation_check": "1500000 + 8500000 = 10000000",
+      "contract_balance_after_settlement_stroops": "0"
+    }
+  },
+  "evidence_boundaries": {
+    "testnet_only": true,
+    "mainnet_ready": false,
+    "professional_audit_complete": false,
+    "public_sep1_published": false,
+    "reproducible_build_independently_confirmed": false
+  }
+}
