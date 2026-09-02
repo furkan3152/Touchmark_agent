@@ -1,4 +1,4 @@
-"""Rapor üretimi: JSON (zincir/IPFS için kanonik) + Markdown (insan için)."""
+"""Report generation: JSON (canonical for chain/IPFS) + Markdown (for humans)."""
 
 from __future__ import annotations
 
@@ -11,16 +11,16 @@ from ..swarm.policy import AUDIT_SCHEMA_VERSION
 
 SEVERITY_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO]
 SEVERITY_LABEL = {
-    Severity.CRITICAL: "KRİTİK",
-    Severity.HIGH: "YÜKSEK",
-    Severity.MEDIUM: "ORTA",
-    Severity.LOW: "DÜŞÜK",
-    Severity.INFO: "BİLGİ",
+    Severity.CRITICAL: "CRITICAL",
+    Severity.HIGH: "HIGH",
+    Severity.MEDIUM: "MEDIUM",
+    Severity.LOW: "LOW",
+    Severity.INFO: "INFO",
 }
 GRADE_LABEL = {
-    "confirmed": "doğrulanmış (doğrudan kanıt)",
-    "inferred": "çıkarım (savunma kanıtı yok)",
-    "simulated": "simüle (indexer bağlı değil)",
+    "confirmed": "confirmed (direct evidence)",
+    "inferred": "inferred (no defending evidence)",
+    "simulated": "simulated (indexer not connected)",
 }
 BADGE_LABEL = {
 
@@ -35,11 +35,11 @@ def _mask(text: str, privacy: bool) -> str:
     if not privacy or not text:
         return text
     digest = sha256(text.encode()).hexdigest()[:16]
-    return f"[privacy-mode: içerik maskelendi, sha256:{digest}]"
+    return f"[privacy-mode: content masked, sha256:{digest}]"
 
 
 def report_to_dict(report: AuditReport, artifact: AgentArtifact) -> dict:
-    """IPFS'e yazılan kanonik JSON gösterimi."""
+    """Canonical JSON representation written to IPFS."""
     privacy = artifact.privacy_mode
     return {
         "schema": AUDIT_SCHEMA_VERSION,
@@ -125,48 +125,48 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
     lines: list[str] = []
     add = lines.append
 
-    add(f"# AgentVeritas Denetim Raporu — {report.agent_name}")
+    add(f"# AgentVeritas Audit Report — {report.agent_name}")
     add("")
     add(f"**Trust Score: {report.overall_score}/100 · Badge: {BADGE_LABEL[report.badge.value]}**")
     add("")
-    add(f"| Alan | Değer |")
+    add(f"| Field | Value |")
     add("|---|---|")
     add(f"| Job ID | `{report.job_id}` |")
     add(f"| Agent ID | `{report.agent_id}` |")
     visible_source = _mask(artifact.source_ref, privacy) if artifact.source_ref else "n/a"
-    add(f"| Kaynak | {artifact.source_kind.value} — `{visible_source}` |")
-    add(f"| Cüzdan | `{artifact.agent_wallet or 'bildirilmedi'}` |")
-    add(f"| Stellar agent contract | `{artifact.agent_contract_id or 'kayıtlı değil'}` |")
+    add(f"| Source | {artifact.source_kind.value} — `{visible_source}` |")
+    add(f"| Wallet | `{artifact.agent_wallet or 'not reported'}` |")
+    add(f"| Stellar agent contract | `{artifact.agent_contract_id or 'not registered'}` |")
     add(
-        f"| Sahip doğrulaması | "
+        f"| Owner verification | "
         f"{'✅ ' if artifact.owner_verified else '❌ '}{artifact.owner_verification_note} |"
     )
 
-    add(f"| Alan (domain) | {artifact.domain} |")
-    add(f"| Seviye | {report.tier.value} |")
-    add(f"| Süre | {report.duration_ms} ms |")
-    add(f"| Oluşturuldu | {created} |")
-    add(f"| Anlaşmazlık endeksi | σ={report.disagreement_index} |")
-    add(f"| Kanıt güvencesi | `{report.assurance_level.value}` |")
+    add(f"| Domain | {artifact.domain} |")
+    add(f"| Tier | {report.tier.value} |")
+    add(f"| Duration | {report.duration_ms} ms |")
+    add(f"| Created | {created} |")
+    add(f"| Disagreement index | σ={report.disagreement_index} |")
+    add(f"| Evidence assurance | `{report.assurance_level.value}` |")
     add(f"| Policy | `{report.policy_version}` |")
     add(f"| Audit input hash | `{report.input_hash}` |")
     add(f"| Finding set hash | `{report.finding_set_hash}` |")
-    add(f"| Deterministik | {'evet' if report.deterministic else 'hayır'} |")
+    add(f"| Deterministic | {'yes' if report.deterministic else 'no'} |")
     if report.report_cid:
-        label = "Yerel CAS" if report.report_uri.startswith("local-cas://") else "IPFS"
+        label = "Local CAS" if report.report_uri.startswith("local-cas://") else "IPFS"
         add(f"| {label} | `{report.report_cid}` |")
     if report.attestation:
         att = report.attestation
         add(
             f"| Attestation | {att.mode} · confirmed={att.confirmed} · "
-            f"tx `{att.tx_hash[:18] + '…' if att.tx_hash else 'yok'}` |"
+            f"tx `{att.tx_hash[:18] + '…' if att.tx_hash else 'none'}` |"
         )
     add("")
 
-    add("## Kanıt ve kapsam")
+    add("## Evidence and scope")
     add("")
     add(
-        f"- kanıt: confirmed={report.evidence_summary.get('confirmed', 0)} · "
+        f"- evidence: confirmed={report.evidence_summary.get('confirmed', 0)} · "
         f"inferred={report.evidence_summary.get('inferred', 0)} · "
         f"simulated={report.evidence_summary.get('simulated', 0)}"
     )
@@ -174,26 +174,26 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
         f"- quorum: {report.coverage.get('completed_auditors', 0)}/"
         f"{report.coverage.get('expected_auditors', 0)} auditor · "
         f"{report.coverage.get('completed_dimensions', 0)}/"
-        f"{report.coverage.get('expected_dimensions', 0)} boyut"
+        f"{report.coverage.get('expected_dimensions', 0)} dimension"
     )
     if report.external_processors:
-        add(f"- harici işleyiciler: {', '.join(report.external_processors)}")
+        add(f"- external processors: {', '.join(report.external_processors)}")
     for limitation in report.limitations:
-        add(f"- sınır: {limitation}")
+        add(f"- limitation: {limitation}")
     add("")
 
-    add("## Boyut skorları")
+    add("## Dimension scores")
     add("")
-    add("| Boyut | Skor | Ağırlık | Katkı |")
+    add("| Dimension | Score | Weight | Weighted |")
     add("|---|---:|---:|---:|")
     for d in report.dimension_scores:
-        add(f"| {d.dimension.value} | {d.score} | %{d.weight * 100:.0f} | {d.weighted} |")
+        add(f"| {d.dimension.value} | {d.score} | {d.weight * 100:.0f}% | {d.weighted} |")
     add("")
 
-    add("## Özet")
+    add("## Summary")
     add("")
     add(
-        "| KRİTİK | YÜKSEK | ORTA | DÜŞÜK | BİLGİ |\n|---:|---:|---:|---:|---:|\n"
+        "| CRITICAL | HIGH | MEDIUM | LOW | INFO |\n|---:|---:|---:|---:|---:|\n"
         f"| {counts['critical']} | {counts['high']} | {counts['medium']} | "
         f"{counts['low']} | {counts['info']} |"
     )
@@ -202,10 +202,10 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
         add(f"- {note}")
     add("")
 
-    add("## Bulgular")
+    add("## Findings")
     add("")
     if not report.findings:
-        add("Bulgu yok.")
+        add("No findings.")
     for sev in SEVERITY_ORDER:
         group = [f for f in report.findings if f.severity == sev]
         if not group:
@@ -215,14 +215,14 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
         for f in group:
             add(f"#### {f.title}")
             add("")
-            add(f"- **id**: `{f.id}` · **boyut**: {f.dimension.value} · **denetçi**: {f.auditor}")
+            add(f"- **id**: `{f.id}` · **dimension**: {f.dimension.value} · **auditor**: {f.auditor}")
             add(
-                f"- **kanıt**: {GRADE_LABEL[f.evidence_grade.value]} · "
-                f"**güven**: {f.confidence:.2f} · **etkin ceza**: {f.penalty:.1f}"
+                f"- **evidence**: {GRADE_LABEL[f.evidence_grade.value]} · "
+                f"**confidence**: {f.confidence:.2f} · **effective penalty**: {f.penalty:.1f}"
             )
 
             if f.references:
-                add(f"- **referans**: {', '.join(f.references)}")
+                add(f"- **reference**: {', '.join(f.references)}")
             add("")
             add(f.detail)
             if f.evidence:
@@ -232,27 +232,27 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
                 add("```")
             if f.remediation:
                 add("")
-                add(f"**Çözüm:** {f.remediation}")
+                add(f"**Remediation:** {f.remediation}")
             add("")
 
-    add("## Denetçi detayları")
+    add("## Auditor details")
     add("")
     for v in report.verdicts:
         add(f"### {v.auditor} — {v.score}/100 ({v.dimension.value})")
         add("")
         add(
-            f"- stake: {v.stake_usdc} USDC · süre: {v.duration_ms} ms · "
-            f"LLM bulgusu: {'evet' if v.llm_assisted else 'hayır'} · "
-            f"LLM'e veri gitti: {'evet' if v.llm_consulted else 'hayır'}"
+            f"- stake: {v.stake_usdc} USDC · duration: {v.duration_ms} ms · "
+            f"LLM assisted: {'yes' if v.llm_assisted else 'no'} · "
+            f"LLM consulted: {'yes' if v.llm_consulted else 'no'}"
         )
         add(f"- rule set: `{v.rule_set}` · coverage: {v.coverage}")
         if v.notes:
-            add(f"- not: {v.notes}")
+            add(f"- note: {v.notes}")
         if v.scenarios:
             passed = sum(1 for s in v.scenarios if s.passed)
-            add(f"- senaryo: {passed}/{len(v.scenarios)} geçti")
+            add(f"- scenario: {passed}/{len(v.scenarios)} passed")
             add("")
-            add("| # | Senaryo | Sonuç | Gerekçe |")
+            add("| # | Scenario | Result | Reason |")
             add("|---|---|---|---|")
             for s in v.scenarios:
                 mark = "✅" if s.passed else "❌"
@@ -262,7 +262,7 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
     add("---")
     add("")
     add(
-        "_AgentVeritas Stellar · Soroban agent validation. Prepared invocation veya hash tek "
-        "başına zincir başarısı değildir; confirmed alanı ledger/state kanıtını gösterir._"
+        "_AgentVeritas Stellar · Soroban agent validation. Prepared invocation or hash alone "
+        "is not on-chain success; confirmed field indicates ledger/state evidence._"
     )
     return "\n".join(lines)

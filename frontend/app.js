@@ -1,18 +1,18 @@
 /* ==========================================================================
-   AgentVeritas — arayüz mantığı
+   AgentVeritas — interface logic
    ==========================================================================
-   Bağımlılık yok, derleme adımı yok: backend `/ui` altından statik servis
-   ediyor ve tek dosya olması hata ayıklamayı kolaylaştırıyor.
+   No dependencies, no build step: backend serves it statically from under `/ui`
+   and being a single file makes debugging easier.
 
-   Kurallar
+   Rules
    --------
-   1. Sunucudan gelen her metin `esc()` ile kaçırılır. Ajan adı, bulgu
-      başlığı, hata mesajı — hepsi denetlenen tarafın kontrolündeki veridir.
-   2. Her uzak çağrının üç durumu vardır: yükleniyor (iskelet), boş (ne
-      yapılacağını söyleyen mesaj), hata (yeniden dene düğmesi).
-      Sessizce boş kalan bir panel hata gizler.
-   3. Sayısal bant eşikleri backend'deki `BADGE_THRESHOLDS` ile aynıdır;
-      tek yerde tanımlıdır (`band()`).
+   1. Every text coming from the server is escaped with `esc()`. Agent name, finding
+      title, error message — all are data controlled by the audited party.
+   2. Every remote call has three states: loading (skeleton), empty (message
+      saying what to do), error (retry button).
+      A panel that remains silently empty hides errors.
+   3. Numeric band thresholds are exactly the same as `BADGE_THRESHOLDS` in the backend;
+      defined in a single place (`band()`).
    ========================================================================== */
 (() => {
   "use strict";
@@ -23,22 +23,22 @@
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   let runtimeConfig = { billing: { enabled: false, asset_code: "SAC" } };
 
-  /* ------------------------------------------------------------- yardımcılar */
+  /* ------------------------------------------------------------- helpers */
 
-  /** HTML kaçırma. Şablon içine giren HER dış değer bundan geçer. */
+  /** HTML escaping. EVERY external value that goes into a template passes through this. */
   const esc = (v) =>
     String(v ?? "").replace(
       /[&<>"']/g,
       (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
     );
 
-  /** Sayı biçimlendirme. `null`/`undefined` için en-dash, sıfır için "0". */
+  /** Number formatting. en-dash for `null`/`undefined`, "0" for zero. */
   const num = (v, digits = 1) =>
     typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "–";
 
   /**
-   * Skoru renk bandına çevirir. Eşikler backend'deki `BADGE_THRESHOLDS`
-   * ile birebir aynı: SAFE ≥ 85, CAUTION ≥ 65, HIGH_RISK ≥ 40, altı BLOCKLIST.
+   * Converts score to color band. Thresholds are exactly the same as
+   * `BADGE_THRESHOLDS` in the backend: SAFE ≥ 85, CAUTION ≥ 65, HIGH_RISK ≥ 40, below BLOCKLIST.
    */
   const band = (score) => {
     if (typeof score !== "number") return "";
@@ -48,13 +48,13 @@
     return "block";
   };
 
-  /** Badge adını renk bandına eşler (backend `Badge` enum'u). */
+  /** Maps badge name to color band (backend `Badge` enum). */
   const badgeBand = (badge) =>
     ({ safe: "safe", caution: "caution", high_risk: "risk", blocklist: "block" }[
       String(badge || "").toLowerCase()
     ] || "");
 
-  /** Uzun hash/adresleri ortadan kısaltır — kopyalanabilir tam hâli title'da. */
+  /** Truncates long hashes/addresses in the middle — copyable full version is in the title. */
   const short = (v, head = 10, tail = 6) => {
     const s = String(v || "");
     return s.length <= head + tail + 1 ? s : `${s.slice(0, head)}…${s.slice(-tail)}`;
@@ -116,7 +116,7 @@
     const saved = writeOperatorKey(operatorInput?.value || "");
     notice(
       $("#runNotice"),
-      saved ? "Operatör anahtarı bu sekme için saklandı." : "sessionStorage kullanılamıyor.",
+      saved ? "Operator key saved for this tab." : "sessionStorage is unavailable.",
       saved ? "ok" : "error"
     );
   });
@@ -124,10 +124,10 @@
   $("#operatorClearBtn")?.addEventListener("click", () => {
     writeOperatorKey("");
     if (operatorInput) operatorInput.value = "";
-    notice($("#runNotice"), "Operatör anahtarı bu sekmeden temizlendi.", "ok");
+    notice($("#runNotice"), "Operator key cleared from this tab.", "ok");
   });
 
-  /* ------------------------------------------------------------ durum mesajı */
+  /* ------------------------------------------------------------ status message */
 
   const ICON = {
     ok: '<svg class="notice-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -138,8 +138,8 @@
   };
 
   /**
-   * Durum mesajı yazar. `kind` yalnızca renk değiştirmez; ikon da ekler,
-   * böylece renk körlüğü olan kullanıcı için renk tek sinyal olmaz.
+   * Writes a status message. `kind` does not just change color; it also adds an icon,
+   * so color is not the only signal for color-blind users.
    */
   function notice(node, message, kind = "") {
     if (!node) return;
@@ -152,34 +152,34 @@
     node.innerHTML = `${ICON[kind] || ""}<span>${esc(message)}</span>`;
   }
 
-  /** Yükleniyor iskeleti — `rows` kadar gri şerit. */
+  /** Loading skeleton — gray stripes based on `rows`. */
   const skeleton = (rows = 3) =>
     Array.from({ length: rows }, () => '<div class="skeleton skeleton-row"></div>').join("");
 
   /**
-   * Boş durum: her zaman "ne yapılacağını" söyler. Sadece "veri yok"
-   * yazmak kullanıcıyı çıkmaz sokakta bırakır.
+   * Empty state: always tells "what to do". Just writing "no data"
+   * leaves the user at a dead end.
    */
   const empty = (title, action) =>
     `<div class="empty"><span class="empty-title">${esc(title)}</span>${
       action ? esc(action) : ""
     }</div>`;
 
-  /** Hata durumu: sebep + yeniden dene. `data-retry` app tarafından bağlanır. */
+  /** Error state: reason + retry. `data-retry` is bound by the app. */
   const failure = (message, retryId) =>
     `<div class="notice" data-kind="error">${ICON.error}<span>${esc(message)}</span></div>` +
     (retryId
       ? `<div class="btn-row" style="margin-top:var(--space-3)">
            <button type="button" class="btn btn-quiet btn-sm" data-retry="${esc(retryId)}">
-             Yeniden dene
+             Retry
            </button>
          </div>`
       : "");
 
   /**
-   * Düğmeyi bekleme durumuna alır ve geri alma fonksiyonu döner.
-   * Metin korunur, yanına spinner eklenir: buton genişliği sabit kalır,
-   * yerleşim zıplamaz.
+   * Puts the button into a waiting state and returns a rollback function.
+   * Text is preserved, a spinner is added next to it: button width remains fixed,
+   * layout doesn't jump.
    */
   function busy(btn, label) {
     if (!btn) return () => {};
@@ -195,10 +195,10 @@
   }
 
   /* ==========================================================================
-     Sekmeler — klavye erişimi dahil
+     Tabs — including keyboard access
      ==========================================================================
-     `role="tablist"` sözleşmesi ok tuşlarıyla gezinmeyi zorunlu kılar; yalnızca
-     tıklamayı bağlamak ARIA rolünü yanlış beyan etmek olur.
+     The `role="tablist"` contract requires arrow key navigation; only
+     binding click would misrepresent the ARIA role.
      ========================================================================== */
   const tabs = $$(".segment-item[role=tab]");
   let activeTab = "onchain";
@@ -233,7 +233,7 @@
   });
 
   /* ==========================================================================
-     ZIP okuma
+     ZIP reading
      ========================================================================== */
   let zipBase64 = "";
 
@@ -244,7 +244,7 @@
       return;
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
-    // 32 KB parçalar: `apply` çağrı yığınını taşırmadan base64'e çevirir.
+    // 32 KB chunks: converts to base64 without overflowing the `apply` call stack.
     let binary = "";
     for (let i = 0; i < bytes.length; i += 0x8000) {
       binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
@@ -252,13 +252,13 @@
     zipBase64 = btoa(binary);
     notice(
       $("#runNotice"),
-      `${file.name} hazır · ${(file.size / 1024).toFixed(0)} KB`,
+      `${file.name} ready · ${(file.size / 1024).toFixed(0)} KB`,
       "ok"
     );
   });
 
   /* ==========================================================================
-     Yükleme isteği gövdesi
+     Ingest request body
      ========================================================================== */
   function payload() {
     const fd = new FormData($("#ingestForm"));
@@ -268,8 +268,8 @@
       agent_wallet: get("agent_wallet"),
       domain: get("domain"),
       privacy_mode: fd.get("privacy_mode") === "on",
-      // Sahiplik imzası backend'de Stellar Ed25519 ile doğrulanır.
-      // Geçersiz imza sessizce yok sayılmaz; raporda nedeni yazılır.
+      // Ownership signature is verified in the backend with Stellar Ed25519.
+      // Invalid signature is not silently ignored; the reason is written in the report.
       owner: get("owner"),
       owner_signature: get("owner_signature"),
     };
@@ -306,10 +306,10 @@
   }
 
   /* ==========================================================================
-     Sahiplik (KYA) — Stellar Ed25519 dış imza akışı
+     Ownership (KYA) — Stellar Ed25519 external signature flow
      ========================================================================== */
 
-  /** İmza mesajı bu referansa bağlanır; backend ile aynı öncelik sırası. */
+  /** Signature message binds to this reference; same priority order as backend. */
   function agentRef() {
     const fd = new FormData($("#ingestForm"));
     const get = (k) => (fd.get(k) || "").toString().trim();
@@ -321,7 +321,7 @@
     const signature = $("#in-signature")?.value.trim();
     const node = $("#ownerNotice");
     if (!owner || !signature) {
-      return notice(node, "Sahip adresi ve imza gerekli.", "error");
+      return notice(node, "Owner address and signature required.", "error");
     }
     try {
       const res = await api("/ownership/verify", {
@@ -330,7 +330,7 @@
       });
       notice(node, res.evidence, res.verified ? "ok" : "error");
     } catch (err) {
-      notice(node, `Doğrulanamadı: ${err.message}`, "error");
+      notice(node, `Could not be verified: ${err.message}`, "error");
     }
   }
 
@@ -339,21 +339,21 @@
     const owner = $("#in-owner")?.value.trim();
     const ref = agentRef();
 
-    if (!owner) return notice(node, "Önce sahip cüzdan adresini girin.", "error");
-    if (!ref) return notice(node, "Önce agent cüzdanı, adresi veya adı girin.", "error");
-    const done = busy(e.currentTarget, "Hazırlanıyor");
+    if (!owner) return notice(node, "Enter the owner wallet address first.", "error");
+    if (!ref) return notice(node, "Enter the agent wallet, address, or name first.", "error");
+    const done = busy(e.currentTarget, "Preparing");
     try {
       const { message } = await api(
         `/ownership/message?agent_ref=${encodeURIComponent(ref)}&owner=${encodeURIComponent(owner)}`
       );
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(message);
-        notice(node, "Ağ-bağlı mesaj panoya kopyalandı. SEP-53 uyumlu G-account signer ile imzalayıp base64 imzayı yapıştırın.", "ok");
+        notice(node, "Network-bound message copied to clipboard. Sign with a SEP-53 compliant G-account signer and paste the base64 signature.", "ok");
       } else {
-        notice(node, `Dış signer ile imzalanacak mesaj: ${message}`, "warn");
+        notice(node, `Message to sign with external signer: ${message}`, "warn");
       }
     } catch (err) {
-      notice(node, `Mesaj hazırlanamadı: ${err.message}`, "error");
+      notice(node, `Failed to prepare message: ${err.message}`, "error");
     } finally {
       done();
     }
@@ -362,28 +362,28 @@
   $("#verifyBtn")?.addEventListener("click", verifySignature);
 
   /* ==========================================================================
-     Denetim akışı
+     Audit flow
      ========================================================================== */
   async function runAudit(body, tier, btn) {
     const node = $("#runNotice");
-    const done = busy(btn || $("#runBtn"), "Denetleniyor");
+    const done = busy(btn || $("#runBtn"), "Auditing");
     try {
       const operatorKey = $("#in-api-key")?.value || "";
       if (operatorKey) writeOperatorKey(operatorKey);
-      notice(node, "Ajan yükleniyor ve normalize ediliyor…");
+      notice(node, "Agent is being ingested and normalized…");
       const agent = await api("/agents/ingest", { method: "POST", body: JSON.stringify(body) });
 
       notice(
         node,
-        `“${agent.name}” alındı · ${agent.code_files} dosya · ${agent.tools.length} araç · ` +
-          `7 denetçi paralel çalışıyor…`
+        `“${agent.name}” received · ${agent.code_files} files · ${agent.tools.length} tools · ` +
+          `7 auditors running in parallel…`
       );
 
       const job = await api("/jobs", {
         method: "POST",
         body: JSON.stringify({ agent_id: agent.agent_id, tier, auto_run: true }),
       });
-      if (job.state === "failed") throw new Error(job.error || "denetim başarısız");
+      if (job.state === "failed") throw new Error(job.error || "audit failed");
 
       renderReport(agent, job);
       const r = job.report;
@@ -399,7 +399,7 @@
       const monitorAgent = $("#monitor-agent-id");
       if (monitorAgent) monitorAgent.value = agent.agent_id;
     } catch (err) {
-      notice(node, `Hata: ${err.message}`, "error");
+      notice(node, `Error: ${err.message}`, "error");
     } finally {
       done();
     }
@@ -411,8 +411,8 @@
     runAudit(payload(), tier);
   });
 
-  // Örnek düğmeleri: korpus ajanları `deep` koşar, çünkü ayrım gücü LLM ve
-  // saldırı süiti açıkken görünür.
+  // Example buttons: corpus agents run `deep`, because the discriminatory power
+  // is visible when LLM and attack suite are on.
   $$("[data-demo]").forEach((btn) =>
     btn.addEventListener("click", () =>
       runAudit({ kind: "repo", local_path: `./examples/${btn.dataset.demo}` }, "deep", btn)
@@ -420,13 +420,13 @@
   );
 
   /* ==========================================================================
-     Rapor
+     Report
      ========================================================================== */
 
   /**
-   * Skor çemberi. `conic-gradient` yerine SVG: kenarlar pürüzsüz ve
-   * `stroke-dashoffset` geçişi tek özellik üzerinden akıcı animasyon verir.
-   * R=44 → çevre 2πr ≈ 276.5.
+   * Score ring. SVG instead of `conic-gradient`: edges are smooth and
+   * `stroke-dashoffset` transition provides fluid animation via a single property.
+   * R=44 → circumference 2πr ≈ 276.5.
    */
   const CIRCUMFERENCE = 2 * Math.PI * 44;
 
@@ -434,7 +434,7 @@
     const pct = Math.max(0, Math.min(100, score || 0)) / 100;
     const offset = CIRCUMFERENCE * (1 - pct);
     return `
-      <div class="score" role="img" aria-label="Güven skoru ${num(score)} / 100">
+      <div class="score" role="img" aria-label="Confidence score ${num(score)} / 100">
         <svg width="104" height="104" viewBox="0 0 104 104" aria-hidden="true">
           <circle class="score-track" cx="52" cy="52" r="44" fill="none" stroke-width="7" />
           <circle class="score-ring-value" data-band="${band(score)}" cx="52" cy="52" r="44"
@@ -482,7 +482,7 @@
             <span class="tag" data-sev="${esc(f.severity)}">${esc(f.severity)}</span>
             <span class="tag" data-grade="${esc(grade)}">${esc(grade)}</span>
             <span class="tag">${esc(f.dimension)}</span>
-            <span class="tag">güven ${(f.confidence * 100).toFixed(0)}%</span>
+            <span class="tag">confidence ${(f.confidence * 100).toFixed(0)}%</span>
           </div>
           <p class="finding-detail">${esc(f.detail)}</p>
           ${f.evidence ? `<p class="finding-evidence mono">${esc(f.evidence)}</p>` : ""}
@@ -501,9 +501,9 @@
     const asset = billing.asset_code || "SAC";
     const escrowFacts = billing.enabled && escrow.mode !== "not_required"
       ? `<span>escrow <b>${num(escrow.amount_usdc, 3)} ${esc(asset)}</b></span>
-         <span>ücret <b>${num(escrow.platform_fee_usdc, 3)} ${esc(asset)}</b></span>
+         <span>fee <b>${num(escrow.platform_fee_usdc, 3)} ${esc(asset)}</b></span>
          <span>swarm <b>${num(escrow.swarm_payout_usdc, 3)} ${esc(asset)}</b></span>`
-      : '<span>ödeme <b>çekirdek akışta yok</b></span>';
+      : '<span>payment <b>not in core flow</b></span>';
 
     const sevChips = SEV_ORDER.filter((s) => counts[s])
       .map((s) => {
@@ -526,7 +526,7 @@
               ? `${a.scenarios.filter((s) => s.passed).length}/${a.scenarios.length}`
               : "–"
           }</td>
-          <td>${a.llm_assisted ? "LLM" : "sezgisel"}</td>
+          <td>${a.llm_assisted ? "LLM" : "heuristic"}</td>
           <td class="num">${a.duration_ms} ms</td>
         </tr>`
       )
@@ -540,10 +540,10 @@
         <div class="verdict-body">
           <span class="badge" data-band="${badgeBand(r.badge)}">${esc(r.badge)}</span>
           <h3 class="verdict-name">${esc(agent.name)}</h3>
-          <p class="verdict-sub">${esc(agent.source_kind)} · ${esc(job.tier)} seviye</p>
+          <p class="verdict-sub">${esc(agent.source_kind)} · ${esc(job.tier)} tier</p>
           <div class="verdict-facts">
-            <span>uzlaşmazlık σ <b>${num(r.disagreement_index)}</b></span>
-            <span>süre <b>${r.duration_ms} ms</b></span>
+            <span>disagreement σ <b>${num(r.disagreement_index)}</b></span>
+            <span>duration <b>${r.duration_ms} ms</b></span>
             ${escrowFacts}
             <span>attestation <b>${esc(att.mode || "–")}</b></span>
           </div>
@@ -554,7 +554,7 @@
 
       <div class="btn-row">${
         sevChips ||
-        '<span class="chip" data-state="ok"><span class="chip-dot"></span>bulgu yok</span>'
+        '<span class="chip" data-state="ok"><span class="chip-dot"></span>no findings</span>'
       }</div>
 
       <div class="finding-list">${renderFindings(r.findings)}</div>
@@ -563,8 +563,8 @@
         <table>
           <thead>
             <tr>
-              <th>Denetçi</th><th>Boyut</th><th class="num">Skor</th>
-              <th class="num">Senaryo</th><th>Mod</th><th class="num">Süre</th>
+              <th>Auditor</th><th>Dimension</th><th class="num">Score</th>
+              <th class="num">Scenario</th><th>Mode</th><th class="num">Duration</th>
             </tr>
           </thead>
           <tbody>${auditors}</tbody>
@@ -575,15 +575,15 @@
 
       <div class="link-row">
         <a href="${API}/jobs/${encodeURIComponent(job.id)}/report.md"
-           target="_blank" rel="noopener">Markdown rapor</a>
+           target="_blank" rel="noopener">Markdown report</a>
         <a href="${API}/jobs/${encodeURIComponent(job.id)}/report.json"
-           target="_blank" rel="noopener">JSON rapor</a>
+           target="_blank" rel="noopener">JSON report</a>
         ${
           r.report_uri && /^https:\/\//.test(r.report_uri)
             ? `<a href="${esc(r.report_uri)}" target="_blank" rel="noopener"
                   title="${esc(r.report_cid)}">IPFS ${esc(short(r.report_cid, 8, 6))}</a>`
             : r.report_cid
-            ? `<span class="mono" title="${esc(r.report_uri)}">yerel CAS ${esc(
+            ? `<span class="mono" title="${esc(r.report_uri)}">local CAS ${esc(
                 short(r.report_cid, 8, 6)
               )}</span>`
             : ""
@@ -591,7 +591,7 @@
       </div>
 
       <details class="raw">
-        <summary>Ham job verisi</summary>
+        <summary>Raw job data</summary>
         <pre class="mono">${esc(JSON.stringify(job, null, 2))}</pre>
       </details>`;
 
@@ -604,20 +604,20 @@
   }
 
   /* ==========================================================================
-     Paneller
+     Panels
      ==========================================================================
-     Her panel `loader()` sarmalayıcısından geçer: yükleniyor → içerik veya
-     hata + yeniden dene. Hiçbir panel sessizce boş kalmaz.
+     Each panel goes through the `loader()` wrapper: loading → content or
+     error + retry. No panel remains silently empty.
      ========================================================================== */
 
-  /** Kayıtlı yükleyiciler; "Yeniden dene" düğmesi buradan çağırır. */
+  /** Registered loaders; "Retry" button calls from here. */
   const loaders = {};
 
   /**
-   * @param {string} id          panel kökünün id'si (retry anahtarı)
-   * @param {Function} fetcher   veri getiren async fonksiyon
-   * @param {Function} render    veriyi HTML'e çeviren fonksiyon
-   * @param {number} skeletonRows iskelet satır sayısı
+   * @param {string} id          id of the panel root (retry key)
+   * @param {Function} fetcher   async function fetching data
+   * @param {Function} render    function converting data to HTML
+   * @param {number} skeletonRows number of skeleton rows
    */
   function loader(id, fetcher, render, skeletonRows = 3) {
     const run = async () => {
@@ -637,22 +637,22 @@
     return run;
   }
 
-  // Tek delege dinleyici: dinamik olarak basılan her "Yeniden dene" çalışır.
+  // Single delegate listener: every dynamically printed "Retry" works.
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-retry]");
     if (btn) loaders[btn.dataset.retry]?.();
   });
 
-  /* --------------------------------------------------------------- istatistik */
+  /* --------------------------------------------------------------- statistics */
   const loadStats = loader(
     "statGrid",
     () => api("/stats"),
     (s) =>
       [
-        ["Denetim", s.completed_audits],
-        ["Ajan", s.agents],
-        ["Ort. skor", num(s.avg_score)],
-        ["Aktif izleme", s.active_monitors],
+        ["Audit", s.completed_audits],
+        ["Agent", s.agents],
+        ["Avg. score", num(s.avg_score)],
+        ["Active monitors", s.active_monitors],
       ]
         .map(
           ([label, value]) =>
@@ -672,16 +672,16 @@
       const rows = d.swarm || [];
       if (!rows.length) {
         return empty(
-          "Henüz denetim yok",
-          "Bir örnek ajanı denetleyin; simülasyon stake'i ve ELO geçmişi burada görünür."
+          "No audits yet",
+          "Audit an example agent; simulation stake and ELO history will appear here."
         );
       }
       return `
         <div class="table-scroll">
           <table>
             <thead>
-              <tr><th>Denetçi</th><th class="num">ELO</th><th class="num">Stake (sim.)</th>
-                  <th class="num">Denetim</th><th class="num">Kazanç (sim.)</th><th class="num">Slash (sim.)</th></tr>
+              <tr><th>Auditor</th><th class="num">ELO</th><th class="num">Stake (sim.)</th>
+                  <th class="num">Audit</th><th class="num">Earned (sim.)</th><th class="num">Slashed (sim.)</th></tr>
             </thead>
             <tbody>
               ${rows
@@ -704,7 +704,7 @@
     2
   );
 
-  /* ---------------------------------------------------------------- rozetler */
+  /* ---------------------------------------------------------------- badges */
   const loadBadges = loader(
     "badgeRoot",
     () => api("/badges"),
@@ -712,15 +712,15 @@
       const rows = d.badges || [];
       if (!rows.length) {
         return empty(
-          "Henüz rozet basılmadı",
-          "Rozet denetim tamamlandığında offchain üretilir; confirmed alanı registry kanıt sınırını gösterir."
+          "No badges issued yet",
+          "Badge is generated offchain when the audit is completed; the confirmed field shows the registry proof boundary."
         );
       }
       return `
         <div class="table-scroll">
           <table>
             <thead>
-              <tr><th>Ajan</th><th>Rozet</th><th class="num">Skor</th><th>Rapor</th></tr>
+              <tr><th>Agent</th><th>Badge</th><th class="num">Score</th><th>Report</th></tr>
             </thead>
             <tbody>
               ${rows
@@ -745,7 +745,7 @@
     1
   );
 
-  /* ------------------------------------------------------------ zincir durumu */
+  /* ------------------------------------------------------------ chain status */
   const loadChain = loader(
     "chainRoot",
     () => api("/chain/status"),
@@ -765,14 +765,14 @@
               c.explorer_url
                 ? `<a href="${esc(c.explorer_url)}" target="_blank" rel="noopener"
                       title="${esc(c.contract_id)}">${esc(short(c.contract_id))}</a>`
-                : esc(short(c.contract_id || "tanımsız"))
+                : esc(short(c.contract_id || "undefined"))
             }</td>
             <td>${
               c.onchain_verified
-                ? '<span class="chip" data-state="ok"><span class="chip-dot"></span>doğrulandı</span>'
+                ? '<span class="chip" data-state="ok"><span class="chip-dot"></span>verified</span>'
                 : c.configured
-                ? '<span class="chip" data-state="warn"><span class="chip-dot"></span>yalnız yapılandırıldı</span>'
-                : '<span class="chip" data-state="warn"><span class="chip-dot"></span>tanımsız</span>'
+                ? '<span class="chip" data-state="warn"><span class="chip-dot"></span>only configured</span>'
+                : '<span class="chip" data-state="warn"><span class="chip-dot"></span>undefined</span>'
             }</td>
           </tr>`
         )
@@ -782,39 +782,39 @@
 
       return `
         <div class="kv-list">
-          ${row("Ağ", `${esc(net.name || "–")} · ${esc(net.key || "–")}`)}
+          ${row("Network", `${esc(net.name || "–")} · ${esc(net.key || "–")}`)}
           ${row("Network passphrase", `<span class="mono">${esc(short(net.passphrase || "–", 18, 8))}</span>`)}
           ${row(
             "RPC",
             rpc.reachable
-              ? `bağlı · ledger ${esc(rpc.latest_ledger ?? "–")}`
-              : `<span style="color:var(--block-text)">bağlı değil${
+              ? `connected · ledger ${esc(rpc.latest_ledger ?? "–")}`
+              : `<span style="color:var(--block-text)">not connected${
                   rpc.error ? ` — ${esc(rpc.error)}` : ""
                 }</span>`
           )}
           ${row(
-            "Validation hazırlığı",
+            "Validation readiness",
             s.validation_ready
-              ? '<span class="chip" data-state="warn"><span class="chip-dot"></span>dış imza bekler</span>'
-              : '<span class="chip" data-state="warn"><span class="chip-dot"></span>eksik yapılandırma</span>'
+              ? '<span class="chip" data-state="warn"><span class="chip-dot"></span>awaits external signature</span>'
+              : '<span class="chip" data-state="warn"><span class="chip-dot"></span>missing configuration</span>'
           )}
-          ${row("Backend signer", s.submission?.backend_signing ? "açık" : "kapalı (güvenlik sınırı)")}
-          ${row("Event deposu", `${esc(s.event_ingestion?.events ?? 0)} event · ${esc(s.event_ingestion?.streams ?? 0)} cursor`)}
+          ${row("Backend signer", s.submission?.backend_signing ? "on" : "off (security boundary)")}
+          ${row("Event store", `${esc(s.event_ingestion?.events ?? 0)} events · ${esc(s.event_ingestion?.streams ?? 0)} cursors`)}
         </div>
         ${blockers ? `<ul class="note-list" style="margin-top:var(--space-4)">${blockers}</ul>` : ""}
         ${
           contracts
             ? `<div class="table-scroll" style="margin-top:var(--space-4)">
                  <table>
-                   <thead><tr><th>Kontrat</th><th>ID</th><th>Kanıt</th></tr></thead>
+                   <thead><tr><th>Contract</th><th>ID</th><th>Proof</th></tr></thead>
                    <tbody>${contracts}</tbody>
                  </table>
                </div>`
             : ""
         }
         <p class="card-note" style="margin-top:var(--space-4)">
-          Contract ID yapılandırılması deployment kanıtı değildir. Başarı için RPC transaction sonucu
-          ve beklenen registry state/event birlikte geri okunmalıdır.
+          Configuring a Contract ID is not a deployment proof. For success, the RPC transaction result
+          and the expected registry state/event must be read back together.
         </p>`;
     }
   );
@@ -826,10 +826,10 @@
     (d) => {
       if (!d.count) {
         return empty(
-          "Zincirde henüz attestation yok",
+          "No attestations on chain yet",
           d.error
-            ? `Registry okunamadı: ${d.error}`
-            : d.note || "Önce doğrulanmış registry event ingestion çalıştırın."
+            ? `Registry could not be read: ${d.error}`
+            : d.note || "Run verified registry event ingestion first."
         );
       }
       return `
@@ -841,13 +841,13 @@
                     title="${esc(d.registry)}">${esc(short(d.registry))}</a>`
               : `<span class="mono">${esc(short(d.registry))}</span>`
           }
-          · ${d.count} kayıt zincirden geri okundu
+          · ${d.count} records read back from chain
         </p>
         <div class="table-scroll" style="margin-top:var(--space-4)">
           <table>
             <thead>
               <tr><th class="num">#</th><th>requestHash</th>
-                  <th class="num">Skor</th><th>Rapor CID</th></tr>
+                  <th class="num">Score</th><th>Report CID</th></tr>
             </thead>
             <tbody>
               ${(d.entries || [])
@@ -883,7 +883,7 @@
       }
       const configured = Boolean(d.contract_id && d.sac_contract_id);
       const contractValue = (value) =>
-        value ? `<span class="mono" title="${esc(value)}">${esc(short(value, 12, 8))}</span>` : "tanımsız";
+        value ? `<span class="mono" title="${esc(value)}">${esc(short(value, 12, 8))}</span>` : "undefined";
 
       const row = (k, v) =>
         `<div class="kv-row"><span class="kv-key">${esc(k)}</span>
@@ -891,28 +891,28 @@
 
       return `
         <p class="card-note">
-          Escrow doğrulama çekirdeğinden bağımsızdır. Etkinleştirilirse SEP-41 Stellar Asset
-          Contract client kullanır; backend yine imzalama veya settlement yapmaz.
+          Escrow is independent of the verification core. If enabled, it uses the SEP-41 Stellar Asset
+          Contract client; the backend still does not do signing or settlement.
         </p>
         <div class="btn-row">
-          <span class="chip" data-state="accent">mod: ${esc(d.mode)}</span>
+          <span class="chip" data-state="accent">mode: ${esc(d.mode)}</span>
           <span class="chip" data-state="${configured ? "warn" : "accent"}"><span class="chip-dot"></span>${
-            configured ? "yapılandırıldı; zincir kanıtı bekleniyor" : "çekirdek ödeme gerektirmez"
+            configured ? "configured; chain proof expected" : "core does not require payment"
           }</span>
         </div>
         <div class="kv-list">
           ${row("AuditEscrow", contractValue(d.contract_id))}
           ${row("SAC", contractValue(d.sac_contract_id))}
-          ${row("Backend signer", d.backend_signing ? "açık" : "kapalı")}
-          ${row("Onchain confirmed", d.confirmed ? "evet" : "hayır")}
-          ${row("Kanıt notu", esc(d.note || "–"))}
+          ${row("Backend signer", d.backend_signing ? "on" : "off")}
+          ${row("Onchain confirmed", d.confirmed ? "yes" : "no")}
+          ${row("Proof note", esc(d.note || "–"))}
         </div>`;
     },
     2
   );
 
   /* ==========================================================================
-     Sistem durumu (selftest)
+     System status (selftest)
      ========================================================================== */
   const STATE_ICON = { ok: "✓", warn: "!", fail: "✕" };
 
@@ -921,7 +921,7 @@
     const btn = deep ? $("#selftestDeepBtn") : $("#selftestBtn");
     if (!host) return;
 
-    const done = busy(btn, deep ? "Koşuluyor" : "Test");
+    const done = busy(btn, deep ? "Running" : "Test");
     host.setAttribute("aria-busy", "true");
     host.innerHTML = skeleton(deep ? 5 : 3);
 
@@ -933,20 +933,20 @@
       const d = await api(deep ? "/selftest/deep" : "/selftest", deep ? { method: "POST" } : {});
       const s = d.summary || {};
 
-      // Genel karar: yalnızca `fail` varsa kırmızı. Kapalı entegrasyon sarı.
+      // Overall verdict: red only if `fail` exists. Closed integration is yellow.
       const verdict = !d.ok
-        ? `<span class="chip" data-state="danger"><span class="chip-dot"></span>${s.fail} arıza</span>`
+        ? `<span class="chip" data-state="danger"><span class="chip-dot"></span>${s.fail} failures</span>`
         : s.warn
-        ? `<span class="chip" data-state="ok"><span class="chip-dot"></span>çalışıyor</span>
-           <span class="chip" data-state="warn"><span class="chip-dot"></span>${s.warn} kapalı</span>`
-        : `<span class="chip" data-state="ok"><span class="chip-dot"></span>her şey açık</span>`;
+        ? `<span class="chip" data-state="ok"><span class="chip-dot"></span>running</span>
+           <span class="chip" data-state="warn"><span class="chip-dot"></span>${s.warn} off</span>`
+        : `<span class="chip" data-state="ok"><span class="chip-dot"></span>all systems go</span>`;
 
       host.innerHTML = `
         <div class="btn-row">
           ${verdict}
           <span class="chip">${s.ok} ok</span>
           <span class="chip">${d.duration_ms} ms</span>
-          ${d.deep ? '<span class="chip" data-state="accent">derin</span>' : ""}
+          ${d.deep ? '<span class="chip" data-state="accent">deep</span>' : ""}
         </div>
         <div class="status-list" style="margin-top:var(--space-4)">
           ${(d.checks || [])
@@ -963,26 +963,26 @@
             .join("")}
         </div>`;
     } catch (err) {
-      host.innerHTML = failure(`Test çalıştırılamadı: ${err.message}`, "selftestRoot");
+      host.innerHTML = failure(`Failed to run test: ${err.message}`, "selftestRoot");
     } finally {
       host.removeAttribute("aria-busy");
       done();
     }
   }
 
-  // "Yeniden dene" için kaydet (hata durumundaki düğme bunu çağırır).
+  // Save for "Retry" (the button in error state calls this).
   loaders.selftestRoot = () => runSelfTest(false);
 
   $("#selftestBtn")?.addEventListener("click", () => runSelfTest(false));
   $("#selftestDeepBtn")?.addEventListener("click", () => runSelfTest(true));
 
   /* ==========================================================================
-     Üst şerit: çalışma modları + kanıt kaynakları
+     Top strips: operational modes + evidence sources
      ==========================================================================
-     Bu iki şerit farklı soruları yanıtlar ve kasıtlı olarak ayrıdır:
-       modeStrip     → "sistem hangi modda çalışıyor?"
-       evidenceStrip → "skor ne kadar sağlam kanıta dayanıyor?"
-     Kapalı bir kanıt kaynağı arıza değil, kapsam daralmasıdır (sarı).
+     These two strips answer different questions and are intentionally separate:
+       modeStrip     → "what mode is the system operating in?"
+       evidenceStrip → "how solid is the evidence backing the score?"
+     An off evidence source is not a failure, but a scope reduction (yellow).
      ========================================================================== */
   async function renderTopStrips() {
     const modeHost = $("#modeStrip");
@@ -997,20 +997,20 @@
     try {
       health = await api("/health");
     } catch {
-      if (modeHost) modeHost.innerHTML = chip("API erişilemiyor", "danger");
+      if (modeHost) modeHost.innerHTML = chip("API unreachable", "danger");
       return;
     }
 
     const m = health.modes || {};
-    const netName = health.network?.name || "ağ yok";
+    const netName = health.network?.name || "no network";
 
     if (modeHost) {
       modeHost.innerHTML = [
         chip(netName, health.network?.is_testnet ? "accent" : "warn"),
-        chip("LLM", m.llm ? "ok" : "warn", m.llm ? "" : "kapalı — yalnızca sezgisel analiz"),
+        chip("LLM", m.llm ? "ok" : "warn", m.llm ? "" : "off — only heuristic analysis"),
         chip("RPC", m.rpc ? "ok" : "warn"),
-        chip("Backend signer kapalı", m.contract_submission ? "danger" : "ok", "Dış imza güvenlik sınırı"),
-        chip("IPFS", m.ipfs ? "ok" : "warn", m.ipfs ? "" : "kapalı — rapor pinlenmez"),
+        chip("Backend signer off", m.contract_submission ? "danger" : "ok", "External signature security boundary"),
+        chip("IPFS", m.ipfs ? "ok" : "warn", m.ipfs ? "" : "off — report is not pinned"),
       ].join("");
     }
 
@@ -1020,18 +1020,18 @@
       chip(
         it.value || it.key,
         it.enabled ? "ok" : "warn",
-        it.enabled ? it.unlocks : `kapalı → ${it.fallback}`
+        it.enabled ? it.unlocks : `off → ${it.fallback}`
       )
     );
 
-    // OFAC ayrı bir uçtan gelir; adres sayısı ve tazelik kanıt gücünü belirler.
+    // OFAC comes from a separate endpoint; address count and freshness determine evidence strength.
     try {
       const s = await api("/compliance/sanctions");
       if (!s.enabled) {
-        chips.push(chip("OFAC kapalı", "warn", "yaptırım kontrolü yapılmıyor"));
+        chips.push(chip("OFAC off", "warn", "sanctions check is not performed"));
       } else if (!s.available) {
         chips.push(
-          chip("OFAC önbellek yok", "warn", "backend.cli sanctions --refresh çalıştırın")
+          chip("OFAC no cache", "warn", "run backend.cli sanctions --refresh")
         );
       } else {
         chips.push(
@@ -1039,22 +1039,22 @@
             `OFAC ${s.total_addresses}`,
             s.fresh ? "ok" : "warn",
             s.fresh
-              ? `${s.publisher} · güncel`
-              : `önbellek ${s.max_age_hours} saatten eski — yenileyin`
+              ? `${s.publisher} · up-to-date`
+              : `cache older than ${s.max_age_hours} hours — refresh`
           )
         );
       }
     } catch {
-      /* uyum ucu yoksa şerit yine anlamlı kalır */
+      /* if compliance endpoint is missing, strip still makes sense */
     }
 
     evHost.innerHTML = chips.join("");
   }
 
   /* ==========================================================================
-     Başlangıç
+     Bootstrap
      ==========================================================================
-     Paneller paralel yüklenir: biri yavaş olduğunda diğerleri beklemez.
+     Panels load in parallel: when one is slow, others don't wait.
      ========================================================================== */
   async function bootstrap() {
     selectTab("onchain");
@@ -1068,7 +1068,7 @@
     loadBadges();
     runSelfTest(false);
 
-    // Şablon listesi ve fiyatlar: fiyat kaynağı kontrat, `.env` yalnızca tahmin.
+    // Template list and prices: price source is the contract, `.env` is just an estimate.
     try {
       const cfg = await api("/config");
       const select = $("#in-template");
@@ -1080,12 +1080,11 @@
       });
       $("#footerMeta").textContent =
         `basic ${cfg.pricing.basic_usdc} · deep ${cfg.pricing.deep_usdc} USDC · ` +
-        `ücret %${(cfg.pricing.platform_fee_bps / 100).toFixed(1)}`;
+        `fee ${(cfg.pricing.platform_fee_bps / 100).toFixed(1)}%`;
     } catch {
-      /* config yoksa şablon sekmesi boş kalır, geri kalan çalışır */
+      /* if no config, template tab remains empty, the rest works */
     }
   }
 
   bootstrap();
 })();
-

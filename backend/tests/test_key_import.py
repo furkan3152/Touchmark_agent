@@ -1,9 +1,8 @@
-"""`scripts/import_keys.py` — anahtar dosyasının `.env`'ye doğru aktarılması.
+"""`scripts/import_keys.py` — correct import of the key file into `.env`.
 
-Bu araç anahtarlara dokunduğu için iki şeyi garanti etmesi gerekir: takma adları
-doğru `.env` alanlarına eşlemek ve boş bırakılan satırlarla mevcut değerleri
-ezmemek. Testler dosya sistemi üzerinde çalışır, ağa çıkmaz.
-"""
+Because this tool touches keys, it must guarantee two things: mapping aliases
+to the correct `.env` fields, and not overwriting existing values with blank lines.
+The tests run on the file system, no network calls."""
 
 from __future__ import annotations
 

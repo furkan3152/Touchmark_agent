@@ -74,7 +74,7 @@ class _FakeLlm:
 def test_roster_requires_exact_unique_dimensions(settings):
     swarm = AuditSwarm(settings)
     swarm.auditors[-1] = swarm.auditors[0]
-    with pytest.raises(RuntimeError, match="yinelenen"):
+    with pytest.raises(RuntimeError, match="Duplicate"):
         swarm._validate_roster()
 
 
@@ -92,7 +92,7 @@ def test_wrong_auditor_identity_breaks_quorum(settings, run, monkeypatch):
         )
 
     monkeypatch.setattr(target, "run", wrong_run)
-    with pytest.raises(RuntimeError, match="kimlik/boyut uyuşmazlığı"):
+    with pytest.raises(RuntimeError, match="identity/dimension mismatch"):
         run(swarm.run(_artifact(), "job_identity"))
 
 
@@ -135,7 +135,7 @@ def test_nested_verdict_identity_is_revalidated(settings, run, monkeypatch):
         )
 
     monkeypatch.setattr(target, "run", forged_run)
-    with pytest.raises(RuntimeError, match="finding kimlik/boyut uyuşmazlığı"):
+    with pytest.raises(RuntimeError, match="finding id/dimension mismatch"):
         run(swarm.run(_artifact(), "job_nested_identity"))
 
 

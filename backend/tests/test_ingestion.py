@@ -1,4 +1,4 @@
-"""Ingestion testleri — 4 yükleme yolunun tek AgentArtifact'e normalize edilmesi."""
+"""Ingestion tests — normalization of 4 loading paths into a single AgentArtifact."""
 
 from __future__ import annotations
 

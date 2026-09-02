@@ -1,4 +1,4 @@
-"""Stellar kopyasının kanıt sınırlarını koruyan öz-denetim."""
+"""Self-test preserving the evidence boundaries of the Stellar replica."""
 
 from __future__ import annotations
 
@@ -53,16 +53,16 @@ class SelfTestService:
         net = self.settings.network_or_none
         if not net:
             return _check(
-                "Ağ profili", FAIL, "STELLAR_NETWORK çözümlenemedi", "STELLAR_NETWORK=testnet"
+                "Network profile", FAIL, "STELLAR_NETWORK could not be resolved", "STELLAR_NETWORK=testnet"
             )
         if not self.settings.is_testnet and not self.settings.allow_mainnet:
-            return _check("Ağ profili", FAIL, "mainnet kilidi açık değil", "ALLOW_MAINNET=true")
-        return _check("Ağ profili", OK, f"{net.name} · passphrase profili yüklü")
+            return _check("Network profile", FAIL, "mainnet is not unlocked", "ALLOW_MAINNET=true")
+        return _check("Network profile", OK, f"{net.name} · passphrase profile loaded")
 
     async def _check_stellar(self) -> list[dict]:
         checks: list[dict] = []
         if not self.settings.rpc_enabled:
-            checks.append(_check("Stellar RPC", WARN, "offline profil", "STELLAR_NETWORK=testnet"))
+            checks.append(_check("Stellar RPC", WARN, "offline profile", "STELLAR_NETWORK=testnet"))
         else:
             health = await self.chain.rpc.health()
             if health.get("reachable"):
@@ -74,7 +74,7 @@ class SelfTestService:
                     )
                 )
             else:
-                checks.append(_check("Stellar RPC", FAIL, health.get("error") or "healthy değil"))
+                checks.append(_check("Stellar RPC", FAIL, health.get("error") or "not healthy"))
 
         deployments = await self.chain.deployed_contracts()
         contract_map = {row["key"]: row for row in deployments["contracts"]}
@@ -84,7 +84,7 @@ class SelfTestService:
                 _check(
                     "Agent registry",
                     WARN,
-                    "contract ID tanımlı değil; rapor offchain kalır",
+                    "contract ID not defined; report remains off-chain",
                     "AGENT_REGISTRY_CONTRACT_ID=C...",
                 )
             )
@@ -101,24 +101,24 @@ class SelfTestService:
                 _check(
                     "Agent registry",
                     WARN,
-                    "ID yapılandırıldı fakat ledger entry/event ile deploy doğrulanmadı",
-                    "event ingester ve contract state readback çalıştırın",
+                    "ID configured but deploy not verified with ledger entry/event",
+                    "run event ingester and contract state readback",
                 )
             )
 
         event_status = self.chain.events.status()
         checks.append(
             _check(
-                "Event deposu",
+                "Event store",
                 OK,
-                f"SQLite hazır · {event_status['events']} olay · {event_status['streams']} cursor",
+                f"SQLite ready · {event_status['events']} events · {event_status['streams']} cursors",
             )
         )
         checks.append(
             _check(
-                "İmzalama sınırı",
+                "Signing boundary",
                 OK,
-                "backend signer/secret saklamıyor; prepared invocation onchain başarı sayılmıyor",
+                "backend does not store signer/secret; prepared invocation is not considered on-chain success",
             )
         )
         escrow = contract_map["audit_escrow"]
@@ -135,12 +135,12 @@ class SelfTestService:
                 _check(
                     "Audit escrow",
                     WARN,
-                    "etkin fakat fonlama/settlement dış imza ve event doğrulaması bekliyor",
+                    "enabled but funding/settlement awaits external signature and event verification",
                 )
             )
         else:
             checks.append(
-                _check("Audit escrow", OK, "kapalı ve agent validation çekirdeğinden bağımsız")
+                _check("Audit escrow", OK, "disabled and independent of the agent validation core")
             )
         return checks
 
@@ -148,60 +148,60 @@ class SelfTestService:
         sep10 = bool(self.settings.sep10_web_auth_endpoint)
         sep45 = bool(self.settings.sep45_web_auth_endpoint)
         if sep10 and sep45:
-            return _check("Account auth", OK, "SEP-10 (G/M) ve SEP-45 (C) uçları ayrık")
+            return _check("Account auth", OK, "SEP-10 (G/M) and SEP-45 (C) endpoints are distinct")
         if sep10 or sep45:
             missing = "SEP-45 C-account" if sep10 else "SEP-10 G/M-account"
-            return _check("Account auth", WARN, f"kısmi: {missing} yolu eksik")
+            return _check("Account auth", WARN, f"partial: {missing} path missing")
         return _check(
             "Account auth",
             WARN,
-            "web auth yapılandırılmadı; raw Ed25519 yalnız G-account için kullanılabilir",
+            "web auth not configured; raw Ed25519 can only be used for G-account",
             "SEP10_WEB_AUTH_ENDPOINT ve SEP45_WEB_AUTH_ENDPOINT",
         )
 
     def _check_ofac(self) -> dict:
         if not self.settings.ofac_enabled:
-            return _check("OFAC yaptırım listesi", WARN, "kapalı")
+            return _check("OFAC sanctions list", WARN, "disabled")
         sanctions = OfacSanctionsList(self.settings.data_path, self.settings.ofac_max_age_hours)
         cache = sanctions.load_cache()
         if not cache:
             return _check(
-                "OFAC yaptırım listesi",
+                "OFAC sanctions list",
                 WARN,
-                "önbellek yok; yaptırım taraması yapılmıyor",
+                "no cache; sanctions scan is not performed",
                 "python -m backend.cli sanctions --refresh",
             )
         total = cache.get("total_addresses", 0)
         if not sanctions.is_fresh(cache):
-            return _check("OFAC yaptırım listesi", WARN, f"{total} adres · güncel değil")
-        return _check("OFAC yaptırım listesi", OK, f"{total} adres · güncel")
+            return _check("OFAC sanctions list", WARN, f"{total} addresses · not up-to-date")
+        return _check("OFAC sanctions list", OK, f"{total} addresses · up-to-date")
 
     def _check_llm(self) -> dict:
         if not self.settings.llm_enabled:
-            return _check("LLM-as-Judge", WARN, "kapalı; deterministik heuristik motor")
+            return _check("LLM-as-Judge", WARN, "disabled; deterministic heuristic engine")
         return _check(
             "LLM-as-Judge", OK, f"{self.settings.llm_provider} · {self.settings.llm_model}"
         )
 
     def _check_ipfs(self) -> dict:
         if not self.settings.ipfs_enabled:
-            return _check("IPFS", WARN, "yerel content-addressed store", "PINATA_JWT")
-        return _check("IPFS", OK, "Pinata pinleme açık")
+            return _check("IPFS", WARN, "local content-addressed store", "PINATA_JWT")
+        return _check("IPFS", OK, "Pinata pinning enabled")
 
     async def _check_pipeline(self) -> dict:
         try:
             report = await self._audit("./examples/vulnerable_agent")
         except Exception as exc:
-            return _check("Uçtan uca denetim", FAIL, f"{type(exc).__name__}: {exc}")
+            return _check("End-to-end audit", FAIL, f"{type(exc).__name__}: {exc}")
         if report is None or report.overall_score > 60:
-            score = report.overall_score if report else "rapor yok"
-            return _check("Uçtan uca denetim", FAIL, f"zafiyetli ajan sonucu: {score}")
+            score = report.overall_score if report else "no report"
+            return _check("End-to-end audit", FAIL, f"vulnerable agent result: {score}")
         att = report.attestation
         return _check(
-            "Uçtan uca denetim",
+            "End-to-end audit",
             OK,
-            f"skor {report.overall_score} · {len(report.findings)} bulgu · "
-            f"attestation={att.mode if att else 'yok'} confirmed={att.confirmed if att else False}",
+            f"score {report.overall_score} · {len(report.findings)} findings · "
+            f"attestation={att.mode if att else 'none'} confirmed={att.confirmed if att else False}",
         )
 
     async def _check_discrimination(self) -> dict:
@@ -209,13 +209,13 @@ class SelfTestService:
             good = await self._audit("./examples/corpus/payroll_agent")
             bad = await self._audit("./examples/corpus/airdrop_scam")
         except Exception as exc:
-            return _check("Skor ayrıştırma", FAIL, f"{type(exc).__name__}: {exc}")
+            return _check("Score discrimination", FAIL, f"{type(exc).__name__}: {exc}")
         if good is None or bad is None:
-            return _check("Skor ayrıştırma", FAIL, "korpus raporu eksik")
+            return _check("Score discrimination", FAIL, "corpus report missing")
         spread = round(good.overall_score - bad.overall_score, 1)
         detail = f"payroll {good.overall_score} - scam {bad.overall_score} = {spread}"
         return _check(
-            "Skor ayrıştırma",
+            "Score discrimination",
             OK if spread >= MIN_SCORE_SPREAD else FAIL,
             detail,
         )

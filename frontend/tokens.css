@@ -1,73 +1,74 @@
 /* ==========================================================================
-   AgentVeritas — tasarım tokenları
+   AgentVeritas — design tokens
    ==========================================================================
 
-   Palet kaynağı: Radix Colors (dark scales). Keyfi hex seçilmedi; Radix
-   ölçekleri algısal olarak eşit adımlıdır ve her ölçekte 11/12 basamağı
-   koyu zeminde AA kontrastını garanti eder. Bu, "skor 84 mü 35 mi" gibi
-   renkle taşınan bilginin okunabilir kalması için gerekli.
+   Palette source: Radix Colors (dark scales). No arbitrary hexes; Radix
+   scales are perceptually uniform, and step 11/12 in every scale guarantees
+   AA contrast on dark backgrounds. This is required so color-coded info
+   like "is the score 84 or 35" remains readable.
 
-   Ölçek seçimi ve gerekçesi:
-     slate   → nötr yüzeyler. Saf gri değil, hafif soğuk; veri yoğun
-               arayüzde gözü yormaz ve indigo aksanla aynı sıcaklıkta kalır.
-     indigo  → tek aksan. Marka + etkileşim. Mor/pembeye kaçmayan,
-               "finans arayüzü" tonunda mavi-menekşe.
-     jade    → olumlu (SAFE, açık entegrasyon, doğrulanmış imza)
-     amber   → dikkat (CAUTION, kapalı opsiyonel entegrasyon, bayat önbellek)
-     orange  → yüksek risk (HIGH_RISK)
-     red     → engel (BLOCKLIST, gerçek arıza)
+   Scale selection and rationale:
+     slate   → neutral surfaces. Not pure gray, slightly cool; doesn't
+               tire the eye in a data-dense UI and shares the same
+               temperature as the indigo accent.
+     indigo  → single accent. Brand + interaction. Blue-violet in a
+               "finance UI" tone, not leaning purple/pink.
+     jade    → positive (SAFE, open integration, verified signature)
+     amber   → caution (CAUTION, closed optional integration, stale cache)
+     orange  → high risk (HIGH_RISK)
+     red     → block (BLOCKLIST, actual failure)
 
-   Kasıtlı olarak KULLANILMAYANLAR:
-     · backdrop-filter / yarı saydam paneller (glassmorphism)
-     · gradient metin, gradient buton dolgusu
-     · geniş yayılımlı renkli parıltı gölgeleri
-   Koyu temada yükseklik hissi gölgeyle değil, **daha açık yüzey + saç
-   teli kenarlık** ile kurulur; gölge yalnızca gerçekten üstte yüzen
-   katman (popover/dropdown) için ayrılmıştır.
+   Intentionally NOT USED:
+     · backdrop-filter / translucent panels (glassmorphism)
+     · gradient text, gradient button fills
+     · wide-spread colored glow shadows
+   In dark theme, the sense of elevation is built with **lighter surface +
+   hairline border**, not shadow; shadow is reserved only for layers that
+   truly float on top (popover/dropdown).
    ========================================================================== */
 
 :root {
   color-scheme: dark;
 
-  /* ---------------------------------------------------------- yüzeyler */
-  /* Yükseklik merdiveni: her adım bir önceki yüzeyin üstünde durur. */
-  --surface-canvas: #0b0c0e;   /* sayfa zemini — slate1'in bir tık altı */
-  --surface-1: #111113;        /* slate1  · kart */
-  --surface-2: #18191b;        /* slate2  · kart içi bölüm, tablo başlığı */
-  --surface-3: #212225;        /* slate3  · input, sekme, kod bloğu */
+  /* ---------------------------------------------------------- surfaces */
+  /* Elevation ladder: each step rests on top of the previous surface. */
+  --surface-canvas: #0b0c0e;   /* page background — slightly below slate1 */
+  --surface-1: #111113;        /* slate1  · card */
+  --surface-2: #18191b;        /* slate2  · card section, table header */
+  --surface-3: #212225;        /* slate3  · input, tab, code block */
   --surface-4: #272a2d;        /* slate4  · hover */
-  --surface-5: #2e3135;        /* slate5  · active / seçili */
+  --surface-5: #2e3135;        /* slate5  · active / selected */
 
-  /* ---------------------------------------------------------- kenarlık */
-  --line: #26282c;             /* saç teli — yapıyı ayırır, çizmez */
-  --line-strong: #363a3f;      /* slate6  · vurgulu ayrım */
-  --line-focus: #5a6169;       /* slate8  · hover kenarlığı */
+  /* ---------------------------------------------------------- border */
+  --line: #26282c;             /* hairline — separates structure, does not draw */
+  --line-strong: #363a3f;      /* slate6  · emphasized separation */
+  --line-focus: #5a6169;       /* slate8  · hover border */
 
-  /* -------------------------------------------------------------- metin */
-  /* Parlaklıklar keyfi seçilmedi: her ton, üzerinde göründüğü **en zorlu**
-     yüzeyde WCAG AA (4.5:1) geçecek şekilde slate ölçeği üzerinde tarandı.
-       --text-3 en zor zemini surface-4 (.card-step) → 4.50
-       --text-4 en zor zemini surface-3 (placeholder) → 4.52
-     Radix slate10/11 arası ara tonlar; hue ramp'ı korunur. */
-  --text: #edeef0;             /* slate12 · başlık, sayı, input değeri */
-  --text-2: #b0b4ba;           /* slate11 · gövde */
-  --text-3: #8c9097;           /* ikincil, etiket, tablo başlığı */
-  --text-4: #848990;           /* placeholder, devre dışı */
-
-
-  /* -------------------------------------------------------------- aksan */
-  /* `--accent-hover` indigo10 değil: indigo10 (#5472e4) üzerinde beyaz metin
-     4.28:1 verir ve AA'yı kaybeder. indigo9→10 rampasında beyazın 4.6'nın
-     üstünde kaldığı en açık ton seçildi. Hover'da kontrast düşmez. */
-  --accent: #3e63dd;           /* indigo9  · dolgu (beyaz metin 5.21:1) */
-  --accent-hover: #4c6ce1;     /* indigo9→10 arası (beyaz metin 4.63:1) */
-  --accent-fg: #ffffff;        /* aksan dolgu üzerindeki metin */
-  --accent-text: #9eb1ff;      /* indigo11 · koyu zeminde okunur metin */
-  --accent-line: #435db1;      /* indigo8  · kenarlık */
-  --accent-bg: #182449;        /* indigo3  · yumuşak zemin */
+  /* -------------------------------------------------------------- text */
+  /* Brightness is not arbitrary: each tone was scanned against the slate
+     scale to pass WCAG AA (4.5:1) on the **hardest** surface it appears on.
+       --text-3 hardest background surface-4 (.card-step) → 4.50
+       --text-4 hardest background surface-3 (placeholder) → 4.52
+     Radix slate10/11 intermediate tones; hue ramp is preserved. */
+  --text: #edeef0;             /* slate12 · heading, number, input value */
+  --text-2: #b0b4ba;           /* slate11 · body */
+  --text-3: #8c9097;           /* secondary, label, table header */
+  --text-4: #848990;           /* placeholder, disabled */
 
 
-  /* ------------------------------------------------------------ semantik */
+  /* -------------------------------------------------------------- accent */
+  /* `--accent-hover` is not indigo10: white text on indigo10 (#5472e4)
+     yields 4.28:1 and loses AA. The lightest tone where white stays above
+     4.6 was chosen on the indigo9→10 ramp. Contrast doesn't drop on hover. */
+  --accent: #3e63dd;           /* indigo9  · fill (white text 5.21:1) */
+  --accent-hover: #4c6ce1;     /* between indigo9→10 (white text 4.63:1) */
+  --accent-fg: #ffffff;        /* text on accent fill */
+  --accent-text: #9eb1ff;      /* indigo11 · readable text on dark background */
+  --accent-line: #435db1;      /* indigo8  · border */
+  --accent-bg: #182449;        /* indigo3  · soft background */
+
+
+  /* ------------------------------------------------------------ semantic */
   --safe: #29a383;             /* jade9 */
   --safe-text: #1fd8a4;        /* jade11 */
   --safe-line: #2a7e68;        /* jade8 */
@@ -88,13 +89,13 @@
   --block-line: #b54548;       /* red8 */
   --block-bg: #3b1219;         /* red3 */
 
-  /* ------------------------------------------------------------- tipografi */
+  /* ------------------------------------------------------------- typography */
   --font-sans: "Inter var", "Inter", ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono",
     Menlo, Consolas, monospace;
 
-  /* Ölçek 1.25 oranında; gövde 14px çünkü arayüz veri yoğun. */
+  /* Scale is 1.25 ratio; body is 14px because UI is data-dense. */
   --text-display: clamp(30px, 3.6vw, 40px);
   --text-title: 19px;
   --text-body: 14px;
@@ -102,8 +103,8 @@
   --text-xs: 12px;
   --text-2xs: 11px;
 
-  /* ---------------------------------------------------------------- ölçüler */
-  /* 4px taban ızgara — tüm boşluklar bunun katı. */
+  /* ---------------------------------------------------------------- metrics */
+  /* 4px base grid — all spacing is a multiple of this. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -120,29 +121,29 @@
   --radius-xl: 16px;
   --radius-pill: 999px;
 
-  /* Etkileşimli öğe yüksekliği. Mobilde 40px'e çıkar (parmakla isabet için
-     asgari hedef) ve font 16px olur — daha küçüğü iOS Safari'de alana
-     odaklanınca sayfayı zorla yakınlaştırır. */
+  /* Interactive element height. Scales to 40px on mobile (minimum target
+     for finger tap) and font becomes 16px — anything smaller forces zoom
+     in iOS Safari on focus. */
   --control-h: 38px;
   --control-fs: var(--text-sm);
 
 
-  /* Gölge yalnızca yüzen katman için. Renksiz ve sıkı. */
+  /* Shadow only for floating layer. Colorless and tight. */
   --shadow-overlay: 0 8px 24px -4px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
 
-  /* -------------------------------------------------------------- hareket */
-  /* Üç süre kademesi. Daha fazlası tutarsızlık üretir. */
-  --dur-instant: 80ms;   /* renk, kenarlık — anında hissedilmeli */
-  --dur-fast: 140ms;     /* hover, focus, küçük konum */
-  --dur-base: 220ms;     /* açılma/kapanma, yükseklik değişimi */
+  /* -------------------------------------------------------------- motion */
+  /* Three duration tiers. More creates inconsistency. */
+  --dur-instant: 80ms;   /* color, border — should be felt instantly */
+  --dur-fast: 140ms;     /* hover, focus, small position */
+  --dur-base: 220ms;     /* open/close, height change */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   --content-width: 1200px;
 }
 
-/* Mobil: dokunma hedefleri büyür. Tokenda değiştiriliyor, tek tek
-   seçicilerde değil — böylece özgüllük yarışı çıkmaz. */
+/* Mobile: touch targets grow. Changed in token, not in individual
+   selectors — so no specificity race occurs. */
 @media (max-width: 700px) {
   :root {
     --control-h: 40px;

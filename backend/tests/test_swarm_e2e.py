@@ -1,9 +1,8 @@
-"""Uçtan uca: pipeline güvenli ve zafiyetli ajanı doğru ayırt ediyor mu?
+"""End-to-end: does the pipeline correctly distinguish between secure and vulnerable agents?
 
-Bu dosya projenin en önemli davranışsal garantisini korur: zafiyetli ajan
-güvenli ajandan belirgin biçimde daha düşük skor almalı, ama güvenli ajan da
-yanlış pozitiflerle blocklist'e düşmemeli.
-"""
+This file preserves the most important behavioral guarantee of the project: a vulnerable agent
+must score significantly lower than a secure agent, but a secure agent
+must not fall into the blocklist due to false positives."""
 
 from __future__ import annotations
 

@@ -34,7 +34,7 @@ from .guards import (
 from .templates import TEMPLATES
 
 STELLAR_ADDRESS_RE = re.compile(r"^[GC][A-Z2-7]{55}$")
-CODE_SUFFIXES = {".py", ".ts", ".js", ".tsx", ".jsx", ".sol", ".rs", ".go", ".json", ".yaml", ".yml", ".toml", ".lock", ".md", ".txt"}
+CODE_SUFFIXES = {".py", ".ts", ".js", ".tsx", ".jsx", ".sol", ".rs", ".go", ".json", ".yaml", ".yml", ".toml", ".lock", ".md", ".txt", ".example", ".sample", ".template"}
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "dist", "build", ".next"}
 #: Denetim yüzeyine hiçbir koşulda alınmayacak dizinler. `keystore` operatörün
 #: özel anahtarını, `sanctions` 5.6 MB'lık OFAC önbelleğini tutar; ikisi de

@@ -1,10 +1,9 @@
-"""Olumsuzlama duyarlı prompt taraması.
+"""Negation-sensitive prompt scanning.
 
-Gerçek korpus taramasında ortaya çıkan iki yanlış negatifi kilitler:
-* "approve unlimited token spending" → içindeki `limit` alt dizesi harcama
-  politikası kanıtı sayılıyordu; dolandırıcı ajan CAUTION alıyordu.
-* "ask for their private key" → `private` MEV koruması sayılıyordu.
-"""
+Locks in two false negatives that emerged in the real corpus scan:
+* "approve unlimited token spending" → the substring `limit` in it was considered
+  evidence of a spending policy; the scam agent was receiving CAUTION.
+* "ask for their private key" → `private` was considered MEV protection."""
 
 from __future__ import annotations
 

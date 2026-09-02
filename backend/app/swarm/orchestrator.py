@@ -1,4 +1,4 @@
-"""Audit Swarm orkestratörü — bağımsız boyutları paralel çalıştırır."""
+"""Audit Swarm orchestrator — runs independent dimensions in parallel."""
 
 from __future__ import annotations
 
@@ -57,47 +57,47 @@ class AuditSwarm:
         dimensions = [auditor.dimension for auditor in self.auditors]
         expected_dimensions = set(DIMENSION_WEIGHTS)
         if len(names) != len(set(names)):
-            raise RuntimeError("Denetim roster'inde yinelenen auditor adı var")
+            raise RuntimeError("Duplicate auditor name in audit roster")
         if len(dimensions) != len(set(dimensions)):
-            raise RuntimeError("Denetim roster'inde yinelenen boyut var")
+            raise RuntimeError("Duplicate dimension in audit roster")
         if set(dimensions) != expected_dimensions:
             missing = sorted(d.value for d in expected_dimensions - set(dimensions))
             extra = sorted(d.value for d in set(dimensions) - expected_dimensions)
-            raise RuntimeError(f"Denetim roster boyutları hatalı (missing={missing}, extra={extra})")
+            raise RuntimeError(f"Invalid audit roster dimensions (missing={missing}, extra={extra})")
 
     @staticmethod
     def _verdict_violation(auditor, verdict: AuditorVerdict) -> str:
-        """Auditor nesnesi atlatılsa bile verdict zarfını yeniden doğrular."""
+        """Re-validates the verdict envelope even if the Auditor object is bypassed."""
         if not 0.0 <= verdict.score <= 100.0:
-            return f"skor aralık dışı: {verdict.score}"
+            return f"score out of bounds: {verdict.score}"
         if verdict.duration_ms < 0:
-            return "negatif süre"
+            return "negative duration"
 
         finding_ids: set[str] = set()
         for finding in verdict.findings:
             if finding.dimension is not auditor.dimension or finding.auditor != auditor.name:
-                return f"finding kimlik/boyut uyuşmazlığı: {finding.id}"
+                return f"finding id/dimension mismatch: {finding.id}"
             if not finding.id or finding.id in finding_ids:
-                return f"yinelenen/boş finding id: {finding.id!r}"
+                return f"duplicate/empty finding id: {finding.id!r}"
             finding_ids.add(finding.id)
             if finding.severity.rank >= Severity.HIGH.rank and not finding.remediation.strip():
-                return f"kritik/yüksek bulgunun çözümü yok: {finding.id}"
+                return f"critical/high finding has no remediation: {finding.id}"
             if (
                 finding.evidence_grade is EvidenceGrade.CONFIRMED
                 and not finding.evidence.strip()
             ):
-                return f"confirmed bulgunun kanıtı yok: {finding.id}"
+                return f"confirmed finding has no evidence: {finding.id}"
 
         scenario_ids: set[str] = set()
         for scenario in verdict.scenarios:
             if not scenario.scenario_id or scenario.scenario_id in scenario_ids:
-                return f"yinelenen/boş scenario id: {scenario.scenario_id!r}"
+                return f"duplicate/empty scenario id: {scenario.scenario_id!r}"
             scenario_ids.add(scenario.scenario_id)
             if (
                 scenario.evidence_grade is EvidenceGrade.CONFIRMED
                 and not scenario.evidence.strip()
             ):
-                return f"confirmed senaryonun kanıtı yok: {scenario.scenario_id}"
+                return f"confirmed scenario has no evidence: {scenario.scenario_id}"
 
         expected_coverage = {
             "findings": len(verdict.findings),
@@ -105,7 +105,7 @@ class AuditSwarm:
             "scenarios_passed": sum(1 for scenario in verdict.scenarios if scenario.passed),
         }
         if any(verdict.coverage.get(key) != value for key, value in expected_coverage.items()):
-            return f"coverage beyanı uyuşmuyor: {verdict.coverage}"
+            return f"coverage declaration mismatch: {verdict.coverage}"
         return ""
 
     async def run(
@@ -139,11 +139,11 @@ class AuditSwarm:
                 failures.append(f"{auditor.name}: {type(result).__name__}: {result}")
                 continue
             if not isinstance(result, AuditorVerdict):
-                failures.append(f"{auditor.name}: geçersiz verdict tipi")
+                failures.append(f"{auditor.name}: invalid verdict type")
                 continue
             if result.auditor != auditor.name or result.dimension is not auditor.dimension:
                 failures.append(
-                    f"{auditor.name}: kimlik/boyut uyuşmazlığı "
+                    f"{auditor.name}: identity/dimension mismatch "
                     f"({result.auditor}/{result.dimension.value})"
                 )
                 continue
@@ -151,14 +151,14 @@ class AuditSwarm:
                 failures.append(f"{auditor.name}: {result.error or result.status}")
                 continue
             if result.rule_set != AUDIT_POLICY_VERSION:
-                failures.append(f"{auditor.name}: policy sürümü uyuşmuyor")
+                failures.append(f"{auditor.name}: policy version mismatch")
                 continue
             if violation := self._verdict_violation(auditor, result):
                 failures.append(f"{auditor.name}: {violation}")
                 continue
             verdicts.append(result)
         if failures or len(verdicts) != len(self.auditors):
-            raise RuntimeError("Denetim quorum'u tamamlanmadı: " + "; ".join(failures))
+            raise RuntimeError("Audit quorum not completed: " + "; ".join(failures))
 
         score, badge, dim_scores, findings, notes, disagreement, assurance = (
             self.judge.synthesise(artifact, verdicts, tier=tier)
@@ -171,7 +171,7 @@ class AuditSwarm:
         payouts = self.judge.settle_stakes(verdicts, score, self.stats, reward_pool_usdc)
         if payouts:
             notes.append(
-                "Stake dağıtımı: "
+                "Stake distribution: "
                 + ", ".join(f"{k}={v:.4f} USDC" for k, v in payouts.items())
             )
 
@@ -180,21 +180,21 @@ class AuditSwarm:
             processors.append(f"{self.settings.llm_provider}:{self.settings.llm_model}")
 
         limitations = [
-            "Statik ve senaryo tabanlı denetim, bağımsız güvenlik sertifikası değildir.",
-            "Prepared invocation/tx hash, ledger ve contract state/event doğrulaması değildir.",
+            "Static and scenario-based audit is not an independent security certificate.",
+            "Prepared invocation/tx hash is not ledger and contract state/event verification.",
         ]
         if not artifact.owner_verified:
-            limitations.append("Agent sahipliği doğrulanmadı; SAFE assurance oluşmaz.")
+            limitations.append("Agent ownership not verified; SAFE assurance cannot be achieved.")
         if artifact.onchain.data_source in ("none", "horizon_account", "simulated"):
             limitations.append(
-                f"Stellar davranış kapsamı sınırlı: data_source={artifact.onchain.data_source}."
+                f"Stellar behavior scope limited: data_source={artifact.onchain.data_source}."
             )
         if processors:
-            limitations.append("Harici LLM kullanıldı; rapor deterministik değildir.")
+            limitations.append("External LLM used; report is not deterministic.")
         surface_coverage = audit_surface_coverage(artifact)
         if tier is AuditTier.DEEP and not surface_coverage["deep_core_complete"]:
             limitations.append(
-                "Deep audit çekirdek yüzeyi eksik: "
+                "Deep audit core surface incomplete: "
                 + ", ".join(
                     gap
                     for gap in surface_coverage["gaps"]

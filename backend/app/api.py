@@ -1,4 +1,4 @@
-"""FastAPI uygulaması: agent ingestion, derin audit ve Soroban validation hazırlığı."""
+"""FastAPI application: agent ingestion, deep audit, and Soroban validation preparation."""
 
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ pipeline = AuditPipeline(settings)
 ingestion = IngestionService(settings)
 chain_status = ChainStatusService(settings)
 
-#: Arka plan patrol turunun sağlığı. Hata sayacı olmadan sürekli patlayan bir
-#: döngü hiçbir yerde görünmüyordu; `/api/v1/stats` bunu artık raporluyor.
+#: Health of the background patrol cycle. A continuously crashing loop without an error
+#: counter wasn't visible anywhere; `/api/v1/stats` now reports this.
 monitor_health: dict = {"ticks": 0, "errors": 0, "last_error": "", "last_run_at": None}
 _operator_requests: dict[str, deque[float]] = defaultdict(deque)
 
@@ -42,18 +42,18 @@ async def require_operator(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
 ) -> None:
-    """Yan etkili API uçlarını fail-closed korur.
+    """Protects side-effecting API endpoints in a fail-closed manner.
 
-    Anahtar yapılandırılmamışsa public yazma yüzeyi açılmaz. Karşılaştırma
-    timing-safe'tir; basit process-local limit reverse-proxy limitinin yerini
-    tutmaz ama tek anahtarın kazara/otomatik kötüye kullanımını sınırlar.
+    If the key is not configured, the public write surface is not opened. The comparison
+    is timing-safe; a simple process-local limit does not replace a reverse-proxy limit,
+    but it limits accidental/automated abuse of the single key.
     """
     expected = settings.admin_api_key
     if not expected:
-        raise HTTPException(status_code=503, detail="operatör API kapalı: ADMIN_API_KEY gerekli")
+        raise HTTPException(status_code=503, detail="operator API disabled: ADMIN_API_KEY required")
     scheme, _, supplied = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not supplied or not secrets.compare_digest(supplied, expected):
-        raise HTTPException(status_code=401, detail="geçersiz operatör kimliği")
+        raise HTTPException(status_code=401, detail="invalid operator identity")
 
     identity = request.client.host if request.client else "unknown"
     now = time.monotonic()
@@ -62,16 +62,16 @@ async def require_operator(
         bucket.popleft()
     limit = max(1, min(settings.admin_rate_limit_per_minute, 600))
     if len(bucket) >= limit:
-        raise HTTPException(status_code=429, detail="operatör istek limiti aşıldı")
+        raise HTTPException(status_code=429, detail="operator request limit exceeded")
     bucket.append(now)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Arka plan patrol döngüsünü başlatır ve kapanışta durumu diske yazar.
+    """Starts the background patrol loop and writes state to disk on shutdown.
 
-    `on_event` FastAPI 0.115'te deprecated; `lifespan` tek giriş/çıkış noktası
-    verdiği için kapanışta `store.flush()` çağrısının atlanma riski de kalmıyor.
+    `on_event` is deprecated in FastAPI 0.115; since `lifespan` provides a single
+    entry/exit point, there is no risk of skipping the `store.flush()` call on shutdown.
     """
     task = asyncio.create_task(_monitor_loop())
     app.state.monitor_task = task
@@ -87,11 +87,11 @@ async def lifespan(app: FastAPI):
 
 
 async def _monitor_loop() -> None:
-    """Dakikalık patrol turu.
+    """Minute-based patrol cycle.
 
-    Hata **yutulmaz**: sayaç artar ve loglanır. Eskiden `except Exception:
-    continue` vardı; abonelik denetimi her turda patlasa bile sistem sağlıklı
-    görünüyordu.
+    Errors are **not swallowed**: the counter increases and is logged. Previously, there was
+    `except Exception: continue`; even if the subscription check crashed on every cycle, the
+    system appeared healthy.
     """
     import time
 
@@ -106,7 +106,16 @@ async def _monitor_loop() -> None:
         except Exception as exc:  # noqa: BLE001 - döngü ayakta kalmalı
             monitor_health["errors"] += 1
             monitor_health["last_error"] = f"{type(exc).__name__}: {exc}"
-            logger.warning("monitor tick başarısız: %s", monitor_health["last_error"])
+            logger.warning("monitor tick failed: %s", monitor_health["last_error"])
+
+        # Cleanup expired rate limit buckets to prevent memory leak
+        now = time.monotonic()
+        for ip_key in list(_operator_requests.keys()):
+            q = _operator_requests[ip_key]
+            while q and now - q[0] >= 60:
+                q.popleft()
+            if not q:
+                del _operator_requests[ip_key]
 
 
 app = FastAPI(
@@ -133,7 +142,7 @@ class FundRequest(BaseModel):
 
 
 class OwnershipVerifyRequest(BaseModel):
-    """Stellar G-account Ed25519 sahiplik imzası ön kontrolü."""
+    """Stellar G-account Ed25519 ownership signature pre-check."""
 
     agent_ref: str
     owner: str
@@ -142,7 +151,7 @@ class OwnershipVerifyRequest(BaseModel):
 
 
 class ValidationRequestHook(BaseModel):
-    """Soroban AgentRegistry validation request olayının güvenilir ingester karşılığı."""
+    """Reliable ingester equivalent of the Soroban AgentRegistry validation request event."""
 
     agent_address: str = ""
     agent_id: str = ""
@@ -154,13 +163,13 @@ class ValidationRequestHook(BaseModel):
 class MonitorSubscribe(BaseModel):
     agent_id: str
     interval_minutes: int = Field(default=30, ge=15, le=1440)
-    # Monitoring çekirdek üründe ücretsizdir. Alan eski istemciler için korunur.
+    # Monitoring is free in the core product. Field is preserved for legacy clients.
     prepaid_usdc: float = Field(default=0.0, ge=0)
 
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    """API ve statik UI için tarayıcı güvenlik sınırlarını açıkça uygula."""
+    """Explicitly enforce browser security boundaries for the API and static UI."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -208,7 +217,7 @@ async def health() -> dict:
 # ------------------------------------------------------------------------ chain
 @app.get("/api/v1/chain/status")
 async def chain_status_view() -> dict:
-    """Ağ, RPC, operatör cüzdanı ve zincire yazma hazırlığı."""
+    """Network, RPC, operator wallet, and on-chain write readiness."""
     return await chain_status.status()
 
 
@@ -224,25 +233,25 @@ async def signing_boundary() -> dict:
 
 @app.get("/api/v1/chain/probe/{address}")
 async def chain_probe(address: str) -> dict:
-    """Bir adresin zincir üzerindeki hızlı özeti (bakiye, nonce, kontrat mı)."""
+    """Quick on-chain summary of an address (balance, nonce, is contract)."""
     return await chain_status.probe_address(address)
 
 
 @app.get("/api/v1/chain/deployments")
 async def chain_deployments() -> dict:
-    """Yapılandırılmış Soroban contract ID'leri; configured, deployed demek değildir."""
+    """Configured Soroban contract IDs; does not necessarily mean they are deployed."""
     return await chain_status.deployed_contracts()
 
 
 @app.get("/api/v1/chain/attestations")
 async def chain_attestations(limit: int = Query(default=20, ge=1, le=100)) -> dict:
-    """Kalıcı event deposunda doğrulanmış registry response olayları."""
+    """Verified registry response events in the persistent event store."""
     return await chain_status.onchain_attestations(limit=limit)
 
 
 @app.post("/api/v1/chain/events/sync", dependencies=[Depends(require_operator)])
 async def chain_events_sync(start_ledger: int = Query(gt=0)) -> dict:
-    """Registry olaylarını kalıcı cursor/dedup deposuna bir sayfa işler."""
+    """Processes a page of registry events into the persistent cursor/dedup store."""
     try:
         return await chain_status.sync_registry_events(start_ledger)
     except Exception as exc:
@@ -254,10 +263,10 @@ async def chain_events_sync(start_ledger: int = Query(gt=0)) -> dict:
     dependencies=[Depends(require_operator)],
 )
 async def reconcile_attestation(job_id: str) -> dict:
-    """Prepared sonucu registry event + live tx readback ile confirmed yapar."""
+    """Makes the prepared result confirmed with registry event + live tx readback."""
     job = pipeline.store.get_job(job_id)
     if not job or not job.report or not job.report.attestation:
-        raise HTTPException(status_code=404, detail="attestation bulunamadı")
+        raise HTTPException(status_code=404, detail="attestation not found")
     proof = await chain_status.confirm_attestation(job.report.attestation)
     if not proof.get("confirmed"):
         raise HTTPException(status_code=409, detail=proof)
@@ -267,7 +276,7 @@ async def reconcile_attestation(job_id: str) -> dict:
     attestation.tx_hash = proof["tx_hash"]
     attestation.ledger = proof.get("ledger")
     attestation.explorer_url = proof.get("explorer_url", "")
-    attestation.note = "Registry responded event ve transaction SUCCESS readback doğrulandı."
+    attestation.note = "Registry responded event and transaction SUCCESS readback verified."
     artifact = pipeline.store.get_agent(job.agent_id)
     if artifact:
         pipeline.badges.issue(artifact, job.report)
@@ -277,16 +286,16 @@ async def reconcile_attestation(job_id: str) -> dict:
 
 @app.get("/api/v1/chain/escrow")
 async def chain_escrow() -> dict:
-    """Çekirdekten bağımsız opsiyonel Soroban escrow + SAC durumu."""
+    """Optional Soroban escrow + SAC status, independent of the core."""
     return await chain_status.escrow_status()
 
 
 @app.get("/api/v1/compliance/sanctions")
 async def compliance_sanctions() -> dict:
-    """OFAC SDN yaptırım listesi önbelleğinin durumu.
+    """Status of the OFAC SDN sanctions list cache.
 
-    Anahtarsız çalışan tek kanıt kaynağı olduğu için UI'ın bunu göstermesi gerekir:
-    önbellek yoksa uyum boyutunda yaptırım kontrolü hiç yapılmıyor demektir.
+    Since it's the only source of truth that runs keyless, the UI must show this:
+    if there is no cache, it means the sanction check is not performed at all in the compliance dimension.
     """
     from .compliance.ofac import OfacSanctionsList
 
@@ -314,15 +323,15 @@ async def compliance_sanctions() -> dict:
 
 @app.get("/api/v1/selftest")
 async def selftest(deep: bool = False) -> dict:
-    """Sistem öz-denetimi: her katmanın canlı doğrulaması.
+    """System self-test: live validation of each layer.
 
-    `deep=true` gerçek bir denetim koşusu da yapar (zafiyetli örnek ajan üzerinde);
-    bu yavaştır ama uçtan uca akışın çalıştığını kesin olarak kanıtlar.
+    `deep=true` also runs a real audit (on a vulnerable sample agent);
+    this is slow but definitively proves the end-to-end flow works.
     """
     if deep:
         raise HTTPException(
             status_code=405,
-            detail="deep selftest yan etkilidir; POST /api/v1/selftest/deep kullanın",
+            detail="deep selftest has side effects; use POST /api/v1/selftest/deep",
         )
     from .services.selftest import SelfTestService
 
@@ -331,7 +340,7 @@ async def selftest(deep: bool = False) -> dict:
 
 @app.post("/api/v1/selftest/deep", dependencies=[Depends(require_operator)])
 async def selftest_deep() -> dict:
-    """Operatör onayıyla yan etkili uçtan uca kontrol."""
+    """Side-effecting end-to-end check with operator approval."""
     from .services.selftest import SelfTestService
 
     return await SelfTestService(get_settings()).run(deep=True)
@@ -375,7 +384,7 @@ async def ingest_agent(req: IngestRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"ingestion hatası: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"ingestion error: {exc}") from exc
 
     pipeline.store.put_agent(artifact)
     return {
@@ -400,19 +409,19 @@ async def ingest_agent(req: IngestRequest) -> dict:
 # ------------------------------------------------------------------- ownership
 @app.get("/api/v1/ownership/message")
 async def ownership_message(agent_ref: str, owner: str) -> dict:
-    """G-account tarafından Ed25519 ile imzalanacak ağ-bağlı metni döndürür."""
+    """Returns the network-bound text to be signed by the G-account via Ed25519."""
     if not agent_ref or not owner:
-        raise HTTPException(status_code=400, detail="agent_ref ve owner gerekli")
+        raise HTTPException(status_code=400, detail="agent_ref and owner are required")
     return {
         "message": canonical_message(agent_ref, owner, settings.network_passphrase),
         "network_passphrase": settings.network_passphrase,
-        "scheme": "SEP-53 Ed25519 (G-account); C-account için SEP-45",
+        "scheme": "SEP-53 Ed25519 (G-account); SEP-45 for C-account",
     }
 
 
 @app.post("/api/v1/ownership/verify")
 async def ownership_verify(req: OwnershipVerifyRequest) -> dict:
-    """İmzayı doğrular. Denetim başlatmadan önce ön kontrol için kullanılır."""
+    """Verifies the signature. Used for pre-check before initiating an audit."""
     check = verify_owner(
         req.agent_ref, req.owner, req.signature, settings.network_passphrase
     )
@@ -446,7 +455,7 @@ async def list_agents() -> dict:
 async def get_agent(agent_id: str) -> dict:
     artifact = pipeline.store.get_agent(agent_id)
     if not artifact:
-        raise HTTPException(status_code=404, detail="agent bulunamadı")
+        raise HTTPException(status_code=404, detail="agent not found")
     data = artifact.model_dump(mode="json")
     data["code_files"] = {k: f"{len(v)} bytes" for k, v in artifact.code_files.items()}
     return data
@@ -553,7 +562,7 @@ async def list_jobs(limit: int = Query(default=20, ge=1, le=100)) -> dict:
 async def get_job(job_id: str) -> dict:
     job = pipeline.store.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="job bulunamadı")
+        raise HTTPException(status_code=404, detail="job not found")
     return _job_view(job)
 
 
@@ -576,7 +585,7 @@ async def job_report_json(job_id: str) -> dict:
 # ------------------------------------------------------------------ validation
 @app.post("/api/v1/validation/requests", dependencies=[Depends(require_operator)])
 async def validation_request(hook: ValidationRequestHook) -> dict:
-    """Doğrulanmış Soroban request event'i geldiğinde audit başlatır."""
+    """Initiates an audit when a verified Soroban request event arrives."""
     agent_id = hook.agent_id
     if not agent_id and hook.agent_address:
         existing = pipeline.store.find_agent_by_wallet(hook.agent_address)
@@ -589,7 +598,7 @@ async def validation_request(hook: ValidationRequestHook) -> dict:
             pipeline.store.put_agent(artifact)
             agent_id = artifact.id
     if not agent_id:
-        raise HTTPException(status_code=400, detail="agent_id veya agent_address gerekli")
+        raise HTTPException(status_code=400, detail="agent_id or agent_address required")
 
     job = pipeline.create_job(agent_id, hook.tier, hook.requester, hook.request_hash)
     try:
@@ -633,7 +642,7 @@ async def all_badges() -> dict:
 async def get_badge(identifier: str) -> dict:
     record = pipeline.badges.get(identifier)
     if not record:
-        raise HTTPException(status_code=404, detail="badge bulunamadı")
+        raise HTTPException(status_code=404, detail="badge not found")
     return {"badge": record, "history": pipeline.badges.get_history(identifier)}
 
 

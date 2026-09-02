@@ -1,8 +1,7 @@
-"""EvidenceGrade tabanlı skorlama ve badge tavanı testleri.
+"""EvidenceGrade-based scoring and badge ceiling tests.
 
-Buradaki asıl mesele: doğrudan kanıt (CONFIRMED) ile çıkarım (INFERRED/SIMULATED)
-aynı ağırlıkta cezalandırılmamalı ve badge tavanını yalnızca CONFIRMED zorlamalı.
-"""
+The main issue here is: direct evidence (CONFIRMED) and inference (INFERRED/SIMULATED)
+must not be penalized with the same weight, and only CONFIRMED must enforce the badge ceiling."""
 
 from __future__ import annotations
 

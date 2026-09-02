@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Aktif Stellar Testnet release kanıtını salt-okunur olarak yeniden doğrula.
+"""Re-verify the active Stellar Testnet release proof as read-only.
 
-Manifest veya contract ID tek başına yeterli sayılmaz. Bu kontrol yerel WASM
-hash'ini, zincirdeki WASM hash'ini, rol/state readback'lerini, escrow bakiyesini
-ve manifestteki tüm transaction'ların Horizon sonucunu birlikte doğrular.
+Manifest or contract ID alone are not considered sufficient. This check verifies
+the local WASM hash, the on-chain WASM hash, role/state readbacks, escrow balance,
+and the Horizon result of all transactions in the manifest together.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def stellar(*args: str) -> str:
     )
     if completed.returncode:
         message = completed.stderr.strip() or completed.stdout.strip()
-        raise RuntimeError(f"stellar CLI başarısız: {message}")
+        raise RuntimeError(f"stellar CLI failed: {message}")
     return completed.stdout.strip()
 
 
@@ -76,9 +76,9 @@ def transactions(value: Any, prefix: str = "") -> list[tuple[str, dict]]:
 def main() -> int:
     manifest = json.loads(MANIFEST.read_text())
     if manifest.get("schema") != "agentveritas.stellar.testnet-deployment.v1":
-        raise RuntimeError("beklenmeyen deployment manifest şeması")
+        raise RuntimeError("unexpected deployment manifest schema")
     if manifest.get("network", {}).get("name") != "Stellar Testnet":
-        raise RuntimeError("yalnız Stellar Testnet manifesti doğrulanabilir")
+        raise RuntimeError("only the Stellar Testnet manifest can be verified")
 
     checks: list[dict[str, Any]] = []
 
@@ -178,7 +178,6 @@ def main() -> int:
         )
     )
     return 0 if not failed else 1
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

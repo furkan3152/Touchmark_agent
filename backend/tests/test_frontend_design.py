@@ -1,20 +1,20 @@
-"""Frontend tasarım sistemi değişmezleri.
+"""Frontend design system invariants.
 
-Neden test
+Why test
 ----------
-Arayüz kararları koda gömülüdür ve sessizce bozulur: birinin `--text-3`'ü
-"biraz daha sönük" yapması yeterli, kontrast AA'nın altına düşer ve kimse
-fark etmez. Bu testler dört şeyi kilitler:
+Interface decisions are embedded in code and break silently: someone changing `--text-3`
+to be "slightly dimmer" is enough for contrast to drop below AA, and nobody
+notices. These tests lock in four things:
 
-1. **Kontrast**: renkle bilgi taşıyan her metin/zemin çifti WCAG AA geçer.
-   Skor bantları (SAFE/CAUTION/HIGH_RISK/BLOCKLIST) bilgi taşır — okunmazsa
-   rapor okunmaz.
-2. **Token disiplini**: `styles.css` içinde ham hex yok, `var()` ile
-   çağrılan her token tanımlı. Ham hex, temanın tek yerden yönetilmesini bozar.
-3. **DOM sözleşmesi**: `app.js`'in aradığı her id HTML'de var. Eksik id
-   sessizce `null` döner ve panel boş kalır — hata gizlenir.
-4. **Bant eşikleri**: frontend'deki `band()` eşikleri backend'deki
-   `BADGE_THRESHOLDS` ile aynı. Ayrışırlarsa UI yanlış renk gösterir.
+1. **Contrast**: every text/background pair carrying information with color passes WCAG AA.
+   Score bands (SAFE/CAUTION/HIGH_RISK/BLOCKLIST) carry information — if unreadable,
+   the report is unreadable.
+2. **Token discipline**: no raw hex in `styles.css`, every token called via
+   `var()` is defined. Raw hex breaks single-point theme management.
+3. **DOM contract**: every id sought by `app.js` exists in HTML. A missing id
+   silently returns `null` and the panel remains empty — hiding the error.
+4. **Band thresholds**: `band()` thresholds in the frontend match
+   `BADGE_THRESHOLDS` in the backend. If they diverge, the UI shows the wrong color.
 """
 
 from __future__ import annotations

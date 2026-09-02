@@ -1,20 +1,20 @@
-"""Ingestion girdi kapıları — yerel yol kumu ve uzak URL denetimi.
+"""Ingestion input guards — local path sandbox and remote URL validation.
 
-Neden gerekli
--------------
-`/api/v1/agents/ingest` denetlenen tarafın kontrolündeki iki alanı doğrudan
-dosya sistemine ve ağa bağlıyordu:
+Why it is necessary
+-----------------
+`/api/v1/agents/ingest` was binding two fields controlled by the audited party directly
+to the file system and network:
 
-* ``local_path`` **herhangi bir dizini** okuyordu. ``local_path=data/keystore``
-  çağrısı operatörün ``attestor.json`` dosyasını (``private_key`` alanıyla)
-  artifact'e alıyordu; dosya sunucu durumuna ve ``data/state.json``'a giriyordu.
-* ``repo_url`` GitHub/IPFS eşleşmediğinde koşulsuz ``client.get(url)`` yapıyordu.
-  Bu klasik SSRF'tir: ``http://169.254.169.254/...`` gibi bir bulut metadata
-  adresi veya ``http://127.0.0.1:8000/...`` gibi bir iç servis çekilebilirdi.
+* `local_path` was reading **any directory**. A `local_path=data/keystore` call
+  was pulling the operator's `attestor.json` (with `private_key` field) into the
+  artifact; the file was entering the server state and `data/state.json`.
+* `repo_url` was unconditionally making `client.get(url)` when GitHub/IPFS didn't match.
+  This is classic SSRF: a cloud metadata address like `http://169.254.169.254/...` or
+  an internal service like `http://127.0.0.1:8000/...` could be fetched.
 
-Bu modül iki değişmez uygular ve ikisi de **denetimin kendi standardıdır**:
-girdi yüzeyi allowlist ile daraltılır, kapsam dışı istek sessizce başarısız
-olmaz — sebebi söylenerek reddedilir.
+This module enforces two invariants and both are **the standard of the audit itself**:
+input surface is narrowed with an allowlist, out-of-scope requests do not fail silently
+— they are rejected with the reason stated.
 """
 
 from __future__ import annotations
@@ -38,21 +38,21 @@ MAX_REMOTE_BYTES = 20 * 1024 * 1024
 
 
 class IngestGuardError(ValueError):
-    """Girdi kapısı reddi. `ValueError` olduğu için API 400 döner."""
+    """Input guard rejection. Since it's a `ValueError`, API returns 400."""
 
 
 # --------------------------------------------------------------- yerel yollar
 def resolve_ingest_path(raw: str, root: Path) -> Path:
-    """`raw` yolunu `root` altına hapseder.
+    """Confines the `raw` path under `root`.
 
-    Sembolik bağlar dahil çözümlenmiş yol karşılaştırılır: kök içindeki bir
-    symlink'in dışarıyı göstermesi kaçış sayılır.
+    The resolved path including symlinks is compared: a symlink inside the root
+    pointing outside is considered an escape.
 
     Raises:
-        IngestGuardError: yol kökün dışındaysa veya dizin değilse.
+        IngestGuardError: if the path is outside the root or not a directory.
     """
     if not raw or not raw.strip():
-        raise IngestGuardError("local_path boş")
+        raise IngestGuardError("local_path is empty")
 
     root = root.resolve()
     candidate = Path(raw.strip()).expanduser()
@@ -60,18 +60,18 @@ def resolve_ingest_path(raw: str, root: Path) -> Path:
 
     if target != root and root not in target.parents:
         raise IngestGuardError(
-            f"local_path izin verilen kökün dışında: {target} (kök: {root}). "
-            "Başka bir dizini denetlemek için INGEST_ROOT ayarlayın."
+            f"local_path is outside the allowed root: {target} (root: {root}). "
+            "Set INGEST_ROOT to audit another directory."
         )
     if not target.exists():
-        raise IngestGuardError(f"dizin bulunamadı: {target}")
+        raise IngestGuardError(f"directory not found: {target}")
     if not target.is_dir():
-        raise IngestGuardError(f"local_path bir dizin olmalı: {target}")
+        raise IngestGuardError(f"local_path must be a directory: {target}")
     return target
 
 
 def is_within(path: Path, root: Path) -> bool:
-    """`path` çözümlendiğinde `root` altında mı? (dosya bazlı symlink kontrolü)"""
+    """Is `path` under `root` when resolved? (file-based symlink check)"""
     try:
         resolved = path.resolve()
     except OSError:
@@ -81,7 +81,7 @@ def is_within(path: Path, root: Path) -> bool:
 
 # ------------------------------------------------------------------ uzak URL
 def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Loopback / özel / link-local / rezerve adresler kapsam dışıdır."""
+    """Loopback / private / link-local / reserved addresses are out of scope."""
     return bool(
         ip.is_loopback
         or ip.is_private
@@ -93,42 +93,42 @@ def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 
 
 def guard_remote_url(url: str, *, resolver=socket.getaddrinfo) -> str:
-    """Uzak URL'yi doğrular; kabul edilirse normalize edilmiş hâlini döndürür.
+    """Validates the remote URL; if accepted, returns its normalized form.
 
-    Kontroller:
-      1. şema `http`/`https` olmalı,
-      2. host bulunmalı ve kimlik bilgisi (`user:pass@`) taşımamalı,
-      3. host'un çözümlendiği **her** adres genel internete ait olmalı.
+    Checks:
+      1. scheme must be `http`/`https`,
+      2. host must be present and not carry credentials (`user:pass@`),
+      3. **every** address the host resolves to must belong to the public internet.
 
-    `resolver` testlerde DNS'e çıkmamak için enjekte edilebilir.
+    `resolver` can be injected to avoid DNS lookups in tests.
 
     Raises:
-        IngestGuardError: kontrollerden biri başarısızsa.
+        IngestGuardError: if one of the checks fails.
     """
     parts = urlsplit((url or "").strip())
 
     if parts.scheme.lower() not in ALLOWED_SCHEMES:
         raise IngestGuardError(
-            f"desteklenmeyen şema: {parts.scheme or '(yok)'} — yalnızca http/https"
+            f"unsupported scheme: {parts.scheme or '(none)'} — only http/https"
         )
     if parts.username or parts.password:
-        raise IngestGuardError("URL'de kimlik bilgisi taşınamaz")
+        raise IngestGuardError("URL cannot contain credentials")
 
     host = parts.hostname
     if not host:
-        raise IngestGuardError("URL'de host yok")
+        raise IngestGuardError("URL has no host")
 
     for ip in _addresses_for(host, parts.port, resolver):
         if _is_forbidden_ip(ip):
             raise IngestGuardError(
-                f"iç ağ adresi kapsam dışı: {host} → {ip}. Yalnızca genel "
-                "internetteki kaynaklar çekilebilir."
+                f"internal network address out of scope: {host} → {ip}. Only resources "
+                "on the public internet can be fetched."
             )
     return parts.geturl()
 
 
 def _addresses_for(host: str, port: int | None, resolver) -> list:
-    """Host'un IP adresleri. IP literal ise DNS'e çıkılmaz."""
+    """IP addresses of the host. If IP literal, DNS is not queried."""
     try:
         return [ipaddress.ip_address(host)]
     except ValueError:
@@ -137,7 +137,7 @@ def _addresses_for(host: str, port: int | None, resolver) -> list:
     try:
         infos = resolver(host, port or 443, proto=socket.IPPROTO_TCP)
     except (socket.gaierror, OSError) as exc:
-        raise IngestGuardError(f"host çözümlenemedi: {host} ({exc})") from exc
+        raise IngestGuardError(f"host could not be resolved: {host} ({exc})") from exc
 
     out = []
     for info in infos:
@@ -147,13 +147,13 @@ def _addresses_for(host: str, port: int | None, resolver) -> list:
         except (ValueError, IndexError):
             continue
     if not out:
-        raise IngestGuardError(f"host için adres bulunamadı: {host}")
+        raise IngestGuardError(f"no address found for host: {host}")
     return out
 
 
 def guard_cid(cid: str) -> str:
-    """IPFS CID'ini doğrular — gateway yoluna `../` sızmasını engeller."""
+    """Validates the IPFS CID — prevents `../` escaping into the gateway path."""
     cid = (cid or "").strip().strip("/")
     if not cid or not CID_RE.match(cid):
-        raise IngestGuardError(f"geçersiz IPFS CID: {cid or '(boş)'}")
+        raise IngestGuardError(f"invalid IPFS CID: {cid or '(empty)'}")
     return cid

@@ -1,4 +1,4 @@
-"""Yan etkili API uçlarının fail-closed operatör kapısı."""
+"""Fail-closed operator gate for API endpoints with side effects."""
 
 from __future__ import annotations
 

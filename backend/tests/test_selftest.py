@@ -1,4 +1,4 @@
-"""Stellar öz-denetimin evidence-boundary sınıflandırması."""
+"""Evidence-boundary classification of Stellar self-audit."""
 
 from __future__ import annotations
 
@@ -34,21 +34,21 @@ def test_fresh_offline_install_has_no_failures(tmp_path, run):
 
 def test_signing_boundary_is_positive_evidence(tmp_path, run):
     checks = _by_name(run(SelfTestService(_settings(tmp_path)).run()))
-    assert checks["İmzalama sınırı"]["state"] == OK
-    assert "prepared invocation" in checks["İmzalama sınırı"]["detail"]
+    assert checks["Signing boundary"]["state"] == OK
+    assert "prepared invocation" in checks["Signing boundary"]["detail"]
 
 
 def test_configured_contract_is_not_reported_as_deployed(tmp_path, run):
     settings = _settings(tmp_path, agent_registry_contract_id="C" + "A" * 55)
     checks = _by_name(run(SelfTestService(settings).run()))
     assert checks["Agent registry"]["state"] == WARN
-    assert "doğrulanmadı" in checks["Agent registry"]["detail"]
+    assert "verified" in checks["Agent registry"]["detail"]
 
 
 def test_disabled_escrow_is_healthy_core_boundary(tmp_path, run):
     checks = _by_name(run(SelfTestService(_settings(tmp_path)).run()))
     assert checks["Audit escrow"]["state"] == OK
-    assert "bağımsız" in checks["Audit escrow"]["detail"]
+    assert "independent" in checks["Audit escrow"]["detail"]
 
 
 def test_partial_sep_auth_is_warn(tmp_path, run):
@@ -61,7 +61,7 @@ def test_partial_sep_auth_is_warn(tmp_path, run):
 def test_invalid_network_is_failure(tmp_path, run):
     result = run(SelfTestService(_settings(tmp_path, stellar_network="unknown")).run())
     checks = _by_name(result)
-    assert checks["Ağ profili"]["state"] == FAIL
+    assert checks["Network profile"]["state"] == FAIL
     assert result["ok"] is False
 
 

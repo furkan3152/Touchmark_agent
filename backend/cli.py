@@ -1,4 +1,4 @@
-"""AgentVeritas Stellar CLI; backend signer veya zincir yazma yolu içermez."""
+"""AgentVeritas Stellar CLI; does not include backend signer or on-chain write path."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def build_request(args: argparse.Namespace) -> IngestRequest:
         return IngestRequest(kind="endpoint", endpoint_url=args.endpoint, **shared)
     if args.wizard:
         return IngestRequest(kind="wizard", template=args.wizard, **shared)
-    raise SystemExit("Kaynak gerekli: --address | --repo | --path | --endpoint | --wizard")
+    raise SystemExit("Source required: --address | --repo | --path | --endpoint | --wizard")
 
 
 async def run_audit(args: argparse.Namespace) -> int:
@@ -44,14 +44,14 @@ async def run_audit(args: argparse.Namespace) -> int:
     await pipeline.fund_job(job.id, args.account or "")
     job = await pipeline.run_job(job.id)
     if job.error or not job.report:
-        print(f"HATA: {job.error or 'rapor üretilmedi'}", file=sys.stderr)
+        print(f"ERROR: {job.error or 'report not generated'}", file=sys.stderr)
         return 1
     report = job.report
     counts = report.counts()
     print(f"{BADGE_ICON[report.badge.value]} {report.badge.value} · Trust Score {report.overall_score}/100")
     print(
-        f"kritik={counts['critical']} yüksek={counts['high']} orta={counts['medium']} "
-        f"düşük={counts['low']} · {report.duration_ms} ms"
+        f"critical={counts['critical']} high={counts['high']} medium={counts['medium']} "
+        f"low={counts['low']} · {report.duration_ms} ms"
     )
     for score in report.dimension_scores:
         print(f"  {score.dimension.value:<16} {score.score:>5.1f}")
@@ -59,10 +59,10 @@ async def run_audit(args: argparse.Namespace) -> int:
         att = report.attestation
         print(
             f"attestation={att.mode} confirmed={att.confirmed} "
-            f"registry={att.registry_contract_id or 'yok'}"
+            f"registry={att.registry_contract_id or 'none'}"
         )
         if att.note:
-            print(f"not: {att.note}")
+            print(f"note: {att.note}")
     if args.markdown:
         print(pipeline.markdown_for(job.id))
     if args.json:
@@ -86,7 +86,7 @@ async def sync_events(args: argparse.Namespace) -> int:
     try:
         data = await ChainStatusService(get_settings()).sync_registry_events(args.start_ledger)
     except Exception as exc:
-        print(f"HATA: {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(data, ensure_ascii=False, indent=2))
     return 0
@@ -109,7 +109,7 @@ async def refresh_sanctions(args: argparse.Namespace) -> int:
     try:
         data = await sanctions.refresh(force=args.refresh)
     except Exception as exc:
-        print(f"HATA: OFAC listesi alınamadı: {exc}", file=sys.stderr)
+        print(f"ERROR: Failed to fetch OFAC list: {exc}", file=sys.stderr)
         return 1
     print(
         json.dumps(
@@ -145,28 +145,28 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="agentveritas-stellar")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    audit = sub.add_parser("audit", help="agent denetimi çalıştır")
+    audit = sub.add_parser("audit", help="run agent audit")
     source = audit.add_mutually_exclusive_group(required=True)
     source.add_argument("--address", help="G... account veya C... contract")
     source.add_argument("--repo")
     source.add_argument("--path")
     source.add_argument("--endpoint")
     source.add_argument("--wizard")
-    audit.add_argument("--account", help="ajan/istek sahibi G... account")
+    audit.add_argument("--account", help="agent/requester G... account")
     audit.add_argument("--tier", choices=("basic", "deep"), default="basic")
     audit.add_argument("--markdown", action="store_true")
     audit.add_argument("--json", action="store_true")
 
-    sub.add_parser("chain", help="Stellar RPC ve contract sınırları")
-    sub.add_parser("templates", help="audit şablonları")
-    sub.add_parser("integrations", help="secret değerlerini göstermeden entegrasyon durumu")
-    attest = sub.add_parser("attestations", help="confirmed registry event kayıtları")
+    sub.add_parser("chain", help="Stellar RPC and contract boundaries")
+    sub.add_parser("templates", help="audit templates")
+    sub.add_parser("integrations", help="integration status without showing secrets")
+    attest = sub.add_parser("attestations", help="confirmed registry event records")
     attest.add_argument("--limit", type=int, default=20)
-    events = sub.add_parser("events-sync", help="registry event sayfasını kalıcı depoya işle")
+    events = sub.add_parser("events-sync", help="process registry event page to persistent store")
     events.add_argument("--start-ledger", type=int, required=True)
-    selftest = sub.add_parser("selftest", help="öz-denetim")
+    selftest = sub.add_parser("selftest", help="self-test")
     selftest.add_argument("--deep", action="store_true")
-    sanctions = sub.add_parser("sanctions", help="OFAC cache durumu/yenileme")
+    sanctions = sub.add_parser("sanctions", help="OFAC cache status/refresh")
     sanctions.add_argument("--refresh", action="store_true")
 
     args = parser.parse_args()

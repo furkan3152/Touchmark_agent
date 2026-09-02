@@ -1,14 +1,13 @@
-"""Ingestion girdi kapısı testleri — yol kaçışı, sır dosyaları, SSRF.
+"""Ingestion input gate tests — path traversal, secret files, SSRF.
 
-Bu testler `backend/app/ingestion/guards.py` içindeki iki değişmezi kilitler:
+These tests lock two invariants in `backend/app/ingestion/guards.py`:
 
-1. `local_path` proje kökünün dışına çıkamaz ve kök içinde olsa dahi sır
-   taşıyan yolları (operatör keystore'u) okumaz.
-2. `repo_url` / `endpoint_url` yalnızca http/https ve yalnızca genel internet
-   adreslerini hedefleyebilir.
+1. `local_path` cannot escape the project root, and even within the root, it does not
+   read paths carrying secrets (operator keystore).
+2. `repo_url` / `endpoint_url` can only target http/https and only public internet
+   addresses.
 
-Hiçbiri ağa çıkmaz: DNS çözümleyici enjekte edilir.
-"""
+None of them make network calls: the DNS resolver is injected."""
 
 from __future__ import annotations
 
@@ -36,13 +35,13 @@ def test_path_within_root_is_accepted(tmp_path):
 
 
 def test_absolute_path_outside_root_is_rejected(tmp_path):
-    with pytest.raises(IngestGuardError, match="kökün dışında"):
+    with pytest.raises(IngestGuardError, match="outside the allowed root"):
         resolve_ingest_path("/etc", tmp_path)
 
 
 def test_dotdot_escape_is_rejected(tmp_path):
     (tmp_path / "inner").mkdir()
-    with pytest.raises(IngestGuardError, match="kökün dışında"):
+    with pytest.raises(IngestGuardError, match="outside the allowed root"):
         resolve_ingest_path("inner/../../..", tmp_path)
 
 
@@ -52,18 +51,18 @@ def test_symlink_pointing_outside_root_is_rejected(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     (root / "link").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(IngestGuardError, match="kökün dışında"):
+    with pytest.raises(IngestGuardError, match="outside the allowed root"):
         resolve_ingest_path("link", root)
 
 
 def test_missing_directory_is_rejected(tmp_path):
-    with pytest.raises(IngestGuardError, match="bulunamadı"):
+    with pytest.raises(IngestGuardError, match="not found"):
         resolve_ingest_path("yok-boyle-bir-dizin", tmp_path)
 
 
 def test_file_instead_of_directory_is_rejected(tmp_path):
     (tmp_path / "agent.json").write_text("{}")
-    with pytest.raises(IngestGuardError, match="dizin olmalı"):
+    with pytest.raises(IngestGuardError, match="must be a directory"):
         resolve_ingest_path("agent.json", tmp_path)
 
 
@@ -112,7 +111,7 @@ def test_local_path_can_be_disabled(settings, run, tmp_path):
     scoped = settings.model_copy(
         update={"ingest_root": str(root), "allow_local_path_ingest": False}
     )
-    with pytest.raises(IngestGuardError, match="kapalı"):
+    with pytest.raises(IngestGuardError, match="ALLOW_LOCAL_PATH_INGEST"):
         run(IngestionService(scoped).ingest(IngestRequest(kind="repo", local_path=".")))
 
 
@@ -144,7 +143,7 @@ def _resolver_for(ip: str):
     ],
 )
 def test_internal_targets_are_rejected(url):
-    with pytest.raises(IngestGuardError, match="iç ağ adresi"):
+    with pytest.raises(IngestGuardError, match="internal network address"):
         guard_remote_url(url, resolver=_resolver_for("127.0.0.1"))
 
 
@@ -156,7 +155,7 @@ def test_public_target_is_accepted():
 
 def test_dns_rebinding_to_private_ip_is_rejected():
     """Genel görünen bir isim özel IP'ye çözümlenirse reddedilir."""
-    with pytest.raises(IngestGuardError, match="iç ağ adresi"):
+    with pytest.raises(IngestGuardError, match="internal network address"):
         guard_remote_url("https://evil.example.com/x", resolver=_resolver_for("10.1.2.3"))
 
 
@@ -164,12 +163,12 @@ def test_dns_rebinding_to_private_ip_is_rejected():
     "url", ["file:///etc/passwd", "gopher://x/1", "ftp://host/f", "/etc/passwd"]
 )
 def test_non_http_schemes_are_rejected(url):
-    with pytest.raises(IngestGuardError, match="desteklenmeyen şema"):
+    with pytest.raises(IngestGuardError, match="unsupported scheme"):
         guard_remote_url(url, resolver=_resolver_for("93.184.216.34"))
 
 
 def test_credentials_in_url_are_rejected():
-    with pytest.raises(IngestGuardError, match="kimlik bilgisi"):
+    with pytest.raises(IngestGuardError, match="credentials"):
         guard_remote_url(
             "https://user:pass@example.com/x", resolver=_resolver_for("93.184.216.34")
         )
@@ -184,7 +183,7 @@ def test_endpoint_ingest_rejects_internal_url(settings, run):
 # ----------------------------------------------------------------- IPFS CID
 @pytest.mark.parametrize("cid", ["../../etc/passwd", "abc/../def", "", "a b"])
 def test_bad_cid_is_rejected(cid):
-    with pytest.raises(IngestGuardError, match="geçersiz IPFS CID"):
+    with pytest.raises(IngestGuardError, match="invalid IPFS CID"):
         guard_cid(cid)
 
 

@@ -1,4 +1,4 @@
-"""Test fixture'ları — tüm dış servisler kapalı, tamamen deterministik mod."""
+"""Test fixtures — all external services disabled, fully deterministic mode."""
 
 from __future__ import annotations
 

@@ -1,10 +1,9 @@
-"""Yanlış pozitif disiplini — kanıt yokken Stellar adresleri suçlanmamalı.
+"""False positive discipline — Stellar addresses should not be accused without evidence.
 
-Bu testler bir gerileme testidir: cüzdan taraması sağlayıcısı yapılandırılmadığında
-eskiden adresin sha256'sından rastgele "high risk / mixer_proximity" üretiliyor ve
-önceki uygulamada adres hash'inden risk türetilip temiz hesaplar CRITICAL alıyordu.
-Artık tarama yoksa iddia değil, kapsam bulgusu üretilmelidir.
-"""
+These tests are a regression test: when the wallet screening provider is not configured,
+a random "high risk / mixer_proximity" was previously generated from the sha256 of the address,
+and in the previous implementation risk was derived from the address hash, causing clean accounts to get CRITICAL.
+Now, if there is no screening, a scope finding must be generated, not a claim."""
 
 from __future__ import annotations
 
