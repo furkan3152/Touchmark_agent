@@ -1,16 +1,13 @@
 /* ==========================================================================
-   AgentVeritas — arayüz
+   AgentVeritas interface
    ==========================================================================
-   Tasarım tokenları `tokens.css` içindedir; burada ham hex yoktur.
+   Design tokens live in `tokens.css`; no raw hex codes here.
 
-   Yapı kararları
-   --------------
-   1. Yükseklik gölgeyle değil yüzey tonuyla kurulur (koyu temada gölge
-      görünmez, ton görünür).
-   2. Tek aksan rengi. İkinci bir "marka rengi" renk kodlamasını
-      (safe/caution/risk/block) bozar — o dört renk bilgi taşır, süs değil.
-   3. Gradient yok, saydamlık yok, blur yok. Metin her zaman opak zeminde.
-   4. Her sayı `tabular-nums`; yenilenen tablolarda sütun zıplamaz.
+   1. Elevation comes from surface tone, not shadow (shadows vanish on a dark theme).
+   2. One accent color. Safe/caution/risk/block carry information, so there is no
+      second brand color.
+   3. No gradients, transparency or blur. Text always sits on an opaque background.
+   4. Every number is `tabular-nums` so columns don't jump when tables refresh.
    ========================================================================== */
 
 *,
@@ -50,10 +47,10 @@ a {
 }
 a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
-/* Satır içi bağlantı dokunma hedefi: WCAG 2.2 SC 2.5.8 satır içi metni
-   muaf tutuyor ama parmakla isabet yine de zor. `inline-block` + dikey
-   padding, satır yüksekliğini bozmadan tıklanabilir alanı 24px'e çıkarır
-   (negatif margin ile metin akışındaki konumu korunur). */
+/* Inline link touch target: WCAG 2.2 SC 2.5.8 exempts inline text,
+   but finger tapping is still hard. `inline-block` + vertical
+   padding increases clickable area to 24px without breaking line height
+   (negative margin preserves its position in text flow). */
 p a, td a, .kv-val a, li a, .card-note a {
   display: inline-block;
   padding: 5px 0;
@@ -73,13 +70,12 @@ code {
   padding: 0.1em 0.4em;
 }
 
-/* Sayısal her şey sabit genişlikte: skorlar ve USDC tutarları
-   yenilenirken sütunların kaymaması için. */
+/* All numerics are fixed-width: so columns don't shift when scores and USDC amounts refresh. */
 .num, td, .stat-value, .score-value {
   font-variant-numeric: tabular-nums;
 }
 
-/* Tek ve tutarlı odak halkası. `:focus-visible` fare tıklamasında çıkmaz. */
+/* Single, consistent focus ring. `:focus-visible` does not appear on mouse click. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -95,7 +91,7 @@ code {
   white-space: nowrap;
 }
 
-/* Klavyeyle Tab'a basıldığında ilk duran yer. */
+/* First stop when Tab is pressed on keyboard. */
 .skip-link {
   position: absolute;
   top: var(--space-2);
@@ -114,7 +110,7 @@ code {
 .skip-link:focus-visible { transform: translateY(0); }
 
 /* ==========================================================================
-   Kabuk: topbar + içerik
+   Shell: topbar + content
    ========================================================================== */
 .app {
   min-height: 100vh;
@@ -122,8 +118,8 @@ code {
   flex-direction: column;
 }
 
-/* Opak topbar: altındaki içerik kaydıkça bulanıklaşan bir başlık veri
-   okurken dikkat dağıtır ve metin kontrastını öngörülemez kılar. */
+/* Opaque topbar: a header that blurs as content scrolls underneath is distracting
+   when reading data and makes text contrast unpredictable. */
 .topbar {
   position: sticky;
   top: 0;
@@ -199,10 +195,10 @@ main {
 }
 
 /* ==========================================================================
-   Chip — tek bileşen, durum `data-state` ile
+   Chip: single component, state via `data-state`
    ==========================================================================
-   Bu ayrım kasıtlı: neutral = kapsam dışı, warn = kapalı opsiyonel yetenek,
-   danger = gerçek arıza. Kapalı bir entegrasyon kırmızı gösterilmez.
+   neutral = out of scope, warn = optional capability turned off,
+   danger = actual failure. A disabled integration is not shown in red.
    ========================================================================== */
 .chip {
   display: inline-flex;
@@ -239,7 +235,7 @@ main {
   background: var(--accent-bg);
 }
 
-/* 6px nokta — ikon yüklemeden durum sinyali. */
+/* 6px dot: status signal without an icon. */
 .chip-dot {
   width: 6px;
   height: 6px;
@@ -248,7 +244,7 @@ main {
   flex: none;
 }
 
-/* Yardım imleci yalnızca gerçekten açıklaması olan chip'lerde. */
+/* Help cursor only on chips that actually have a description. */
 .chip[title] { cursor: help; }
 
 /* ==========================================================================
@@ -268,8 +264,8 @@ main {
   letter-spacing: -0.035em;
   max-width: 20ch;
 }
-/* Gradient metin yerine tek renkli aksan: küçük boyutlarda okunur kalır
-   ve kopyala/yapıştırda kaybolmaz. */
+/* Monocolor accent instead of gradient text: remains readable at small sizes
+   and doesn't get lost in copy/paste. */
 .hero-title em {
   font-style: normal;
   color: var(--accent-text);
@@ -291,7 +287,7 @@ main {
   .hero { grid-template-columns: 1fr; gap: var(--space-5); }
 }
 
-/* İstatistik ızgarası — auto-fit ile içerik kadar sütun. */
+/* Stat grid: columns fit content with auto-fit. */
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -321,7 +317,7 @@ main {
 }
 
 /* ==========================================================================
-   Kart
+   Card
    ========================================================================== */
 .card {
   border: 1px solid var(--line);
@@ -345,7 +341,7 @@ main {
   letter-spacing: 0;
   margin-right: auto;
 }
-/* Bölüm numarası — akışın nerede olduğunu gösterir. */
+/* Step number: shows where the flow is. */
 .card-step {
   flex: none;
   display: grid;
@@ -362,8 +358,8 @@ main {
 .card-body { padding: var(--space-5); }
 .card-body > * + * { margin-top: var(--space-4); }
 
-/* Mobilde başlık ve eylemler yan yana sığmıyor: başlık iki satıra kırılıp
-   düğmeler daralıyordu. Dar ekranda eylemler kendi satırına iner. */
+/* Title and actions don't fit side-by-side on mobile: title would wrap to two lines
+   and buttons squeeze. On narrow screens actions drop to their own line. */
 @media (max-width: 560px) {
   .card-head {
     flex-wrap: wrap;
@@ -372,8 +368,7 @@ main {
   .card-head h2 { margin-right: 0; }
   .card-head .btn-row {
     width: 100%;
-    /* Başlık satırıyla arasına nefes payı — `gap` yalnızca yatay değil,
-       satır kırıldığında dikeyde de uygulanır ama burada net olsun. */
+    /* Space below the header row (`gap` also applies vertically when wrapped). */
     margin-top: var(--space-1);
   }
   .card-head .btn-row .btn { flex: 1; }
@@ -392,11 +387,10 @@ main {
 }
 
 /* ==========================================================================
-   Düğmeler
+   Buttons
    ==========================================================================
-   Üç varyant: primary (tek birincil eylem), secondary (yan eylem),
-   quiet (düşük ağırlıklı, demo/yardımcı). Hepsi ≥ 36px yüksek — dokunma
-   hedefi için mobilde 40px'e çıkar.
+   Three variants: primary (single main action), secondary (side action),
+   quiet (low weight, demo/helper). All ≥ 36px high, 40px on mobile for touch.
    ========================================================================== */
 .btn {
   display: inline-flex;
@@ -452,8 +446,8 @@ main {
 
 .btn-sm { min-height: 28px; padding: 0 var(--space-3); font-size: var(--text-xs); }
 
-/* Mobilde küçük düğme de tam dokunma hedefi olur; `.btn-sm` sınıfı
-   yalnızca görsel ağırlığı düşürmek içindir, isabeti zorlaştırmak için değil. */
+/* On mobile, small button also becomes full touch target; `.btn-sm` class is
+   only to lower visual weight, not to make tapping harder. */
 @media (max-width: 700px) {
   .btn, .btn-sm { min-height: var(--control-h); }
 }
@@ -465,8 +459,8 @@ main {
   align-items: center;
 }
 
-/* Bekleyen düğmede dönen halka. Buton genişliği değişmesin diye
-   metin yerinde kalır, ikon eklenir. */
+/* Spinning ring on pending button. Text stays in place so button width doesn't change,
+   icon is appended. */
 .spinner {
   width: 13px;
   height: 13px;
@@ -479,9 +473,9 @@ main {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ==========================================================================
-   Segment (sekme) — Uniswap tarzı kaydırıcı yerine düz segment kontrolü
+   Segment (tab): flat segment control instead of a Uniswap-style slider
    ==========================================================================
-   `role="tablist"` ile klavye ok tuşları app.js'te bağlanır.
+   Keyboard arrow keys bind via `role="tablist"` in app.js.
    ========================================================================== */
 .segment {
   display: inline-flex;
@@ -518,10 +512,9 @@ main {
   color: var(--text);
 }
 
-/* Mobil: sekmeler yatay kaydırma yerine 2×2 ızgaraya geçer. Kaydırma
-   çubuğu gizli olduğu için taşan sekme keşfedilemez kalıyordu — kullanıcı
-   "Endpoint" seçeneğinin var olduğunu göremez. Izgarada hepsi görünür.
-   Dokunma hedefi de aynı anda tokendan büyür. */
+/* Mobile: tabs switch to a 2x2 grid instead of horizontal scroll. With the
+   scrollbar hidden, an overflowing tab such as "Endpoint" is never found.
+   The touch target grows through the token. */
 @media (max-width: 700px) {
   .segment {
     display: grid;
@@ -536,11 +529,9 @@ main {
 /* ==========================================================================
    Form
    ========================================================================== */
-/* `hidden` özniteliği bir sınıf değil, tarayıcının `display: none`'ı — ama
-   UA stil sayfasından geldiği için *herhangi* bir yazar `display` kuralı onu
-   ezer. `.field-grid { display: grid }` yazdığımız an `<div hidden>` görünür
-   hâle gelir; sekmeler çalışıyor gibi durur ama tüm paneller aynı anda
-   ekranda olur. Bu yüzden `hidden` burada yeniden ve öncelikli beyan edilir. */
+/* `hidden` is the UA stylesheet's `display: none`, so any author `display`
+   rule overrides it: with `.field-grid { display: grid }` a `<div hidden>`
+   shows up and every tab panel is on screen at once. Redeclared with priority. */
 [hidden] { display: none !important; }
 
 .field-grid {
@@ -564,17 +555,16 @@ main {
   color: var(--text-2);
 }
 
-/* Etiket altındaki açıklama — placeholder'a talimat gömmek yerine.
-   Placeholder yalnızca biçim örneği gösterir. */
+/* Description below the label; the placeholder only shows a format example. */
 .field-help {
   font-size: var(--text-xs);
   color: var(--text-3);
 }
 
-/* Alan yüksekliği tek bir tokendan gelir. Medya sorgusu özgüllük
-   *eklemediği* için `input[type="text"]` (0,1,1) bir medya sorgusundaki
-   düz `input` (0,0,1) kuralını yener — bu yüzden mobil yükseklik seçici
-   yarışına sokulmadan token üzerinden değiştirilir. */
+/* Field height comes from a single token. Since media query does *not*
+   add specificity, `input[type="text"]` (0,1,1) beats a plain `input`
+   (0,0,1) rule in a media query, so the mobile height changes through the
+   token instead of a specificity race. */
 input[type="text"],
 input[type="url"],
 input[type="number"],
@@ -600,9 +590,9 @@ textarea:hover:not(:disabled) { border-color: var(--line-focus); }
 input::placeholder,
 textarea::placeholder { color: var(--text-4); }
 
-/* Adres/imza gibi alanlar monospace: 0/O ve l/1 ayırt edilebilsin.
-   Punto `--control-fs`'in bir tık altında ama mobilde 16px'in altına
-   inmez (iOS zoom'u engellemek için). */
+/* Fields like address/signature are monospace: so 0/O and l/1 can be
+   distinguished. Font size is slightly below `--control-fs` but doesn't
+   drop below 16px on mobile (to prevent iOS zoom). */
 input.mono, textarea.mono {
   font-family: var(--font-mono);
   font-size: max(var(--text-xs), calc(var(--control-fs) - 1px));
@@ -614,7 +604,7 @@ textarea { resize: vertical; min-height: 96px; line-height: 1.55; }
 select {
   appearance: none;
   padding-right: var(--space-8);
-  /* Kendi oku: yerel ok koyu temada tutarsız görünür. Tek renk, token'dan. */
+  /* Custom arrow: native arrow looks inconsistent in dark theme. Single color, from token. */
   background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%),
     linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
   background-position: right 18px center, right 13px center;
@@ -642,8 +632,8 @@ input[type="file"] {
   font-size: var(--text-sm);
   color: var(--text-2);
   cursor: pointer;
-  /* Dokunma hedefi onay kutusunun kendisi değil, bu etikettir; bu yüzden
-     yükseklik diğer kontrollerle aynı tokendan gelir. */
+  /* The label is the touch target, not the checkbox, so it takes the
+     same height token as other controls. */
   min-height: var(--control-h);
 }
 .field-check input[type="checkbox"] {
@@ -654,7 +644,7 @@ input[type="file"] {
   flex: none;
 }
 
-/* Yatay ayırıcı — form bölümlerini ayırır. */
+/* Divider between form sections. */
 .divider {
   height: 1px;
   background: var(--line);
@@ -662,7 +652,7 @@ input[type="file"] {
   margin: 0;
 }
 
-/* Katlanabilir bölüm (KYA imza bloğu). */
+/* Collapsible section (KYA signature block). */
 .disclosure {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -680,7 +670,7 @@ input[type="file"] {
   list-style: none;
 }
 .disclosure > summary::-webkit-details-marker { display: none; }
-/* Ok işareti CSS ile; açıldığında 90° döner. */
+/* Arrow mark via CSS; rotates 90° when open. */
 .disclosure > summary::before {
   content: "";
   width: 0; height: 0;
@@ -699,10 +689,10 @@ input[type="file"] {
 }
 
 /* ==========================================================================
-   Durum mesajı
+   Status message
    ==========================================================================
-   Hata durumunda yalnızca renk değişmez — ikon ve metin de değişir.
-   Renk körlüğü olan kullanıcı için renk tek sinyal olamaz.
+   On error the icon and text change too, not just the color, so colorblind
+   users get the signal.
    ========================================================================== */
 .notice {
   display: flex;
@@ -734,10 +724,10 @@ input[type="file"] {
 .notice-icon { flex: none; margin-top: 1px; }
 
 /* ==========================================================================
-   İskelet (yükleniyor)
+   Skeleton (loading)
    ==========================================================================
-   Spinner yerine iskelet: gelen içeriğin şeklini önceden gösterir, böylece
-   yerleşim yüklendiğinde zıplamaz.
+   Skeleton instead of spinner: shows the shape of incoming content upfront,
+   so layout doesn't jump when loaded.
    ========================================================================== */
 .skeleton {
   border-radius: var(--radius-sm);
@@ -755,7 +745,7 @@ input[type="file"] {
 }
 
 /* ==========================================================================
-   Boş durum
+   Empty state
    ========================================================================== */
 .empty {
   padding: var(--space-8) var(--space-5);
@@ -771,9 +761,9 @@ input[type="file"] {
 }
 
 /* ==========================================================================
-   Tablo
+   Table
    ==========================================================================
-   Başlık sticky: uzun listelerde kaydırırken sütun adı görünür kalır.
+   Header sticky: column name remains visible while scrolling long lists.
    ========================================================================== */
 .table-scroll {
   overflow-x: auto;
@@ -814,7 +804,7 @@ td {
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: var(--surface-2); }
 
-/* Sayısal sütunlar sağa yaslı: basamaklar hizalanır, karşılaştırma kolaylaşır. */
+/* Numeric columns right-aligned: digits align, makes comparison easy. */
 td.num, th.num { text-align: right; }
 
 .cell-primary { color: var(--text); font-weight: 550; }
@@ -826,7 +816,7 @@ td.num, th.num { text-align: right; }
 }
 
 /* ==========================================================================
-   Anahtar/değer listesi — tablo kurmaya değmeyen 2-8 satırlık veri
+   Key/value list: 2-8 rows, not worth a table
    ========================================================================== */
 .kv-list {
   display: grid;
@@ -853,11 +843,11 @@ td.num, th.num { text-align: right; }
 }
 
 /* ==========================================================================
-   Skor göstergesi — rapor başlığı
+   Score indicator (report header)
    ==========================================================================
-   `conic-gradient` yerine SVG çember: kenarları pürüzsüz, animasyonu
-   `stroke-dashoffset` ile yumuşak ve `prefers-reduced-motion` altında
-   anında son değere oturur.
+   SVG circle instead of `conic-gradient`: smooth edges, animation is
+   smooth with `stroke-dashoffset` and snaps to final value instantly
+   under `prefers-reduced-motion`.
    ========================================================================== */
 .verdict {
   display: grid;
@@ -935,8 +925,8 @@ td.num, th.num { text-align: right; }
   .verdict { grid-template-columns: 1fr; justify-items: start; gap: var(--space-4); }
 }
 
-/* Badge — dört bant, her biri kendi rengi. Metin de büyük harf, yani
-   renk tek ayırt edici değil. */
+/* Badge: four bands, each with its own color. The text is uppercase too, so
+   color is not the only differentiator. */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -962,10 +952,10 @@ td.num, th.num { text-align: right; }
 }
 
 /* ==========================================================================
-   Boyut çubukları
+   Dimension bars
    ==========================================================================
-   Etiket sabit genişlikte; altı boyut arasında çubuk başlangıçları
-   hizalanır, böylece göz tek dikey eksende karşılaştırma yapar.
+   Label is fixed width; bar starts align across six dimensions, so
+   the eye compares on a single vertical axis.
    ========================================================================== */
 .dims { display: grid; gap: var(--space-3); }
 
@@ -1011,10 +1001,10 @@ td.num, th.num { text-align: right; }
 }
 
 /* ==========================================================================
-   Bulgular
+   Findings
    ==========================================================================
-   Sol kenardaki 3px şerit ciddiyeti taşır; ayrıca metin etiketi var, yani
-   renk tek başına bilgi taşımıyor.
+   The 3px strip on the left edge carries severity; plus there is a text label,
+   so color alone doesn't carry info.
    ========================================================================== */
 .finding-list { display: grid; gap: var(--space-2); }
 
@@ -1058,8 +1048,8 @@ td.num, th.num { text-align: right; }
 .tag[data-sev="medium"] { color: var(--caution-text); border-color: var(--caution-line); }
 .tag[data-sev="low"] { color: var(--accent-text); border-color: var(--accent-line); }
 
-/* Kanıt derecesi: `confirmed` badge tavanını zorlar, diğerleri zorlamaz.
-   Bu ayrım skoru anlamak için kritik, o yüzden görsel olarak da ayrı. */
+/* Evidence grade: `confirmed` pushes the badge ceiling, others do not, so they
+   look different. */
 .tag[data-grade="confirmed"] { color: var(--text); border-color: var(--line-focus); }
 .tag[data-grade="inferred"],
 .tag[data-grade="simulated"] { color: var(--text-4); border-color: var(--line); }
@@ -1081,10 +1071,10 @@ td.num, th.num { text-align: right; }
 }
 
 /* ==========================================================================
-   Sistem durumu satırları
+   System status rows
    ==========================================================================
-   Üç durum: ok / warn / fail. `warn` kırmızı DEĞİL — kapalı bir opsiyonel
-   entegrasyon arıza değildir, kanıt kapsamının daralmasıdır.
+   Three states: ok / warn / fail. `warn` is not red: a disabled optional
+   integration is not a fault, only a narrower evidence scope.
    ========================================================================== */
 .status-list {
   display: grid;
@@ -1125,7 +1115,7 @@ td.num, th.num { text-align: right; }
 }
 
 /* ==========================================================================
-   Ham veri bölümü
+   Raw data section
    ========================================================================== */
 details.raw > summary {
   cursor: pointer;
@@ -1147,7 +1137,7 @@ details.raw pre {
   line-height: 1.6;
 }
 
-/* Bağlantı satırı — rapor çıktıları. */
+/* Link row: report outputs. */
 .link-row {
   display: flex;
   flex-wrap: wrap;
@@ -1172,7 +1162,7 @@ details.raw pre {
   text-decoration: none;
 }
 
-/* Yargıç notları — madde işareti yerine sol şerit. */
+/* Judge notes: left strip instead of bullets. */
 .note-list {
   margin: 0;
   padding: 0;
@@ -1207,10 +1197,10 @@ footer {
 }
 
 /* ==========================================================================
-   Hareket azaltma
+   Reduced motion
    ==========================================================================
-   Animasyonlar kapatılır ama geçişler tamamen 0'a çekilmez: 1ms bırakmak
-   `transitionend` bekleyen kodu bozmaz. Skor yayı son değerine anında oturur.
+   Animations are disabled but transitions are not completely pulled to 0:
+   leaving 1ms doesn't break code waiting for `transitionend`. Score arc snaps instantly.
    ========================================================================== */
 @media (prefers-reduced-motion: reduce) {
   *,

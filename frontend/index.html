@@ -1,24 +1,24 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
-<meta name="description" content="AgentVeritas Stellar — kanıt-öncelikli AI agent doğrulama ve Soroban registry katmanı." />
-<title>AgentVeritas Stellar — agent doğrulama</title>
+<meta name="description" content="AgentVeritas Stellar — evidence-first AI agent validation and Soroban registry layer." />
+<title>AgentVeritas Stellar — agent validation</title>
 
-<!-- Tokenlar önce: styles.css onlara dayanır. -->
+<!-- Tokens first: styles.css depends on them. -->
 <link rel="stylesheet" href="/ui/tokens.css" />
 <link rel="stylesheet" href="/ui/styles.css" />
 </head>
 <body>
 <div class="app">
 
-<a class="skip-link" href="#main">İçeriğe atla</a>
+<a class="skip-link" href="#main">Skip to content</a>
 
 <header class="topbar">
   <div class="brand">
-    <!-- Marka işareti: kalkan + onay. Gradient yok, tek renk currentColor. -->
+    <!-- Brand mark: shield + check. No gradient, single color currentColor. -->
     <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 2.5 4.5 5.4v6.2c0 4.5 3 8.6 7.5 9.9 4.5-1.3 7.5-5.4 7.5-9.9V5.4L12 2.5Z"
             stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
@@ -32,10 +32,10 @@
   </div>
 
   <div class="topbar-meta">
-    <!-- Ağ ve çalışma modları. app.js dolduruyor. -->
-    <div class="topbar-meta" id="modeStrip" aria-label="Çalışma modları"></div>
-    <!-- Kanıt kalitesi: hangi kanıt kaynağı açık. Kapalı = kapsam daralması. -->
-    <div class="topbar-meta" id="evidenceStrip" aria-label="Kanıt kaynakları"></div>
+    <!-- Network and operation modes. Populated by app.js. -->
+    <div class="topbar-meta" id="modeStrip" aria-label="Operation modes"></div>
+    <!-- Evidence quality: which evidence source is open. Closed = scope reduction. -->
+    <div class="topbar-meta" id="evidenceStrip" aria-label="Evidence sources"></div>
   </div>
 </header>
 
@@ -44,49 +44,49 @@
   <!-- ==================================================================== hero -->
   <section class="hero">
     <div>
-      <h1 class="hero-title">Agent'ı denetleyin, kanıtı <em>doğrulayın.</em></h1>
+      <h1 class="hero-title">Audit the agent, <em>verify</em> the evidence.</h1>
       <p class="hero-lead">
-        Yedi uzman denetçi (intent · security · economic · compliance · reliability ·
-        stellar-native · provenance) 0–100 validation skoru üretir. Rapor yerel CAS'a
-        veya yapılandırılmışsa IPFS'e yazılır; Soroban registry çağrısı dış imza için
-        hazırlanır. Ledger state/event doğrulanmadan onchain başarı gösterilmez.
+        Seven expert auditors (intent · security · economic · compliance · reliability ·
+        stellar-native · provenance) produce a 0–100 validation score. The report is written to local CAS
+        or IPFS if configured; a Soroban registry call is prepared for external signature.
+        No onchain success is shown without validating the Ledger state/event.
       </p>
       <p class="hero-lead">
-        Skorlamanın kuralı tek: <strong>kanıt yoksa iddia üretilmez.</strong> Doğrulanmış
-        bulgu badge tavanını zorlar, çıkarım ve simülasyon zorlamaz — kapsam boşluğu
-        suçlama değil, eksik kanıt olarak raporlanır.
+        There is one rule for scoring: <strong>no evidence, no claim.</strong> A verified
+        finding pushes the badge ceiling, inference and simulation do not — a scope gap
+        is reported as missing evidence, not as an accusation.
       </p>
     </div>
 
     <div class="hero-side">
       <div class="stat-grid" id="statGrid">
-        <!-- Yükleniyor iskeleti: gelen kutuların şekli baştan belli, yerleşim zıplamaz. -->
-        <div class="stat"><span class="skeleton skeleton-row" style="width:60%"></span><span class="stat-label">yükleniyor</span></div>
-        <div class="stat"><span class="skeleton skeleton-row" style="width:45%"></span><span class="stat-label">yükleniyor</span></div>
-        <div class="stat"><span class="skeleton skeleton-row" style="width:70%"></span><span class="stat-label">yükleniyor</span></div>
-        <div class="stat"><span class="skeleton skeleton-row" style="width:52%"></span><span class="stat-label">yükleniyor</span></div>
+        <!-- Loading skeleton: incoming boxes shape is known upfront, layout doesn't jump. -->
+        <div class="stat"><span class="skeleton skeleton-row" style="width:60%"></span><span class="stat-label">loading</span></div>
+        <div class="stat"><span class="skeleton skeleton-row" style="width:45%"></span><span class="stat-label">loading</span></div>
+        <div class="stat"><span class="skeleton skeleton-row" style="width:70%"></span><span class="stat-label">loading</span></div>
+        <div class="stat"><span class="skeleton skeleton-row" style="width:52%"></span><span class="stat-label">loading</span></div>
       </div>
     </div>
   </section>
 
-  <!-- ========================================================= sistem durumu -->
+  <!-- ========================================================= system status -->
   <section class="card">
     <div class="card-head">
       <span class="card-step" aria-hidden="true">0</span>
-      <h2>Sistem durumu</h2>
+      <h2>System status</h2>
       <div class="btn-row">
-        <button type="button" class="btn btn-quiet btn-sm" id="selftestBtn">Yenile</button>
+        <button type="button" class="btn btn-quiet btn-sm" id="selftestBtn">Refresh</button>
         <button type="button" class="btn btn-secondary btn-sm" id="selftestDeepBtn">
-          Derin test
+          Deep test
         </button>
       </div>
     </div>
     <div class="card-body">
       <p class="card-note">
-        Her katmanın canlı doğrulaması. Kapalı bir opsiyonel entegrasyon
-        <strong>arıza değildir</strong> — sistem çalışmaya devam eder, yalnızca kanıt
-        kalitesi düşer. Derin test gerçek bir denetim koşusu yapar; süre etkin
-        entegrasyonlara ve hedefe göre değişir.
+        Live validation of each layer. A closed optional integration
+        <strong>is not a fault</strong> — the system continues to work, only evidence
+        quality drops. A deep test runs an actual audit pass; duration varies based on active
+        integrations and target.
       </p>
       <div id="selftestRoot">
         <div class="status-list" aria-busy="true">
@@ -99,18 +99,18 @@
   </section>
 
 
-  <!-- =========================================================== ajan yükleme -->
+  <!-- =========================================================== load agent -->
   <section class="card">
     <div class="card-head">
       <span class="card-step" aria-hidden="true">1</span>
-      <h2>Ajanı yükle</h2>
+      <h2>Load agent</h2>
     </div>
     <div class="card-body">
 
-      <div class="segment" role="tablist" aria-label="Yükleme yöntemi">
+      <div class="segment" role="tablist" aria-label="Load method">
         <button type="button" class="segment-item" role="tab" id="tab-onchain"
                 aria-selected="true" aria-controls="pane-onchain" data-tab="onchain">
-          Zincir adresi
+          Chain address
         </button>
         <button type="button" class="segment-item" role="tab" id="tab-repo"
                 aria-selected="false" aria-controls="pane-repo" data-tab="repo" tabindex="-1">
@@ -122,7 +122,7 @@
         </button>
         <button type="button" class="segment-item" role="tab" id="tab-wizard"
                 aria-selected="false" aria-controls="pane-wizard" data-tab="wizard" tabindex="-1">
-          Sihirbaz
+          Wizard
         </button>
       </div>
 
@@ -132,17 +132,17 @@
         <div class="field-grid" role="tabpanel" id="pane-onchain"
              aria-labelledby="tab-onchain" data-pane="onchain">
           <div class="field">
-            <label for="in-address">Agent cüzdan adresi</label>
+            <label for="in-address">Agent wallet address</label>
             <input class="mono" id="in-address" name="address" type="text"
-                   placeholder="G… account veya C… contract"
+                   placeholder="G… account or C… contract"
                    spellcheck="false" autocomplete="off" />
-            <span class="field-help">G-account Horizon'dan, C-account Soroban RPC sınırından okunur.</span>
+            <span class="field-help">G-account is read from Horizon, C-account from Soroban RPC edge.</span>
           </div>
           <div class="field">
-            <label for="in-contract">veya Soroban agent contract ID</label>
+            <label for="in-contract">or Soroban agent contract ID</label>
             <input class="mono" id="in-contract" name="agent_contract_id" type="text"
                    placeholder="C…" spellcheck="false" />
-            <span class="field-help">Yapılandırılmış registry/card kaynağından çözülür; ID tek başına deploy kanıtı değildir.</span>
+            <span class="field-help">Resolved from configured registry/card source; ID alone is not deployment evidence.</span>
           </div>
         </div>
 
@@ -150,21 +150,21 @@
         <div class="field-grid" role="tabpanel" id="pane-repo"
              aria-labelledby="tab-repo" data-pane="repo" hidden>
           <div class="field">
-            <label for="in-repo">GitHub veya IPFS URI</label>
+            <label for="in-repo">GitHub or IPFS URI</label>
             <input class="mono" id="in-repo" name="repo_url" type="url"
                    placeholder="https://github.com/org/agent" spellcheck="false" />
           </div>
           <div class="field">
-            <label for="in-path">veya yerel dizin yolu</label>
+            <label for="in-path">or local directory path</label>
             <input class="mono" id="in-path" name="local_path" type="text"
                    placeholder="./examples/corpus/payroll_agent" spellcheck="false" />
           </div>
           <div class="field field-wide">
-            <label for="in-zip">veya ZIP arşivi</label>
+            <label for="in-zip">or ZIP archive</label>
             <input id="in-zip" name="zip" type="file" accept=".zip" />
             <span class="field-help">
-              Kod, sistem prompt'u, manifest ve bağımlılıklar statik olarak taranır;
-              bulgular <code>dosya:satır</code> referansı alır.
+              Code, system prompt, manifest, and dependencies are scanned statically;
+              findings get a <code>file:line</code> reference.
             </span>
           </div>
         </div>
@@ -178,7 +178,7 @@
                    placeholder="https://agent.example.com/chat" spellcheck="false" />
           </div>
           <div class="field">
-            <label for="in-protocol">Protokol</label>
+            <label for="in-protocol">Protocol</label>
             <select id="in-protocol" name="endpoint_protocol">
               <option value="http">HTTP</option>
               <option value="a2a">A2A</option>
@@ -186,12 +186,12 @@
             </select>
           </div>
           <div class="field field-wide">
-            <label for="in-auth">Authorization başlığı</label>
+            <label for="in-auth">Authorization header</label>
             <input class="mono" id="in-auth" name="auth_header" type="password"
                    placeholder="Bearer …" spellcheck="false" autocomplete="off" />
             <span class="field-help">
-              Opsiyonel. Canlı probe ile gecikme, hata oranı ve prompt injection
-              direnci ölçülür.
+              Optional. Live probe measures latency, error rate, and prompt injection
+              resistance.
             </span>
           </div>
         </div>
@@ -200,91 +200,91 @@
         <div class="field-grid" role="tabpanel" id="pane-wizard"
              aria-labelledby="tab-wizard" data-pane="wizard" hidden>
           <div class="field">
-            <label for="in-template">Şablon</label>
+            <label for="in-template">Template</label>
             <select id="in-template" name="template">
-              <option value="">seçin…</option>
+              <option value="">select…</option>
             </select>
           </div>
           <div class="field">
-            <label for="in-name">Ajan adı</label>
+            <label for="in-name">Agent name</label>
             <input id="in-name" name="name" type="text" placeholder="Treasury Rebalancer" />
           </div>
           <div class="field field-wide">
-            <label for="in-prompt">Sistem prompt'u</label>
+            <label for="in-prompt">System prompt</label>
             <textarea id="in-prompt" name="system_prompt" rows="5"
                       placeholder="You are …"></textarea>
           </div>
           <div class="field field-wide">
-            <label for="in-caps">Yetenekler</label>
+            <label for="in-caps">Capabilities</label>
             <input id="in-caps" name="capabilities" type="text"
                    placeholder="yield_scanning, rebalancing" />
-            <span class="field-help">Virgülle ayırın.</span>
+            <span class="field-help">Separate with commas.</span>
           </div>
         </div>
 
         <hr class="divider" style="margin: var(--space-5) 0" />
 
-        <!-- ------------------------------------------------- ortak alanlar -->
+        <!-- ------------------------------------------------- common fields -->
         <div class="field-grid">
           <div class="field">
-            <label for="in-wallet">Agent cüzdanı</label>
+            <label for="in-wallet">Agent wallet</label>
             <input class="mono" id="in-wallet" name="agent_wallet" type="text"
                    placeholder="G…" spellcheck="false" />
           </div>
           <div class="field">
-            <label for="in-domain">Alan</label>
+            <label for="in-domain">Domain</label>
             <select id="in-domain" name="domain">
-              <option value="">otomatik</option>
+              <option value="">automatic</option>
               <option value="payments">payments</option>
               <option value="defi_trading">defi_trading</option>
               <option value="defi_yield">defi_yield</option>
               <option value="research">research</option>
             </select>
-            <span class="field-help">MEV kapsamını belirler.</span>
+            <span class="field-help">Determines MEV scope.</span>
           </div>
           <div class="field">
-            <label for="in-tier">Denetim seviyesi</label>
+            <label for="in-tier">Audit tier</label>
             <select id="in-tier" name="tier">
               <option value="basic">Basic</option>
-              <option value="deep">Deep — LLM + saldırı süiti</option>
+              <option value="deep">Deep — LLM + attack suite</option>
             </select>
           </div>
           <div class="field">
             <label class="field-check" for="in-privacy">
               <input id="in-privacy" name="privacy_mode" type="checkbox" />
-              Gizlilik modu (harici LLM kapalı)
+              Privacy mode (external LLM disabled)
             </label>
           </div>
         </div>
 
-        <!-- ------------------------------------------------- sahiplik (KYA) -->
+        <!-- ------------------------------------------------- ownership (KYA) -->
         <details class="disclosure" style="margin-top: var(--space-4)">
-          <summary>Sahiplik kanıtı (KYA) — badge tavanını açar</summary>
+          <summary>Proof of ownership (KYA) — unlocks badge ceiling</summary>
           <div class="disclosure-body">
             <p class="field-help">
-              İmza sunulmazsa <code>owner-unverified</code> doğrulanmış bir HIGH bulgu
-              olarak kalır ve skor 84.0 tavanında durur — SAFE badge'i verilmez.
-              İmza mesajı ajana ve Stellar network passphrase'e bağlıdır: başka ajana veya ağa taşınamaz.
-              <strong>Boş bırakmak, geçersiz imza vermekten iyidir</strong>; geçersiz imza
-              sahiplik iddiasını çürütür ve daha ağır raporlanır.
+              If no signature is provided, <code>owner-unverified</code> remains a verified HIGH finding
+              and the score stops at the 84.0 ceiling — the SAFE badge is not granted.
+              The signature message is bound to the agent and Stellar network passphrase: it cannot be ported to another agent or network.
+              <strong>Leaving it blank is better than providing an invalid signature</strong>; an invalid signature
+              refutes the ownership claim and is reported more severely.
             </p>
             <div class="field">
-              <label for="in-owner">Sahip cüzdan adresi</label>
+              <label for="in-owner">Owner wallet address</label>
               <input class="mono" id="in-owner" name="owner" type="text"
                      placeholder="G…" spellcheck="false" autocomplete="off" />
             </div>
             <div class="field">
-              <label for="in-signature">SEP-53 Ed25519 imzası (base64)</label>
+              <label for="in-signature">SEP-53 Ed25519 signature (base64)</label>
               <input class="mono" id="in-signature" name="owner_signature" type="text"
-                     placeholder="Dış signer çıktısını yapıştırın" spellcheck="false"
+                     placeholder="Paste external signer output" spellcheck="false"
                      autocomplete="off" />
             </div>
             <div class="btn-row">
               <button type="button" class="btn btn-secondary btn-sm" id="signBtn">
-                İmza mesajını hazırla
+                Prepare signature message
               </button>
               <button type="button" class="btn btn-quiet btn-sm" id="verifyBtn">
-                İmzayı doğrula
+                Verify signature
               </button>
             </div>
             <p class="notice" id="ownerNotice" role="status" aria-live="polite"></p>
@@ -292,27 +292,27 @@
         </details>
 
         <div class="field" style="margin-top: var(--space-4)">
-          <label for="in-api-key">Operatör API anahtarı</label>
+          <label for="in-api-key">Operator API key</label>
           <input class="mono" id="in-api-key" type="password"
                  placeholder="ADMIN_API_KEY" autocomplete="off" />
-          <span class="field-help">Yalnız bu sekmenin sessionStorage alanında tutulur; sunucu anahtarı yapılandırılmamışsa yazma uçları kapalıdır.</span>
+          <span class="field-help">Stored only in this tab's sessionStorage; if server key is not configured, write endpoints are closed.</span>
           <div class="btn-row">
-            <button type="button" class="btn btn-secondary btn-sm" id="operatorSaveBtn">Bu sekmede sakla</button>
-            <button type="button" class="btn btn-quiet btn-sm" id="operatorClearBtn">Temizle</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="operatorSaveBtn">Store in this tab</button>
+            <button type="button" class="btn btn-quiet btn-sm" id="operatorClearBtn">Clear</button>
           </div>
         </div>
 
-        <!-- ------------------------------------------------------- eylemler -->
+        <!-- ------------------------------------------------------- actions -->
         <div class="btn-row" style="margin-top: var(--space-5)">
-          <button type="submit" class="btn btn-primary" id="runBtn">Denetimi başlat</button>
+          <button type="submit" class="btn btn-primary" id="runBtn">Start audit</button>
           <button type="button" class="btn btn-quiet" data-demo="corpus/payroll_agent">
-            Örnek: üretim kalitesi
+            Example: production quality
           </button>
           <button type="button" class="btn btn-quiet" data-demo="corpus/lending_optimizer">
-            Örnek: kısmi boşluk
+            Example: partial gap
           </button>
           <button type="button" class="btn btn-quiet" data-demo="corpus/airdrop_scam">
-            Örnek: dolandırıcı
+            Example: scammer
           </button>
         </div>
 
@@ -322,26 +322,26 @@
     </div>
   </section>
 
-  <!-- ================================================================ rapor -->
+  <!-- ================================================================ report -->
   <section class="card" id="reportCard" hidden>
     <div class="card-head">
       <span class="card-step" aria-hidden="true">2</span>
-      <h2>Denetim raporu</h2>
+      <h2>Audit report</h2>
     </div>
     <div class="card-body" id="reportRoot"></div>
   </section>
 
-  <!-- ================================================ izleme + son denetimler -->
+  <!-- ================================================ monitoring + recent audits -->
   <div class="grid-2">
     <section class="card">
       <div class="card-head">
-        <h2>Sürekli izleme</h2>
-        <button type="button" class="btn btn-quiet btn-sm" id="monitorTickBtn">Şimdi denetle</button>
+        <h2>Continuous monitoring</h2>
+        <button type="button" class="btn btn-quiet btn-sm" id="monitorTickBtn">Audit now</button>
       </div>
       <div class="card-body">
         <p class="card-note">
-          Ücretsiz patrol turu skor kadar kanıt güvencesi, bulgu seti ve yeni
-          doğrulanmış high/critical risk değişimini de izler.
+          A free patrol run monitors evidence assurance up to the score, finding sets,
+          and new verified high/critical risk changes.
         </p>
         <div class="field-grid">
           <div class="field">
@@ -349,12 +349,12 @@
             <input class="mono" id="monitor-agent-id" type="text" placeholder="agent_…" spellcheck="false" />
           </div>
           <div class="field">
-            <label for="monitor-interval">Aralık (dakika)</label>
+            <label for="monitor-interval">Interval (minutes)</label>
             <input id="monitor-interval" type="number" min="15" max="1440" value="30" />
           </div>
         </div>
         <div class="btn-row">
-          <button type="button" class="btn btn-secondary" id="monitorSubscribeBtn">İzlemeye al</button>
+          <button type="button" class="btn btn-secondary" id="monitorSubscribeBtn">Subscribe to monitoring</button>
         </div>
         <p class="notice" id="monitorNotice" role="status" aria-live="polite"></p>
         <div id="monitorRoot"><div class="skeleton skeleton-row"></div></div>
@@ -363,8 +363,8 @@
 
     <section class="card">
       <div class="card-head">
-        <h2>Son denetimler</h2>
-        <button type="button" class="btn btn-quiet btn-sm" id="jobsRefreshBtn">Yenile</button>
+        <h2>Recent audits</h2>
+        <button type="button" class="btn btn-quiet btn-sm" id="jobsRefreshBtn">Refresh</button>
       </div>
       <div class="card-body" id="jobsRoot">
         <div class="skeleton skeleton-row"></div>
@@ -373,10 +373,10 @@
     </section>
   </div>
 
-  <!-- ====================================================== zincir + swarm -->
+  <!-- ====================================================== chain + swarm -->
   <div class="grid-2">
     <section class="card">
-      <div class="card-head"><h2>Stellar ağ ve registry durumu</h2></div>
+      <div class="card-head"><h2>Stellar network and registry status</h2></div>
       <div class="card-body" id="chainRoot">
         <div class="skeleton skeleton-row"></div>
         <div class="skeleton skeleton-row"></div>
@@ -385,7 +385,7 @@
     </section>
 
     <section class="card">
-      <div class="card-head"><h2>Denetçi swarm'ı</h2></div>
+      <div class="card-head"><h2>Auditor swarm</h2></div>
       <div class="card-body" id="leaderboardRoot">
         <div class="skeleton skeleton-row"></div>
         <div class="skeleton skeleton-row"></div>
@@ -395,7 +395,7 @@
 
   <!-- ========================================================= attestation -->
   <section class="card">
-    <div class="card-head"><h2>Zincire yazılmış attestation'lar</h2></div>
+    <div class="card-head"><h2>Onchain attestations</h2></div>
     <div class="card-body" id="attestationRoot">
       <div class="skeleton skeleton-row"></div>
       <div class="skeleton skeleton-row"></div>
@@ -404,14 +404,14 @@
 
   <!-- ============================================================== escrow -->
   <section class="card">
-    <div class="card-head"><h2>Opsiyonel Soroban escrow ve SAC</h2></div>
+    <div class="card-head"><h2>Optional Soroban escrow and SAC</h2></div>
     <div class="card-body" id="escrowRoot">
       <div class="skeleton skeleton-row"></div>
       <div class="skeleton skeleton-row"></div>
     </div>
   </section>
 
-  <!-- ============================================================= rozetler -->
+  <!-- ============================================================= badges -->
   <section class="card">
     <div class="card-head"><h2>Verified by AgentVeritas</h2></div>
     <div class="card-body" id="badgeRoot">

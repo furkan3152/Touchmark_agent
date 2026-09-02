@@ -1,15 +1,12 @@
-"""MEV kapsam disiplini — fiyat maruziyeti yoksa slippage bulgusu üretilmez.
+"""MEV scope: no slippage finding without price exposure.
 
-Bu bir gerileme testidir. Eskiden MEV kontrolü ``has_funds`` (imza yetkili bir
-araç var mı) koşuluna bağlıydı. Sonuç: düz USDC transferi yapan bordro ajanı
-"MEV/slippage koruması yok" (HIGH, CONFIRMED) alıyordu. Bulgu doğrulanmış HIGH
-olduğu için `CAUTION_CEILING` devreye giriyor ve ajan SAFE badge'i alamıyordu —
-yani yanlış pozitif doğrudan badge'i düşürüyordu. Korpus taramasında üretim
-kalitesindeki her ajanın tam 84.0'da durmasının sebebi buydu.
+Regression test. Tying the MEV check to ``has_funds`` (any tool with signing authority)
+gave a payroll agent making plain USDC transfers "No MEV/slippage protection" (HIGH,
+CONFIRMED). That triggered `CAUTION_CEILING` and kept every production-quality corpus
+agent at exactly 84.0, below the SAFE badge.
 
-Artık kapsam **yetenekten** çıkarılır: alan (domain) veya araçların adı/açıklaması
-takasa işaret etmiyorsa kontrol konu dışıdır.
-"""
+Scope comes from capability: if the domain or the tools' names and descriptions do not
+indicate swapping, the check is out of scope."""
 
 from __future__ import annotations
 

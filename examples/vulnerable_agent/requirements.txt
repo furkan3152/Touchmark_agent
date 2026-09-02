@@ -1,4 +1,4 @@
 requests>=2.0
 stellar-sdk-py
-langchian
+langchain
 git+https://github.com/someone/unaudited-defi-sdk.git

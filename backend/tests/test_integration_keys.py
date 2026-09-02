@@ -1,10 +1,8 @@
-"""Opsiyonel entegrasyon anahtarlarının kapısı (LLM / AML tarama / IPFS).
+"""Optional integration keys (LLM / AML screening / IPFS).
 
-Buradaki tek kural: **anahtar yoksa iddia üretilmez.** Sağlayıcı yapılandırılmadığında
-sistem tam işlevini korur ama eksik kontrolü kapsam boşluğu olarak bildirir; asla
-uydurma bir sonuç üretmez. `SCREENING_PROVIDER` set edilip anahtar verilmemesi de
-"kapalı" sayılır — yarım yapılandırma sessizce sahte veri üretmemeli.
-"""
+No key, no claim. Without a configured provider the system keeps working and reports the
+missing check as a scope gap instead of a fabricated result. `SCREENING_PROVIDER` without a
+key also counts as off, so a half configuration cannot produce fake data."""
 
 from __future__ import annotations
 
@@ -153,13 +151,7 @@ def test_integrations_never_leaks_secret_values(tmp_path):
     assert by_key["PINATA_JWT"]["enabled"] is True
 
 
-def test_screening_mode_is_boolean_not_provider_name(tmp_path):
-    """`modes.screening` sağlayıcı adı değil, gerçekten açık mı olduğudur.
 
-    Sağlayıcı adı dönseydi "none" bile dolu bir string olduğu için UI kapalı
-    entegrasyonu açık gösterirdi.
-    """
-    s = _settings(tmp_path, screening_provider="trm", screening_api_key="")
 
 # ------------------------------------------------------- Chainalysis eşlemesi
 class _FakeResponse:

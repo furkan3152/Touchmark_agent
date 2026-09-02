@@ -1,10 +1,8 @@
-"""Yanlış pozitif disiplini — kanıt yokken Stellar adresleri suçlanmamalı.
+"""Stellar addresses are not accused without evidence.
 
-Bu testler bir gerileme testidir: cüzdan taraması sağlayıcısı yapılandırılmadığında
-eskiden adresin sha256'sından rastgele "high risk / mixer_proximity" üretiliyor ve
-önceki uygulamada adres hash'inden risk türetilip temiz hesaplar CRITICAL alıyordu.
-Artık tarama yoksa iddia değil, kapsam bulgusu üretilmelidir.
-"""
+Regression tests: deriving a "high risk / mixer_proximity" from the address hash when
+no screening provider is configured gave clean accounts CRITICAL findings. Without
+screening, the result must be a scope finding, not a claim."""
 
 from __future__ import annotations
 

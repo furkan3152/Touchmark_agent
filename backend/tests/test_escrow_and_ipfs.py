@@ -1,4 +1,4 @@
-"""Ödeme-çekirdek ayrımı, external signer sınırı ve yerel CID."""
+"""Payment-core separation, external signer boundary, and local CID."""
 
 from __future__ import annotations
 

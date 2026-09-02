@@ -1,7 +1,7 @@
-"""Soroban build/hash ve aktif Testnet release doğrulayıcısı.
+"""Soroban build/hash and active Testnet release verifier.
 
-Backend deploy anahtarı taşımaz. İmzalı deployment haricî Stellar CLI signer ile
-yürütülür; bu modül build/hash üretir ve salt-okunur release verifier'ı çağırır.
+Backend does not hold deploy keys. Signed deployment is executed via the external Stellar CLI signer;
+this module produces the build/hash and calls the read-only release verifier.
 """
 
 from __future__ import annotations
@@ -34,12 +34,12 @@ def build() -> int:
 def show_hashes() -> int:
     missing = [str(path) for path in WASMS.values() if not path.exists()]
     if missing:
-        print("WASM bulunamadı; önce `python -m backend.deploy build` çalıştırın.")
+        print("WASM not found; run `python -m backend.deploy build` first.")
         return 1
     for name, path in WASMS.items():
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         print(f"{name:<16} sha256:{digest}  {path.relative_to(ROOT)}")
-    print("Not: WASM hash'i deploy veya başarılı invocation kanıtı değildir.")
+    print("Note: WASM hash is not proof of deployment or successful invocation.")
     return 0
 
 

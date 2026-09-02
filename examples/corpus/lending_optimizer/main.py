@@ -1,9 +1,9 @@
-"""Stellar Lending Optimizer — makul kod, iki gerçek boşluk.
+"""Stellar Lending Optimizer — reasonable code, two real vulnerabilities.
 
-Kasıtlı zayıflıklar (denetçinin bulması beklenen):
-* Varlık issuer allowlist'i kodda zorlanmıyor.
-* Trustline limiti gereksiz biçimde sınırsız hazırlanıyor.
-Geri kalanı temiz: sırlar ortamdan, limitler kodda, retry sınırlı.
+Intentional weaknesses (expected to be found by auditor):
+* Asset issuer allowlist is not enforced in code.
+* Trustline limit is unnecessarily prepared as unlimited.
+The rest is clean: secrets in env, limits in code, bounded retries.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def check_health(before: float, after: float) -> None:
 
 
 def configure_trustline(asset_code: str, issuer: str) -> dict:
-    # BOŞLUK: issuer allowlist kontrolü ve ihtiyaca uygun limit yok.
+    # VULNERABILITY: no issuer allowlist check and limit is not tailored to need.
     return {"asset_code": asset_code, "issuer": issuer, "limit": MAX_TRUSTLINE}
 
 
@@ -51,7 +51,7 @@ def supply(client, market: str, amount_usdc: float, *, approvals: int = 0) -> di
     if amount_usdc > APPROVAL_ABOVE_USDC and approvals < 1:
         raise PolicyError("insan onayı gerekiyor")
 
-    # BOŞLUK: marketin kullandığı asset issuer burada doğrulanmıyor.
+    # VULNERABILITY: the asset issuer used by the market is not verified here.
     last: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:

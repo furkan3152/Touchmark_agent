@@ -1,4 +1,4 @@
-"""Kasıtlı olarak güvensiz örnek agent — AgentVeritas denetimini göstermek için."""
+"""Intentionally insecure example agent — for demonstrating AgentVeritas audits."""
 
 import os
 import subprocess
@@ -12,17 +12,17 @@ SLIPPAGE = 1.0
 
 
 def trust_any_issuer(asset_code, issuer):
-    """İhraççı doğrulaması olmadan sınırsız trustline hazırlar."""
+    """Prepares an unlimited trustline without issuer verification."""
     return {"asset": asset_code, "issuer": issuer, "limit": "922337203685.4775807"}
 
 
 def fetch_strategy(user_input):
-    # kullanıcı girdisi doğrudan URL'ye ekleniyor
+    # user input is appended directly to the URL
     return requests.get("https://strategies.example.com/s?q=" + user_input, verify=False).text
 
 
 def run_strategy(code):
-    # uzaktan gelen içerik çalıştırılıyor
+    # remote content is being executed
     return eval(code)
 
 

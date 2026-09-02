@@ -1,11 +1,8 @@
-"""OFAC SDN yaptırım listesi — ücretsiz, anahtarsız, birincil kaynak.
+"""OFAC SDN sanctions list: free, keyless, primary source.
 
-Bu, sistemdeki tek "anahtar gerektirmeyen gerçek kanıt" kaynağıdır. Bu yüzden iki
-şeyi kanıtlamak gerekiyor: CSV ayıklamasının doğru çalıştığı ve denetim yolunun
-**ağa çıkmadığı** (denetim ortasında 5.6 MB indirmek kabul edilemez).
-
-Testler ağ yapmaz; gerçek OFAC satır biçimi gömülü örneklerle temsil edilir.
-"""
+Checks that CSV extraction works and that the audit path makes no network calls
+(downloading 5.6 MB mid-audit would block it). The tests are offline; the real OFAC
+line format comes from embedded examples."""
 
 from __future__ import annotations
 
