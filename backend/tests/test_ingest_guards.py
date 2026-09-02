@@ -84,6 +84,27 @@ def test_keystore_is_not_read_as_agent_code(settings, run, tmp_path):
     assert "0xdeadbeef" not in joined
 
 
+def test_secret_names_are_case_insensitive_and_env_templates_remain_auditable(
+    settings, run, tmp_path
+):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "agent.json").write_text('{"name":"Case Guard"}')
+    (root / ".ENV.PRODUCTION").write_text("API_KEY=must-not-leak")
+    (root / "Signer.JSON").write_text('{"secret":"must-not-leak"}')
+    (root / "operator.PEM").write_text("must-not-leak")
+    (root / ".env.example").write_text("API_KEY=")
+
+    scoped = settings.model_copy(update={"ingest_root": str(root)})
+    artifact = run(IngestionService(scoped).ingest(IngestRequest(kind="repo", local_path=".")))
+
+    assert ".env.example" in artifact.code_files
+    assert ".ENV.PRODUCTION" not in artifact.code_files
+    assert "Signer.JSON" not in artifact.code_files
+    assert "operator.PEM" not in artifact.code_files
+    assert "must-not-leak" not in " ".join(artifact.code_files.values())
+
+
 def test_local_path_can_be_disabled(settings, run, tmp_path):
     root = tmp_path / "proj"
     root.mkdir()
@@ -195,9 +216,23 @@ def test_zip_path_traversal_entries_are_skipped(settings, run):
     assert "0xbad" not in " ".join(artifact.code_files.values())
 
 
+def test_zip_secret_names_are_case_insensitive(settings, run):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("agent.json", '{"name":"Zip Case Guard"}')
+        zf.writestr(".ENV.PRODUCTION", "TOKEN=must-not-leak")
+        zf.writestr("Keys/Operator.PEM", "must-not-leak")
+        zf.writestr("STELLAR-CLI/identity.toml", "secret=must-not-leak")
+    payload = base64.b64encode(buf.getvalue()).decode()
+
+    artifact = run(
+        IngestionService(settings).ingest(IngestRequest(kind="repo", zip_base64=payload))
+    )
+    assert set(artifact.code_files) == {"agent.json"}
+
+
 def test_invalid_zip_gives_clear_error(settings, run):
     svc = IngestionService(settings)
     with pytest.raises(IngestGuardError):
         run(svc.ingest(IngestRequest(kind="repo", zip_base64="bu-base64-degil!!")))
-
 

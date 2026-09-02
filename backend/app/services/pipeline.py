@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 
 from ..stellar.attestation import Attestor, request_id
@@ -54,7 +55,8 @@ class AuditPipeline:
         )
         job.escrow = self.escrow.open(job.id, tier, requester)
         job.log(
-            f"job açıldı · tier={tier.value} · opsiyonel escrow={job.escrow.amount_usdc} USDC · "
+            f"job açıldı · tier={tier.value} · opsiyonel escrow={job.escrow.amount_usdc} "
+            f"{self.settings.resolved_escrow_asset_code} · "
             f"validationRequest={job.validation_request_hash[:18]}…"
         )
         return self.store.put_job(job)
@@ -89,7 +91,8 @@ class AuditPipeline:
             raise
         job.state = JobState.FUNDED
         job.log(
-            f"escrow yatırıldı ({job.escrow.mode}): {job.escrow.amount_usdc} USDC "
+            f"escrow yatırıldı ({job.escrow.mode}): {job.escrow.amount_usdc} "
+            f"{self.settings.resolved_escrow_asset_code} "
             f"({funder or 'anon'})"
         )
         if job.escrow.note:
@@ -118,7 +121,7 @@ class AuditPipeline:
             job = self._job(job_id)
 
         job.state = JobState.RUNNING
-        job.log("swarm başlatıldı (5 denetçi paralel)")
+        job.log("swarm başlatıldı (7 denetçi paralel)")
         self.store.put_job(job)
 
         try:
@@ -167,8 +170,10 @@ class AuditPipeline:
                 return self.store.put_job(job)
             job.state = JobState.SETTLED
             job.log(
-                f"settlement ({job.escrow.mode}) · platform fee={job.escrow.platform_fee_usdc} USDC · "
-                f"swarm payout={job.escrow.swarm_payout_usdc} USDC"
+                f"settlement ({job.escrow.mode}) · platform fee={job.escrow.platform_fee_usdc} "
+                f"{self.settings.resolved_escrow_asset_code} · "
+                f"swarm payout={job.escrow.swarm_payout_usdc} "
+                f"{self.settings.resolved_escrow_asset_code}"
             )
             if job.escrow.note:
                 job.log(f"escrow notu: {job.escrow.note}")
@@ -207,8 +212,12 @@ class AuditPipeline:
 
         # markdown'ı da sakla
         md = render_markdown(report, artifact)
-        (self.settings.data_path / "reports").mkdir(parents=True, exist_ok=True)
-        (self.settings.data_path / "reports" / f"{job.id}.md").write_text(md)
+        report_dir = self.settings.data_path / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(report_dir, 0o700)
+        report_path = report_dir / f"{job.id}.md"
+        report_path.write_text(md)
+        os.chmod(report_path, 0o600)
 
     def markdown_for(self, job_id: str) -> str:
         job = self._job(job_id)
@@ -238,7 +247,7 @@ class AuditPipeline:
         return self.store.put_subscription(sub)
 
     async def monitor_tick(self, force: bool = False) -> list[dict]:
-        """Tüm aktif abonelikler için patrol turu; her tur x402 mikro ödemesi keser."""
+        """Tüm aktif abonelikler için ücretsiz, kanıt-drift odaklı patrol turu."""
         results: list[dict] = []
         now = time.time()
 

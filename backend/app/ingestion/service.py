@@ -39,11 +39,50 @@ SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "dist", "build", ".
 #: Denetim yüzeyine hiçbir koşulda alınmayacak dizinler. `keystore` operatörün
 #: özel anahtarını, `sanctions` 5.6 MB'lık OFAC önbelleğini tutar; ikisi de
 #: denetlenen ajanın kodu değildir.
-SECRET_DIRS = {"keystore", "sanctions", ".ssh", ".gnupg", ".aws", ".config"}
+SECRET_DIRS = {
+    "keystore",
+    "sanctions",
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".config",
+    ".stellar",
+    "stellar-cli",
+}
 #: Ad bazlı sır dosyaları — uzantı filtresi bunları yakalamıyor.
-SECRET_FILENAMES = {"signer.json", "state.json", ".env", ".env.local", "id_rsa", "credentials"}
+SECRET_FILENAMES = {
+    "signer.json",
+    "state.json",
+    ".env",
+    ".env.local",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    "credentials",
+    "credentials.json",
+}
+SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 MAX_FILE_BYTES = 200_000
 MAX_FILES = 60
+
+
+def _is_secret_path(parts: tuple[str, ...]) -> bool:
+    """Case-insensitive secret/key path allow-deny decision.
+
+    ``.env.example`` and template variants are intentionally auditable because
+    they document configuration without containing live credentials.
+    """
+    lowered = tuple(part.lower() for part in parts)
+    if any(part in SECRET_DIRS for part in lowered[:-1]):
+        return True
+    name = lowered[-1] if lowered else ""
+    if name in {".env.example", ".env.sample", ".env.template"}:
+        return False
+    return bool(
+        name in SECRET_FILENAMES
+        or name.startswith(".env.")
+        or Path(name).suffix in SECRET_SUFFIXES
+    )
 
 
 class IngestRequest(BaseModel):
@@ -264,9 +303,9 @@ class IngestionService:
             if path.is_dir():
                 continue
             parts = path.parts
-            if any(part in SKIP_DIRS for part in parts):
+            if any(part.lower() in SKIP_DIRS for part in parts):
                 continue
-            if any(part in SECRET_DIRS for part in parts) or path.name in SECRET_FILENAMES:
+            if _is_secret_path(parts):
                 skipped_secrets.append(path.name)
                 continue
             if path.suffix.lower() not in CODE_SUFFIXES:
@@ -320,9 +359,9 @@ class IngestionService:
                 # Yol kaçışı: `../etc/passwd` veya `/etc/passwd`.
                 if ".." in parts or Path(name).is_absolute() or name.startswith("/"):
                     continue
-                if any(part in SKIP_DIRS or part in SECRET_DIRS for part in parts):
+                if any(part.lower() in SKIP_DIRS for part in parts):
                     continue
-                if Path(name).name in SECRET_FILENAMES:
+                if _is_secret_path(parts):
                     continue
                 if Path(name).suffix.lower() not in CODE_SUFFIXES:
                     continue

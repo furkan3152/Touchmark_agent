@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 from pathlib import Path
 
 import httpx
@@ -41,7 +42,8 @@ class IpfsPublisher:
     @property
     def store_dir(self) -> Path:
         d = self.settings.data_path / "reports"
-        d.mkdir(parents=True, exist_ok=True)
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(d, 0o700)
         return d
 
     async def publish(self, name: str, content: str) -> tuple[str, str]:
@@ -50,7 +52,9 @@ class IpfsPublisher:
         cid = local_cid(payload)
 
         # her durumda yerel kopya (denetlenebilirlik ve yeniden servis için)
-        (self.store_dir / f"{cid}.json").write_bytes(payload)
+        local_copy = self.store_dir / f"{cid}.json"
+        local_copy.write_bytes(payload)
+        os.chmod(local_copy, 0o600)
 
         if self.settings.ipfs_enabled:
             pinned = await self._pin_to_pinata(name, payload)

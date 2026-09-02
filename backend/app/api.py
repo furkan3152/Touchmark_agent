@@ -154,7 +154,29 @@ class ValidationRequestHook(BaseModel):
 class MonitorSubscribe(BaseModel):
     agent_id: str
     interval_minutes: int = Field(default=30, ge=15, le=1440)
-    prepaid_usdc: float = Field(default=1.0, gt=0)
+    # Monitoring çekirdek üründe ücretsizdir. Alan eski istemciler için korunur.
+    prepaid_usdc: float = Field(default=0.0, ge=0)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """API ve statik UI için tarayıcı güvenlik sınırlarını açıkça uygula."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self'; "
+        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    )
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 # ---------------------------------------------------------------------- health
@@ -172,6 +194,7 @@ async def health() -> dict:
             "explorer": settings.explorer,
         },
         "modes": {
+            "operator_api": bool(settings.admin_api_key),
             "llm": settings.llm_enabled,
             "rpc": settings.rpc_enabled,
             "contract_submission": False,
@@ -212,7 +235,7 @@ async def chain_deployments() -> dict:
 
 
 @app.get("/api/v1/chain/attestations")
-async def chain_attestations(limit: int = 20) -> dict:
+async def chain_attestations(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     """Kalıcı event deposunda doğrulanmış registry response olayları."""
     return await chain_status.onchain_attestations(limit=limit)
 
@@ -274,7 +297,7 @@ async def compliance_sanctions() -> dict:
     out: dict = {
         "enabled": settings.ofac_enabled,
         "available": bool(cache),
-        "cache_path": str(sanctions.cache_path),
+        "cache_configured": True,
         "max_age_hours": settings.ofac_max_age_hours,
     }
     if cache:
@@ -322,6 +345,16 @@ async def config() -> dict:
             "deep_usdc": settings.price_deep_usdc,
             "monitor_tick_usdc": settings.monitor_tick_price_usdc,
             "platform_fee_bps": settings.platform_fee_bps,
+        },
+        "billing": {
+            "enabled": settings.audit_escrow_enabled,
+            "asset_code": settings.resolved_escrow_asset_code,
+            "backend_signing": False,
+            "note": (
+                "optional external-signer escrow"
+                if settings.audit_escrow_enabled
+                else "core validation is free"
+            ),
         },
         "contracts": {
             "agent_registry": settings.agent_registry_contract_id,
@@ -512,7 +545,7 @@ async def run_job(job_id: str) -> dict:
 
 
 @app.get("/api/v1/jobs")
-async def list_jobs(limit: int = 20) -> dict:
+async def list_jobs(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     return {"jobs": [_job_view(j) for j in pipeline.store.recent_jobs(limit)]}
 
 

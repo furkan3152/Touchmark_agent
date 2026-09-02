@@ -7,6 +7,7 @@ abonelikleri JSON olarak diske yazılır, yeniden başlatmada geri yüklenir.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -32,7 +33,7 @@ class Store:
     def put_agent(self, artifact: AgentArtifact) -> AgentArtifact:
         with self._lock:
             self.agents[artifact.id] = artifact
-        self._save()
+            self._save_locked()
         return artifact
 
     def get_agent(self, agent_id: str) -> AgentArtifact | None:
@@ -49,7 +50,7 @@ class Store:
     def put_job(self, job: Job) -> Job:
         with self._lock:
             self.jobs[job.id] = job
-        self._save()
+            self._save_locked()
         return job
 
     def get_job(self, job_id: str) -> Job | None:
@@ -69,14 +70,15 @@ class Store:
     def put_subscription(self, sub: MonitorSubscription) -> MonitorSubscription:
         with self._lock:
             self.subscriptions[sub.id] = sub
-        self._save()
+            self._save_locked()
         return sub
 
     def active_subscriptions(self) -> list[MonitorSubscription]:
         return [s for s in self.subscriptions.values() if s.active]
 
     # ------------------------------------------------------------ persistence
-    def _save(self) -> None:
+    def _save_locked(self) -> None:
+        """Atomik ve owner-only kayıt; çağıran ``self._lock`` tutmalıdır."""
         payload = {
             "agents": {k: v.model_dump(mode="json") for k, v in self.agents.items()},
             "jobs": {k: v.model_dump(mode="json") for k, v in self.jobs.items()},
@@ -84,6 +86,7 @@ class Store:
         }
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False))
+        os.chmod(tmp, 0o600)
         tmp.replace(self.path)
 
     def _load(self) -> None:
@@ -110,4 +113,5 @@ class Store:
                 continue
 
     def flush(self) -> None:
-        self._save()
+        with self._lock:
+            self._save_locked()

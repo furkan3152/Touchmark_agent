@@ -85,7 +85,8 @@
       <p class="card-note">
         Her katmanın canlı doğrulaması. Kapalı bir opsiyonel entegrasyon
         <strong>arıza değildir</strong> — sistem çalışmaya devam eder, yalnızca kanıt
-        kalitesi düşer. Derin test gerçek bir denetim koşusu yapar (~70 sn).
+        kalitesi düşer. Derin test gerçek bir denetim koşusu yapar; süre etkin
+        entegrasyonlara ve hedefe göre değişir.
       </p>
       <div id="selftestRoot">
         <div class="status-list" aria-busy="true">
@@ -186,7 +187,7 @@
           </div>
           <div class="field field-wide">
             <label for="in-auth">Authorization başlığı</label>
-            <input class="mono" id="in-auth" name="auth_header" type="text"
+            <input class="mono" id="in-auth" name="auth_header" type="password"
                    placeholder="Bearer …" spellcheck="false" autocomplete="off" />
             <span class="field-help">
               Opsiyonel. Canlı probe ile gecikme, hata oranı ve prompt injection
@@ -295,6 +296,10 @@
           <input class="mono" id="in-api-key" type="password"
                  placeholder="ADMIN_API_KEY" autocomplete="off" />
           <span class="field-help">Yalnız bu sekmenin sessionStorage alanında tutulur; sunucu anahtarı yapılandırılmamışsa yazma uçları kapalıdır.</span>
+          <div class="btn-row">
+            <button type="button" class="btn btn-secondary btn-sm" id="operatorSaveBtn">Bu sekmede sakla</button>
+            <button type="button" class="btn btn-quiet btn-sm" id="operatorClearBtn">Temizle</button>
+          </div>
         </div>
 
         <!-- ------------------------------------------------------- eylemler -->
@@ -325,6 +330,48 @@
     </div>
     <div class="card-body" id="reportRoot"></div>
   </section>
+
+  <!-- ================================================ izleme + son denetimler -->
+  <div class="grid-2">
+    <section class="card">
+      <div class="card-head">
+        <h2>Sürekli izleme</h2>
+        <button type="button" class="btn btn-quiet btn-sm" id="monitorTickBtn">Şimdi denetle</button>
+      </div>
+      <div class="card-body">
+        <p class="card-note">
+          Ücretsiz patrol turu skor kadar kanıt güvencesi, bulgu seti ve yeni
+          doğrulanmış high/critical risk değişimini de izler.
+        </p>
+        <div class="field-grid">
+          <div class="field">
+            <label for="monitor-agent-id">Agent ID</label>
+            <input class="mono" id="monitor-agent-id" type="text" placeholder="agent_…" spellcheck="false" />
+          </div>
+          <div class="field">
+            <label for="monitor-interval">Aralık (dakika)</label>
+            <input id="monitor-interval" type="number" min="15" max="1440" value="30" />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button type="button" class="btn btn-secondary" id="monitorSubscribeBtn">İzlemeye al</button>
+        </div>
+        <p class="notice" id="monitorNotice" role="status" aria-live="polite"></p>
+        <div id="monitorRoot"><div class="skeleton skeleton-row"></div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Son denetimler</h2>
+        <button type="button" class="btn btn-quiet btn-sm" id="jobsRefreshBtn">Yenile</button>
+      </div>
+      <div class="card-body" id="jobsRoot">
+        <div class="skeleton skeleton-row"></div>
+        <div class="skeleton skeleton-row"></div>
+      </div>
+    </section>
+  </div>
 
   <!-- ====================================================== zincir + swarm -->
   <div class="grid-2">

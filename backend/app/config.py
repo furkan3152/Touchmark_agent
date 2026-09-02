@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
@@ -37,6 +39,8 @@ class Settings(BaseSettings):
     agent_registry_contract_id: str = ""
     audit_escrow_contract_id: str = ""
     sac_contract_id: str = ""
+    # Boş bırakılırsa deployment manifestindeki asset türünden çözülür.
+    escrow_asset_code: str = ""
     enable_audit_escrow: bool = False
     # Backend tx imzalamaz; bu değer yalnız hazırlanmış çağrıları görünür kılar.
     external_signing_required: bool = True
@@ -125,6 +129,28 @@ class Settings(BaseSettings):
             and self.audit_escrow_contract_id
             and self.sac_contract_id
         )
+
+    @property
+    def resolved_escrow_asset_code(self) -> str:
+        """Aktif escrow birimini yapılandırma veya release manifestinden çöz.
+
+        Kalıcı model alanları geriye uyumluluk için ``*_usdc`` adını taşıyor.
+        Bu nedenle gerçek SAC native XLM olduğunda kullanıcı yüzeyinde yanlış
+        bir USDC settlement iddiası üretmemek için ayrı bir kanıtlı etiket gerekir.
+        """
+        if self.escrow_asset_code.strip():
+            return self.escrow_asset_code.strip().upper()
+        try:
+            manifest = json.loads(self.deployment_manifest_path.read_text())
+            asset = manifest.get("asset") or {}
+            if (
+                asset.get("contract_id") == self.sac_contract_id
+                and asset.get("kind") == "native_xlm_sac"
+            ):
+                return "XLM"
+        except (OSError, json.JSONDecodeError):
+            pass
+        return "SAC"
 
     @property
     def llm_enabled(self) -> bool:
@@ -228,7 +254,13 @@ class Settings(BaseSettings):
     @property
     def data_path(self) -> Path:
         path = Path(self.data_dir)
-        path.mkdir(parents=True, exist_ok=True)
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            # Salt-okunur/container dosya sistemlerinde asıl yazma işlemi de
+            # fail-closed olur; sırf chmod desteği yok diye health importu çökmesin.
+            pass
         return path
 
     @property

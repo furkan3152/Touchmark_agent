@@ -18,8 +18,10 @@
   "use strict";
 
   const API = "/api/v1";
+  const OPERATOR_KEY = "agentveritas_stellar_admin_key";
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  let runtimeConfig = { billing: { enabled: false, asset_code: "SAC" } };
 
   /* ------------------------------------------------------------- yardımcılar */
 
@@ -58,9 +60,37 @@
     return s.length <= head + tail + 1 ? s : `${s.slice(0, head)}…${s.slice(-tail)}`;
   };
 
+  const readOperatorKey = () => {
+    try {
+      return sessionStorage.getItem(OPERATOR_KEY) || "";
+    } catch {
+      return "";
+    }
+  };
+
+  const writeOperatorKey = (value) => {
+    try {
+      if (value) sessionStorage.setItem(OPERATOR_KEY, value);
+      else sessionStorage.removeItem(OPERATOR_KEY);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const errorDetail = (data, status) => {
+    const detail = data?.detail;
+    if (typeof detail === "string" && detail) return detail;
+    if (Array.isArray(detail)) {
+      return detail.map((item) => item?.msg || JSON.stringify(item)).join("; ");
+    }
+    if (detail && typeof detail === "object") return JSON.stringify(detail);
+    return `HTTP ${status}`;
+  };
+
   async function api(path, options = {}) {
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-    const operatorKey = sessionStorage.getItem("agentveritas_stellar_admin_key") || "";
+    const operatorKey = readOperatorKey();
     if (operatorKey && String(options.method || "GET").toUpperCase() !== "GET") {
       headers.Authorization = `Bearer ${operatorKey}`;
     }
@@ -75,9 +105,27 @@
     } catch {
       data = { detail: text };
     }
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(errorDetail(data, res.status));
     return data;
   }
+
+  const operatorInput = $("#in-api-key");
+  if (operatorInput) operatorInput.value = readOperatorKey();
+
+  $("#operatorSaveBtn")?.addEventListener("click", () => {
+    const saved = writeOperatorKey(operatorInput?.value || "");
+    notice(
+      $("#runNotice"),
+      saved ? "Operatör anahtarı bu sekme için saklandı." : "sessionStorage kullanılamıyor.",
+      saved ? "ok" : "error"
+    );
+  });
+
+  $("#operatorClearBtn")?.addEventListener("click", () => {
+    writeOperatorKey("");
+    if (operatorInput) operatorInput.value = "";
+    notice($("#runNotice"), "Operatör anahtarı bu sekmeden temizlendi.", "ok");
+  });
 
   /* ------------------------------------------------------------ durum mesajı */
 
@@ -321,7 +369,7 @@
     const done = busy(btn || $("#runBtn"), "Denetleniyor");
     try {
       const operatorKey = $("#in-api-key")?.value || "";
-      if (operatorKey) sessionStorage.setItem("agentveritas_stellar_admin_key", operatorKey);
+      if (operatorKey) writeOperatorKey(operatorKey);
       notice(node, "Ajan yükleniyor ve normalize ediliyor…");
       const agent = await api("/agents/ingest", { method: "POST", body: JSON.stringify(body) });
 
@@ -347,6 +395,9 @@
       loadStats();
       loadLeaderboard();
       loadBadges();
+      loadJobs();
+      const monitorAgent = $("#monitor-agent-id");
+      if (monitorAgent) monitorAgent.value = agent.agent_id;
     } catch (err) {
       notice(node, `Hata: ${err.message}`, "error");
     } finally {
@@ -446,6 +497,13 @@
     const att = r.attestation || {};
     const escrow = job.escrow || {};
     const counts = r.severity_counts || {};
+    const billing = runtimeConfig.billing || {};
+    const asset = billing.asset_code || "SAC";
+    const escrowFacts = billing.enabled && escrow.mode !== "not_required"
+      ? `<span>escrow <b>${num(escrow.amount_usdc, 3)} ${esc(asset)}</b></span>
+         <span>ücret <b>${num(escrow.platform_fee_usdc, 3)} ${esc(asset)}</b></span>
+         <span>swarm <b>${num(escrow.swarm_payout_usdc, 3)} ${esc(asset)}</b></span>`
+      : '<span>ödeme <b>çekirdek akışta yok</b></span>';
 
     const sevChips = SEV_ORDER.filter((s) => counts[s])
       .map((s) => {
@@ -486,9 +544,7 @@
           <div class="verdict-facts">
             <span>uzlaşmazlık σ <b>${num(r.disagreement_index)}</b></span>
             <span>süre <b>${r.duration_ms} ms</b></span>
-            <span>escrow <b>${num(escrow.amount_usdc, 3)} USDC</b></span>
-            <span>ücret <b>${num(escrow.platform_fee_usdc, 3)}</b></span>
-            <span>swarm <b>${num(escrow.swarm_payout_usdc, 3)}</b></span>
+            ${escrowFacts}
             <span>attestation <b>${esc(att.mode || "–")}</b></span>
           </div>
         </div>
@@ -523,11 +579,13 @@
         <a href="${API}/jobs/${encodeURIComponent(job.id)}/report.json"
            target="_blank" rel="noopener">JSON rapor</a>
         ${
-          r.report_cid
-            ? `<a href="https://ipfs.io/ipfs/${encodeURIComponent(r.report_cid)}"
-                  target="_blank" rel="noopener" title="${esc(r.report_cid)}">IPFS ${esc(
+          r.report_uri && /^https:\/\//.test(r.report_uri)
+            ? `<a href="${esc(r.report_uri)}" target="_blank" rel="noopener"
+                  title="${esc(r.report_cid)}">IPFS ${esc(short(r.report_cid, 8, 6))}</a>`
+            : r.report_cid
+            ? `<span class="mono" title="${esc(r.report_uri)}">yerel CAS ${esc(
                 short(r.report_cid, 8, 6)
-              )}</a>`
+              )}</span>`
             : ""
         }
       </div>
@@ -539,7 +597,10 @@
 
     const card = $("#reportCard");
     card.hidden = false;
-    card.scrollIntoView({ behavior: "smooth", block: "start" });
+    card.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "start",
+    });
   }
 
   /* ==========================================================================
@@ -591,7 +652,7 @@
         ["Denetim", s.completed_audits],
         ["Ajan", s.agents],
         ["Ort. skor", num(s.avg_score)],
-        ["Platform geliri", `${num(s.platform_revenue_usdc, 3)} USDC`],
+        ["Aktif izleme", s.active_monitors],
       ]
         .map(
           ([label, value]) =>
@@ -612,15 +673,15 @@
       if (!rows.length) {
         return empty(
           "Henüz denetim yok",
-          "Bir örnek ajanı denetleyin; denetçiler stake edip ELO kazanmaya başlar."
+          "Bir örnek ajanı denetleyin; simülasyon stake'i ve ELO geçmişi burada görünür."
         );
       }
       return `
         <div class="table-scroll">
           <table>
             <thead>
-              <tr><th>Denetçi</th><th class="num">ELO</th><th class="num">Stake</th>
-                  <th class="num">Denetim</th><th class="num">Kazanç</th><th class="num">Slash</th></tr>
+              <tr><th>Denetçi</th><th class="num">ELO</th><th class="num">Stake (sim.)</th>
+                  <th class="num">Denetim</th><th class="num">Kazanç (sim.)</th><th class="num">Slash (sim.)</th></tr>
             </thead>
             <tbody>
               ${rows
@@ -1027,5 +1088,4 @@
 
   bootstrap();
 })();
-
 
