@@ -169,7 +169,7 @@ class ChainStatusService:
         return {
             "contracts": list(rows.values()),
             "verified_code_contracts": verified,
-            "manifest": str(self.settings.deployment_manifest_path) if manifest else "",
+            "manifest_loaded": bool(manifest),
             "note": "configured tek başına deployed değildir; canlı tx ve pinned hash birlikte aranır",
         }
 
@@ -233,6 +233,7 @@ class ChainStatusService:
             "enabled": self.settings.audit_escrow_enabled,
             "contract_id": self.settings.audit_escrow_contract_id,
             "sac_contract_id": self.settings.sac_contract_id,
+            "asset_code": self.settings.resolved_escrow_asset_code,
             "backend_signing": False,
             "confirmed": False,
             "mode": "external_signature_required" if self.settings.audit_escrow_enabled else "disabled",

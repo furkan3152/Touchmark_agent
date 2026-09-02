@@ -8,6 +8,7 @@ aynı olayın iki kez uygulanmasını engeller.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -20,9 +21,11 @@ from .rpc import StellarRpc
 
 class StellarEventStore:
     def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path.parent, 0o700)
         self.path = path
         self._init_schema()
+        os.chmod(self.path, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
@@ -167,7 +170,7 @@ class StellarEventStore:
         with self._connect() as db:
             events = db.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
             cursors = db.execute("SELECT COUNT(*) AS n FROM cursors").fetchone()["n"]
-        return {"database": str(self.path), "events": events, "streams": cursors}
+        return {"database_configured": True, "events": events, "streams": cursors}
 
 
 class StellarEventIngester:
