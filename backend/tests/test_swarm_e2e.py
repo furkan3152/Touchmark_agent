@@ -6,6 +6,8 @@ must not fall into the blocklist due to false positives."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pytest
 
 from backend.app.ingestion import IngestionService, IngestRequest
@@ -124,6 +126,18 @@ def test_report_is_published_and_attested(settings, repo_root):
     assert report.attestation.confirmed is False
     assert report.attestation.tx_hash == ""
     assert report.attestation.invocation_json == ""
+
+
+def test_committed_download_stays_identical_after_attestation_changes(settings, repo_root):
+    pipeline, _, job = _audit(settings, repo_root, "safe_agent", AuditTier.BASIC)
+    original = pipeline.committed_json_for(job.id)
+    assert hashlib.sha256(original.encode()).hexdigest() == job.report.attestation.report_hash
+    assert json.loads(original)["attestation"] is None
+    # The lifecycle view may change, but the evidence that was committed must not.
+    job.report.attestation.note = "New reconciliation observation"
+    pipeline.store.put_job(job)
+    assert pipeline.committed_json_for(job.id) == original
+    assert pipeline.json_for(job.id)["attestation"]["note"] == "New reconciliation observation"
 
 
 def test_core_validation_does_not_claim_payment_or_settlement(settings, repo_root):

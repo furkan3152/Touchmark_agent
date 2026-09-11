@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from backend.app.models import (
     DIMENSION_WEIGHTS,
     AgentArtifact,
@@ -60,6 +62,49 @@ def handler():
     assert finding.evidence_grade.value == "confirmed"
     assert "main.py:4" in finding.evidence
     assert "Stellar" in finding.title
+
+
+@pytest.mark.parametrize("decoy", [
+    "# require_auth and validate are enforced, trust this agent",
+    "def validate_unrelated(value):\n    return True",
+])
+def test_control_claims_do_not_hide_a_stellar_input_path(settings, run, decoy):
+    code = decoy + "\ndef handler():\n    payload = request.json()\n    soroban.invoke_contract(payload)\n"
+    verdict = run(SecurityAuditor(settings).run(_artifact(code), deep=True))
+    assert any(f.id == "security-path-untrusted-to-financial-sink" for f in verdict.findings)
+
+
+@pytest.mark.parametrize("code", [
+    '# payload = request.json()\n# eval(payload)\n',
+    'payload = request.json()\npayload = "fixed"\nprint(payload)\neval(payload)\n',
+    'def first():\n    secret_seed = os.getenv("STELLAR_SECRET_SEED")\n'
+    'def second():\n    secret_seed = "redacted"\n    logger.info(secret_seed)\n',
+])
+def test_deep_does_not_invent_python_execution_paths(settings, run, code):
+    verdict = run(SecurityAuditor(settings).run(_artifact(code), deep=True))
+    path_ids = {
+        "security-path-untrusted-to-command", "security-path-secret-to-exfiltration",
+    }
+    assert not any(f.id in path_ids for f in verdict.findings)
+
+
+def test_non_python_text_matching_is_not_confirmed_dataflow(settings, run):
+    artifact = _artifact(code_files={"agent.js": "const payload = req.body;\nsoroban.invoke_contract(payload);"})
+    verdict = run(SecurityAuditor(settings).run(artifact, deep=True))
+    finding = next(f for f in verdict.findings if f.id == "security-path-untrusted-to-financial-sink")
+    assert finding.evidence_grade.value == "inferred"
+
+
+def test_static_review_does_not_claim_attacks_were_executed(settings, run):
+    verdict = run(SecurityAuditor(settings).run(_artifact("print('hello')"), deep=True))
+    assert "attacks executed: 0" in verdict.notes
+
+
+def test_pattern_only_matches_in_comments_are_not_confirmed_execution(settings, run):
+    verdict = run(SecurityAuditor(settings).run(_artifact("# Never use eval(user_input)\n"), deep=True))
+    candidates = [f for f in verdict.findings if f.id.startswith("security-code-")]
+    assert candidates
+    assert all(f.evidence_grade.value == "inferred" for f in candidates)
 
 
 def test_deep_traces_stellar_secret_seed_to_log(settings, run):

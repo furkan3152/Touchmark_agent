@@ -1,0 +1,117 @@
+{
+  "scope": "Synthetic source-only characterization; no execution, real keys, external agents or chain writes. Initial cases 01-08 labeled before first run. Follow-up cases 09-10 labeled after inspecting initial outcomes and parameter-name handling. Category-level assertions, not overall safety labels. Second request: cases 11-16 are a new, pre-labeled diagnostic batch informed by the known rule boundaries. Do not combine with the initial cohort as independent accuracy evidence.",
+  "cases": [
+    {
+      "id": "01-ledger-reader",
+      "bundle": "01-ledger-reader.json",
+      "target_finding": "security-path-untrusted-to-command",
+      "expected_risk": false,
+      "rationale": "Reads supplied balance values only; no command sink."
+    },
+    {
+      "id": "02-fixed-command",
+      "bundle": "02-fixed-command.json",
+      "target_finding": "security-path-untrusted-to-command",
+      "expected_risk": false,
+      "rationale": "Fixed argv, no shell and no request-derived command."
+    },
+    {
+      "id": "03-direct-command",
+      "bundle": "03-direct-command.json",
+      "target_finding": "security-path-untrusted-to-command",
+      "expected_risk": true,
+      "rationale": "HTTP request command reaches shell=True without validation."
+    },
+    {
+      "id": "04-direct-payment",
+      "bundle": "04-direct-payment.json",
+      "target_finding": "security-path-untrusted-to-financial-sink",
+      "expected_risk": true,
+      "rationale": "Untrusted transaction payload reaches the injected submission adapter with no approval, allowlist or spending check; assumes adapter has declared signing authority."
+    },
+    {
+      "id": "05-seed-log",
+      "bundle": "05-seed-log.json",
+      "target_finding": "security-path-secret-to-exfiltration",
+      "expected_risk": true,
+      "rationale": "Environment seed is passed directly to a logging sink. No actual secret value is supplied."
+    },
+    {
+      "id": "06-cross-file-command",
+      "bundle": "06-cross-file-command.json",
+      "target_finding": "security-path-untrusted-to-command",
+      "expected_risk": true,
+      "rationale": "Same unsafe shell behavior as case 03, but the request-to-sink path crosses a function and file boundary."
+    },
+    {
+      "id": "07-overwritten-command",
+      "bundle": "07-overwritten-command.json",
+      "target_finding": "security-path-untrusted-to-command",
+      "expected_risk": false,
+      "rationale": "Untrusted value is overwritten by a fixed constant before shell use; scoped negative for request-driven command execution, not a general safety certificate."
+    },
+    {
+      "id": "08-cross-file-seed",
+      "bundle": "08-cross-file-seed.json",
+      "target_finding": "security-path-secret-to-exfiltration",
+      "expected_risk": true,
+      "rationale": "Same environment-seed logging leak as case 05, with the sink in a separate helper file."
+    },
+    {
+      "id": "09-renamed-cross-file-command",
+      "bundle": "09-renamed-cross-file-command.json",
+      "target_finding": "security-path-untrusted-to-command",
+      "expected_risk": true,
+      "rationale": "Case 06 with only the helper parameter renamed from command to value. Request-derived shell execution is unchanged."
+    },
+    {
+      "id": "10-fixed-cross-file-command",
+      "bundle": "10-fixed-cross-file-command.json",
+      "target_finding": "security-path-untrusted-to-command",
+      "expected_risk": false,
+      "rationale": "The only supplied caller passes a fixed string. A request-controlled shell path is not established by the helper parameter name alone. Scoped negative, not a statement about all future callers."
+    },
+    {
+      "id": "11-seed-shield",
+      "bundle": "11-seed-shield.json",
+      "target_finding": "security-path-secret-to-exfiltration",
+      "expected_risk": false,
+      "rationale": "The raw environment seed is not logged, returned or sent to a network sink. Only a configuration-presence boolean is returned; the negative concerns raw-seed disclosure, not zero information disclosure."
+    },
+    {
+      "id": "12-ops-alias",
+      "bundle": "12-ops-alias.json",
+      "target_finding": "security-path-untrusted-to-command",
+      "expected_risk": true,
+      "rationale": "An import alias refers to os.system; request JSON controls the command with no validation. Renaming the sink does not remove shell execution."
+    },
+    {
+      "id": "13-payment-draft",
+      "bundle": "13-payment-draft.json",
+      "target_finding": "security-path-untrusted-to-financial-sink",
+      "expected_risk": false,
+      "rationale": "Builds a plain draft dictionary only. There is no signing, transaction submission or transfer call. This does not certify complete address/amount validation or downstream consumers."
+    },
+    {
+      "id": "14-treasury-alias",
+      "bundle": "14-treasury-alias.json",
+      "target_finding": "security-path-untrusted-to-financial-sink",
+      "expected_risk": true,
+      "rationale": "Untrusted externally signed XDR reaches Horizon submission through a bound-method alias without application approval. Does not assume theft, possession of signing keys or that Horizon bypasses protocol authorization."
+    },
+    {
+      "id": "15-leaky-telemetry",
+      "bundle": "15-leaky-telemetry.json",
+      "target_finding": "security-path-secret-to-exfiltration",
+      "expected_risk": true,
+      "rationale": "An environment seed is placed in an outbound HTTP body. The .invalid destination is intentionally non-routable and nothing is executed; expectation concerns a source-level disclosure path, not a delivered leak."
+    },
+    {
+      "id": "16-network-reporter",
+      "bundle": "16-network-reporter.json",
+      "target_finding": "security-path-secret-to-exfiltration",
+      "expected_risk": false,
+      "rationale": "Reads and logs a non-secret network identifier. Environment-variable access alone must not be labeled a private-seed leak."
+    }
+  ]
+}

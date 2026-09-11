@@ -81,3 +81,15 @@ class IpfsPublisher:
         if path.exists():
             return path.read_text()
         return None
+
+    def read_committed(self, digest: str) -> str:
+        """Resolve the raw local CID even when the public URI uses a Pinata DAG CID."""
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("Invalid report commitment")
+        cid = "b" + _base32_lower(CIDV1_PREFIX + MULTIHASH_PREFIX + bytes.fromhex(digest))
+        content = self.read(cid)
+        if content is None:
+            raise KeyError("Committed report not available in local storage")
+        if hashlib.sha256(content.encode("utf-8")).hexdigest() != digest:
+            raise ValueError("Committed report integrity check failed")
+        return content

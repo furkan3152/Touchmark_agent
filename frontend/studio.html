@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Add a Stellar account, contract or agent source. Get clear audit findings without sharing a private key.">
+<title>AgentVeritas — Audit your Stellar agent</title>
+<link rel="icon" href="/ui/studio-mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/studio.css"><script src="/ui/studio.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#workspace">Skip to audit</a>
+<header class="site-header">
+  <a class="brand" href="/"><img src="/ui/studio-mark.svg" alt="" width="32" height="32">AgentVeritas <span>on Stellar</span></a>
+  <nav aria-label="Main navigation"><a href="#workspace">Audit</a><a href="#plans">Pricing</a><a href="#method">How it works</a></nav>
+</header>
+<main>
+  <section class="intro"><div><h1>Audit your Stellar agent.</h1><p>What can it do? Where can it go wrong? Start with the evidence.</p></div><span class="free-label">Free to start. No secret keys.</span></section>
+  <section class="workspace" id="workspace" aria-label="Agent audit">
+    <div class="submission">
+      <form id="review-form">
+        <div class="section-heading"><h2>1. Add your agent</h2><label class="network-label" for="stellar-network"><span class="sr-only">Stellar network</span><select id="stellar-network"><option value="testnet">Stellar Testnet</option><option value="mainnet">Stellar Mainnet · read only</option></select></label></div>
+        <div class="source-tabs" role="tablist" aria-label="Add agent using">
+          <button type="button" id="tab-address" data-source-mode="address" role="tab" aria-selected="true" aria-controls="source-address">Stellar address</button>
+          <button type="button" id="tab-github" data-source-mode="github" role="tab" aria-selected="false" aria-controls="source-github" tabindex="-1">GitHub</button>
+          <button type="button" id="tab-files" data-source-mode="files" role="tab" aria-selected="false" aria-controls="source-upload" tabindex="-1">Upload files</button>
+        </div>
+        <div id="source-address" class="source-panel" role="tabpanel" aria-labelledby="tab-address">
+          <label for="stellar-address">Agent's public account or contract</label>
+          <div class="input-action"><input id="stellar-address" placeholder="G… or C…" maxlength="56" spellcheck="false" autocomplete="off"><button id="identify-address" type="button">Check address</button></div>
+          <p class="help">No universal agent key is required. Use a public Stellar address, never an S… secret key.</p>
+          <p id="address-status" class="address-status" role="status">An address locates an account. Add source files for a code audit.</p>
+        </div>
+        <div id="source-github" class="source-panel" role="tabpanel" aria-labelledby="tab-github" hidden>
+          <label for="github-repository">Public GitHub repository</label>
+          <div class="input-action"><input id="github-repository" type="text" inputmode="url" placeholder="https://github.com/owner/agent"><button id="import-github" type="button">Import</button></div>
+          <p class="help">Imports agent-audit.json from the repository root. No GitHub login or repository execution.</p>
+          <button type="button" id="download-template" class="text-button">Download the bundle template</button>
+          <p id="import-status" role="status" class="help"></p>
+        </div>
+        <div id="source-upload" class="source-panel" role="tabpanel" aria-labelledby="tab-files" hidden>
+          <label for="source-files" class="upload-label">Choose your agent files</label>
+          <input id="source-files" type="file" multiple accept=".py,.js,.ts,.rs,.go,.json,.md,.txt,.toml,.yaml,.yml">
+          <p class="help">Source code or agent-audit.json. Up to 12 files, 32 KB per file and 64 KB total source.</p>
+        </div>
+        <div id="file-list" class="file-list" aria-live="polite"></div>
+        <div class="examples"><span>Just exploring?</span><button type="button" data-example="reader">Try a read-only agent</button><button type="button" data-example="payment">Try an unsafe agent</button></div>
+        <div class="section-heading second-step"><h2>2. Tell us its job</h2><span>About 30 seconds</span></div>
+        <label for="agent-name">Agent name</label><input id="agent-name" required maxlength="100" placeholder="e.g. Treasury assistant" autocomplete="off">
+        <label for="agent-purpose">What is it allowed to do?</label><textarea id="agent-purpose" required minlength="12" maxlength="2000" rows="2" placeholder="Send approved payments, read balances, research markets…"></textarea>
+        <fieldset class="capabilities"><legend>Declared capabilities <span>Choose what it can actually do</span></legend>
+          <label><input type="checkbox" data-scope="read:chain"> Read Stellar data</label>
+          <label><input type="checkbox" data-scope="read:web"> Browse the web</label>
+          <label><input type="checkbox" data-scope="sign:tx"> Sign or move funds</label>
+          <label><input type="checkbox" data-scope="exec:host"> Run code or commands</label>
+        </fieldset>
+        <details class="permissions"><summary>Advanced inputs <span id="tool-count">0 tools declared</span></summary>
+          <label for="agent-prompt">System instructions</label><textarea id="agent-prompt" maxlength="12000" rows="3" placeholder="Paste the instructions your agent actually receives."></textarea>
+          <label for="tool-manifest">Tool manifest JSON</label><textarea id="tool-manifest" class="code-input" rows="4" spellcheck="false">[]</textarea>
+          <p class="help">Imported manifests keep their tool names and configuration. A declared permission is not proof that a limit is enforced.</p>
+        </details>
+        <p class="privacy-note">Source is reviewed in memory, not executed or saved. Never upload credentials.</p>
+        <p id="form-error" class="error" role="alert" hidden></p>
+        <button id="run-review" class="primary" type="submit">Audit agent — free</button>
+        <p id="run-status" class="help" role="status">No wallet connection. No payment. No transaction.</p>
+      </form>
+    </div>
+    <section class="dossier" aria-labelledby="dossier-title" aria-live="polite">
+      <div class="section-heading"><h2 id="dossier-title">3. See your results</h2><span id="dossier-state">Ready when you are</span></div>
+      <div id="empty-report" class="empty-report">
+        <div class="document-symbol" aria-hidden="true">?</div><h3>Trust needs a paper trail.</h3>
+        <p>Add an agent to see concrete findings, what is missing, and what to check next.</p>
+        <ol class="review-steps"><li><strong>Find risky permissions</strong><span>Signing, spending, code execution and data access.</span></li><li><strong>Understand the evidence</strong><span>Source locations and actionable checks, not just a score.</span></li><li><strong>Keep your report</strong><span>Download an integrity-checked report. Stellar publication is a separate step.</span></li></ol>
+        <div class="boundary-note"><strong>Address ≠ audit</strong><p>A wallet balance cannot tell us how an agent behaves. Source and runtime evidence answer different questions.</p></div>
+      </div>
+      <div id="review-result" hidden>
+        <div class="result-banner"><span id="result-decision"></span><h3 id="result-name"></h3><p id="result-summary"></p><p id="result-subject"></p></div>
+        <dl class="evidence-counts"><div><dt>Observations</dt><dd id="finding-count">0</dd></div><div><dt>Priority findings</dt><dd id="priority-count">0</dd></div><div><dt>Dimensions</dt><dd id="dimension-count">0</dd></div></dl>
+        <div class="result-actions"><button type="button" id="download-report">Download report</button><button type="button" id="download-bundle">Download agent bundle</button></div>
+        <p id="download-note" class="help">Download your report before leaving this tab.</p>
+        <h4>What needs attention</h4><div id="findings"></div>
+        <h4>What is still missing</h4><ul id="missing-evidence" class="missing-evidence"></ul>
+        <details class="technical"><summary>Evidence details and report hash</summary><div id="dimensions"></div><p class="help">SHA-256 of your report download. Integrity is not a safety guarantee.</p><code id="report-hash"></code><ul id="scope-limits"></ul></details>
+      </div>
+    </section>
+  </section>
+  <section id="plans" class="pricing-section"><div class="pricing-heading"><h2>Pay for the review.<br>Not a passing score.</h2><p>Free discovery. Fixed-price release reviews. A subscription for teams.</p></div>
+    <div class="price-grid">
+      <article class="price-card available-plan"><span class="plan-status">Available now</span><h3>Quick check</h3><p class="price">Free</p><p>Address lookup, source review, priority findings and a downloadable report.</p><a href="#workspace">Start an audit</a></article>
+      <article class="price-card"><span class="plan-status">Planned · checkout closed</span><h3>Release audit</h3><p class="price">49 USDC <small>/ version</small></p><p>Bounded runtime tests, one remediation rerun and a version-bound Stellar record.</p><span class="plan-footer">Fixed scope, regardless of result</span></article>
+      <article class="price-card"><span class="plan-status">Planned · checkout closed</span><h3>Team</h3><p class="price">149 USDC <small>/ month</small></p><p>10 automated release reviews, change comparisons and CI alerts.</p><span class="plan-footer">Independent human review quoted separately</span></article>
+    </div><p class="help pricing-note">Paid prices are pilot targets, not live offers. No funds are collected. Existing testnet escrow uses XLM; USDC checkout is not enabled.</p>
+  </section>
+  <section id="method" class="method"><h2>A Stellar audit,<br>without the jargon.</h2><div>
+    <details><summary>Can I add any Stellar agent?</summary><p>You can submit a public G-account or C-contract address on Testnet or Mainnet, or provide source without a wallet. The address check is read-only. A private agent needs its owner's source or a later authorized runtime test; no service can fully audit hidden behavior from an address alone.</p></details>
+    <details><summary>Does Stellar have an agent key?</summary><p>There is no universal agent ID required by this product. Agents may use ordinary Stellar accounts or smart accounts with delegated permissions. We ask for public identifiers only. A private key is authority to act, not evidence of trustworthy behavior.</p></details>
+    <details><summary>What does the current audit prove?</summary><p>Seven rule-based dimensions inspect the supplied evidence. They do not execute your agent. The report distinguishes source findings from missing evidence. Owner signatures and successful Soroban state readback are required for a published audit record; this screen does not claim that step is complete.</p></details>
+  </div></section>
+</main>
+<footer><span>AgentVeritas · Built for Stellar</span><a href="/operator">Operator console</a><span>Never share your secret key.</span></footer>
+</body></html>
