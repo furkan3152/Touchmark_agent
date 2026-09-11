@@ -1,6 +1,6 @@
 # AgentVeritas Stellar — Deep Agent Audit
 
-Policy: `agentveritas.stellar.policy.2026-08-31.4`
+Policy: `agentveritas.stellar.policy.2026-09-11.1`
 
 ## What makes the Deep tier different?
 
@@ -13,7 +13,7 @@ The Stellar-specific deep analysis looks for these paths:
 - Stellar secret seed/private key/API secret → log or outbound network call;
 - signing/spending tool → absence of `require_auth`, allowlist, limits, and sequence/idempotency enforcement in the executable code.
 
-When a source variable and sink are seen in the same file, the finding is `CONFIRMED` and backed by file:line evidence. The absence of checks or tool chainability remains `INFERRED`; it is not presented as an actualized exploit.
+Python paths use AST-based propagation with function-local state, reassignment and conservative branch joins. A visible source-to-sink path is `CONFIRMED` **static evidence**, backed by file:line context; this is not confirmation of exploitability. Comments do not create Python paths and unrelated `validate`/`require_auth` text does not suppress them. Other languages and text-pattern-only matches remain `INFERRED`. Missing controls require additional enforcement tests.
 
 ## Compounded risks
 
@@ -35,4 +35,6 @@ It must only be enabled on an isolated, test-funded, and resettable target. When
 
 ## Evidence boundary
 
-The analysis is deterministic, intra-file, and a lightweight taint approach; it is not full AST, inter-procedural, or symbolic execution. It may miss dynamic dispatch, external policy gateways, and authorization checks in another repository. A finding-free result is not a professional Stellar/Soroban audit or proof of exploit absence.
+The Python analysis uses a bounded AST, not inter-procedural or symbolic execution. It may miss import aliases, dynamic dispatch, external policy gateways, exception-dependent flow and authorization checks in another repository. A finding-free result is not a professional Stellar/Soroban audit or proof of exploit absence. Process invocation does not automatically imply shell injection, and a financial input path does not prove that a downstream authorization policy is bypassable.
+
+The public [Studio](AUDIT_STUDIO.md) always runs source review without active probes or external integrations. Its scenario checks describe defense signals, not executed attacks. The legacy operator probe remains an explicitly enabled endpoint check, not an isolated runtime harness. The latter is a [pilot milestone](PRODUCT_AND_PILOT.md).

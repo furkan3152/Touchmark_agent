@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -24,6 +24,9 @@ from .models import AuditTier
 from .services.chain_status import ChainStatusService
 from .services.escrow import EscrowIndeterminateError, ExternalSignatureRequired
 from .services.pipeline import AuditPipeline
+from .services.studio import ReviewRequest, review_source
+from .studio_guard import StudioGuard
+from .services.studio_intake import AddressRequest, GitHubRequest, identify_address, import_github_bundle
 
 logger = logging.getLogger("agentveritas.api")
 
@@ -124,6 +127,7 @@ app = FastAPI(
     description="Stellar agent validation layer — Soroban registry and evidence-first audits.",
     lifespan=lifespan,
 )
+app.add_middleware(StudioGuard)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
@@ -377,6 +381,26 @@ async def config() -> dict:
 
 
 # ---------------------------------------------------------------------- agents
+@app.post("/api/v1/studio/review")
+async def studio_review(req: ReviewRequest) -> dict:
+    return await review_source(req, settings)
+
+
+@app.post("/api/v1/studio/identify")
+async def studio_identify(req: AddressRequest) -> dict:
+    return await identify_address(req)
+
+
+@app.post("/api/v1/studio/import")
+async def studio_import(req: GitHubRequest) -> dict:
+    try:
+        return await import_github_bundle(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="GitHub could not be reached. Upload your bundle directly.") from exc
+
+
 @app.post("/api/v1/agents/ingest", dependencies=[Depends(require_operator)])
 async def ingest_agent(req: IngestRequest) -> dict:
     try:
@@ -434,7 +458,7 @@ async def ownership_verify(req: OwnershipVerifyRequest) -> dict:
 
 
 
-@app.get("/api/v1/agents")
+@app.get("/api/v1/agents", dependencies=[Depends(require_operator)])
 async def list_agents() -> dict:
     return {
         "agents": [
@@ -451,7 +475,7 @@ async def list_agents() -> dict:
     }
 
 
-@app.get("/api/v1/agents/{agent_id}")
+@app.get("/api/v1/agents/{agent_id}", dependencies=[Depends(require_operator)])
 async def get_agent(agent_id: str) -> dict:
     artifact = pipeline.store.get_agent(agent_id)
     if not artifact:
@@ -553,12 +577,12 @@ async def run_job(job_id: str) -> dict:
     return _job_view(job)
 
 
-@app.get("/api/v1/jobs")
+@app.get("/api/v1/jobs", dependencies=[Depends(require_operator)])
 async def list_jobs(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     return {"jobs": [_job_view(j) for j in pipeline.store.recent_jobs(limit)]}
 
 
-@app.get("/api/v1/jobs/{job_id}")
+@app.get("/api/v1/jobs/{job_id}", dependencies=[Depends(require_operator)])
 async def get_job(job_id: str) -> dict:
     job = pipeline.store.get_job(job_id)
     if not job:
@@ -566,7 +590,7 @@ async def get_job(job_id: str) -> dict:
     return _job_view(job)
 
 
-@app.get("/api/v1/jobs/{job_id}/report.md", response_class=PlainTextResponse)
+@app.get("/api/v1/jobs/{job_id}/report.md", response_class=PlainTextResponse, dependencies=[Depends(require_operator)])
 async def job_report_md(job_id: str) -> str:
     try:
         return pipeline.markdown_for(job_id)
@@ -574,12 +598,25 @@ async def job_report_md(job_id: str) -> str:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/api/v1/jobs/{job_id}/report.json")
+@app.get("/api/v1/jobs/{job_id}/report.json", dependencies=[Depends(require_operator)])
 async def job_report_json(job_id: str) -> dict:
     try:
         return pipeline.json_for(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/jobs/{job_id}/report.committed.json", dependencies=[Depends(require_operator)])
+async def job_committed_report(job_id: str) -> Response:
+    try:
+        content = pipeline.committed_json_for(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(content, media_type="application/json", headers={
+        "Content-Disposition": 'attachment; filename="agent-review.committed.json"',
+    })
 
 
 # ------------------------------------------------------------------ validation
@@ -633,12 +670,12 @@ async def validation_request(hook: ValidationRequestHook) -> dict:
 
 
 # ---------------------------------------------------------------------- badges
-@app.get("/api/v1/badges")
+@app.get("/api/v1/badges", dependencies=[Depends(require_operator)])
 async def all_badges() -> dict:
     return {"badges": pipeline.badges.all_badges()}
 
 
-@app.get("/api/v1/badges/{identifier}")
+@app.get("/api/v1/badges/{identifier}", dependencies=[Depends(require_operator)])
 async def get_badge(identifier: str) -> dict:
     record = pipeline.badges.get(identifier)
     if not record:
@@ -656,7 +693,7 @@ async def monitor_subscribe(req: MonitorSubscribe) -> dict:
     return sub.model_dump(mode="json")
 
 
-@app.get("/api/v1/monitor/subscriptions")
+@app.get("/api/v1/monitor/subscriptions", dependencies=[Depends(require_operator)])
 async def monitor_list() -> dict:
     return {
         "subscriptions": [s.model_dump(mode="json") for s in pipeline.store.subscriptions.values()]
@@ -682,7 +719,7 @@ async def stats() -> dict:
     return out
 
 
-@app.get("/api/v1/ledger/nanopayments")
+@app.get("/api/v1/ledger/nanopayments", dependencies=[Depends(require_operator)])
 async def nanopayments() -> dict:
     ledger = pipeline.escrow.nanopayment_ledger
     return {
@@ -697,6 +734,10 @@ if FRONTEND_DIR.exists():
 
     @app.get("/")
     async def index() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "studio.html")
+
+    @app.get("/operator")
+    async def operator_console() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "index.html")
 
     app.mount("/ui", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="ui")

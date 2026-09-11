@@ -233,6 +233,13 @@ class AuditPipeline:
             raise KeyError("rapor hazır değil")
         return report_to_dict(job.report, artifact)
 
+    def committed_json_for(self, job_id: str) -> str:
+        """Exact report bytes hashed before any mutable attestation metadata existed."""
+        job = self._job(job_id)
+        if not job.report or not job.report.attestation:
+            raise KeyError("Committed report not ready")
+        return self.ipfs.read_committed(job.report.attestation.report_hash)
+
     # -------------------------------------------------------------- monitoring
     def subscribe_monitor(
         self, agent_id: str, interval_minutes: int, prepaid_usdc: float

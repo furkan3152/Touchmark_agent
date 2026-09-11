@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
+from fastapi.testclient import TestClient
 
 from backend.app import api
 from backend.app.config import Settings
@@ -72,3 +73,16 @@ def test_deep_selftest_cannot_be_triggered_with_get(run):
     with pytest.raises(HTTPException) as caught:
         run(api.selftest(deep=True))
     assert caught.value.status_code == 405
+
+
+@pytest.mark.parametrize("path", [
+    "/agents", "/agents/private-agent", "/jobs", "/jobs/private-job",
+    "/jobs/private-job/report.json", "/jobs/private-job/report.md",
+    "/monitor/subscriptions", "/ledger/nanopayments", "/badges", "/badges/private-agent",
+    "/jobs/private-job/report.committed.json",
+])
+def test_persisted_audit_data_requires_operator_identity(settings, monkeypatch, path):
+    monkeypatch.setattr(api, "settings", settings.model_copy(update={"admin_api_key": "test-only"}))
+    with TestClient(api.app) as client:
+        response = client.get("/api/v1" + path)
+    assert response.status_code == 401

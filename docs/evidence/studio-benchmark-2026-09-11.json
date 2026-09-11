@@ -1,0 +1,176 @@
+{
+  "date": "2026-09-11",
+  "scope": "Synthetic source-only public HTTP API characterization. No agent execution, independent third-party agents, external AI, chain writes or real secrets. Initial 8 pre-labeled cases plus 2 diagnostic follow-ups; not a population accuracy benchmark.",
+  "metrics": {
+    "cases": 10,
+    "true_positive": 4,
+    "false_negative": 2,
+    "true_negative": 3,
+    "false_positive": 1,
+    "risk_recall": 0.6666666666666666,
+    "alarm_precision": 0.8,
+    "negative_false_positive_rate": 0.25
+  },
+  "cases": [
+    {
+      "case": "01-ledger-reader",
+      "expected_risk": false,
+      "detected": false,
+      "target_finding": "security-path-untrusted-to-command",
+      "target_grades": [],
+      "priority_count": 0,
+      "total_findings": 25,
+      "decision": "needs_evidence",
+      "input_hash": "sha256:658b796719182a578fddc19d63dfd6345edb6423d27b1bd7c514e9107a2098ff",
+      "report_sha256": "65bf932a737f281c81c30aa0203303edf6d7369209421eb647210c799c1b61f1",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "02-fixed-command",
+      "expected_risk": false,
+      "detected": false,
+      "target_finding": "security-path-untrusted-to-command",
+      "target_grades": [],
+      "priority_count": 0,
+      "total_findings": 23,
+      "decision": "needs_evidence",
+      "input_hash": "sha256:9af5945e83649d2f560e9aaab77ae0d10411d2cde1840082b6f48de3423656f7",
+      "report_sha256": "03adcf08276d9004ff1bb43f9d5ed064ac0baba010ad56081edfaa02b7cde785",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "03-direct-command",
+      "expected_risk": true,
+      "detected": true,
+      "target_finding": "security-path-untrusted-to-command",
+      "target_grades": [
+        "confirmed"
+      ],
+      "priority_count": 1,
+      "total_findings": 25,
+      "decision": "needs_fixes",
+      "input_hash": "sha256:dbe429b0ea0671e8eea740c72b04a0dc2345b66f3d9621554368346a087b992e",
+      "report_sha256": "3ca0bf7c393bd231b960a242d42bf6176334cd27a6c4e0554b18042b0ae18a42",
+      "target_evidence": [
+        "agent.py:5 `return subprocess.run(payload['command'], shell=True, capture_output=True, timeout=2).stdout`"
+      ],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "04-direct-payment",
+      "expected_risk": true,
+      "detected": true,
+      "target_finding": "security-path-untrusted-to-financial-sink",
+      "target_grades": [
+        "confirmed"
+      ],
+      "priority_count": 5,
+      "total_findings": 33,
+      "decision": "needs_fixes",
+      "input_hash": "sha256:722264c12c589dd8f758d4cf14bb63e5119c9cb2f698328fb7df2c723d771f17",
+      "report_sha256": "9898e79b2dc17e8e20d1d66c4d21e3039f7c37b5bd45a728ec89c25526818ff0",
+      "target_evidence": [
+        "agent.py:3 `return soroban.invoke_contract(payload)`"
+      ],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "05-seed-log",
+      "expected_risk": true,
+      "detected": true,
+      "target_finding": "security-path-secret-to-exfiltration",
+      "target_grades": [
+        "confirmed"
+      ],
+      "priority_count": 1,
+      "total_findings": 25,
+      "decision": "needs_fixes",
+      "input_hash": "sha256:546b4c730347ddea6545851a903f93f0d040d3618347a3b6518b19e94462106d",
+      "report_sha256": "8ef09fd672e4b4160c4a89b3ccd3029f5e11763e627f131c72fc4547440fba7c",
+      "target_evidence": [
+        "agent.py:5 `logger.info('Wallet diagnostics: %s', secret_seed)`"
+      ],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "06-cross-file-command",
+      "expected_risk": true,
+      "detected": true,
+      "target_finding": "security-path-untrusted-to-command",
+      "target_grades": [
+        "confirmed"
+      ],
+      "priority_count": 1,
+      "total_findings": 25,
+      "decision": "needs_fixes",
+      "input_hash": "sha256:b2ea37aa8c03c226fb892937ef95ebe280c795397a44e4473fb60f6beab989a4",
+      "report_sha256": "f68ea1bec283ca7ba6437de42043e9eecb87d47c582c8c50eb2964c73e371f21",
+      "target_evidence": [
+        "executor.py:4 `return subprocess.run(command, shell=True, capture_output=True, timeout=2).stdout`"
+      ],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "07-overwritten-command",
+      "expected_risk": false,
+      "detected": false,
+      "target_finding": "security-path-untrusted-to-command",
+      "target_grades": [],
+      "priority_count": 0,
+      "total_findings": 24,
+      "decision": "needs_evidence",
+      "input_hash": "sha256:0b503bb6687bf6175eda6424e50f1a2bf9e6e7df48f5c23a2d0012fac867f357",
+      "report_sha256": "d82987fb27cf18feeacdeca4bfac3db44408f92e4b3e8912f204cba1a17293e3",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "08-cross-file-seed",
+      "expected_risk": true,
+      "detected": false,
+      "target_finding": "security-path-secret-to-exfiltration",
+      "target_grades": [],
+      "priority_count": 0,
+      "total_findings": 24,
+      "decision": "needs_evidence",
+      "input_hash": "sha256:e086d271fbe225c3aa24e87a5698b5129e549741181707cc1382f509ed9989c7",
+      "report_sha256": "18102e6436c765e3adbcd6e9e34c5383a9c605c0f23a6f657ed7c7647cb48287",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "09-renamed-cross-file-command",
+      "expected_risk": true,
+      "detected": false,
+      "target_finding": "security-path-untrusted-to-command",
+      "target_grades": [],
+      "priority_count": 0,
+      "total_findings": 24,
+      "decision": "needs_evidence",
+      "input_hash": "sha256:b51d36d7fe701aba279f0140939240880066f0383cee753a5431b570e775cfd0",
+      "report_sha256": "659ab0ac8a9f979b00db62a7867c244c70968ff10e95a22449013f465500a305",
+      "target_evidence": [],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    },
+    {
+      "case": "10-fixed-cross-file-command",
+      "expected_risk": false,
+      "detected": true,
+      "target_finding": "security-path-untrusted-to-command",
+      "target_grades": [
+        "confirmed"
+      ],
+      "priority_count": 1,
+      "total_findings": 25,
+      "decision": "needs_fixes",
+      "input_hash": "sha256:cad89148a5e6165656e52f398a83903a93bd46ec5be1c119ad4b95dfcf7d45fb",
+      "report_sha256": "ebb152a476dc2c3cb0e251679c1ed3a01aaec5f24690ae3bf5bd4b1fc6fd4a14",
+      "target_evidence": [
+        "executor.py:4 `return subprocess.run(command, shell=True, capture_output=True, timeout=2).stdout`"
+      ],
+      "policy": "agentveritas.stellar.policy.2026-09-11.1"
+    }
+  ]
+}

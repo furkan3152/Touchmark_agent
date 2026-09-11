@@ -91,7 +91,7 @@
   async function api(path, options = {}) {
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     const operatorKey = readOperatorKey();
-    if (operatorKey && String(options.method || "GET").toUpperCase() !== "GET") {
+    if (operatorKey) {
       headers.Authorization = `Bearer ${operatorKey}`;
     }
     const res = await fetch(API + path, {
@@ -574,10 +574,8 @@
       ${notes ? `<ul class="note-list">${notes}</ul>` : ""}
 
       <div class="link-row">
-        <a href="${API}/jobs/${encodeURIComponent(job.id)}/report.md"
-           target="_blank" rel="noopener">Markdown report</a>
-        <a href="${API}/jobs/${encodeURIComponent(job.id)}/report.json"
-           target="_blank" rel="noopener">JSON report</a>
+        <button type="button" data-download-report="md">Markdown report</button>
+        <button type="button" data-download-report="committed.json">Committed JSON report</button>
         ${
           r.report_uri && /^https:\/\//.test(r.report_uri)
             ? `<a href="${esc(r.report_uri)}" target="_blank" rel="noopener"
@@ -596,6 +594,28 @@
       </details>`;
 
     const card = $("#reportCard");
+    card.querySelectorAll("[data-download-report]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          const extension = button.dataset.downloadReport;
+          const response = await fetch(`${API}/jobs/${encodeURIComponent(job.id)}/report.${extension}`, {
+            headers: { Authorization: `Bearer ${readOperatorKey()}` },
+          });
+          if (!response.ok) throw new Error(`Report download failed (HTTP ${response.status}).`);
+          const url = URL.createObjectURL(await response.blob());
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `audit-${job.id}.${extension}`;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) {
+          button.textContent = error.message;
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
     card.hidden = false;
     card.scrollIntoView({
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",

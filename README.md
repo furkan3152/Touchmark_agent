@@ -1,6 +1,6 @@
 # AgentVeritas Stellar
 
-**Evidence-first verification and audit system for AI agents operating on or interacting with the Stellar network.**
+Review an agent's code, permissions and behavior claims before giving it authority on Stellar.
 
 ![Stellar](https://img.shields.io/badge/Stellar-Network-black?style=flat&logo=stellar)
 ![Soroban](https://img.shields.io/badge/Soroban-Smart_Contracts-black?style=flat&logo=rust)
@@ -8,6 +8,9 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat&logo=python)
 
 ## Table of Contents
+
+- [Product and pilot scope](docs/PRODUCT_AND_PILOT.md)
+- [Audit Studio](#audit-studio)
 - [Project Overview](#project-overview)
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
@@ -30,7 +33,21 @@
 - **Purpose**: Evidence-first verification and audit system for AI agents operating on or interacting with the Stellar network
 - **Architecture**: Python audit backend + Soroban AgentRegistry contract + optional SAC AuditEscrow contract
 - **Independence**: Standalone Stellar product with no cross-chain dependencies
-- **Status**: Testnet deployed, NOT mainnet ready
+- **Status**: Local public-review prototype and existing Testnet contracts; not a hosted production service
+
+## Audit Studio
+
+At `/`, add a public Stellar account/contract address, import a public GitHub `agent-audit.json`, or upload source files. Describe the intended job and select its capabilities; detailed instructions and tool JSON are optional advanced inputs. No wallet connection or operator key is needed. Try the labeled read-only and unsafe-payment fixtures, inspect the findings, then download the report and reusable input bundle.
+
+Address lookup reads Testnet or Mainnet without signing. Finding an account or contract does **not** identify its owner or prove agent behavior. An address-only submission returns missing evidence, not a source audit. GitHub import reads a bounded root bundle, not an entire repository. Never supply a private key.
+
+The quick check is free. Proposed paid offers are **49 USDC per automated release review** and **149 USDC/month for 10 automated reviews**. They are pilot pricing targets: runtime testing, subscriptions and USDC checkout are not enabled, and no payment is collected.
+
+The Studio runs the existing seven **rule-based analysis modules**, not seven independent human auditors. Python source paths use bounded AST analysis; other languages use heuristics. Uploaded programs are never imported or executed. Source is processed in server memory without persistence or external AI processing. Reports can contain source excerpts: review them before sharing.
+
+The result distinguishes actionable source findings from missing evidence. It does not award a production safety certificate. Runtime execution, owner verification and Soroban publication are separate stages. The original operator workflow remains available at `/operator`; its stored agents, jobs, badges and reports now require operator authentication for reads as well as writes.
+
+See the [bundle/API contract](docs/AUDIT_STUDIO.md), [product and revenue model](docs/PRODUCT_AND_PILOT.md), and [current verification record](docs/VERIFICATION_2026-09-11.md).
 
 ## How It Works
 
@@ -55,7 +72,11 @@ DEEP tier traces: untrusted input → command/code execution, untrusted input �
 ## Architecture
 
 ```text
-agent input
+Studio bundle (public, bounded, stateless)
+    └─► seven static dimensions ──► source findings + coverage + exact report download
+         No code execution, ownership claim, payment, persistence or chain write
+
+Operator ingestion (authenticated, persistent)
     │
     ▼
 secure ingestion ──► parallel audit swarm ──► synthesis judge
@@ -84,6 +105,8 @@ The backend never stores seeds, never signs transactions, and never submits them
 
 Deployed on August 30, 2026 with external Stellar CLI signer:
 
+Read-only re-verification on September 11, 2026 passed all **31** checks in `scripts/verify_testnet_deployment.py`. No new deployment was made for the Studio changes.
+
 | Component | Testnet ID | Evidence |
 |---|---|---|
 | AgentRegistry | `CBBBUECSLXGXVXYMRYK3BCTL3YYBRWDZGW3RNCH5CWKY6KU6UGE576KT` | Local/on-chain WASM hash match, deploy tx SUCCESS, role and lifecycle readback |
@@ -94,8 +117,8 @@ Registry: register → request → respond → review completed. Escrow: create 
 
 ## SEP Boundaries
 
-- **SEP-1**: Service discovery and endpoint announcement
-- **SEP-10**: G/M account web session auth
+- **SEP-1**: Planned service discovery; no production domain or published discovery file is claimed
+- **SEP-10**: Planned G/M account web sessions; the current operator bearer key is not SEP-10
 - **SEP-53 (Final)**: G-account offchain ownership message with prefix + SHA-256 + Ed25519
 - **SEP-45 (Draft)**: C-account web auth; does not replace core contract authorization
 - **SEP-41/SAC**: Optional escrow asset only
@@ -109,8 +132,8 @@ Detailed decisions: [docs/STELLAR_ARCHITECTURE_DECISION.md](docs/STELLAR_ARCHITE
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements.txt
-cp .env.example .env
+.venv/bin/pip install -r backend/requirements-dev.txt
+test -f .env || cp .env.example .env
 
 # Offline verification (no external writes)
 STELLAR_NETWORK=offline \
@@ -119,12 +142,17 @@ ENABLE_AUDIT_ESCROW=false \
 LLM_PROVIDER= \
 LLM_API_KEY= \
 PINATA_JWT= \
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q \
+  backend/tests/test_audit_studio.py \
+  backend/tests/test_deep_agent_audit.py \
+  backend/tests/test_api_security.py \
+  backend/tests/test_swarm_e2e.py
 
 # Soroban
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+# Contract source is unchanged by the Studio release.
+cargo test -p agent-veritas-registry
 cargo build --workspace --target wasm32v1-none --release
 ```
 
@@ -132,10 +160,11 @@ Dev server:
 ```bash
 ./scripts/dev.sh
 # UI: http://127.0.0.1:8000/
+# Operator: http://127.0.0.1:8000/operator
 # API: http://127.0.0.1:8000/api/v1
 ```
 
-Side-effect API endpoints return 503 if `ADMIN_API_KEY` is not set. Local directory ingestion is disabled by default. `scripts/test.sh` runs tests with all external services force-disabled.
+Persistent operator endpoints return 503 if `ADMIN_API_KEY` is not set; unauthenticated requests are rejected when it is set. Studio remains usable without that key. Local directory ingestion is disabled by default. `scripts/test.sh` is the separate release-wide check; use targeted tests during development.
 
 ## Testnet Verification
 
@@ -169,11 +198,11 @@ Testnet deployment and native-XLM funded lifecycle are verified; remaining gaps 
 │   │   ├── ingestion/ # Secure agent ingestion
 │   │   ├── reporting/ # Report generation, IPFS
 │   │   └── compliance/# OFAC screening
-│   └── tests/         # 25 test modules
+│   └── tests/         # Targeted regressions and pipeline tests
 ├── contracts/         # Soroban smart contracts
 │   ├── agent-registry/# Core registry contract
 │   └── audit-escrow/  # Optional escrow contract
-├── frontend/          # Web UI (HTML/CSS/JS)
+├── frontend/          # Public Studio + authenticated operator console
 ├── scripts/           # Dev, test, deploy utilities
 ├── deployments/       # Testnet deployment manifest
 ├── docs/              # Architecture docs & audit reports
@@ -184,9 +213,12 @@ Testnet deployment and native-XLM funded lifecycle are verified; remaining gaps 
 
 ## Documentation
 
+- [Product and Pilot](docs/PRODUCT_AND_PILOT.md) — users, upload flow, revenue hypotheses and 30-day Instawards scope
+- [Audit Studio API](docs/AUDIT_STUDIO.md) — bundle format, limits and exact-byte report verification
+- [Verification 2026-09-11](docs/VERIFICATION_2026-09-11.md) — changes, evidence and remaining release gates
 - [Stellar Architecture Decision](docs/STELLAR_ARCHITECTURE_DECISION.md) — SEP choices and system design rationale
 - [Deep Agent Audit](docs/DEEP_AGENT_AUDIT.md) — DEEP tier analysis methodology
-- [Audit Report 2026-08-30](docs/AUDIT_2026-08-30.md) — Current findings and evidence matrix
+- [Audit Report 2026-08-30](docs/AUDIT_2026-08-30.md) — Historical findings and evidence matrix
 - [Visual Review](docs/REVIEW_2026-08-30.html) — Readable audit summary
 - [Deployment Manifest](deployments/stellar-testnet.json) — Full transaction/ledger/event evidence
 

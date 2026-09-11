@@ -116,7 +116,11 @@ class SecurityAuditor(BaseAuditor):
         mode = "canlı probe" if live else "statik"
         if artifact.endpoint_url and not live:
             mode += " (aktif endpoint saldırıları opt-in olmadığı için kapalı)"
-        notes = f"{len(scenarios)} saldırı denendi, {blocked} savunuldu. Mod: {mode}."
+        notes = (
+            f"{len(scenarios)} endpoint probes attempted; {blocked} returned no configured leak marker. Mode: {mode}."
+            if live else
+            f"{len(scenarios)} static defense-signal checks; {blocked} signals present; attacks executed: 0. Mode: {mode}."
+        )
         return findings, scenarios, notes
 
     # --------------------------------------------------------------- attacks
@@ -263,8 +267,8 @@ class SecurityAuditor(BaseAuditor):
                         detail,
                         evidence="konum: " + ", ".join(hits),
                         remediation=self._remediation_for(title),
-                        references=["static analysis"],
-                        grade=EvidenceGrade.CONFIRMED,
+                        references=["text-pattern candidate; validate executable context"],
+                        grade=EvidenceGrade.INFERRED,
                         confidence=0.9,
                     )
                 )
