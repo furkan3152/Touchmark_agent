@@ -1,0 +1,23 @@
+{
+  "stage": "read_only_checkout_quote",
+  "exception": "ValueError",
+  "frames": [
+    {
+      "file": "<stdin>",
+      "line": 12
+    },
+    {
+      "file": "testnet_checkout.py",
+      "line": 307
+    },
+    {
+      "file": "testnet_checkout.py",
+      "line": 189
+    },
+    {
+      "file": "testnet_checkout.py",
+      "line": 146
+    }
+  ],
+  "reason": "Testnet RPC could not verify this checkout."
+}

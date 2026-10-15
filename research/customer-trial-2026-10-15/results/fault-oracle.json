@@ -1,0 +1,18 @@
+{
+  "schema": "veritas.customer-trial-fault-oracle/v1",
+  "engine_result": false,
+  "network_used": false,
+  "simulation": "External payment acknowledgement lost; no assumption about ledger acceptance.",
+  "source_unchanged": true,
+  "reserve_pending_outcome": {
+    "retry": {
+      "status": "already_processed"
+    },
+    "pending_intents": 1,
+    "submission_attempts": 1,
+    "reconciled": false
+  },
+  "unapproved_recipient_rejected": true,
+  "over_action_budget_rejected": true,
+  "interpretation": "An existing unconfirmed intent is reported already_processed with no reconciliation. Replay avoidance is not proof of payment completion."
+}
