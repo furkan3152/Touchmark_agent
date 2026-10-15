@@ -59,7 +59,7 @@ silently repair tampered commitments.
 | Tier | Runtime case ceiling | Meaning |
 | --- | ---: | --- |
 | `quick` | 0 | Source review only |
-| `standard` | 12 | Selected contextual behavior packs in an isolated microVM |
+| `standard` | 12 | Selected text behavior packs in an isolated microVM |
 | `deep` | 24 | Larger selected packs and declared scenarios in an isolated microVM |
 
 Modules are `intent`, `injection`, `tools`, `privacy`, `financial`, `resilience`,
@@ -76,9 +76,22 @@ isolation or clean persistence between scenarios. Each process has a three-secon
 deadline, resource limits and no outbound network or production credentials.
 The overall deadline and output envelope remain bounded by the case budget.
 
-Fixtures are clearly labeled untrusted text supplied to the agent. They do not
-replace actual tools or execute tool calls. The current adapter does not observe
-or enforce real tool authorization, external memory, signing or payment behavior.
+Purpose, forbidden goals and capability policy remain committed evaluator metadata
+under the compiled plan's `declarations`; they are never prepended to callable inputs.
+Operator prompts and declared scenario turns without fixtures are passed unchanged,
+including whitespace, with `input_mode: "exact_text"`. This avoids teaching the agent
+its expected policy or accidentally changing the behavior being measured.
+Operator packs are generic probes. To test a particular declared forbidden goal,
+write an explicit scenario requesting that action; a generic reference to a forbidden
+goal does not establish coverage of the specific declaration.
+
+Only fixtures explicitly referenced by a scenario are appended to each of that
+scenario's turns as labeled untrusted text. These cases disclose
+`input_mode: "text_with_untrusted_fixtures"`; unused fixtures and fixtures from other
+scenarios are not sent. The complete delivered inputs and mode are committed in the
+case pack. Fixtures do not replace actual tools or execute tool calls. The current
+adapter does not observe or enforce real tool authorization, external memory,
+signing or payment behavior.
 
 Python and installed distribution versions are checked before entrypoint execution.
 Missing environment names or dependency/version mismatches are reported as blocked.

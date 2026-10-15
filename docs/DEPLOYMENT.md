@@ -4,18 +4,17 @@
 
 `app.py` exports the FastAPI application with a strict public-route allowlist. It sets `STATELESS_STUDIO=true`, disables the patrol lifecycle and denies operator endpoints. Temporary framework bookkeeping uses `/tmp`; it is not durable storage. No source bundle or report is persisted by the Studio.
 
-Connect this repository and deploy the reviewed feature branch as a **preview**. `vercel.json` selects FastAPI and a 60-second request limit. `requirements.txt` includes the backend requirements. No signing key is needed. The source does not enable paid checkout or credential minting.
+Connect this repository and deploy the reviewed feature branch as a **preview**. `vercel.json` selects FastAPI and a 180-second request limit, subject to the account's platform limits. `requirements.txt` includes the backend requirements. No signing key is needed for the stateless Studio. Automatic order funding and settlement stay disabled there.
 
-Keep public AI disabled until there is a provider budget and deployment-level rate limiting. Process-local admission control is per instance, **not a distributed cost cap**. Set:
+AI review requires explicit source-sharing consent and private pilot authorization. Keep it disabled until there is a provider budget and deployment-level rate limiting. Process-local admission control is per instance, **not a distributed cost cap**. For the verified Gateway path, set:
 
 ```text
-LLM_PROVIDER=openai
-LLM_MODEL=<a model supported by your account>
-LLM_API_KEY=<set in the deployment secret manager>
+LLM_PROVIDER=vercel
+LLM_MODEL=openai/gpt-4.1-mini
 ENABLE_PUBLIC_AI_REVIEW=true
 ```
 
-The app sends one bounded prompt for the optional public AI second opinion, with a 25-second application timeout. A source review still works if AI fails. The user must explicitly consent on each submitted review. Redaction is best effort: do not submit production credentials.
+Vercel supplies its own OIDC identity. Outside Vercel, securely configure a Gateway API key. See [AI configuration](AI_CONFIGURATION.md) for exact request limits, private access keys and live evidence. Source review sends one bounded prompt for its optional AI second opinion; runtime AI planning is a separate call. Static review can still return when AI is unavailable, but paid fulfillment refuses to settle when a requested AI review did not complete. Redaction is best effort: do not submit production credentials.
 
 ## Durable operator service
 
@@ -32,13 +31,15 @@ The service binds to loopback in Compose; place a TLS reverse proxy with request
 
 Persistent operator reports are access-controlled but not encrypted at rest by this application. Use host encryption and a retention policy. The shared operator bearer token is an administrative pilot boundary, not customer tenant isolation. Do not expose it to customer browsers or sell multi-tenant accounts without adding per-tenant authorization.
 
+For the new official Testnet order service, follow [OFFICIAL_FULFILLMENT.md](OFFICIAL_FULFILLMENT.md). Compose pins its SQLite database to the named `/app/data` volume. Explicitly enable `ENABLE_OFFICIAL_ORDERS`, `OFFICIAL_ORDERS_STORAGE_DURABLE` and `ENABLE_TESTNET_ORDER_SETTLEMENT`, keep `OFFICIAL_ORDERS_LOCAL_PILOT=false`, and configure the pinned service identities plus private Blob storage in the host's secret manager. These switches are assertions of deployment responsibility; they do not provision backups or verify the host's durability. Leave them disabled until the volume and recovery procedure have been checked.
+
 ## New contract deployment
 
 The historical `deployments/stellar-testnet.json` describes an older release. Do not overwrite its transaction evidence or use it to claim the new contracts are deployed.
 
 1. Build and test with Rust 1.91.0 and pinned Soroban SDK 25.3.0.
 2. Deploy registry v0.2 with constructor argument `admin` using an external signer.
-3. Deploy escrow with constructor arguments `admin`, `token`, `fee_to`, `fee_bps`. Supply an explicitly verified SAC contract. Native XLM is not USDC.
+3. Deploy escrow with constructor arguments `admin`, `token`, `fee_to`, `fee_bps`, `registry`, in that order. Supply the new registry address and an explicitly verified SAC contract. Native XLM is not USDC. The current verified deployment is recorded in `deployments/testnet-audit-delivery-2026-10-15.json`.
 4. Deploy `AuditCredential` with constructor argument `registry` pointing at the new registry.
 5. Register an agent; authorize a validator; create a validation request; submit the report hash/URI; issue the credential using that request ID and an expiry within 90 days.
 6. Read back the credential and `is_current`. Verify the exact WASM hash and successful transaction status.

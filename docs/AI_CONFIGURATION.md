@@ -142,10 +142,19 @@ never change deterministic scores or authorize a transaction or credential.
 ## Verification status
 
 Provider transport, error handling, redaction, bounds and grounding are covered
-by mocked HTTP regression tests. The public Gateway catalog was read successfully.
-At implementation time no Gateway key, direct-provider key or OIDC token was
-available in the local runtime, so **no live inference or deployed OIDC inference
-was verified**. Update this statement only after recording a real canary result.
+by mocked HTTP regression tests. On 2026-10-15, an explicitly invoked Vercel
+Preview build used its own OIDC identity for a real Gateway connection canary and
+a separate source review with `openai/gpt-4.1-mini`. Both completed. The private
+proof was authenticated, hash-checked and independently denied anonymous access.
+See [deployed integration evidence](../deployments/deployed-integrations-2026-10-15.json).
+
+The two calls used 339 provider-reported tokens and reported $0.0002616 in model
+cost, excluding Sandbox/build charges. The model's one accepted observation was
+a speculative future-risk hypothesis about an ignored prompt parameter, not a
+verified vulnerability; it did not change the deterministic score. This confirms
+the connection and grounding pipeline, not useful detection accuracy. Protected
+deployed HTTP, browser and Freighter journeys remain unverified. Local AI still
+requires a separately configured credential; no build identity was exported.
 
 ## Official sources
 
