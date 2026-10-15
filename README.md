@@ -378,3 +378,7 @@ Apache 2.0 — see [LICENSE](LICENSE).
 <p align="center">
   <sub>Built for the Stellar ecosystem · No cross-chain dependencies · Independence verified via <code>scripts/verify_independence.sh</code></sub>
 </p>
+
+## Runtime pilot and localhost
+
+See [the runtime pilot guide](docs/RUNTIME_PILOT.md) for automatic source discovery, folder/GitHub intake, isolated Python probes, localhost commands and exact current limitations. [Fresh testnet evidence](deployments/testnet-pilot-2026-10-15.json) includes a completed synthetic credential issue/revocation lifecycle.

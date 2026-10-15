@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     admin_rate_limit_per_minute: int = 60
 
     # LLM; privacy-mode için ayrıca opt-in gerekir.
+    enable_sandbox_runtime: bool = False
+    runtime_api_key: str = ""
+    sandbox_image: str = "vercel/sandbox/universal@sha256:c77f7436b9bc0a8b01ef7b09dbcea2de6a18a9fe2aafa89996d2da193da72cf0"
     enable_public_ai_review: bool = False
     llm_provider: str = ""
     llm_api_key: str = ""

@@ -69,3 +69,7 @@ Sources checked 15 October 2026:
 - https://developers.stellar.org/docs/build/guides/transactions/fee-sponsorship
 
 Owner-specific fields still required: legal applicant name, chapter relationship, team availability, pilot commitments and requested award amount agreed with the Chapter Lead. No such details have been invented.
+
+## October 15 pilot evidence update
+
+Three fresh testnet contracts are deployed; the synthetic credential lifecycle (issue, owner/current readback, revoke, not-current readback) is recorded in `deployments/testnet-pilot-2026-10-15.json`. Python source discovery and isolated behavioral probes are implemented, with a live microVM runner smoke test. Broader framework adapters, trusted tool telemetry, live model brokering and paid USDC checkout remain proposed work. See `RUNTIME_PILOT.md`; do not present deterministic runner fixtures as real customer agent audits.
