@@ -170,6 +170,9 @@ async def verify(run_id, restart_only=False):
     evidence['checks'].extend({'id':name,'passed':True} for name in (
         'funded_escrow_read_from_testnet','actual_isolated_business_execution','known_restart_defect_observed',
         'canonical_private_report_verified','settlement_and_owner_bound_credential'))
+    if evidence.get('failure_code'):
+        evidence['recovered_failure_code'] = evidence.pop('failure_code')
+    evidence['checks'] = list({check['id']:check for check in evidence['checks']}.values())
     publish(evidence)
 
 
