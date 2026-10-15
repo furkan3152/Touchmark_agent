@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 CHILD = r'''
-import asyncio, contextlib, importlib.util, inspect, json, os, resource, sys
+import asyncio, contextlib, importlib, inspect, json, os, resource, sys, types
 resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
 resource.setrlimit(resource.RLIMIT_AS, (536870912, 536870912))
 resource.setrlimit(resource.RLIMIT_FSIZE, (65536, 65536))
@@ -21,9 +21,12 @@ request = json.loads(sys.argv[1])
 sys.path.insert(0, '/vercel/project')
 sys.path.insert(0, os.path.dirname('/vercel/project/' + request['file']))
 try:
-    spec = importlib.util.spec_from_file_location('submitted_agent', '/vercel/project/' + request['file'])
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    package = types.ModuleType('_veritas_submission')
+    package.__path__ = ['/vercel/project']
+    sys.modules[package.__name__] = package
+    module_path = request['file'][:-3].replace('/', '.')
+    if module_path.endswith('.__init__'): module_path = module_path[:-9]
+    module = importlib.import_module(package.__name__ + '.' + module_path)
     result = getattr(module, request['symbol'])(request['input'])
     if inspect.isawaitable(result): result = asyncio.run(result)
     text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)

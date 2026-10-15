@@ -1,0 +1,24 @@
+{
+  "scope": "Veritas Blueprint multi-file deterministic fixture; not a production agent audit",
+  "session_id": "sbx_NUoC7egiN2SI77yKlq6epkjWJr4m",
+  "session_stopped_confirmed": true,
+  "command_id": "cmd_7478a8f5cb9d4b76bcfd49b2bb03",
+  "command_exit_code": 0,
+  "image": "vercel/sandbox/universal@sha256:c77f7436b9bc0a8b01ef7b09dbcea2de6a18a9fe2aafa89996d2da193da72cf0",
+  "requested_network_policy": {
+    "allow": []
+  },
+  "source_sha256": "d4803191cd88b2401f8abf5be3b87ddfaab6710f3fdda24dea9bb9eea864342a",
+  "plan_sha256": "a7f305d7a03247c32b07239e43e6d7c99854224cb0ed0d3b17bbe23a8bdc180a",
+  "entrypoint": "agent/main.py:respond",
+  "observations": 8,
+  "declared_text_assertions_matched": 2,
+  "relative_python_import_exercised": true,
+  "instruction_and_policy_files_loaded": true,
+  "controls_verified": [],
+  "limitations": [
+    "Connector exercised the checked-in supervisor; deployed HTTP-to-Sandbox SDK path remains unverified.",
+    "No live LLM, external tool, transaction or production state was used.",
+    "In-VM observations are untrusted and do not certify control enforcement."
+  ]
+}
