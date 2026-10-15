@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     enable_sandbox_runtime: bool = False
     runtime_api_key: str = ""
     checkout_quote_signing_key: str = ""
+    # Official Testnet fulfillment is a separate opt-in persistent service.
+    # Never enable the SQLite order worker on ephemeral serverless storage.
+    enable_official_orders: bool = False
+    official_orders_database: str = "./data/official-orders.db"
+    official_orders_storage_durable: bool = False
+    official_orders_local_pilot: bool = False
+    enable_testnet_order_settlement: bool = False
+    official_provider_secret: str = Field(default="", repr=False, exclude=True)
+    official_evaluator_secret: str = Field(default="", repr=False, exclude=True)
+    official_report_base_url: str = ""
+    blob_read_write_token: str = Field(default="", repr=False, exclude=True)
+    blob_store_id: str = ""
     sandbox_image: str = "vercel/sandbox/universal@sha256:c77f7436b9bc0a8b01ef7b09dbcea2de6a18a9fe2aafa89996d2da193da72cf0"
     enable_public_ai_review: bool = False
     llm_provider: str = ""
@@ -173,7 +185,18 @@ class Settings(BaseSettings):
     @property
     def llm_credential(self) -> str:
         if self.llm_provider.lower() == "vercel":
-            return self.ai_gateway_api_key or self.llm_api_key or os.getenv("VERCEL_OIDC_TOKEN", "") or self.vercel_oidc_token
+            explicit = self.ai_gateway_api_key or self.llm_api_key
+            if explicit:
+                return explicit
+            if os.getenv("VERCEL") == "1":
+                # Functions receive a rotating request-context token; builds use
+                # the environment. Resolve at call time, never cache or export it.
+                try:
+                    from vercel.oidc import get_vercel_oidc_token
+                    return get_vercel_oidc_token()
+                except Exception:
+                    return ""
+            return os.getenv("VERCEL_OIDC_TOKEN", "") or self.vercel_oidc_token
         return self.llm_api_key
 
     @property

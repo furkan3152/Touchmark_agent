@@ -1,4 +1,4 @@
-/* No source persistence, external scripts, wallet access or automatic submissions. */
+/* Immediate review state stays in memory. Private order persistence and explicit wallet actions live in orders.js and checkout.js. */
 "use strict";
 (() => {
   const byId = (id) => document.getElementById(id);
@@ -143,14 +143,14 @@
     capsule = null; invalidate(); applyCapsuleLock();
     byId("capsule-state").textContent = "New editable draft. Imported custom policy and scenarios are no longer attached. Your original capsule download remains unchanged.";
   });
-  function renderEngagement(report) {
+  function renderEngagement(report, {renderPlan = true} = {}) {
     const engagement = report.engagement;
     if (!engagement) return;
     const runtime = engagement.runtime;
     const moduleResults = engagement.module_results || [];
     byId("dossier-state").textContent = "Official review complete";
     byId("result-summary").textContent = runtime ? "Source findings and isolated execution evidence are bound to this review. Open questions remain visible in Coverage." : "Source findings are bound to your chosen plan. Coverage distinguishes inspected evidence from checks still required.";
-    if (engagement.plan) renderAuditPlan({plan:engagement.plan,plan_sha256:engagement.plan_sha256});
+    if (renderPlan && engagement.plan) renderAuditPlan({plan:engagement.plan,plan_sha256:engagement.plan_sha256});
     const results = Array.isArray(moduleResults) ? moduleResults : Object.entries(moduleResults).map(([id,value]) => ({id,...value}));
     if (results.length) {
       const block = node("section", undefined, "official-results"); block.append(node("h4", "Your official reviewers"));
@@ -447,7 +447,7 @@
     finally { event.target.value = ""; setBusy(false); }
   });
   form.addEventListener("input", (event) => {
-    if (busy) return;
+    if (busy || ["ai-access-key","audit-runtime-key"].includes(event.target.id)) return;
     invalidate(); error();
     if (!event.target.closest(".audit-builder") && event.target.id !== "ai-consent") {
       capsule = null;
@@ -746,6 +746,7 @@
       // Render the committed bytes, not a potentially divergent response view.
       value.report = JSON.parse(value.report_json);
       result = value; submitted = input;
+      byId("download-bundle").hidden = false; byId("run-runtime").disabled = false;
       renderReport(value); renderEngagement(value.report); renderCredential(value);
       byId("run-status").textContent = "Review complete. Download your evidence before leaving.";
       if (window.innerWidth <= 720) byId("dossier-title").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
@@ -811,6 +812,31 @@
     } catch (failure) { byId("policy-decision").textContent = "Check unavailable."; byId("policy-reasons").textContent = failure.message; }
     finally { button.disabled = false; }
   });
+
+  window.addEventListener("veritas:order-report", async (event) => {
+    const {envelope,credential,order_id} = event.detail;
+    try {
+      if (busy) throw new Error("Wait for the current review to finish before opening the order report.");
+      if (!envelope || typeof envelope.report_json !== "string" || !/^[a-f0-9]{64}$/.test(envelope.report_sha256 || "")) throw new Error("The order report is incomplete.");
+      const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(envelope.report_json)))].map((byte) => byte.toString(16).padStart(2,"0")).join("");
+      if (hash !== envelope.report_sha256) throw new Error("Order report integrity did not match its commitment.");
+      if (busy) throw new Error("A new review started while this report was loading. Open the order report after it finishes.");
+      const committed = JSON.parse(envelope.report_json);
+      const value = {...envelope, report:committed, scope:committed.review_scope, decision:committed.review_decision || envelope.decision};
+      result = value; submitted = null; runtimeResult = null; deliveryState = null;
+      renderReport(value); renderEngagement(committed,{renderPlan:false}); renderCredential(value);
+      byId("download-bundle").hidden = true; byId("run-runtime").disabled = true;
+      byId("download-note").textContent = `Private order ${order_id.slice(0,12)} · report commitment checked. The current intake fields were not changed.`;
+      if (credential) {
+        byId("credential-contract").value = credential.contract_id;
+        byId("credential-token").value = credential.token_id;
+        byId("credential-owner").value = credential.owner;
+        await prepareDelivery(credential);
+      }
+      event.detail.resolve?.();
+    } catch (failure) {event.detail.reject?.(failure);}
+  });
+
   byId("download-report").addEventListener("click", () => { if (result) { download("agent-review.json", result.report_json); byId("download-note").textContent = "Report exported. Verify its SHA-256 against the fingerprint below."; } });
   byId("download-bundle").addEventListener("click", () => { if (submitted) download("agent-audit.json", JSON.stringify(submitted, null, 2)); });
 })();
