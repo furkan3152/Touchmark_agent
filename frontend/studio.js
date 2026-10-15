@@ -111,6 +111,10 @@
     const budget = plan.budgets || {};
     const counts = node("div", undefined, "plan-facts");
     [["Case budget", budget.runtime_cases ?? budget.max_runtime_cases ?? 0], ["Source files", Object.keys(files).length], ["Test asset", plan.price?.testnet_amount ? `${plan.price.testnet_amount} XLM` : "No payment taken"]].forEach(([label,value]) => { const fact = node("div"); fact.append(node("strong",String(value)),node("span",label)); counts.append(fact); }); panel.append(counts);
+    if (plan.execution_profile) {
+      panel.append(node("p", `${plan.planned_runtime_cases} committed workflows · restart and external tool evidence`));
+      panel.append(node("p", "Declared clients use a controlled broker. Model calls and disposable Testnet payments are bounded; native client transports are outside this execution scope.", "help"));
+    }
     const blockers = plan.blockers || [];
     if (blockers.length) {
       const list = node("ul", undefined, "plan-blockers"); blockers.forEach((item) => list.append(node("li", typeof item === "string" ? item : item.message || item.reason))); panel.append(node("strong", "Before this plan can run"), list);
@@ -171,8 +175,25 @@
         const card = node("article", undefined, "runtime-observation");
         card.append(node("strong", `${item.id?.replaceAll("_", " ") || "Probe"} · ${item.status}`), node("p",item.response || item.dependency || item.error || "No usable response."));
         if (item.assertion) card.append(node("p",`Declared expectation: ${item.assertion.result?.replaceAll("_", " ") || "not evaluated"}. ${item.assertion.meaning || ""}`));
+        if (item.blocked_reason) card.append(node("p", `Blocked: ${item.blocked_reason.replaceAll("_", " ")}`));
+        (item.assertions || []).forEach((check) => card.append(node("p", `${check.kind || check.operator}: ${check.result?.replaceAll("_", " ")} · ${check.evidence || "agent output assertion"}${check.actual !== undefined ? " · observed " + JSON.stringify(check.actual).slice(0,160) : ""}`)));
+        (item.step_outcomes || []).forEach((step) => {if (step.error) card.append(node("p", `Step ${step.step + 1}: ${step.error}`));});
         byId("runtime-results").append(card);
       });
+      if (evidence.broker_evidence) {
+        const block = node("article", undefined, "runtime-observation");
+        block.append(node("strong", "External tool evidence"), node("p", "These events were recorded outside the agent sandbox. Agent outputs remain untrusted."));
+        (evidence.broker_evidence.events || []).forEach((event) => {
+          const row = node("p", `${event.workflow} · ${event.method} · ${event.mode || "broker"} · ${event.status}`);
+          if (/^[a-f0-9]{64}$/.test(event.receipt?.hash || "")) {
+            const link = node("a", " View confirmed Testnet transaction ↗");
+            link.href = `https://stellar.expert/explorer/testnet/tx/${event.receipt.hash}`;
+            link.target = "_blank"; link.rel = "noopener noreferrer"; row.append(link);
+          }
+          block.append(row);
+        });
+        byId("runtime-results").append(block);
+      }
       byId("runtime-status").textContent = observations.length ? `${observations.length} runtime observations recorded in your audit dossier.` : evidence.note || evidence.reason || `Runtime status: ${evidence.status || "no observations"}.`;
       if (runtime.report_json) {runtimeResult = runtime; byId("download-runtime").hidden = false;}
       byId("missing-evidence").firstElementChild?.remove();

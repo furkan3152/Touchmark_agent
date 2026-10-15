@@ -101,7 +101,7 @@ def load_contract(files: dict[str,str]) -> ExecutionContract | None:
 def profile_digest():
     paths=['python312-stellar.lock','workflow_probe.py']
     values={p:sha256((RUNTIME_ROOT/p).read_bytes()).hexdigest() for p in paths}
-    for p in ('execution_contract.py','execution_broker.py','workflow_runtime.py'):
+    for p in ('execution_contract.py','execution_broker.py','workflow_runtime.py','execution_journal.py'):
         values[p]=sha256(Path(__file__).with_name(p).read_bytes()).hexdigest()
     return sha256(json.dumps(values,sort_keys=True).encode()).hexdigest()
 
@@ -113,6 +113,8 @@ def workflow_cases(spec):
 
 def preflight(spec, capsule, settings):
     failures=[]
+    if not settings.blob_read_write_token or not settings.blob_store_id:
+        failures.append('Brokered execution requires a private external intent journal before any side effect.')
     if not settings.enable_brokered_runtime:failures.append('Brokered workflow execution is not enabled on this deployment.')
     if not capsule:failures.append('Brokered execution requires a committed .veritas capsule.')
     else:
