@@ -22,6 +22,7 @@ jobs:
       - run: pip install -r backend/requirements-dev.txt
       - run: python -m pytest -q
       - run: node --check frontend/studio.js
+      - run: python scripts/verify_local.py
   contracts:
     runs-on: ubuntu-latest
     env:

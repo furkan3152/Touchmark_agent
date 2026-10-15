@@ -9,6 +9,8 @@
   let submitted = null;
   let busy = false;
   let sourceReference = "";
+  let sourceRevision = "";
+  let runtimeResult = null;
 
   function sourceMode(mode) {
     const panels = { address: "source-address", github: "source-github", files: "source-upload" };
@@ -42,6 +44,10 @@
   function invalidate() {
     result = null;
     submitted = null;
+    runtimeResult = null;
+    byId("runtime-results").replaceChildren();
+    byId("download-runtime").hidden = true;
+    byId("discovery-results").hidden = true;
     byId("review-result").hidden = true;
     byId("empty-report").hidden = false;
     byId("dossier-state").textContent = "Awaiting review";
@@ -63,7 +69,7 @@
       const remove = node("button", "Remove");
       remove.type = "button";
       remove.setAttribute("aria-label", `Remove ${name}`);
-      remove.addEventListener("click", () => { delete files[name]; invalidate(); renderFiles(); });
+      remove.addEventListener("click", () => { delete files[name]; sourceRevision = ""; invalidate(); renderFiles(); });
       row.append(remove);
       list.append(row);
     });
@@ -81,7 +87,7 @@
   }
   function loadBundle(bundle) {
     if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) throw new Error("An audit bundle must be a JSON object.");
-    const allowed = new Set(["name", "purpose", "system_prompt", "files", "tools", "dependencies", "stellar_address", "network", "source_reference", "architecture", "ai_assistance", "external_processing_consent"]);
+    const allowed = new Set(["name", "purpose", "system_prompt", "files", "tools", "dependencies", "stellar_address", "network", "source_reference", "source_revision", "architecture", "ai_assistance", "external_processing_consent"]);
     if (Object.keys(bundle).some((key) => !allowed.has(key))) throw new Error("Unknown bundle fields. Use an exported agent-audit.json as the template.");
     if (bundle.files && (Array.isArray(bundle.files) || typeof bundle.files !== "object" || Object.values(bundle.files).some((value) => typeof value !== "string"))) throw new Error("Bundle files must map filenames to source text.");
     if (bundle.tools && !Array.isArray(bundle.tools)) throw new Error("Bundle tools must be an array.");
@@ -95,6 +101,7 @@
     byId("stellar-address").value = bundle.stellar_address || "";
     byId("stellar-network").value = bundle.network || "testnet";
     sourceReference = bundle.source_reference || "";
+    sourceRevision = bundle.source_revision || "";
     byId("address-status").textContent = "Address not checked for this bundle. A source review does not prove ownership.";
     byId("address-status").removeAttribute("data-state");
     byId("tool-manifest").value = JSON.stringify(bundle.tools || [], null, 2);
@@ -131,7 +138,7 @@
           pending[file.name] = await file.text();
         }
         if (Object.keys(pending).length > 12 || Object.values(pending).reduce((sum, content) => sum + new TextEncoder().encode(content).length, 0) > 64000) throw new Error("A review accepts at most 12 files and 64 KB of source.");
-        files = pending; invalidate(); renderFiles();
+        files = pending; sourceReference = ""; sourceRevision = ""; invalidate(); renderFiles();
       }
       document.querySelectorAll("[data-example]").forEach((item) => item.setAttribute("aria-pressed", "false"));
     } catch (failure) { error(failure.message); }
@@ -160,7 +167,7 @@
   }));
 
   async function post(path, body) {
-    const response = await fetch(`/api/v1/studio/${path}`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:AbortSignal.timeout(20000)});
+    const response = await fetch(`/api/v1/studio/${path}`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:AbortSignal.timeout(35000)});
     const data = await response.json();
     if (!response.ok) throw new Error(Array.isArray(data.detail) ? data.detail.map((item) => item.msg).join("; ") : data.detail || "Request failed. Please retry.");
     return data;
@@ -181,11 +188,12 @@
   });
   byId("import-github").addEventListener("click", async () => {
     if (busy) return;
-    error(); setBusy(true); byId("import-status").textContent = "Importing the public bundle…";
+    error(); setBusy(true); byId("import-status").textContent = "Discovering the repository at a fixed commit…";
     try {
       const value = await post("import", {repository:byId("github-repository").value.trim()});
       loadBundle({...value.bundle, source_reference:value.source});
-      byId("import-status").textContent = `Imported ${Object.keys(files).length} files. Check the details below, then start the audit.`;
+      renderDiscovery(value.discovery);
+      byId("import-status").textContent = `Imported ${Object.keys(files).length} files at ${value.revision.slice(0,8)}. ${value.import_scope.eligible_files_omitted} eligible files omitted by limits. This is a bounded source selection.`;
     } catch (failure) { error(failure.message); byId("import-status").textContent = "Nothing imported. You can upload files instead."; }
     finally { setBusy(false); }
   });
@@ -196,6 +204,70 @@
       const fixtures = await response.json(); download("agent-audit.json", JSON.stringify(fixtures.reader, null, 2));
     } catch (failure) { error(failure.message); }
   });
+
+
+  function renderDiscovery(plan) {
+    if (!plan) return;
+    const panel = byId("discovery-results"); panel.hidden = false; panel.replaceChildren();
+    panel.append(node("strong", plan.frameworks.length ? plan.frameworks.join(" · ") : "Custom or unidentified framework"));
+    panel.append(node("p", `${plan.files_inspected} files inspected. ${plan.entrypoints.length} possible entry points. ${plan.test_suites.length} test suites.`));
+    if (plan.required_environment_names.length) panel.append(node("p", `Environment names found: ${plan.required_environment_names.join(", ")}. Values are never requested here.`));
+    const list = node("ul");
+    plan.entrypoints.forEach((entry) => list.append(node("li", `${entry.id} — ${entry.reason}`)));
+    if (!plan.entrypoints.length) list.append(node("li", "No supported callable detected. Include the real entry module or a thin adapter to it."));
+    panel.append(list);
+    const select = byId("runtime-entrypoint"); select.replaceChildren();
+    plan.entrypoints.filter((entry) => entry.adapter === "python_text").forEach((entry) => {
+      const option = node("option", entry.id); option.value = entry.id; select.append(option);
+    });
+    byId("runtime-status").textContent = select.options.length ? "Confirm that this callable reaches the real agent. Runtime access is required." : "This project needs an adapter or an operator-reviewed framework image before execution.";
+  }
+  byId("discover-project").addEventListener("click", async () => {
+    if (busy) return;
+    error(); setBusy(true);
+    try {
+      const plan = await post("discover", {name: byId("agent-name").value || "Uploaded project", purpose: byId("agent-purpose").value || "Inspect the actual project behavior and security boundaries.", files});
+      renderDiscovery(plan);
+    } catch (failure) { error(failure.message); } finally { setBusy(false); }
+  });
+  byId("source-folder").addEventListener("change", async (event) => {
+    if (busy) return;
+    error(); setBusy(true);
+    try {
+      const all = [...event.target.files];
+      const eligible = all.map((file) => ({file,path:file.webkitRelativePath.split("/").slice(1).join("/")}))
+        .filter(({file,path}) => file.size <= 32000 && path.length <= 160 && !path.split("/").some((part) => part.startsWith(".") || ["node_modules","vendor","target","dist","build","venv","__pycache__"].includes(part)) && /\.(py|js|ts|tsx|jsx|mjs|cjs|rs|go|json|md|txt|toml|ya?ml)$/.test(path) && !/(^|\/)(credentials|secrets?|id_rsa|service.account)([._-]|$)/i.test(path));
+      const rank = (path) => /(^|\/)(package.json|pyproject.toml|requirements.txt)$/.test(path) ? 0 : /\.(py|js|ts)$/.test(path) ? 1 : 2;
+      eligible.sort((a,b) => rank(a.path)-rank(b.path) || a.path.split("/").length-b.path.split("/").length || a.path.localeCompare(b.path));
+      const next = {}; let bytes = 0;
+      for (const {file,path} of eligible) {
+        if (Object.keys(next).length >= 12 || bytes + file.size > 64000) continue;
+        next[path] = await file.text(); bytes += file.size;
+      }
+      files = next; sourceReference = ""; sourceRevision = ""; invalidate(); renderFiles();
+      byId("folder-status").textContent = `${Object.keys(files).length} source files selected; ${all.length - Object.keys(files).length} files excluded or over the review limit. Review the list before auditing.`;
+      if (!byId("agent-name").value) byId("agent-name").value = all[0]?.webkitRelativePath.split("/")[0] || "Uploaded project";
+    } catch (failure) { error(failure.message); } finally { setBusy(false); event.target.value = ""; }
+  });
+  byId("run-runtime").addEventListener("click", async () => {
+    if (busy || !submitted) return;
+    const key = byId("runtime-access").value.trim();
+    if (!byId("runtime-consent").checked || !key || !byId("runtime-entrypoint").value) { byId("runtime-status").textContent = "Select a supported entry point, provide the pilot key and authorize execution."; return; }
+    setBusy(true); byId("run-runtime").disabled = true; byId("runtime-status").textContent = "Creating an isolated microVM and executing six behavior probes…";
+    try {
+      const response = await fetch("/api/v1/studio/runtime", {method:"POST", headers:{"Content-Type":"application/json",Authorization:`Bearer ${key}`}, body:JSON.stringify({source:submitted,entrypoint:byId("runtime-entrypoint").value,execution_consent:true}),signal:AbortSignal.timeout(60000)});
+      const value = await response.json(); if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : "Runtime request could not be validated.");
+      const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value.report_json)))].map((b)=>b.toString(16).padStart(2,"0")).join("");
+      if (hash !== value.report_sha256) throw new Error("Runtime report integrity mismatch.");
+      runtimeResult = value; const report = JSON.parse(value.report_json);
+      const panel = byId("runtime-results"); panel.replaceChildren();
+      report.observations.forEach((item) => {const card = node("article",undefined,"runtime-observation"); card.append(node("strong",`${item.id.replaceAll("_"," ")} · ${item.status}`),node("p", item.response || item.dependency || item.error || "No usable response."));panel.append(card);});
+      byId("runtime-status").textContent = "Execution finished. These observations do not certify controls or production safety.";
+      byId("download-runtime").hidden = false;
+    } catch (failure) {byId("runtime-status").textContent = failure.message;}
+    finally {setBusy(false); byId("run-runtime").disabled = false; byId("runtime-access").value = "";}
+  });
+  byId("download-runtime").addEventListener("click", () => {if(runtimeResult) download("agent-runtime-evidence.json", runtimeResult.report_json);});
 
   const findingTitles = {
     "security-path-untrusted-to-command": "Untrusted input reaches code execution",
@@ -222,6 +294,7 @@
     byId("result-decision").textContent = value.decision === "needs_fixes" ? "Investigate before deployment" : "More evidence required";
     byId("result-name").textContent = value.report.agent.name;
     byId("result-summary").textContent = "Source inspected. Runtime behavior, owner identity and onchain publication have not been verified.";
+    renderDiscovery(value.report.discovery);
     const subject = value.report.subject || {};
     byId("result-subject").textContent = `${subject.network === "mainnet" ? "Stellar Mainnet" : "Stellar Testnet"}${subject.stellar_address ? " · " + subject.stellar_address : " · No wallet linked"}`;
     const findings = [...value.report.findings].sort((a,b) => ["critical","high","medium","low","info"].indexOf(a.severity) - ["critical","high","medium","low","info"].indexOf(b.severity));
@@ -294,7 +367,7 @@
       const tools = JSON.parse(byId("tool-manifest").value);
       if (!Array.isArray(tools)) throw new Error("Tool permissions must be a JSON array.");
       if (!Object.keys(files).length && !byId("agent-prompt").value.trim() && !byId("stellar-address").value.trim()) throw new Error("Add a public Stellar address, source files or system instructions first.");
-      input = { name: byId("agent-name").value, purpose: byId("agent-purpose").value, system_prompt: byId("agent-prompt").value, files: { ...files }, tools, dependencies, stellar_address:byId("stellar-address").value.trim(), network:byId("stellar-network").value, source_reference:sourceReference, architecture:JSON.parse(byId("architecture-manifest").value), ai_assistance:byId("ai-consent").checked, external_processing_consent:byId("ai-consent").checked };
+      input = { name: byId("agent-name").value, purpose: byId("agent-purpose").value, system_prompt: byId("agent-prompt").value, files: { ...files }, tools, dependencies, stellar_address:byId("stellar-address").value.trim(), network:byId("stellar-network").value, source_reference:sourceReference, source_revision:sourceRevision, architecture:JSON.parse(byId("architecture-manifest").value), ai_assistance:byId("ai-consent").checked, external_processing_consent:byId("ai-consent").checked };
     } catch (failure) { error(failure.message); return; }
     setBusy(true);
     byId("run-review").textContent = "Reviewing source…";

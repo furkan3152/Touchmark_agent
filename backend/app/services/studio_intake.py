@@ -23,27 +23,85 @@ class GitHubRequest(BaseModel):
         return value.rstrip("/").removesuffix(".git")
 
 
+async def _github_json(client, endpoint: str, *, limit: int = 1_000_000, missing_ok: bool = False):
+    async with client.stream("GET", "https://api.github.com/" + endpoint, headers={
+        "Accept": "application/vnd.github+json", "User-Agent": "AgentVeritas-Stellar",
+    }) as response:
+        if response.status_code == 404 and missing_ok:
+            return None
+        if response.status_code != 200:
+            raise ValueError("GitHub is unavailable or rate-limited. Upload your project files instead.")
+        raw = bytearray()
+        async for chunk in response.aiter_bytes():
+            raw.extend(chunk)
+            if len(raw) > limit:
+                raise ValueError("Repository metadata exceeds the bounded import limit. Upload a focused project folder.")
+    return json.loads(raw)
+
+
 async def import_github_bundle(request: GitHubRequest) -> dict:
+    """Resolve one commit, inspect its tree and fetch bounded blobs. No clone or execution."""
+    import asyncio
+    import base64
+    from hashlib import sha1
+    from pathlib import PurePosixPath
+    from .discovery import discover_project, safe_source_path
     from .studio import ReviewRequest
     path = request.repository.removeprefix("https://github.com/")
-    async with httpx.AsyncClient(timeout=12, follow_redirects=False, trust_env=False) as client:
-        async with client.stream("GET", f"https://api.github.com/repos/{path}/contents/agent-audit.json", headers={
-            "Accept": "application/vnd.github.raw+json", "User-Agent": "AgentVeritas-Stellar",
-        }) as response:
-            if response.status_code == 404:
-                raise ValueError("No public agent-audit.json found at the repository root. Upload files instead or add the template to your repository.")
-            if response.status_code != 200:
-                raise ValueError("GitHub import unavailable or rate-limited. Upload your bundle directly.")
-            raw = bytearray()
-            async for chunk in response.aiter_bytes():
-                raw.extend(chunk)
-                if len(raw) > 131072:
-                    raise ValueError("GitHub bundle exceeds 128 KiB. Use a smaller bundle.")
-    try:
-        bundle = ReviewRequest.model_validate(json.loads(raw)).model_dump(mode="json")
-    except (ValueError, TypeError) as exc:
-        raise ValueError("Invalid agent-audit.json. Use the downloadable bundle template and respect the upload limits.") from exc
-    return {"bundle": bundle, "source": request.repository, "executed": False}
+    async with asyncio.timeout(25), httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        commit = await _github_json(client, f"repos/{path}/commits/HEAD")
+        revision = commit.get("sha", "")
+        if not re.fullmatch(r"[a-f0-9]{40}", revision):
+            raise ValueError("GitHub did not return an immutable commit.")
+        tree = await _github_json(client, f"repos/{path}/git/trees/{revision}?recursive=1")
+        entries = tree.get("tree", [])
+        candidates = [x for x in entries if x.get("type") == "blob" and x.get("mode") == "100644"
+                      and safe_source_path(x.get("path", ""))]
+        def rank(item):
+            name = PurePosixPath(item["path"]).name
+            priority = 0 if name in {"package.json", "pyproject.toml", "requirements.txt"} else 1 if PurePosixPath(name).suffix in {".py", ".ts", ".js", ".mjs"} else 2
+            return (priority, item["path"].count("/"), item["path"])
+        files, omitted, total = {}, [], 0
+        for item in sorted(candidates, key=rank):
+            name, size = item["path"], item.get("size", 0)
+            if name == 'agent-audit.json':
+                # A bundle is a useful upload format, but never substitutes its embedded
+                # source for the actual repository contents at this commit.
+                omitted.append(name)
+                continue
+            if len(files) >= 12 or size > 32000 or total + size > 64000:
+                omitted.append(name)
+                continue
+            blob_id = item.get("sha", "")
+            if not re.fullmatch(r"[a-f0-9]{40}", blob_id):
+                raise ValueError("Invalid repository blob reference.")
+            blob = await _github_json(client, f"repos/{path}/git/blobs/{blob_id}", limit=60000)
+            if blob.get("encoding") != "base64":
+                omitted.append(name)
+                continue
+            raw = base64.b64decode(re.sub(r"\s+", "", blob.get("content", "")), validate=True)
+            if len(raw) != size or sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest() != blob_id:
+                raise ValueError("GitHub blob integrity check failed.")
+            try:
+                content = raw.decode('utf-8')
+            except UnicodeError:
+                omitted.append(name)
+                continue
+            files[name] = content
+            total += len(raw)
+    if not files:
+        raise ValueError("No supported source files were found. Upload a focused source folder.")
+    discovery = discover_project(files)
+    bundle = ReviewRequest(name=path.split('/')[-1][:100],
+        purpose="Review this project's actual agent behavior and security boundaries.",
+        files=files, dependencies=discovery['dependencies'], source_reference=request.repository,
+        source_revision=revision).model_dump(mode="json")
+    return {"bundle": bundle, "source": request.repository, "revision": revision,
+            "discovery": discovery, "executed": False,
+            "import_scope": {"complete": not omitted and not tree.get('truncated') and len(files) == len(entries),
+                "tree_truncated": bool(tree.get('truncated')), "files_imported": len(files),
+                "eligible_files_omitted": len(omitted), "omitted_paths": omitted[:50],
+                "note": "Bounded source selection, not the entire repository. Hidden files, credentials, symlinks, binaries and dependencies are excluded."}}
 
 
 class AddressRequest(BaseModel):

@@ -1,6 +1,7 @@
 #![no_std]
 //! Non-transferable audit credentials. They prove issuer assertions, not safety.
-use agent_veritas_registry::{AgentRegistryClient, ValState};
+mod registry_interface;
+use registry_interface::{AgentRegistryClient, ValState};
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
     BytesN, Env, String,
