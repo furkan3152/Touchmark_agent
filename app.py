@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 async def public_surface_only(request, call_next):
     path = request.url.path
     allowed = (path == "/" or path == "/api/v1/health" or path.startswith("/ui/")
+               or path == '/api/v1/studio/orders' or path.startswith('/api/v1/studio/orders/')
                or path in {"/api/v1/studio/review", "/api/v1/studio/identify", "/api/v1/studio/import",
                            "/api/v1/studio/discover", "/api/v1/studio/runtime", "/api/v1/studio/capabilities", "/api/v1/studio/policy",
                            "/api/v1/studio/stellar/inspect-auth", '/api/v1/studio/catalog',
@@ -27,4 +28,8 @@ async def public_surface_only(request, call_next):
                            '/api/v1/studio/checkout', '/api/v1/studio/checkout/prepare'})
     if not allowed:
         return JSONResponse({"detail": "This deployment exposes the public audit Studio only."}, status_code=404)
+    if os.environ.get('VERCEL') == '1':
+        from vercel.headers import HeadersContext
+        with HeadersContext(dict(request.headers)).use():
+            return await call_next(request)
     return await call_next(request)

@@ -40,9 +40,9 @@ LIMITS = [
     'Testnet XLM has no monetary value. Network transaction fees are additional to the audit amount.',
     'Prepared or simulated transactions are not payment confirmation. Only a live bound escrow state confirms funding.',
     'Provider and evaluator are first-party identities controlled by one operator; they are not independent reviewers.',
-    'Funding does not start an automatic audit worker or issue a credential. Official delivery and evaluation remain separate.',
+    'Funding activates only a matching saved official order on a configured persistent worker. A credential requires completed report and chain verification.',
     'Keep the acknowledged source and plan. Only their commitments are written onchain; private source is not published.',
-    'After the escrow deadline, the requester can use the contract refund function if its state permits; this four-step checkout does not prepare refunds.',
+    'Use the private order refund action for disputed escrow, or eligible funded/submitted escrow after its ledger deadline; a separate wallet signature and submission are required.',
 ]
 
 

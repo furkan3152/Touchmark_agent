@@ -1,0 +1,24 @@
+{
+  "checked_at": "2026-10-15T15:04:08.331386+00:00",
+  "provider": "Vercel Blob",
+  "sdk": "vercel==0.11.6",
+  "store_id": "store_EVlQaNdD2T85Necg",
+  "visibility": "private",
+  "report": {
+    "status": "verified",
+    "verified": true,
+    "report_sha256": "d799fb6b9e653ab06adee22bdb1e426f6417698b7db54adc437e154ec0f48104",
+    "report_uri": "https://evlqandd2t85necg.private.blob.vercel-storage.com/reports/d799fb6b9e653ab06adee22bdb1e426f6417698b7db54adc437e154ec0f48104.json",
+    "visibility": "private",
+    "storage": "vercel_blob",
+    "byte_length": 303,
+    "verified_at": "2026-10-15T15:03:47.061582+00:00",
+    "write_outcome": "created"
+  },
+  "repeat_write_outcome": "reconciled_existing",
+  "independent_authenticated_readback": true,
+  "unauthenticated_http_status": 403,
+  "unauthenticated_access_denied": true,
+  "contains_customer_source": false,
+  "scope": "Synthetic storage fixture only. This does not establish deployed HTTP flow, private customer report authorization, audit quality or onchain settlement."
+}
