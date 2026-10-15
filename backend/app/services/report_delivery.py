@@ -65,7 +65,7 @@ def _read_credential(ref: CredentialReference, source: str) -> tuple[dict, bool,
     from stellar_sdk.client.requests_client import RequestsClient
     client = RequestsClient(num_retries=0, request_timeout=10, post_timeout=10)
     try:
-        contract = ContractClient(ref.contract_id, 'https://soroban-testnet.stellar.org',
+        contract = ContractClient(ref.contract_id, 'https://soroban-rpc.testnet.stellar.gateway.fm',
                                   Network.TESTNET_NETWORK_PASSPHRASE, request_client=client)
         token = scval.to_bytes(bytes.fromhex(ref.token_id))
         record = scval.to_native(contract.invoke('get', [token], source=source).result())
