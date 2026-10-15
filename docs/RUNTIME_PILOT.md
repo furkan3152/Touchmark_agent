@@ -44,3 +44,7 @@ AI review requires `ENABLE_PUBLIC_AI_REVIEW=true`, `LLM_PROVIDER`, `LLM_MODEL`, 
 ## Still required for the broad product
 
 Framework-specific adapters for LangGraph/CrewAI/MCP/JS, controlled dependency preparation, brokered model credentials, host-observed tool calls, multi-turn memory/tenant tests, adversarial test oracles, worker queues, user auth, paid checkout and independent security review. No finite test suite can establish that every possible agent behavior is safe. The UI and grant submission must distinguish implemented pilot evidence from these future capabilities.
+
+## Explicit project maps
+
+[Veritas Blueprint](VERITAS_BLUEPRINT.md) adds a root `veritas.json` with exact component paths, a checked entrypoint and declared permission boundaries. Discovery returns `blueprint.plan_sha256`; supply it as `plan_sha256` on runtime requests when a manifest is present. Incomplete maps and stale fingerprints are rejected before sandbox creation. The UI sends the fingerprint from the reviewed report automatically. Run `scripts/veritas.py check examples/blueprint-reader` for a multi-file example with relative imports and two custom text assertions.

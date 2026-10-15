@@ -22,6 +22,8 @@
 
 The English public Studio now includes a 24-area evidence inventory, explicit architecture declarations (MCP, delegation, memory and egress), opt-in AI hypotheses with source-location validation, local report fingerprint verification, and an interactive authority-policy lab. See [release status](docs/RELEASE_2026-10-15.md) for verification and boundaries.
 
+**Veritas Blueprint v1** adds an explicit `veritas.json` project map: component paths, a checked entrypoint, declared permission boundaries, import evidence and a source-bound audit plan. Missing files and stale plans block isolated execution. Start with [the protocol and local commands](docs/VERITAS_BLUEPRINT.md) and [the multi-file example](examples/blueprint-reader/veritas.json).
+
 The new **AuditCredential** Soroban contract issues non-transferable, revocable, expiring report credentials from completed registry validations. Registry v0.2 binds requests to source version and metadata/endpoint hashes; source changes invalidate old credentials. Registry and escrow initialize atomically through constructors. **These are new deployment artifacts: the historical testnet manifest does not verify this release.**
 
 - [Instawards 30-day sprint and budget](docs/INSTAWARDS_SPRINT.md)
@@ -63,10 +65,10 @@ The public Studio at `/` offers three intake methods — no wallet connection or
 | Intake | What it does |
 |---|---|
 | **Stellar Address** | Read-only Testnet/Mainnet lookup via Horizon + RPC (no signing) |
-| **GitHub Import** | Fetches root `agent-audit.json` from a public repo (bounded, no clone) |
-| **File Upload** | Direct source bundle upload for offline analysis |
+| **GitHub Import** | Pins a public repository commit, verifies source blobs and follows root `veritas.json` when present (bounded, no clone) |
+| **File Upload** | Source bundles or project folders, with explicit Blueprint maps or provisional discovery |
 
-The Studio runs seven **rule-based static analysis modules** across all submitted source. Files are never executed or persisted by the public Studio. Static review does not send source externally; optional AI second opinions require operator enablement and explicit per-review consent. Reports include file:line evidence, coverage metrics, input-commitment SHA-256 and an exact-byte downloadable report.
+The Studio runs seven **rule-based static analysis modules** across all submitted source. Static review never executes submitted files. A separately authenticated, opt-in runtime pilot invokes supported Python callables in disposable microVMs. Static review does not send source to a model provider; optional AI second opinions require operator enablement and explicit per-review consent. Reports include file:line evidence, coverage metrics, input-commitment SHA-256 and an exact-byte downloadable report. See [runtime limits and setup](docs/RUNTIME_PILOT.md).
 
 > The operator workflow at `/operator` provides the full persistent pipeline with authentication, stored jobs, badges and Soroban integration.
 

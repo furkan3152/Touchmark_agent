@@ -47,6 +47,7 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
     from pathlib import PurePosixPath
     from .discovery import discover_project, safe_source_path
     from .studio import ReviewRequest
+    from .blueprint import parse_blueprint
     path = request.repository.removeprefix("https://github.com/")
     async with asyncio.timeout(25), httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
         commit = await _github_json(client, f"repos/{path}/commits/HEAD")
@@ -55,15 +56,23 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
             raise ValueError("GitHub did not return an immutable commit.")
         tree = await _github_json(client, f"repos/{path}/git/trees/{revision}?recursive=1")
         entries = tree.get("tree", [])
-        candidates = [x for x in entries if x.get("type") == "blob" and x.get("mode") == "100644"
+        declaration = next((x for x in entries if x.get('path') == 'veritas.json'), None)
+        if declaration and (declaration.get('type') != 'blob' or declaration.get('mode') not in {'100644', '100755'}):
+            raise ValueError('veritas.json must be a regular source file. Symbolic links are not followed.')
+        candidates = [x for x in entries if x.get("type") == "blob" and x.get("mode") in {"100644", "100755"}
                       and safe_source_path(x.get("path", ""))]
         def rank(item):
             name = PurePosixPath(item["path"]).name
-            priority = 0 if name in {"package.json", "pyproject.toml", "requirements.txt"} else 1 if PurePosixPath(name).suffix in {".py", ".ts", ".js", ".mjs"} else 2
+            priority = -1 if item['path'] == 'veritas.json' else 0 if name in {"package.json", "pyproject.toml", "requirements.txt"} else 1 if PurePosixPath(name).suffix in {".py", ".ts", ".js", ".mjs"} else 2
             return (priority, item["path"].count("/"), item["path"])
         files, omitted, omitted_reasons, total = {}, [], [], 0
+        declared_paths = None
         for item in sorted(candidates, key=rank):
             name, size = item["path"], item.get("size", 0)
+            if declared_paths is not None and name not in declared_paths:
+                omitted.append(name)
+                omitted_reasons.append({'file': name, 'reason': 'Outside declared Blueprint scope.'})
+                continue
             if name == 'agent-audit.json':
                 # A bundle is a useful upload format, but never substitutes its embedded
                 # source for the actual repository contents at this commit.
@@ -96,17 +105,28 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
                 continue
             files[name] = content
             total += len(raw)
+            if name == 'veritas.json':
+                try:
+                    declared_paths = {c.path for c in parse_blueprint(content).components}
+                except ValueError:
+                    # Keep invalid evidence visible; discovery blocks execution.
+                    declared_paths = set()
+        if any(x['path'] == 'veritas.json' for x in candidates) and 'veritas.json' not in files:
+            raise ValueError('Repository Blueprint could not be imported within the source limits. Upload a smaller, valid veritas.json; automatic fallback is disabled.')
     if not files:
         raise ValueError("No supported source files were found. Upload a focused source folder.")
     discovery = discover_project(files)
-    bundle = ReviewRequest(name=path.split('/')[-1][:100],
-        purpose="Review this project's actual agent behavior and security boundaries.",
+    manifest = discovery['blueprint'].get('manifest', {})
+    bundle = ReviewRequest(name=manifest.get('name', path.split('/')[-1][:100]),
+        purpose=manifest.get('purpose', "Review this project's actual agent behavior and security boundaries."),
         files=files, dependencies=discovery['dependencies'], source_reference=request.repository,
         source_revision=revision).model_dump(mode="json")
     return {"bundle": bundle, "source": request.repository, "revision": revision,
             "discovery": discovery, "executed": False,
             "import_scope": {"complete": not omitted and not tree.get('truncated') and len(files) == len(entries),
                 "tree_truncated": bool(tree.get('truncated')), "files_imported": len(files),
+                "selection": "blueprint" if declared_paths is not None else "provisional_discovery",
+                "declared_scope_complete": bool(declared_paths) and declared_paths.issubset(files) if declared_paths is not None else None,
                 "eligible_files_omitted": len(omitted), "omitted_paths": omitted[:50], "omitted_reasons": omitted_reasons[:50],
                 "note": "Bounded source selection, not the entire repository. Hidden files, credentials, symlinks, binaries and dependencies are excluded."}}
 

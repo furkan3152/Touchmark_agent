@@ -1,0 +1,219 @@
+{
+  "$defs": {
+    "Boundary": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "maxLength": 48,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 48,
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        },
+        "permission": {
+          "enum": [
+            "read",
+            "invoke",
+            "write",
+            "delegate",
+            "sign"
+          ],
+          "title": "Permission",
+          "type": "string"
+        },
+        "approval_required": {
+          "default": true,
+          "title": "Approval Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "target",
+        "permission"
+      ],
+      "title": "Boundary",
+      "type": "object"
+    },
+    "Component": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "entrypoint",
+            "implementation",
+            "instructions",
+            "tool",
+            "memory",
+            "policy",
+            "delegate",
+            "contract",
+            "test",
+            "dependency"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "path"
+      ],
+      "title": "Component",
+      "type": "object"
+    },
+    "Entrypoint": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "maxLength": 48,
+          "minLength": 1,
+          "title": "Component",
+          "type": "string"
+        },
+        "symbol": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,79}$",
+          "title": "Symbol",
+          "type": "string"
+        },
+        "adapter": {
+          "const": "python_text",
+          "default": "python_text",
+          "title": "Adapter",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component",
+        "symbol"
+      ],
+      "title": "Entrypoint",
+      "type": "object"
+    },
+    "Expectation": {
+      "additionalProperties": false,
+      "properties": {
+        "operator": {
+          "enum": [
+            "contains",
+            "excludes"
+          ],
+          "title": "Operator",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operator",
+        "value"
+      ],
+      "title": "Expectation",
+      "type": "object"
+    },
+    "Scenario": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,39}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "input": {
+          "maxLength": 1200,
+          "minLength": 12,
+          "title": "Input",
+          "type": "string"
+        },
+        "expect": {
+          "$ref": "#/$defs/Expectation"
+        }
+      },
+      "required": [
+        "id",
+        "input",
+        "expect"
+      ],
+      "title": "Scenario",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "veritas.blueprint/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "purpose": {
+      "maxLength": 2000,
+      "minLength": 12,
+      "title": "Purpose",
+      "type": "string"
+    },
+    "components": {
+      "items": {
+        "$ref": "#/$defs/Component"
+      },
+      "maxItems": 40,
+      "minItems": 1,
+      "title": "Components",
+      "type": "array"
+    },
+    "entrypoint": {
+      "$ref": "#/$defs/Entrypoint"
+    },
+    "boundaries": {
+      "items": {
+        "$ref": "#/$defs/Boundary"
+      },
+      "maxItems": 60,
+      "title": "Boundaries",
+      "type": "array"
+    },
+    "scenarios": {
+      "items": {
+        "$ref": "#/$defs/Scenario"
+      },
+      "maxItems": 2,
+      "title": "Scenarios",
+      "type": "array"
+    }
+  },
+  "required": [
+    "protocol",
+    "name",
+    "purpose",
+    "components",
+    "entrypoint"
+  ],
+  "title": "Blueprint",
+  "type": "object"
+}

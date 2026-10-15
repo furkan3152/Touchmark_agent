@@ -53,7 +53,7 @@ def discover_project(files: dict[str, str]) -> dict:
                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith('_'):
                     params = n.args.posonlyargs + n.args.args
                     # A supported call shape, not a claim that this is an agent.
-                    if len(params) == 1 and not n.args.vararg and not n.args.kwarg and not n.args.kwonlyargs and params[0].arg in {'prompt', 'message', 'query', 'input_text'}:
+                    if len(params) == 1 and not n.decorator_list and not n.args.vararg and not n.args.kwarg and not n.args.kwonlyargs and params[0].arg in {'prompt', 'message', 'query', 'input_text'}:
                         entrypoints.append({'id': f'{path}:{n.name}', 'file': path, 'symbol': n.name,
                             'adapter': 'python_text', 'line': n.lineno, 'confidence': 'candidate',
                             'reason': 'Top-level single-text-input callable; confirm that it invokes the real agent.'})
@@ -87,7 +87,14 @@ def discover_project(files: dict[str, str]) -> dict:
     for token, label in FRAMEWORKS.items():
         if any(v == token or v.startswith(token + '.') or v.startswith(token + '/') or v.startswith(token + '=') or token.endswith('/') and v.startswith(token) for v in imports | {re.split(r"[<>=~!\[ ]", d)[0].replace("-", "_") for d in dependencies}):
             frameworks.add(label)
+    from .blueprint import compile_blueprint, suggest_blueprint
+    blueprint = compile_blueprint(files)
+    draft = suggest_blueprint(files, entrypoints) if blueprint['status'] == 'not_declared' else None
+    if blueprint['status'] != 'not_declared':
+        # An invalid declaration never falls back to guessed execution.
+        entrypoints = [blueprint['entrypoint']] if blueprint['status'] == 'mapped' else []
     return {'schema': 'agentveritas.discovery.v1', 'source_sha256': source_digest(files),
+            'blueprint': blueprint, 'blueprint_draft': draft,
             'files_inspected': len(files), 'frameworks': sorted(frameworks),
             'dependencies': sorted(dependencies)[:100], 'required_environment_names': sorted(env_keys)[:40],
             'entrypoints': entrypoints[:30], 'test_suites': tests[:12], 'diagnostics': diagnostics,

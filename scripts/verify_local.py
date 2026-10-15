@@ -42,8 +42,18 @@ def main():
             assert value['report']['discovery']['source_sha256'] == plan['source_sha256']
             assert len(value['report']['assurance']['controls']) == 24
             assert client.post('/api/v1/studio/runtime', json={'source':source,'entrypoint':plan['entrypoints'][0]['id'],'execution_consent':True}).status_code == 401
+            example = ROOT / 'examples/blueprint-reader'
+            mapped_source = {**source, 'files': {p.relative_to(example).as_posix(): p.read_text() for p in example.rglob('*') if p.is_file()}}
+            mapped = client.post('/api/v1/studio/discover', json=mapped_source).json()['blueprint']
+            assert mapped['status'] == 'mapped'
+            mapped_review = client.post('/api/v1/studio/review', json=mapped_source).json()
+            assert mapped_review['report']['discovery']['blueprint']['plan_sha256'] == mapped['plan_sha256']
+            assert hashlib.sha256(mapped_review['report_json'].encode()).hexdigest() == mapped_review['report_sha256']
+            del mapped_source['files']['agent/tools.py']
+            incomplete = client.post('/api/v1/studio/discover', json=mapped_source).json()
+            assert incomplete['blueprint']['status'] == 'blocked' and incomplete['entrypoints'] == []
             print(json.dumps({'localhost':f'http://127.0.0.1:{port}', 'source_review':'passed', 'discovery':'passed',
-                'report_integrity':'passed', 'runtime_auth':'passed', 'operator_surface':'hidden', 'controls':24}))
+                'blueprint_map_and_missing_file_gate':'passed', 'report_integrity':'passed', 'runtime_auth':'passed', 'operator_surface':'hidden', 'controls':24}))
     finally:
         server.terminate()
         try: server.wait(timeout=5)
