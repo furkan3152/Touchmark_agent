@@ -134,11 +134,45 @@ function assertLayout(value,label){
   await mobile.setViewportSize({width:320,height:740});
   const narrowLayout=await inspectLayout(mobile);
   assertLayout(narrowLayout,'Narrow mobile');
+  // Optional live-chain QA of an already executed, delivered report. This is
+  // report rendering/readback, not a recording of wallet signing or execution.
+  let deliveredReport = null;
+  if(process.env.VERITAS_DELIVERED_REPORT && process.env.VERITAS_DELIVERY_PROOF){
+   const envelope=JSON.parse(fs.readFileSync(process.env.VERITAS_DELIVERED_REPORT,'utf8'));
+   const proof=JSON.parse(fs.readFileSync(process.env.VERITAS_DELIVERY_PROOF,'utf8'));
+   assert.equal(proof.status,'verified');
+   const delivery=proof.delivery;
+   assert.equal(delivery.report_sha256,envelope.report_sha256);
+   const credential={contract_id:delivery.credential_contract_id,token_id:delivery.token_id,owner:delivery.owner};
+   await page.evaluate(({envelope,credential,order_id})=>new Promise((resolve,reject)=>window.dispatchEvent(new CustomEvent('veritas:order-report',{detail:{envelope,credential,order_id,resolve,reject}}))),{envelope,credential,order_id:proof.order_id});
+   await page.locator('[data-result-view="runtime"]').click();
+   const runtimeText=await page.locator('#runtime-results').innerText();
+   assert.match(runtimeText,/restart replay/);
+   assert.match(runtimeText,/needs_investigation/);
+   assert.match(runtimeText,/KeyError/);
+   assert.match(runtimeText,/live_testnet/);
+   await page.locator('#runtime-results').scrollIntoViewIfNeeded();
+   await page.screenshot({path:OUT+'/delivered-deep-runtime.png'});
+   assertLayout(await inspectLayout(page),'Delivered desktop');
+   await page.locator('[data-result-view="delivery"]').click();
+   assert.match(await page.locator('#delivery-results').innerText(),/Onchain record verified/);
+   await page.locator('#credential-card').scrollIntoViewIfNeeded();
+   await page.screenshot({path:OUT+'/delivered-deep-credential.png'});
+   const downloaded=page.waitForEvent('download');
+   await page.locator('#download-designed-report').click();
+   await (await downloaded).saveAs(OUT+'/delivered-deep-report.html');
+   await page.setViewportSize({width:390,height:844});
+   await page.locator('[data-result-view="runtime"]').click();
+   assertLayout(await inspectLayout(page),'Delivered mobile');
+   deliveredReport={report_sha256:envelope.report_sha256,order_id:proof.order_id,
+      live_credential_readback:true,workflow_findings_rendered:true,designed_report_downloaded:true,
+      execution_replayed:false,wallet_signing_recorded:false};
+  }
   assert.deepEqual(errors,[],'Uncaught browser errors');
   assert.deepEqual(consoleErrors,[],'Console errors');
   assert.deepEqual(failedRequests,[],'Failed requests');
   assert.deepEqual(responses,[],'HTTP errors');
-  const result={status:'passed',browser:await browser.version(),localhost:base,live_backend:true,desktop:{viewport:'1440x1000',layout:desktopLayout,tiers:3,official_modules:8,reader_decision:readerDecision,unsafe_decision:unsafeDecision,unsafe_priority_findings:Number(unsafePriority),coverage_controls:controls,report_download:true,source_edit_invalidates_report:true},mobile:{viewport:'390x844',real_file_upload_and_audit:true,layout,narrow_layout:narrowLayout},official_orders:{available:false,create_disabled:true,recovery_disabled:true,reason:availability},wallet:{library_loaded:true,extension_e2e:false},console_errors:consoleErrors,page_errors:errors,failed_requests:failedRequests,http_errors:responses,screenshots:['desktop-hero.png','desktop-audit.png','desktop-unsafe-report.png','desktop-orders-unavailable.png','mobile-hero.png','mobile-audit.png']};
+  const result={deliveredReport,status:'passed',browser:await browser.version(),localhost:base,live_backend:true,desktop:{viewport:'1440x1000',layout:desktopLayout,tiers:3,official_modules:8,reader_decision:readerDecision,unsafe_decision:unsafeDecision,unsafe_priority_findings:Number(unsafePriority),coverage_controls:controls,report_download:true,source_edit_invalidates_report:true},mobile:{viewport:'390x844',real_file_upload_and_audit:true,layout,narrow_layout:narrowLayout},official_orders:{available:false,create_disabled:true,recovery_disabled:true,reason:availability},wallet:{library_loaded:true,extension_e2e:false},console_errors:consoleErrors,page_errors:errors,failed_requests:failedRequests,http_errors:responses,screenshots:['desktop-hero.png','desktop-audit.png','desktop-unsafe-report.png','desktop-orders-unavailable.png','mobile-hero.png','mobile-audit.png']};
   fs.writeFileSync(OUT+'/result.json',JSON.stringify(result,null,2)); console.log(JSON.stringify(result,null,2));
  }finally{if(browser)await browser.close();if(server.exitCode===null){server.kill('SIGTERM');await new Promise(r=>server.once('exit',r));}}
 })().catch(e=>{console.error(e);process.exitCode=1;});
