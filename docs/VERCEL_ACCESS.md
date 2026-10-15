@@ -21,6 +21,8 @@ The first project/team observations come from this development session. The foll
 
 The successful project read and empty team list establish inconsistent access across operations. They do **not** establish whether the underlying cause is an expired grant, a missing team grant, an account mismatch or a provider-side authorization defect.
 
+Deployment creation, private Blob configuration and an explicitly invoked Preview-build canary succeeded. The build used its own OIDC identity for actual AI Gateway review and Python Sandbox execution; [the corrected integration evidence](../deployments/deployed-integrations-exact-input-2026-10-15.json) records the result. No build token was exported. These successful integrations use different authorization surfaces and do not resolve the connector's protected-HTTP scope error.
+
 ## Required next step
 
 The account owner should reauthorize the **existing Vercel connection** through its connection settings, signing in to the Vercel account that can administer `agentveritas-stellar` in `akdogan1`. During Vercel's OAuth consent flow, grant access to that owning team when offered. The current tools do not expose a reconnect or OAuth grant editor; this consent step must happen in the account owner's connection flow.
