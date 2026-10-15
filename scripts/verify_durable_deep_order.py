@@ -57,7 +57,7 @@ async def verify(run_id, restart_only=False):
     settings = Settings(_env_file=None, enable_official_orders=True, enable_testnet_order_settlement=True,
         enable_sandbox_runtime=True, enable_brokered_runtime=True, official_orders_storage_durable=True,
         official_orders_database=str(directory/'orders.db'), data_dir=str(directory/'audit'),
-        enable_ofac_screening=False)
+        enable_ofac_screening=False, enable_public_ai_review=True)
     keys = {role: Keypair.from_secret(os.environ[name]) for role, name in {
         'requester':'TRIAL_REQUESTER_SECRET', 'provider':'OFFICIAL_PROVIDER_SECRET',
         'evaluator':'OFFICIAL_EVALUATOR_SECRET'}.items()}
@@ -91,6 +91,8 @@ async def verify(run_id, restart_only=False):
             execution_consent=True, ai_assistance=True, external_processing_consent=True)
         plan = build_plan(request, settings)
         if plan['plan']['blockers']:
+            evidence.update(status='preflight_blocked', blockers=plan['plan']['blockers'])
+            publish(evidence)
             raise ValueError('Deep order preflight blocked')
         request.plan_sha256 = plan['plan_sha256']
         state['engagement'] = request.model_dump(mode='json')
