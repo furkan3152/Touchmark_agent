@@ -128,7 +128,21 @@ async def verify(run_id, restart_only=False):
     store = AuditOrderStore(settings.official_orders_database, deployment='persistent-worker', durable_storage=True)
     await activate_order(state['order_id'], state['order_token'], settings, store)
     publisher, adapter = build_adapters(settings, store)
-    await run_order_once(store, 'durable-deep-proof', settings=settings, executor=audit_engagement,
+    async def recorded_execution(request, config):
+        import traceback
+        from backend.app.services.audit_orders import _validate_result
+        try:
+            result = await audit_engagement(request, config)
+            write_private(directory/'audit.json', result)
+            _validate_result(result, store._private(state['order_id']))
+            return result
+        except Exception as exc:
+            evidence['execution_diagnostic'] = {'error':type(exc).__name__,
+                'frames':[{'file':Path(f.filename).name,'line':f.lineno}
+                          for f in traceback.extract_tb(exc.__traceback__)[-6:]]}
+            publish(evidence)
+            raise
+    await run_order_once(store, 'durable-deep-proof', settings=settings, executor=recorded_execution,
                          publisher=publisher.publish, chain_adapter=adapter, lease_seconds=600)
     summary = store.get(state['order_id'], state['order_token'])
     if summary['status'] != 'delivered':

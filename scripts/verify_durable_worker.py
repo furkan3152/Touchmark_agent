@@ -40,7 +40,7 @@ def operator_archive():
     return buffer.getvalue()
 
 
-async def verify(run_id):
+async def verify(run_id, attempt_id=None):
     if os.getenv('VERCEL_ENV')!='preview' or not os.getenv('VERCEL_OIDC_TOKEN'):
         raise ValueError('Preview build identity required')
     from vercel import sandbox as provider
@@ -48,7 +48,7 @@ async def verify(run_id):
     settings = Settings(_env_file=None)
     publisher = PrivateReportPublisher(settings)
     origin, token = publisher.origin, settings.blob_read_write_token
-    prefix = 'verification/'+run_id
+    prefix = 'verification/'+(attempt_id or run_id)
     # Allowlist only operator service credentials, never forward the build env wholesale.
     names = ['VERCEL_OIDC_TOKEN','VERCEL_PROJECT_ID','VERCEL_TEAM_ID','BLOB_READ_WRITE_TOKEN',
         'BLOB_STORE_ID','LLM_PROVIDER','LLM_MODEL','LLM_BASE_URL','ALLOW_EXTERNAL_LLM_FOR_PRIVATE_AUDITS',
@@ -70,7 +70,9 @@ async def verify(run_id):
         await client.put(prefix+'.claim.json',canonical_json(proof).encode(),access='private',
             content_type='application/json',add_random_suffix=False,overwrite=False,multipart=False)
         try:
-            drive, _ = await provider.get_or_create_drive(name='av-'+run_id, max_size_bytes=1_073_741_824, region='iad1')
+            drive, created = await provider.get_or_create_drive(name='av-'+run_id, max_size_bytes=1_073_741_824, region='iad1')
+            if attempt_id and created:
+                raise ValueError('Recovery requires the existing persistent drive')
             for restart in (False, True):
                 async with provider.create_sandbox(name='av-'+run_id+('-restart' if restart else '-work'),
                     image=settings.sandbox_image, persistent=False, execution_time_limit=1000,
@@ -116,8 +118,9 @@ async def verify(run_id):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--run-id',required=True);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--run-id',required=True);parser.add_argument('--attempt-id');args=parser.parse_args()
     if not re.fullmatch(r'[a-z0-9-]{8,64}',args.run_id):parser.error('Invalid ID')
-    try:asyncio.run(asyncio.wait_for(verify(args.run_id),timeout=1900))
+    if args.attempt_id and not re.fullmatch(r'[a-z0-9-]{8,64}',args.attempt_id):parser.error('Invalid attempt ID')
+    try:asyncio.run(asyncio.wait_for(verify(args.run_id,args.attempt_id),timeout=1900))
     except Exception as exc:
         print(json.dumps({'status':'incomplete','error':type(exc).__name__}));raise SystemExit(1) from None
