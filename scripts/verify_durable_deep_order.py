@@ -132,9 +132,17 @@ async def verify(run_id, restart_only=False):
         import traceback
         from backend.app.services.audit_orders import _validate_result
         try:
-            result = await audit_engagement(request, config)
-            write_private(directory/'audit.json', result)
-            _validate_result(result, store._private(state['order_id']))
+            candidate = directory/'audit.json'
+            if candidate.exists():
+                # Reuse the exact private execution output; never rerun the
+                # model or agent payments when usable evidence already exists.
+                result = json.loads(candidate.read_text())
+                _validate_result(result, store._private(state['order_id']))
+                evidence['checks'].append({'id':'retained_exact_audit_no_reexecution','passed':True})
+            else:
+                result = await audit_engagement(request, config)
+                write_private(candidate, result)
+                _validate_result(result, store._private(state['order_id']))
             return result
         except Exception as exc:
             evidence['execution_diagnostic'] = {'error':type(exc).__name__,

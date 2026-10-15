@@ -501,3 +501,31 @@ def test_paid_requested_ai_requires_usable_provider_response(config, ai_status, 
     else:
         with pytest.raises(orders.OrderError, match='AI review did not complete'):
             orders._validate_result(result_for(report), order)
+
+
+def workflow_exception_fixture():
+    observation = {'id':'invoice','status':'inconclusive','exit_code':0,'steps_observed':1,
+        'step_outcomes':[{'step':0,'response':'','error':'KeyError'}], 'external_event_range':[0,1]}
+    runtime = {'execution_profile':{'id':'reviewed'},
+        'cases':[{'id':'invoice','workflow':{'steps':[{'input':'invoice'}]}}],
+        'broker_evidence':{'events':[{'workflow':'invoice','method':'model','status':'completed'}]}}
+    return observation, runtime
+
+
+def test_completed_business_exception_is_negative_audit_evidence():
+    observation, runtime = workflow_exception_fixture()
+    assert orders._observed_workflow_exception(observation, runtime)
+
+
+@pytest.mark.parametrize('fault', ['provider_unavailable','unknown_payment','missing_step','runner_error','timeout','wrong_workflow','invalid_range'])
+def test_business_exception_does_not_mask_infrastructure_failure(fault):
+    observation, runtime = workflow_exception_fixture()
+    event = runtime['broker_evidence']['events'][0]
+    if fault == 'provider_unavailable': event['status'] = 'unavailable'
+    if fault == 'unknown_payment': event.update(method='pay',status='unknown')
+    if fault == 'missing_step': observation['step_outcomes'] = []
+    if fault == 'runner_error': observation['step_outcomes'][0]['error'] = 'RunnerError'
+    if fault == 'timeout': observation['step_outcomes'][0]['error'] = 'TimeoutError'
+    if fault == 'wrong_workflow': event['workflow'] = 'other'
+    if fault == 'invalid_range': observation['external_event_range'] = [0,2]
+    assert not orders._observed_workflow_exception(observation, runtime)
