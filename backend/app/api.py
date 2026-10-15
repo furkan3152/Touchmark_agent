@@ -421,7 +421,7 @@ async def studio_discover(req: ReviewRequest) -> dict:
 async def studio_runtime(req: RuntimeRequest, authorization: str = Header(default="")) -> dict:
     # Separate pilot credential; never expose the operator admin key to a public UI.
     expected = settings.runtime_api_key
-    if len(expected) < 32 or not authorization.startswith("Bearer ") or not secrets.compare_digest(authorization[7:], expected):
+    if len(expected) < 32 or not authorization.startswith("Bearer ") or not secrets.compare_digest(authorization[7:].encode(), expected.encode()):
         raise HTTPException(status_code=401, detail="A valid runtime pilot access key is required.")
     if _runtime_lock.locked():
         raise HTTPException(status_code=429, detail="An isolated run is in progress. Retry after it completes.")
