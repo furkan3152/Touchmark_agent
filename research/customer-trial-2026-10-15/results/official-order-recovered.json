@@ -1,0 +1,231 @@
+{
+  "schema": "veritas.customer-trial-order/v1",
+  "network": "testnet",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "status": "verified",
+  "created_at": "2026-10-15T20:24:58.276883+00:00",
+  "fixture": "research/customer-trial-2026-10-15/invoicepilot.veritas (separately sealed Quick tier)",
+  "tier_id": "quick",
+  "amount_atomic": "1000000",
+  "asset": "testnet_faucet_XLM",
+  "contracts": {
+    "registry": {
+      "id": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "wasm_sha256": "a77262a8430e5c172569845973d927b73701f0a8306311d5c0ffea20d88cd677",
+      "constructor_atomic": true
+    },
+    "credential": {
+      "id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+      "wasm_sha256": "f796e4a6d1b877ce3d261eea6c172e922e47540627017f74482a5715d1fa77cf",
+      "constructor_atomic": true
+    },
+    "escrow": {
+      "id": "CD4OOPXGVL64YSUVZWDBAM2AATNITI5DKY4HXRALYUURH27MQZNF2O4V",
+      "wasm_sha256": "ca95c3f572aa465d9d9a59f651bc0a49050eff0d53cf21e6f0e0b163f2b8488a",
+      "wasm_path": "target/wasm32v1-none/release/agent_veritas_escrow.wasm",
+      "constructor_atomic": true,
+      "registry_bound": true,
+      "registry": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "constructor_argument_order": [
+        "admin",
+        "token",
+        "fee_to",
+        "fee_bps",
+        "registry"
+      ]
+    }
+  },
+  "roles": {
+    "requester": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+    "provider": "GDE6VWFICHOE7PEGVT7TUMR24WB3ETW7K62RHLJYPEBX5MDIVUFZAI4A",
+    "evaluator": "GCAO46UTNNLBRZSHZOUBJXGROQXZ2BHLV55EALQYUDRPC45AJRKO4EMC",
+    "admin": "GDCGJTWMFCIK3EJ4KWRASUQXD7ZZUPOC2E5JXWZLJGOTGDAYGAY3L6YK",
+    "treasury": "GB6M2BNKWTFIHWBGM7LYGZ3ZIICQZJGQ6DXAFQUKU36RILZ3IYSA55UE"
+  },
+  "checkout_transactions": [
+    {
+      "step": "register",
+      "hash": "3257d06e0f702811274b3f349288dcd9062af20b2d23e95efd9c63cc10b92c9b",
+      "status": "SUCCESS",
+      "ledger": 5214766,
+      "signer_role": "requester",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/3257d06e0f702811274b3f349288dcd9062af20b2d23e95efd9c63cc10b92c9b"
+    },
+    {
+      "step": "request",
+      "hash": "e4ff15cf53710c3fd5b659ba084426e824f4dd4cd2a9533f6f5a5af80103d9ae",
+      "status": "SUCCESS",
+      "ledger": 5214770,
+      "signer_role": "requester",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/e4ff15cf53710c3fd5b659ba084426e824f4dd4cd2a9533f6f5a5af80103d9ae"
+    },
+    {
+      "step": "create",
+      "hash": "c6588bf79e4fc44213299b8313da744fa9dc4c15d05465311bce5e47b008ca7d",
+      "status": "SUCCESS",
+      "ledger": 5214773,
+      "signer_role": "requester",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/c6588bf79e4fc44213299b8313da744fa9dc4c15d05465311bce5e47b008ca7d"
+    },
+    {
+      "step": "fund",
+      "hash": "e0f17c63674e82823963a1c17bc817860124d885d1f5d6f7434641d38fa3e466",
+      "status": "SUCCESS",
+      "ledger": 5214777,
+      "signer_role": "requester",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/e0f17c63674e82823963a1c17bc817860124d885d1f5d6f7434641d38fa3e466"
+    }
+  ],
+  "checks": [
+    {
+      "id": "sep53_requester_order_scope",
+      "passed": true
+    },
+    {
+      "id": "restart_before_activation",
+      "passed": true,
+      "payment_confirmed": true
+    },
+    {
+      "id": "funded_escrow_reloaded_from_testnet",
+      "passed": true,
+      "ledger": 5214778
+    },
+    {
+      "id": "canonical_report_commitment",
+      "passed": true
+    },
+    {
+      "id": "authenticated_private_blob_readback",
+      "passed": true
+    },
+    {
+      "id": "unauthenticated_report_access_denied",
+      "passed": true
+    },
+    {
+      "id": "registry_report_source_plan_score_binding",
+      "passed": true
+    },
+    {
+      "id": "escrow_payment_complete",
+      "passed": true
+    },
+    {
+      "id": "current_owner_bound_credential",
+      "passed": true
+    },
+    {
+      "id": "restart_does_not_rerun_paid_work",
+      "passed": true
+    },
+    {
+      "id": "transaction_intents_unchanged_on_retry",
+      "passed": true
+    },
+    {
+      "id": "wrong_capability_cannot_read_report",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "First-party requester, provider and evaluator share one operator; they are not independent validators.",
+    "The frozen InvoicePilot source received a separately scoped Quick static audit. No AI model or runtime execution is claimed.",
+    "The report is stored privately; its SHA-256 and token-free private URI are public on Testnet.",
+    "Local SQLite worker proof is not evidence of a durable serverless production queue.",
+    "A current audit credential records scoped provenance, not a guarantee of security.",
+    "The separate Deep trial observed 0 successful agent responses. This credential does not certify behavioral safety.",
+    "Read-only diagnosis: Testnet RPC could not verify this checkout. No checkout transaction intent or confirmed transaction was recorded. Automatic review rejected an unchanged paid-flow retry."
+  ],
+  "order_id": "b2dfda7a71dce1594f3a9aedf755f87c92bdb47f446a095367e11c7369b96e99",
+  "retry_auto_review_rejected": true,
+  "credential_issued": true,
+  "payment_confirmed": true,
+  "checked_at": "2026-10-15T20:54:42.271642+00:00",
+  "delivery": {
+    "agent_id": "b687b940408698c65c58547c23b37fbf6bca732100749887850e79aa2432ed76",
+    "checked_at_ledger": 5214816,
+    "credential_contract_id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+    "credential_expires_at": 1792702423,
+    "escrow_contract_id": "CD4OOPXGVL64YSUVZWDBAM2AATNITI5DKY4HXRALYUURH27MQZNF2O4V",
+    "independent_evaluator": false,
+    "is_current": true,
+    "network": "testnet",
+    "owner": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+    "payment_state": "Complete",
+    "report_score": 64.0,
+    "report_sha256": "018943bc7a5691e08f7cb24048c3b90078458f7e4835edbfa9dd776ddfc037a9",
+    "report_uri": "https://evlqandd2t85necg.private.blob.vercel-storage.com/reports/018943bc7a5691e08f7cb24048c3b90078458f7e4835edbfa9dd776ddfc037a9.json",
+    "report_visibility": "private",
+    "request_id": "b2dfda7a71dce1594f3a9aedf755f87c92bdb47f446a095367e11c7369b96e99",
+    "schema": "veritas.testnet-order-delivery/v1",
+    "score": 64,
+    "score_conversion": "nearest_integer_ties_to_even",
+    "status": "delivered",
+    "token_id": "b2dfda7a71dce1594f3a9aedf755f87c92bdb47f446a095367e11c7369b96e99",
+    "transactions": [
+      {
+        "hash": "ab34e2e4e7a65c976e5bee328695d5af4ac7b7945149ad5aee017ac84f220a79",
+        "ledger": 5214790,
+        "status": "confirmed",
+        "step": "respond"
+      },
+      {
+        "hash": "c23a677978d44c4bc7758372472dbf80e698a385f390c9c183af2d81e805ecb9",
+        "ledger": 5214797,
+        "status": "confirmed",
+        "step": "submit"
+      },
+      {
+        "hash": "bb55d9dbe7a335cd713b8bf8f2c921f6d2faf4d11a81b52e47d2a8c241514b11",
+        "ledger": 5214804,
+        "status": "confirmed",
+        "step": "complete"
+      },
+      {
+        "hash": "d20eb8525b9d31bc8651c6f111f4b6a9b0435072c6bf8f5bd37f27c902dae5c9",
+        "ledger": 5214811,
+        "status": "confirmed",
+        "step": "issue"
+      }
+    ]
+  },
+  "report": {
+    "sha256": "018943bc7a5691e08f7cb24048c3b90078458f7e4835edbfa9dd776ddfc037a9",
+    "uri": "https://evlqandd2t85necg.private.blob.vercel-storage.com/reports/018943bc7a5691e08f7cb24048c3b90078458f7e4835edbfa9dd776ddfc037a9.json",
+    "visibility": "private",
+    "bytes": 43827,
+    "source_sha256": "4c52a5fa1b2e732fcf0c0ce1e28c10e9784b84433c1f31786202d078a7554d08",
+    "plan_sha256": "d56eb45b87a52e675dd215c885217a4a6623b09a3218d87e7369e0be32a01c83",
+    "runtime_executed": false,
+    "ai_model_invoked": false,
+    "review_decision": "needs_evidence"
+  },
+  "settlement_transactions": [
+    {
+      "hash": "ab34e2e4e7a65c976e5bee328695d5af4ac7b7945149ad5aee017ac84f220a79",
+      "ledger": 5214790,
+      "status": "confirmed",
+      "step": "respond"
+    },
+    {
+      "hash": "c23a677978d44c4bc7758372472dbf80e698a385f390c9c183af2d81e805ecb9",
+      "ledger": 5214797,
+      "status": "confirmed",
+      "step": "submit"
+    },
+    {
+      "hash": "bb55d9dbe7a335cd713b8bf8f2c921f6d2faf4d11a81b52e47d2a8c241514b11",
+      "ledger": 5214804,
+      "status": "confirmed",
+      "step": "complete"
+    },
+    {
+      "hash": "d20eb8525b9d31bc8651c6f111f4b6a9b0435072c6bf8f5bd37f27c902dae5c9",
+      "ledger": 5214811,
+      "status": "confirmed",
+      "step": "issue"
+    }
+  ],
+  "recovery": "Public Gateway Testnet RPC; explicit user authorization to resume after fix."
+}

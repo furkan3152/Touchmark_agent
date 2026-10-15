@@ -98,6 +98,8 @@ def normalize(request: EngagementRequest):
 
 def build_plan(request: EngagementRequest, settings) -> dict:
     source, capsule, compiled = normalize(request)
+    from .execution_contract import load_contract, workflow_cases, preflight, profile_digest
+    execution = load_contract(source.files)
     discovery = discover_project(source.files)
     tier = next(t for t in TIERS if t['id'] == request.tier_id)
     modules = [m for m in MODULES if m['id'] in request.module_ids]
@@ -117,6 +119,17 @@ def build_plan(request: EngagementRequest, settings) -> dict:
             blockers.extend(compiled.get('blockers', []))
         from .capsule import module_cases
         planned_cases = compiled['cases'] if compiled else module_cases(source, tier=request.tier_id, modules=sorted(request.module_ids))
+        if execution:
+            planned_cases = workflow_cases(execution)
+            blockers.extend(preflight(execution, capsule, settings))
+            if any(w.model_reply is None for w in execution.workflows) and not source.external_processing_consent:
+                blockers.append('Live model tools require explicit external processing consent.')
+        elif capsule:
+            environment = capsule.environment
+            if environment.python_version not in {'3', '3.14'}:
+                blockers.append('The native sandbox provides Python 3.14; declare a reviewed execution profile for another version.')
+            if environment.dependencies or environment.required_environment_names:
+                blockers.append('Dependencies or environment configuration require an explicit reviewed execution profile before payment.')
         if not planned_cases:
             blockers.append('These specialists have no Python behavior pack; choose Preview or include a behavior specialist.')
     else:
@@ -147,6 +160,13 @@ def build_plan(request: EngagementRequest, settings) -> dict:
             'payment': {'state': 'not_requested', 'checkout_enabled': False},
             'limits': ['A larger case budget increases sampled coverage; it does not establish complete security.',
                        'Tool, memory and live model integrations require separate instrumented adapters.']}
+    if execution and request.tier_id != 'quick':
+        plan['execution_profile'] = {'id': execution.profile, 'sha256': profile_digest(),
+            'mode': 'brokered_workflows', 'network': 'Testnet tools through external broker',
+            'native_clients_tested': False, 'bindings': [b.model_dump() for b in execution.bindings]}
+        plan['ai_generated_cases_max'] = 0
+        plan['coverage']['execution'] = 'brokered_python_microvm'
+        plan['limits'].append('Declared client classes are substituted; native transport implementations need separate validation.')
     return {'plan': plan, 'plan_sha256': sha256(canonical_json(plan).encode()).hexdigest()}
 
 

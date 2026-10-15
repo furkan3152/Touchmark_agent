@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     # LLM; privacy-mode için ayrıca opt-in gerekir.
     enable_sandbox_runtime: bool = False
+    enable_brokered_runtime: bool = False
     runtime_api_key: str = ""
     checkout_quote_signing_key: str = ""
     # Official Testnet fulfillment is a separate opt-in persistent service.

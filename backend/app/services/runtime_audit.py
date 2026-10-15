@@ -102,6 +102,7 @@ def assess_observations(raw: dict, cases: list[dict] | None = None) -> list[dict
             'assertion': assertion,
             'assertions': expectations, 'step_responses': [redact(x[:2000]) for x in step_responses],
             'steps_observed': len(step_responses),
+            'blocked_reason': str(output.get('blocked', ''))[:100],
             'dependency': str(output.get('dependency', ''))[:100], 'error': str(output.get('error', ''))[:100],
             'exit_code': row.get('exit_code'), 'runtime_verified_control': False})
     return results
@@ -167,6 +168,11 @@ async def run_runtime(request: RuntimeRequest, settings, *, provider=None) -> di
         raise ValueError('Choose a discovered, supported Python text callable. No arbitrary shell commands are accepted.')
     if provider is None:
         from vercel import sandbox as provider
+    from .execution_contract import load_contract
+    execution = load_contract(request.source.files)
+    if execution:
+        from .workflow_runtime import run_workflows
+        return await run_workflows(request, settings, execution, entry, plan, capsule_plan, provider)
     cases, ai_planning = await plan_cases(request, settings, plan)
     if not cases:
         raise ValueError('The selected modules have no Python behavior pack; request source or chain evidence instead.')

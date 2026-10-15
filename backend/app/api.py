@@ -199,7 +199,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self' https://soroban-testnet.stellar.org; "
+        "img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self' https://soroban-rpc.testnet.stellar.gateway.fm; "
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     )
     if request.url.path.startswith("/api/"):
