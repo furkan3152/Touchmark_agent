@@ -29,6 +29,7 @@ from .attacks import (
     Attack,
 )
 from .base import BaseAuditor
+from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
@@ -92,6 +93,7 @@ class SecurityAuditor(BaseAuditor):
             if finding:
                 findings.append(finding)
 
+        findings += architecture_findings(artifact, self.name)
         findings += self._static_analysis(artifact)
         findings += self._privilege_analysis(artifact)
         findings += self._supply_chain(artifact)
