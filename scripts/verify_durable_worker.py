@@ -104,7 +104,7 @@ async def verify(run_id, attempt_id=None):
                         except (FileNotFoundError, provider.SandboxPathNotFoundError): continue
                         if len(raw)>500_000:raise ValueError('Trial evidence exceeds bound')
                         await put_private(client,prefix+'-'+suffix+('-restart' if restart else '')+'.json',raw,origin,token)
-                    await put_private(client,prefix+'-checkpoint.json',canonical_json(proof).encode(),origin,token)
+                    await put_private(client,prefix+('-restart-checkpoint.json' if restart else '-checkpoint.json'),canonical_json(proof).encode(),origin,token)
                     if process.returncode != 0:
                         raise ValueError('Trusted Deep worker did not finish')
             proof['status']='verified'
