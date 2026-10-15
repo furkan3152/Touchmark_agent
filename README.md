@@ -26,6 +26,8 @@ The portable **`.veritas` capsule** binds source contents, intent, forbidden goa
 
 Current public proofs:
 
+- [Official order fulfillment](deployments/official-order-pilot-2026-10-15.json): eight real Testnet transactions, wallet-bound private order, source-only audit, private report readback, matching credential and restart checks. Publication used a disclosed operator checkpoint. See [the fulfillment guide](docs/OFFICIAL_FULFILLMENT.md) for recovery, refunds and deployment limits.
+- [Live AI and Sandbox integration](deployments/deployed-integrations-2026-10-15.json): real Vercel OIDC model review and 12 observed Python case responses in a Preview build. One output assertion failed and remains recorded; these are execution observations, not security certifications.
 - [Paid Testnet delivery](deployments/testnet-audit-delivery-2026-10-15.json): 20 successful transactions, registry-bound escrow, exact payout, a report credential and a separate stale-version refund test.
 - [Bounded agent authority](deployments/agent-account-testnet-2026-10-15.json): actual authorized SAC transfer, rejected recipient/budget/revoked-key attempts and owner recovery.
 - [24-case isolated execution](deployments/capsule-runtime-pilot-2026-10-15.json): real microVM execution of a controlled, stateful Python fixture, including three-turn observations. It is not a live-model or production-tool test.
@@ -44,7 +46,7 @@ The **AuditCredential** Soroban contract issues unique, non-transferable, revoca
 - [Deployment and operations](docs/DEPLOYMENT.md)
 - [Threat model and trust boundaries](docs/THREAT_MODEL.md)
 
-The operator service requires durable single-worker hosting. Vercel exposes the stateless Studio. Testnet settlement has been verified; production checkout, automated operator fulfillment and public minting are not enabled. AI Gateway integration supports deployment OIDC or a local key, behind private access and source-sharing consent; [configuration and live-check instructions](docs/AI_CONFIGURATION.md) distinguish configuration from a successful model call.
+The official fulfillment worker requires durable hosting and is implemented for a private Testnet pilot, including wallet proof, persisted orders, retries, refunds and credential delivery. Vercel exposes the stateless Studio and blocks automatic funding without that service. Hosted production checkout and public minting are not enabled. AI Gateway integration supports deployment OIDC or a local key, behind private access and source-sharing consent; [configuration and live-check instructions](docs/AI_CONFIGURATION.md) distinguish configuration from a successful model call.
 
 ## Table of Contents
 

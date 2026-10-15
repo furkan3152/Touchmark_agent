@@ -8,6 +8,7 @@ services:
       DATA_DIR: /app/data
       EVENT_DATABASE: /app/data/events.db
       DATABASE_URL: sqlite:////app/data/agentveritas.db
+      OFFICIAL_ORDERS_DATABASE: /app/data/official-orders.db
     volumes:
       - veritas-data:/app/data
     read_only: true
