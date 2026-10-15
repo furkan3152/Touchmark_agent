@@ -187,7 +187,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self'; "
+        "img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self' https://soroban-testnet.stellar.org; "
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     )
     if request.url.path.startswith("/api/"):
@@ -413,6 +413,136 @@ from .stellar.auth_inspector import AuthorizationInspectionRequest, inspect_auth
 _runtime_lock = asyncio.Lock()
 
 
+def require_pilot_key(authorization: str, *, ai: bool = False) -> None:
+    expected = (settings.ai_review_api_key or settings.runtime_api_key) if ai else settings.runtime_api_key
+    if len(expected) < 32 or not authorization.startswith('Bearer ') or not secrets.compare_digest(authorization[7:].encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail='A valid private pilot access key is required.')
+
+
+from .services.audit_product import EngagementRequest, catalogue, build_plan, audit_engagement, normalize
+from .services.report_delivery import DeliveryRequest, deliver_report, pilot_evidence
+from .services.testnet_checkout import CheckoutRequest, CheckoutStepRequest, prepare_checkout, prepare_checkout_step
+from pydantic import ConfigDict
+
+
+class CapsuleImportRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    document: str = Field(min_length=2, max_length=96_000)
+
+
+@app.get('/api/v1/studio/catalog')
+async def studio_catalog() -> dict:
+    return catalogue(settings)
+
+
+@app.post('/api/v1/studio/checkout')
+async def studio_checkout(req: CheckoutRequest, authorization: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    try:
+        return await prepare_checkout(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/checkout/prepare')
+async def studio_checkout_prepare(req: CheckoutStepRequest, authorization: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    try:
+        return await prepare_checkout_step(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/ai/check')
+async def studio_ai_check(authorization: str = Header(default=''), x_ai_review_key: str = Header(default='')) -> dict:
+    require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
+    from .swarm.llm import LlmClient
+    return await LlmClient(settings).check_connection()
+
+
+@app.get('/.well-known/stellar.toml', response_class=PlainTextResponse)
+async def stellar_info() -> Response:
+    # Publish only integrations that exist. No invented web-auth or anchor URL.
+    from .services.report_delivery import pilot_evidence
+    import json
+    pilot = pilot_evidence()
+    lines = ['VERSION="2.7.0"', 'NETWORK_PASSPHRASE="Test SDF Network ; September 2015"',
+             '', '[DOCUMENTATION]', 'ORG_DESCRIPTION="AgentVeritas official agent audit Testnet pilot."',
+             'ORG_GITHUB="furkan3152"', '', '[AGENTVERITAS]',
+             'STATUS="testnet_pilot"', 'INDEPENDENT_OPERATORS=false',
+             'CREDENTIAL_STANDARD="custom_nontransferable_audit_record"']
+    if pilot.get('available'):
+        for name, value in pilot['evidence'].get('contracts', {}).items():
+            if name in {'registry', 'escrow', 'credential'} and isinstance(value, dict):
+                lines.append(name.upper() + '_CONTRACT=' + json.dumps(value.get('id', '')))
+    return PlainTextResponse('\n'.join(lines) + '\n', headers={'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'public, max-age=300', 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.post('/api/v1/studio/plan')
+async def studio_plan(req: EngagementRequest) -> dict:
+    try:
+        return build_plan(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/audit')
+async def studio_audit(req: EngagementRequest, authorization: str = Header(default=''), x_ai_review_key: str = Header(default='')) -> dict:
+    try:
+        source, _, _ = normalize(req)
+        if source.ai_assistance:
+            require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
+        if req.tier_id != 'quick':
+            require_pilot_key(authorization)
+        if _runtime_lock.locked():
+            raise HTTPException(status_code=429, detail='An audit is in progress. Retry after it completes.')
+        async with _runtime_lock:
+            return await audit_engagement(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning('Audit execution incomplete: %s', type(exc).__name__)
+        raise HTTPException(status_code=503, detail='The audit did not complete. Check the configured provider; no completed report or credential is claimed.') from exc
+
+
+@app.post('/api/v1/studio/capsule/import')
+async def studio_capsule_import(req: CapsuleImportRequest) -> dict:
+    from .services.capsule import parse_capsule, compile_capsule, capsule_review_source
+    try:
+        capsule = parse_capsule(req.document)
+        return {'capsule': capsule.model_dump(mode='json'), 'source': capsule_review_source(capsule).model_dump(mode='json'),
+                'compiled': compile_capsule(capsule)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/capsule/export')
+async def studio_capsule_export(req: EngagementRequest) -> dict:
+    from .services.capsule import draft_capsule, compile_capsule
+    try:
+        source, existing, _ = normalize(req)
+        capsule = existing or draft_capsule(source, tier=req.tier_id, modules=req.module_ids)
+        return {'capsule': capsule.model_dump(mode='json'), 'compiled': compile_capsule(capsule)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/delivery')
+async def studio_delivery(req: DeliveryRequest) -> dict:
+    try:
+        return await deliver_report(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get('/api/v1/studio/delivery/pilot')
+async def studio_delivery_pilot() -> dict:
+    return pilot_evidence()
+
+
 @app.post("/api/v1/studio/discover")
 async def studio_discover(req: ReviewRequest) -> dict:
     return discover_project(req.files)
@@ -430,11 +560,13 @@ async def studio_inspect_auth(req: AuthorizationInspectionRequest) -> dict:
 
 
 @app.post("/api/v1/studio/runtime")
-async def studio_runtime(req: RuntimeRequest, authorization: str = Header(default="")) -> dict:
+async def studio_runtime(req: RuntimeRequest, authorization: str = Header(default=""), x_ai_review_key: str = Header(default='')) -> dict:
     # Separate pilot credential; never expose the operator admin key to a public UI.
     expected = settings.runtime_api_key
     if len(expected) < 32 or not authorization.startswith("Bearer ") or not secrets.compare_digest(authorization[7:].encode(), expected.encode()):
         raise HTTPException(status_code=401, detail="A valid runtime pilot access key is required.")
+    if req.source.ai_assistance:
+        require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
     if _runtime_lock.locked():
         raise HTTPException(status_code=429, detail="An isolated run is in progress. Retry after it completes.")
     async with _runtime_lock:
@@ -455,12 +587,16 @@ async def studio_capabilities() -> dict:
             "runtime_auth_required": True, "runtime_adapter": "python_text",
             "ai_available": settings.enable_public_ai_review and settings.llm_enabled,
             "ai_provider": settings.llm_provider if settings.enable_public_ai_review else "",
+            "ai_connection": settings.llm_status(), "ai_auth_required": True,
             "controls": ArchitectureManifest.catalogue(), "checkout_enabled": False,
+            "testnet_checkout_available": settings.stellar_network == 'testnet' and len(settings.runtime_api_key) >= 32 and len(settings.checkout_quote_signing_key) >= 32,
             "certificate_minting_enabled": False}
 
 
 @app.post("/api/v1/studio/review")
-async def studio_review(req: ReviewRequest) -> dict:
+async def studio_review(req: ReviewRequest, authorization: str = Header(default=''), x_ai_review_key: str = Header(default='')) -> dict:
+    if req.ai_assistance:
+        require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
     try:
         return await review_source(req, settings)
     except ValueError as exc:

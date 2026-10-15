@@ -1,0 +1,519 @@
+{
+  "schema": "agentveritas.testnet-audit-delivery/v1",
+  "network": "testnet",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "horizon": "https://horizon-testnet.stellar.org",
+  "created_at": "2026-10-15T12:49:34.178161+00:00",
+  "operating_model": "Official first-party requester/provider/evaluator identities; distinct keys, one operator. Not independent validators.",
+  "status": "verified",
+  "transactions": [
+    {
+      "label": "escrow_upload",
+      "contract": "escrow",
+      "function": "upload_contract_wasm",
+      "signer_role": "admin",
+      "hash": "dc2922d54ea80caa89b4ed155a6c5b291785aade8ba21763b86a0f534a175408",
+      "status": "SUCCESS",
+      "ledger": 5209059,
+      "fee_charged_atomic": "160468563",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/dc2922d54ea80caa89b4ed155a6c5b291785aade8ba21763b86a0f534a175408"
+    },
+    {
+      "label": "escrow_deploy",
+      "contract": "escrow",
+      "function": "create_contract",
+      "signer_role": "admin",
+      "hash": "dc2d792b8dfbd9246c03006e85209f15ce4b7e1e6b532a09028beee28b6c2d37",
+      "status": "SUCCESS",
+      "ledger": 5209060,
+      "fee_charged_atomic": "297785",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/dc2d792b8dfbd9246c03006e85209f15ce4b7e1e6b532a09028beee28b6c2d37"
+    },
+    {
+      "label": "enable_official_validator",
+      "contract": "registry",
+      "function": "set_valid",
+      "signer_role": "admin",
+      "hash": "9734797a2c980dfde42c0f622259aaac9cc80268477009cec7739a69486ba947",
+      "status": "SUCCESS",
+      "ledger": 5209062,
+      "fee_charged_atomic": "98552",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/9734797a2c980dfde42c0f622259aaac9cc80268477009cec7739a69486ba947"
+    },
+    {
+      "label": "delivery.register",
+      "contract": "registry",
+      "function": "reg_agent",
+      "signer_role": "requester",
+      "hash": "156328ba9bab8b93c38dd782a3bd690086815faba819c10780193c30c4f08c86",
+      "status": "SUCCESS",
+      "ledger": 5209065,
+      "fee_charged_atomic": "406878",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/156328ba9bab8b93c38dd782a3bd690086815faba819c10780193c30c4f08c86"
+    },
+    {
+      "label": "delivery.request",
+      "contract": "registry",
+      "function": "req_valid",
+      "signer_role": "requester",
+      "hash": "30bb901a6f076c75e0af2d979af85bce3ad14fe841fd08a3970c6b6d94478de5",
+      "status": "SUCCESS",
+      "ledger": 5209067,
+      "fee_charged_atomic": "426083",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/30bb901a6f076c75e0af2d979af85bce3ad14fe841fd08a3970c6b6d94478de5"
+    },
+    {
+      "label": "delivery.create",
+      "contract": "escrow",
+      "function": "create",
+      "signer_role": "requester",
+      "hash": "a717c411102dd362b5c883dd948f5cf8b22e9b48b9d1a80901c57f23f9e579b0",
+      "status": "SUCCESS",
+      "ledger": 5209070,
+      "fee_charged_atomic": "685901",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/a717c411102dd362b5c883dd948f5cf8b22e9b48b9d1a80901c57f23f9e579b0"
+    },
+    {
+      "label": "delivery.fund",
+      "contract": "escrow",
+      "function": "fund",
+      "signer_role": "requester",
+      "hash": "b08c0a1008a249898ef7694a68c6c8a401c18bd510267749b5c79f36a1b03ff3",
+      "status": "SUCCESS",
+      "ledger": 5209073,
+      "fee_charged_atomic": "673292",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/b08c0a1008a249898ef7694a68c6c8a401c18bd510267749b5c79f36a1b03ff3"
+    },
+    {
+      "label": "delivery.respond",
+      "contract": "registry",
+      "function": "respond",
+      "signer_role": "provider",
+      "hash": "be5c8a6039bfb57c66fa9fa78a59dc3e5958b6264093540bf7a859ed6a5bccd7",
+      "status": "SUCCESS",
+      "ledger": 5209075,
+      "fee_charged_atomic": "142920",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/be5c8a6039bfb57c66fa9fa78a59dc3e5958b6264093540bf7a859ed6a5bccd7"
+    },
+    {
+      "label": "delivery.submit",
+      "contract": "escrow",
+      "function": "submit",
+      "signer_role": "provider",
+      "hash": "99d2fe30cce485dd019ae0278c153a809795629ce926473078908db8beb1ca8a",
+      "status": "SUCCESS",
+      "ledger": 5209078,
+      "fee_charged_atomic": "10288",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/99d2fe30cce485dd019ae0278c153a809795629ce926473078908db8beb1ca8a"
+    },
+    {
+      "label": "delivery.complete",
+      "contract": "escrow",
+      "function": "complete",
+      "signer_role": "evaluator",
+      "hash": "09cb834e2b013106e69c4d5472d25c69f441380e3dd598983c0167a7268c236c",
+      "status": "SUCCESS",
+      "ledger": 5209084,
+      "fee_charged_atomic": "14624",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/09cb834e2b013106e69c4d5472d25c69f441380e3dd598983c0167a7268c236c"
+    },
+    {
+      "label": "delivery.issue_credential",
+      "contract": "credential",
+      "function": "issue",
+      "signer_role": "provider",
+      "hash": "6a92e36c26bb98de5a95e23031fba3248470a13772748460ee0be36e5468879e",
+      "status": "SUCCESS",
+      "ledger": 5209089,
+      "fee_charged_atomic": "633292",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/6a92e36c26bb98de5a95e23031fba3248470a13772748460ee0be36e5468879e"
+    },
+    {
+      "label": "stale.register",
+      "contract": "registry",
+      "function": "reg_agent",
+      "signer_role": "requester",
+      "hash": "3f31668b4c58f298b3e55df80c4ef318b94f1787e7e8c55c9a34665a8f826215",
+      "status": "SUCCESS",
+      "ledger": 5209098,
+      "fee_charged_atomic": "406766",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/3f31668b4c58f298b3e55df80c4ef318b94f1787e7e8c55c9a34665a8f826215"
+    },
+    {
+      "label": "stale.request",
+      "contract": "registry",
+      "function": "req_valid",
+      "signer_role": "requester",
+      "hash": "e609bda241e2268319538466d0277c5c5cc820f58b9ab908972927fcb1c9046d",
+      "status": "SUCCESS",
+      "ledger": 5209100,
+      "fee_charged_atomic": "425965",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/e609bda241e2268319538466d0277c5c5cc820f58b9ab908972927fcb1c9046d"
+    },
+    {
+      "label": "stale.create",
+      "contract": "escrow",
+      "function": "create",
+      "signer_role": "requester",
+      "hash": "ee93cbbff18d12c500764f3a828de780a8dd04e837c42f54aecff93f8326f60c",
+      "status": "SUCCESS",
+      "ledger": 5209102,
+      "fee_charged_atomic": "685711",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/ee93cbbff18d12c500764f3a828de780a8dd04e837c42f54aecff93f8326f60c"
+    },
+    {
+      "label": "stale.fund",
+      "contract": "escrow",
+      "function": "fund",
+      "signer_role": "requester",
+      "hash": "3fc612a88c8f88794d8a5caa6e87679c5e69dcbcb49b6c36a2b33c6ab47aacb4",
+      "status": "SUCCESS",
+      "ledger": 5209104,
+      "fee_charged_atomic": "12066",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/3fc612a88c8f88794d8a5caa6e87679c5e69dcbcb49b6c36a2b33c6ab47aacb4"
+    },
+    {
+      "label": "stale.respond",
+      "contract": "registry",
+      "function": "respond",
+      "signer_role": "provider",
+      "hash": "59a1e6f6484d7c8bca0948c98ffa037642429b716f771ffa4fc74385e5293871",
+      "status": "SUCCESS",
+      "ledger": 5209107,
+      "fee_charged_atomic": "142883",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/59a1e6f6484d7c8bca0948c98ffa037642429b716f771ffa4fc74385e5293871"
+    },
+    {
+      "label": "stale.submit",
+      "contract": "escrow",
+      "function": "submit",
+      "signer_role": "provider",
+      "hash": "a8290a01a06dad1ae78386d6d15d51ec52a1dbc5c0f66b8b2dfa0c82086cf3a6",
+      "status": "SUCCESS",
+      "ledger": 5209110,
+      "fee_charged_atomic": "10287",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/a8290a01a06dad1ae78386d6d15d51ec52a1dbc5c0f66b8b2dfa0c82086cf3a6"
+    },
+    {
+      "label": "stale.change_version",
+      "contract": "registry",
+      "function": "upd_agent",
+      "signer_role": "requester",
+      "hash": "a320b02c1f7918d42637c0390c2ede5e50a6b6efbd814562157e793cba540e53",
+      "status": "SUCCESS",
+      "ledger": 5209113,
+      "fee_charged_atomic": "6333",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/a320b02c1f7918d42637c0390c2ede5e50a6b6efbd814562157e793cba540e53"
+    },
+    {
+      "label": "stale.dispute",
+      "contract": "escrow",
+      "function": "dispute",
+      "signer_role": "evaluator",
+      "hash": "880442183021833090416d7a12331c33a4a8aabb8dba44cc1b401bc490f0d77e",
+      "status": "SUCCESS",
+      "ledger": 5209118,
+      "fee_charged_atomic": "5081",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/880442183021833090416d7a12331c33a4a8aabb8dba44cc1b401bc490f0d77e"
+    },
+    {
+      "label": "stale.refund",
+      "contract": "escrow",
+      "function": "refund",
+      "signer_role": "requester",
+      "hash": "6a9e2879452a506e13ce7c19b5ae381de300409d06aba963589b338d8999bab6",
+      "status": "SUCCESS",
+      "ledger": 5209121,
+      "fee_charged_atomic": "9955",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/6a9e2879452a506e13ce7c19b5ae381de300409d06aba963589b338d8999bab6"
+    }
+  ],
+  "negative_simulations": [
+    {
+      "label": "wrong_report_hash_rejected",
+      "contract": "escrow",
+      "function": "submit",
+      "rejected": true,
+      "stage": "rpc_simulation_before_submission",
+      "contract_error_codes": [
+        15
+      ],
+      "transaction_submitted": false,
+      "expected_contract_error_code": 15
+    },
+    {
+      "label": "score_mismatch_rejected",
+      "contract": "escrow",
+      "function": "complete",
+      "rejected": true,
+      "stage": "rpc_simulation_before_submission",
+      "contract_error_codes": [
+        9
+      ],
+      "transaction_submitted": false,
+      "expected_contract_error_code": 9
+    },
+    {
+      "label": "stale_version_settlement_rejected",
+      "contract": "escrow",
+      "function": "complete",
+      "rejected": true,
+      "stage": "rpc_simulation_before_submission",
+      "contract_error_codes": [
+        16
+      ],
+      "transaction_submitted": false,
+      "expected_contract_error_code": 16
+    },
+    {
+      "label": "stale_version_credential_rejected",
+      "contract": "credential",
+      "function": "issue",
+      "rejected": true,
+      "stage": "rpc_simulation_before_submission",
+      "contract_error_codes": [
+        3
+      ],
+      "transaction_submitted": false,
+      "expected_contract_error_code": 3
+    }
+  ],
+  "checks": [
+    {
+      "label": "escrow.uploaded_wasm",
+      "ok": true,
+      "actual": "ca95c3f572aa465d9d9a59f651bc0a49050eff0d53cf21e6f0e0b163f2b8488a"
+    },
+    {
+      "label": "registry.onchain_wasm_sha256",
+      "ok": true,
+      "actual": "a77262a8430e5c172569845973d927b73701f0a8306311d5c0ffea20d88cd677"
+    },
+    {
+      "label": "credential.onchain_wasm_sha256",
+      "ok": true,
+      "actual": "f796e4a6d1b877ce3d261eea6c172e922e47540627017f74482a5715d1fa77cf"
+    },
+    {
+      "label": "escrow.onchain_wasm_sha256",
+      "ok": true,
+      "actual": "ca95c3f572aa465d9d9a59f651bc0a49050eff0d53cf21e6f0e0b163f2b8488a"
+    },
+    {
+      "label": "escrow.registry_binding",
+      "ok": true,
+      "actual": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH"
+    },
+    {
+      "label": "settlement.provider_exact_payout",
+      "ok": true,
+      "actual": 8500000
+    },
+    {
+      "label": "settlement.treasury_exact_fee",
+      "ok": true,
+      "actual": 1500000
+    },
+    {
+      "label": "delivery.same_content_hash",
+      "ok": true,
+      "actual": "626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35"
+    },
+    {
+      "label": "delivery.same_report_uri",
+      "ok": true,
+      "actual": "https://raw.githubusercontent.com/furkan3152/agentveritas-stellar/830091f9e3ea261951af7be1fe947d3c738f404e/deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.json"
+    },
+    {
+      "label": "delivery.same_score",
+      "ok": true,
+      "actual": 64
+    },
+    {
+      "label": "delivery.escrow_complete",
+      "ok": true,
+      "actual": [
+        "Complete"
+      ]
+    },
+    {
+      "label": "delivery.credential_owner",
+      "ok": true,
+      "actual": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI"
+    },
+    {
+      "label": "delivery.credential_current",
+      "ok": true,
+      "actual": true
+    },
+    {
+      "label": "refund.exact_return_after_transaction_fee",
+      "ok": true,
+      "actual": 2500000
+    },
+    {
+      "label": "refund.state",
+      "ok": true,
+      "actual": [
+        "Refunded"
+      ]
+    },
+    {
+      "label": "escrow.no_remaining_funds",
+      "ok": true,
+      "actual": 0
+    }
+  ],
+  "asset": {
+    "code": "XLM",
+    "decimals": 7,
+    "kind": "testnet_faucet_native_xlm",
+    "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+  },
+  "limitations": [
+    "Testnet faucet currency only; no real money or Mainnet transactions.",
+    "The report is a genuine bounded static review of our deterministic fixture; no AI model or agent runtime was executed by this pilot.",
+    "The credential records the issuer's scoped audit assertion and exact report hash; it is not a universal security guarantee.",
+    "Requester, provider, evaluator and admin are controlled by the same official pilot operator. Cryptographic role separation is not organizational independence.",
+    "Negative checks are RPC simulations rejected before submission, explicitly separate from successful ledger transactions."
+  ],
+  "report": {
+    "path": "deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.json",
+    "sha256": "626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35",
+    "source_sha256": "d4803191cd88b2401f8abf5be3b87ddfaab6710f3fdda24dea9bb9eea864342a",
+    "source_revision": "2d7e2de5d68794df855467017726fc506e804af8",
+    "blueprint_sha256": "137888565836b4d34e7ac9af7a29cd230e1e5b52f564c0825d396f9138c76962",
+    "bytes": 35931,
+    "decision": "needs_evidence",
+    "overall_score": 64.0,
+    "contract_score": 64,
+    "scope": "bounded_static_source_review",
+    "runtime_executed": false,
+    "ai_model_invoked": false,
+    "controls_verified": [],
+    "uri": "https://raw.githubusercontent.com/furkan3152/agentveritas-stellar/830091f9e3ea261951af7be1fe947d3c738f404e/deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.json",
+    "public_bytes_verified_at": "2026-10-15T12:54:03.178250+00:00"
+  },
+  "roles": {
+    "requester": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+    "provider": "GDE6VWFICHOE7PEGVT7TUMR24WB3ETW7K62RHLJYPEBX5MDIVUFZAI4A",
+    "evaluator": "GCAO46UTNNLBRZSHZOUBJXGROQXZ2BHLV55EALQYUDRPC45AJRKO4EMC",
+    "admin": "GDCGJTWMFCIK3EJ4KWRASUQXD7ZZUPOC2E5JXWZLJGOTGDAYGAY3L6YK",
+    "treasury": "GB6M2BNKWTFIHWBGM7LYGZ3ZIICQZJGQ6DXAFQUKU36RILZ3IYSA55UE"
+  },
+  "contracts": {
+    "registry": {
+      "id": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "wasm_sha256": "a77262a8430e5c172569845973d927b73701f0a8306311d5c0ffea20d88cd677",
+      "constructor_atomic": true
+    },
+    "credential": {
+      "id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+      "wasm_sha256": "f796e4a6d1b877ce3d261eea6c172e922e47540627017f74482a5715d1fa77cf",
+      "constructor_atomic": true
+    },
+    "escrow": {
+      "id": "CD4OOPXGVL64YSUVZWDBAM2AATNITI5DKY4HXRALYUURH27MQZNF2O4V",
+      "wasm_sha256": "ca95c3f572aa465d9d9a59f651bc0a49050eff0d53cf21e6f0e0b163f2b8488a",
+      "wasm_path": "target/wasm32v1-none/release/agent_veritas_escrow.wasm",
+      "constructor_atomic": true,
+      "registry_bound": true,
+      "registry": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "constructor_argument_order": [
+        "admin",
+        "token",
+        "fee_to",
+        "fee_bps",
+        "registry"
+      ]
+    }
+  },
+  "escrow_deployment_salt": "a0475d1b17703108654625cb8ad787fd1c4cd61196954ffe363111bd5507bd92",
+  "ids": {
+    "agent": "cb07b0e359a5344df52b97b556c7fbe24044a17cc58bed109601a369b089be86",
+    "request": "8915cc2eb03f845a18b5359ec43ae6229cea15f5cf2bc6ea2819e251f3855b13",
+    "stale_agent": "16e8dc96011dcb44b946c2a249ce906e84a873544069296f28d4f8375eae715d",
+    "stale_request": "fb3548dcc86b17bb742284583acd088dc95e8bde9b8746f6633e047e6adb3607"
+  },
+  "token_id": "8915cc2eb03f845a18b5359ec43ae6229cea15f5cf2bc6ea2819e251f3855b13",
+  "delivery_deadline": 5210507,
+  "settlement_balances_before": {
+    "provider": 99999846792,
+    "treasury": 100000000000
+  },
+  "settlement_balances_after": {
+    "provider": 100008346792,
+    "treasury": 100001500000
+  },
+  "settlement": {
+    "amount_atomic": "10000000",
+    "fee_atomic": "1500000",
+    "provider_payout_atomic": "8500000",
+    "fee_bps": 1500
+  },
+  "credential_expires_at": 1792673822,
+  "readbacks": {
+    "validation": {
+      "agent_id": "cb07b0e359a5344df52b97b556c7fbe24044a17cc58bed109601a369b089be86",
+      "end_hash": "d4803191cd88b2401f8abf5be3b87ddfaab6710f3fdda24dea9bb9eea864342a",
+      "meta_hash": "137888565836b4d34e7ac9af7a29cd230e1e5b52f564c0825d396f9138c76962",
+      "rep_hash": "626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35",
+      "rep_uri": "https://raw.githubusercontent.com/furkan3152/agentveritas-stellar/830091f9e3ea261951af7be1fe947d3c738f404e/deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.json",
+      "requester": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+      "score": 64,
+      "state": [
+        "Complete"
+      ],
+      "validator": "GDE6VWFICHOE7PEGVT7TUMR24WB3ETW7K62RHLJYPEBX5MDIVUFZAI4A",
+      "version": 1
+    },
+    "escrow": {
+      "amount": 10000000,
+      "deadline": 5210507,
+      "del_hash": "626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35",
+      "evaluator": "GCAO46UTNNLBRZSHZOUBJXGROQXZ2BHLV55EALQYUDRPC45AJRKO4EMC",
+      "fee_bps": 1500,
+      "fee_to": "GB6M2BNKWTFIHWBGM7LYGZ3ZIICQZJGQ6DXAFQUKU36RILZ3IYSA55UE",
+      "provider": "GDE6VWFICHOE7PEGVT7TUMR24WB3ETW7K62RHLJYPEBX5MDIVUFZAI4A",
+      "requester": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+      "score": 64,
+      "state": [
+        "Complete"
+      ]
+    },
+    "credential": {
+      "agent_id": "cb07b0e359a5344df52b97b556c7fbe24044a17cc58bed109601a369b089be86",
+      "end_hash": "d4803191cd88b2401f8abf5be3b87ddfaab6710f3fdda24dea9bb9eea864342a",
+      "expires_at": 1792673822,
+      "issued_at": 1792069032,
+      "issuer": "GDE6VWFICHOE7PEGVT7TUMR24WB3ETW7K62RHLJYPEBX5MDIVUFZAI4A",
+      "meta_hash": "137888565836b4d34e7ac9af7a29cd230e1e5b52f564c0825d396f9138c76962",
+      "owner": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+      "reason_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "report_hash": "626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35",
+      "report_uri": "https://raw.githubusercontent.com/furkan3152/agentveritas-stellar/830091f9e3ea261951af7be1fe947d3c738f404e/deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.json",
+      "revoked": false,
+      "score": 64,
+      "version": 1
+    },
+    "refunded_stale_job": {
+      "amount": 2500000,
+      "deadline": 5210540,
+      "del_hash": "626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35",
+      "evaluator": "GCAO46UTNNLBRZSHZOUBJXGROQXZ2BHLV55EALQYUDRPC45AJRKO4EMC",
+      "fee_bps": 1500,
+      "fee_to": "GB6M2BNKWTFIHWBGM7LYGZ3ZIICQZJGQ6DXAFQUKU36RILZ3IYSA55UE",
+      "provider": "GDE6VWFICHOE7PEGVT7TUMR24WB3ETW7K62RHLJYPEBX5MDIVUFZAI4A",
+      "requester": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+      "score": 0,
+      "state": [
+        "Refunded"
+      ]
+    }
+  },
+  "stale_deadline": 5210540,
+  "refund_balance_before": 99983771005,
+  "refund_balance_after": 99986261050,
+  "verified_at": "2026-10-15T13:00:13.173606+00:00"
+}

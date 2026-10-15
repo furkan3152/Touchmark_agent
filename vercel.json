@@ -3,7 +3,7 @@
   "framework": "fastapi",
   "functions": {
     "app.py": {
-      "maxDuration": 60,
+      "maxDuration": 180,
       "excludeFiles": "{target/**,.venv/**,contracts/**,docs/**,backend/tests/**}"
     }
   }
