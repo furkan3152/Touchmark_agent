@@ -18,6 +18,31 @@ from ..swarm import AuditSwarm
 from ..stellar.identity import is_valid_stellar_address
 
 
+def instruction_literals(files: dict[str, str]) -> list[dict]:
+    """Locate bounded literal model instructions without importing source.
+
+    These are candidate instructions, not proof of the live instruction hierarchy.
+    Dynamic strings and framework-specific construction remain unresolved.
+    """
+    found = []
+    for path, content in sorted(files.items()):
+        if not path.endswith('.py'): continue
+        try: tree = ast.parse(content)
+        except (SyntaxError, ValueError, RecursionError): continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call): continue
+            values = []
+            if isinstance(node.func, ast.Attribute) and node.func.attr in {'decide', 'judge'} and node.args:
+                values.append(node.args[0])
+            values.extend(k.value for k in node.keywords if k.arg in {'system', 'system_prompt', 'instructions'})
+            for value in values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str) and 20 <= len(value.value) <= 2000:
+                    found.append({'file': path, 'line': value.lineno, 'text': value.value,
+                        'evidence': 'source_literal_candidate', 'runtime_verified': False})
+                    if len(found) == 6: return found
+    return found
+
+
 class ReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -94,12 +119,14 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         "enable_ofac_screening": False, "enable_active_agent_probes": False,
         "enable_audit_escrow": False,
     })
+    embedded_instructions = instruction_literals(request.files) if not request.system_prompt.strip() else []
+    candidate_prompt = request.system_prompt or '\n\n'.join(item['text'] for item in embedded_instructions)
     artifact = AgentArtifact(
         source_kind=SourceKind.UPLOAD if request.files or request.system_prompt else SourceKind.ONCHAIN_ADDRESS,
         source_ref=f"studio:{request.network}:{request.source_reference or request.stellar_address or 'submitted-bundle'}:{request.source_revision}",
         name=request.name, description=request.purpose,
         architecture=request.architecture.model_dump(),
-        system_prompt=request.system_prompt, code_files=request.files,
+        system_prompt=candidate_prompt, code_files=request.files,
         tools=request.tools, dependencies=request.dependencies,
         agent_wallet=request.stellar_address if request.stellar_address.startswith("G") else "",
         agent_contract_id=request.stellar_address if request.stellar_address.startswith("C") else "",
@@ -116,6 +143,9 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         "Scores summarize observed findings and do not establish safety or complete coverage.",
         "Use priority findings, explicit limitations and the control inventory to plan further validation.",
     ]
+    payload['instruction_evidence'] = embedded_instructions
+    if embedded_instructions:
+        payload['judge_notes'].append('Literal model instructions were located in source. Their use and the complete runtime hierarchy remain unverified.')
     from ..reporting.english import ATTACK_LABELS
     for auditor in payload["auditors"]:
         auditor["notes"] = f"Static {auditor['dimension']} analysis. See findings and coverage for evidence and limitations."

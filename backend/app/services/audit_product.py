@@ -220,6 +220,13 @@ async def audit_engagement(request: EngagementRequest, settings, *, runtime_runn
         payload['judge_notes'][0] = 'Source assessment with separately committed isolated runtime observations.'
         if not sampled:
             payload['review_scope']['limits'].append('No successful agent response was observed; inspect blocked, timeout and error outcomes.')
+        failures = [{'workflow': row['id'], 'check': check}
+            for row in observations for check in row.get('assertions', [])
+            if check.get('result') == 'not_matched' and check.get('evidence') in {'external_testnet_receipts', 'external_broker_policy'}]
+        payload['engagement']['business_invariant_failures'] = failures
+        if failures:
+            payload['review_decision'] = 'needs_fixes'
+            payload['judge_notes'].append('Externally observed tool/ledger results violated declared business invariants. Inspect the scoped workflow evidence.')
     encoded = canonical_json(payload)
-    return {**result, 'mode': 'official_audit', 'report': payload, 'report_json': encoded,
+    return {**result, 'decision': payload['review_decision'], 'mode': 'official_audit', 'report': payload, 'report_json': encoded,
             'scope': payload['review_scope'], 'report_sha256': sha256(encoded.encode()).hexdigest()}
