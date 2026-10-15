@@ -86,7 +86,8 @@ async def rpc(server, method, *args):
     return await asyncio.to_thread(getattr(server, method), *args)
 
 
-async def checkout_transaction(step, quote_response, settings, requester, state, evidence, server):
+async def checkout_transaction(step, quote_response, settings, requester, state, evidence, server,
+                               *, persist_state=save_private, persist_evidence=save_evidence):
     row = state.setdefault('checkout_intents', {}).get(step)
     if row is None:
         prepared = await checkout.prepare_checkout_step(checkout.CheckoutStepRequest(
@@ -97,7 +98,7 @@ async def checkout_transaction(step, quote_response, settings, requester, state,
         tx.sign(requester)
         row = {'step': step, 'tx_hash': tx.hash_hex(), 'signed_xdr': tx.to_xdr(), 'status': 'prepared'}
         state['checkout_intents'][step] = row
-        save_private(state)
+        persist_state(state)
     observed = await rpc(server, 'get_transaction', row['tx_hash'])
     if observed.status.value == 'NOT_FOUND':
         submitted = await rpc(server, 'send_transaction', row['signed_xdr'])
@@ -111,11 +112,11 @@ async def checkout_transaction(step, quote_response, settings, requester, state,
     if observed.status.value != 'SUCCESS':
         raise ValueError('Testnet checkout transaction is not confirmed')
     row.update(status='SUCCESS', ledger=observed.ledger)
-    save_private(state)
+    persist_state(state)
     public = {'step': step, 'hash': row['tx_hash'], 'status': 'SUCCESS', 'ledger': observed.ledger,
               'signer_role': 'requester', 'explorer_url': 'https://stellar.expert/explorer/testnet/tx/' + row['tx_hash']}
     evidence['checkout_transactions'] = [t for t in evidence['checkout_transactions'] if t['step'] != step] + [public]
-    save_evidence(evidence)
+    persist_evidence(evidence)
     print(json.dumps({'step': 'checkout_' + step, 'status': 'SUCCESS', 'hash': row['tx_hash']}), flush=True)
 
 
