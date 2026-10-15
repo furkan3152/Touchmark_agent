@@ -1,0 +1,187 @@
+{
+  "status": "passed",
+  "browser": "133.0.6943.0",
+  "live_backend": true,
+  "desktop": {
+    "viewport": "1440x1000",
+    "layout": {
+      "viewport": 1440,
+      "body": 1440,
+      "document": 1440,
+      "surfaces": [
+        {
+          "selector": "site-header",
+          "left": 40,
+          "right": 1400,
+          "width": 1360
+        },
+        {
+          "selector": "",
+          "left": 852,
+          "right": 1352,
+          "width": 500
+        },
+        {
+          "selector": "hero-copy",
+          "left": 106,
+          "right": 733.515625,
+          "width": 627.515625
+        },
+        {
+          "selector": "audit-form",
+          "left": 88,
+          "right": 1352,
+          "width": 1264
+        },
+        {
+          "selector": "dossier",
+          "left": 726.234375,
+          "right": 1351,
+          "width": 624.765625
+        },
+        {
+          "selector": "review-result",
+          "left": 760.234375,
+          "right": 1317,
+          "width": 556.765625
+        }
+      ],
+      "overflow": []
+    },
+    "tiers": 3,
+    "official_modules": 8,
+    "reader_decision": "MORE EVIDENCE REQUIRED",
+    "unsafe_decision": "INVESTIGATE BEFORE DEPLOYMENT",
+    "unsafe_priority_findings": 8,
+    "coverage_controls": 24,
+    "report_download": true,
+    "source_edit_invalidates_report": true
+  },
+  "mobile": {
+    "viewport": "390x844",
+    "real_file_upload_and_audit": true,
+    "layout": {
+      "viewport": 390,
+      "body": 390,
+      "document": 390,
+      "surfaces": [
+        {
+          "selector": "site-header",
+          "left": 0,
+          "right": 390,
+          "width": 390
+        },
+        {
+          "selector": "",
+          "left": 224.8125,
+          "right": 370,
+          "width": 145.1875
+        },
+        {
+          "selector": "hero-copy",
+          "left": 24,
+          "right": 366,
+          "width": 342
+        },
+        {
+          "selector": "audit-form",
+          "left": 16,
+          "right": 374,
+          "width": 358
+        },
+        {
+          "selector": "dossier",
+          "left": 17,
+          "right": 373,
+          "width": 356
+        },
+        {
+          "selector": "review-result",
+          "left": 37,
+          "right": 353,
+          "width": 316
+        }
+      ],
+      "overflow": []
+    },
+    "narrow_layout": {
+      "viewport": 320,
+      "body": 320,
+      "document": 320,
+      "surfaces": [
+        {
+          "selector": "site-header",
+          "left": 0,
+          "right": 320,
+          "width": 320
+        },
+        {
+          "selector": "",
+          "left": 177.375,
+          "right": 300,
+          "width": 122.625
+        },
+        {
+          "selector": "hero-copy",
+          "left": 24,
+          "right": 296,
+          "width": 272
+        },
+        {
+          "selector": "audit-form",
+          "left": 16,
+          "right": 304,
+          "width": 288
+        },
+        {
+          "selector": "dossier",
+          "left": 17,
+          "right": 303,
+          "width": 286
+        },
+        {
+          "selector": "review-result",
+          "left": 37,
+          "right": 283,
+          "width": 246
+        }
+      ],
+      "overflow": []
+    }
+  },
+  "official_orders": {
+    "available": false,
+    "create_disabled": true,
+    "recovery_disabled": true,
+    "reason": "Automatic orders require a persistent worker service; this Studio deployment is stateless."
+  },
+  "wallet": {
+    "library_loaded": true,
+    "extension_e2e": false
+  },
+  "console_errors": [],
+  "page_errors": [],
+  "failed_requests": [],
+  "http_errors": [],
+  "screenshots": [
+    "desktop-hero.png",
+    "desktop-audit.png",
+    "desktop-unsafe-report.png",
+    "desktop-orders-unavailable.png",
+    "mobile-hero.png",
+    "mobile-audit.png"
+  ],
+  "protocol": "veritas.local-browser-verification/v1",
+  "checked_at": "2026-10-15T15:44:05.817123+00:00",
+  "transport": "Real headless Chromium against a temporary loopback ASGI server; no mocked HTTP responses.",
+  "script": "scripts/verify_browser_ui.cjs",
+  "script_sha256": "b35df13dd53c94ea15497fabe4ad31852368d447ca45e1f9ec8eb315d5a390fe",
+  "browser_distribution": "@sparticuz/chromium 133.0.0, installed outside the repository",
+  "playwright_version": "1.62.1",
+  "limitations": [
+    "No Freighter browser extension was installed; wallet signatures and submissions were not exercised.",
+    "No external AI provider, isolated runtime, paid audit or official order worker was invoked.",
+    "Automatic official orders were intentionally disabled; the unavailable state was verified.",
+    "Screenshots are local verification artifacts and are not included in the repository."
+  ]
+}
