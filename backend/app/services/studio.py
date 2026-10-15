@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..config import Settings
+from .assurance import ArchitectureManifest, build_assurance
 from ..models import AgentArtifact, AuditTier, EvidenceGrade, Severity, SourceKind, ToolSpec
 from ..reporting.generator import canonical_json, report_to_dict
 from ..swarm import AuditSwarm
@@ -20,6 +21,9 @@ from ..stellar.identity import is_valid_stellar_address
 class ReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    ai_assistance: bool = False
+    external_processing_consent: bool = False
+    architecture: ArchitectureManifest = Field(default_factory=ArchitectureManifest)
     name: str = Field(min_length=1, max_length=100)
     purpose: str = Field(min_length=12, max_length=2000)
     system_prompt: str = Field(default="", max_length=12000)
@@ -74,6 +78,11 @@ class ReviewRequest(BaseModel):
 
 
 async def review_source(request: ReviewRequest, settings: Settings) -> dict:
+    if request.ai_assistance:
+        if not request.external_processing_consent:
+            raise ValueError("Explicit consent is required to send source to the configured AI provider.")
+        if not settings.enable_public_ai_review or not settings.llm_enabled:
+            raise ValueError("AI review is unavailable. Run a static review or ask the operator to enable the provider.")
     # Copy explicit settings, then disable every external integration. Server .env
     # cannot silently turn a free source review into an external upload or probe.
     isolated = settings.model_copy(update={
@@ -87,6 +96,7 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         source_kind=SourceKind.UPLOAD if request.files or request.system_prompt else SourceKind.ONCHAIN_ADDRESS,
         source_ref=f"studio:{request.network}:{request.source_reference or request.stellar_address or 'submitted-bundle'}",
         name=request.name, description=request.purpose,
+        architecture=request.architecture.model_dump(),
         system_prompt=request.system_prompt, code_files=request.files,
         tools=request.tools, dependencies=request.dependencies,
         agent_wallet=request.stellar_address if request.stellar_address.startswith("G") else "",
@@ -94,7 +104,27 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         owner_verification_note="Not checked during source review.",
     )
     report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP)
+    from ..reporting.english import english_finding
+    from ..swarm.policy import finding_set_commitment
+    report.findings = [english_finding(f) for f in report.findings]
+    report.finding_set_hash = finding_set_commitment(report.findings)
     payload = report_to_dict(report, artifact)
+    payload["judge_notes"] = [
+        "Rule-based source assessment; no runtime attacks were executed.",
+        "Scores summarize observed findings and do not establish safety or complete coverage.",
+        "Use priority findings, explicit limitations and the control inventory to plan further validation.",
+    ]
+    from ..reporting.english import ATTACK_LABELS
+    for auditor in payload["auditors"]:
+        auditor["notes"] = f"Static {auditor['dimension']} analysis. See findings and coverage for evidence and limitations."
+        for scenario in auditor["scenarios"]:
+            sid = scenario["scenario_id"]
+            if sid.startswith("A-") and sid[2:].isdigit() and 1 <= int(sid[2:]) <= len(ATTACK_LABELS):
+                scenario["name"] = ATTACK_LABELS[int(sid[2:]) - 1][0]
+            else:
+                scenario["name"] = f"{auditor['dimension'].replace('_', ' ').title()} check {sid}"
+            scenario["reason"] = "Recognized static signal present; enforcement unverified." if scenario["passed"] else "Expected static signal not established; further evidence required."
+    payload["assurance"] = build_assurance(artifact, report.findings)
     payload["subject"] = {
         "stellar_address": request.stellar_address, "network": request.network,
         "source_reference": request.source_reference, "association_verified": False,
@@ -112,6 +142,18 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
             "Source is processed on this server in memory; download the report before leaving.",
         ],
     }
+    payload["ai_review"] = {"status": "not_requested", "observations": []}
+    if request.ai_assistance:
+        import asyncio
+        from .ai_review import second_opinion
+        try:
+            payload["ai_review"] = await asyncio.wait_for(second_opinion(request, settings), timeout=25)
+        except asyncio.TimeoutError:
+            payload["ai_review"] = {"status": "unavailable", "observations": [], "note": "AI review timed out."}
+        scope["external_processors"] = [f"{settings.llm_provider}:{settings.llm_model}"]
+        scope["limits"].append("Source was sent to the configured AI provider with consent; redaction is best effort.")
+        payload["result"]["external_processors"] = scope["external_processors"]
+        payload["result"]["deterministic"] = False
     payload["review_scope"] = scope
     # Missing ownership is an explicit scope boundary in this route, not a code
     # defect. Heuristic signals remain in the report for investigation.

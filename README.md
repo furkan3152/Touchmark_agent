@@ -18,6 +18,19 @@
 
 ---
 
+## October 2026 workspace release
+
+The English public Studio now includes a 24-area evidence inventory, explicit architecture declarations (MCP, delegation, memory and egress), opt-in AI hypotheses with source-location validation, local report fingerprint verification, and an interactive authority-policy lab. See [release status](docs/RELEASE_2026-10-15.md) for verification and boundaries.
+
+The new **AuditCredential** Soroban contract issues non-transferable, revocable, expiring report credentials from completed registry validations. Registry v0.2 binds requests to source version and metadata/endpoint hashes; source changes invalidate old credentials. Registry and escrow initialize atomically through constructors. **These are new deployment artifacts: the historical testnet manifest does not verify this release.**
+
+- [Instawards 30-day sprint and budget](docs/INSTAWARDS_SPRINT.md)
+- [Revenue model and settlement boundaries](docs/REVENUE_MODEL.md)
+- [Deployment and operations](docs/DEPLOYMENT.md)
+- [Threat model and trust boundaries](docs/THREAT_MODEL.md)
+
+The complete operator service uses durable single-worker hosting. The Vercel entrypoint exposes only the stateless public Studio; it does not claim to persist operator jobs or run monitoring. Paid checkout and public credential minting remain disabled pending funded integration verification.
+
 ## Table of Contents
 
 - [Why AgentVeritas?](#why-agentveritas)
@@ -53,7 +66,7 @@ The public Studio at `/` offers three intake methods — no wallet connection or
 | **GitHub Import** | Fetches root `agent-audit.json` from a public repo (bounded, no clone) |
 | **File Upload** | Direct source bundle upload for offline analysis |
 
-The Studio runs seven **rule-based static analysis modules** across all submitted source. Files are never executed, persisted or sent to external AI services. Reports include file:line evidence, coverage metrics, input-commitment SHA-256 and an exact-byte downloadable report.
+The Studio runs seven **rule-based static analysis modules** across all submitted source. Files are never executed or persisted by the public Studio. Static review does not send source externally; optional AI second opinions require operator enablement and explicit per-review consent. Reports include file:line evidence, coverage metrics, input-commitment SHA-256 and an exact-byte downloadable report.
 
 > The operator workflow at `/operator` provides the full persistent pipeline with authentication, stored jobs, badges and Soroban integration.
 

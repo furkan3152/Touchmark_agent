@@ -51,6 +51,8 @@ async def require_operator(
     is timing-safe; a simple process-local limit does not replace a reverse-proxy limit,
     but it limits accidental/automated abuse of the single key.
     """
+    if settings.stateless_studio:
+        raise HTTPException(status_code=503, detail="operator API requires persistent deployment")
     expected = settings.admin_api_key
     if not expected:
         raise HTTPException(status_code=503, detail="operator API disabled: ADMIN_API_KEY required")
@@ -76,6 +78,9 @@ async def lifespan(app: FastAPI):
     `on_event` is deprecated in FastAPI 0.115; since `lifespan` provides a single
     entry/exit point, there is no risk of skipping the `store.flush()` call on shutdown.
     """
+    if settings.stateless_studio:
+        yield
+        return
     task = asyncio.create_task(_monitor_loop())
     app.state.monitor_task = task
     try:
@@ -207,7 +212,8 @@ async def health() -> dict:
             "explorer": settings.explorer,
         },
         "modes": {
-            "operator_api": bool(settings.admin_api_key),
+            "operator_api": bool(settings.admin_api_key) and not settings.stateless_studio,
+            "stateless_studio": settings.stateless_studio,
             "llm": settings.llm_enabled,
             "rpc": settings.rpc_enabled,
             "contract_submission": False,
@@ -381,9 +387,40 @@ async def config() -> dict:
 
 
 # ---------------------------------------------------------------------- agents
+from .services.runtime_policy import RuntimePolicy, Action, evaluate
+
+
+class PolicySimulation(BaseModel):
+    policy: RuntimePolicy
+    action: Action
+    spent: int = Field(default=0, ge=0, le=2**63-1, strict=True)
+    paused: bool = False
+
+
+@app.post("/api/v1/studio/policy")
+async def simulate_policy(req: PolicySimulation) -> dict:
+    reasons = evaluate(req.policy, req.action, spent=req.spent, paused=req.paused)
+    if req.policy.require_approval:
+        reasons.append("signed_approval_required")
+    return {"allowed": not reasons, "reasons": reasons, "simulation": True,
+            "executed": False, "note": "Simulation only. No action is authorized or submitted."}
+
+
+@app.get("/api/v1/studio/capabilities")
+async def studio_capabilities() -> dict:
+    from .services.assurance import ArchitectureManifest
+    return {"ai_available": settings.enable_public_ai_review and settings.llm_enabled,
+            "ai_provider": settings.llm_provider if settings.enable_public_ai_review else "",
+            "controls": ArchitectureManifest.catalogue(), "checkout_enabled": False,
+            "certificate_minting_enabled": False}
+
+
 @app.post("/api/v1/studio/review")
 async def studio_review(req: ReviewRequest) -> dict:
-    return await review_source(req, settings)
+    try:
+        return await review_source(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/studio/identify")
