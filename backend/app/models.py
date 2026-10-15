@@ -211,6 +211,7 @@ class AgentArtifact(BaseModel):
 
     onchain: OnchainActivity = Field(default_factory=OnchainActivity)
     raw_metadata: dict[str, Any] = Field(default_factory=dict)
+    architecture: dict[str, Any] = Field(default_factory=dict)
 
     def text_surface(self) -> str:
         """Denetçilerin tarayacağı birleşik metin yüzeyi."""

@@ -23,9 +23,8 @@ fn sac_fund_and_complete_is_atomic() {
     let asset_admin = token::StellarAssetClient::new(&env, &asset.address());
     asset_admin.mint(&requester, &1_000_000);
 
-    let contract_id = env.register(AuditEscrow, ());
+    let contract_id = env.register(AuditEscrow, (&admin, &asset.address(), &fee_to, &1_500u32));
     let client = AuditEscrowClient::new(&env, &contract_id);
-    client.init(&admin, &asset.address(), &fee_to, &1_500);
     let job_id = b32(&env, 1);
     client.create(&requester, &job_id, &provider, &evaluator, &500_000, &100);
     client.fund(&requester, &job_id);
@@ -64,9 +63,8 @@ fn wrong_provider_cannot_submit() {
     let fee_to = Address::generate(&env);
     let asset = env.register_stellar_asset_contract_v2(admin.clone());
     token::StellarAssetClient::new(&env, &asset.address()).mint(&requester, &100);
-    let contract_id = env.register(AuditEscrow, ());
+    let contract_id = env.register(AuditEscrow, (&admin, &asset.address(), &fee_to, &0u32));
     let client = AuditEscrowClient::new(&env, &contract_id);
-    client.init(&admin, &asset.address(), &fee_to, &0);
     let job_id = b32(&env, 3);
     client.create(&requester, &job_id, &provider, &evaluator, &100, &100);
     client.fund(&requester, &job_id);
@@ -85,9 +83,8 @@ fn requester_cannot_refund_before_deadline() {
     let fee_to = Address::generate(&env);
     let asset = env.register_stellar_asset_contract_v2(admin.clone());
     token::StellarAssetClient::new(&env, &asset.address()).mint(&requester, &100);
-    let contract_id = env.register(AuditEscrow, ());
+    let contract_id = env.register(AuditEscrow, (&admin, &asset.address(), &fee_to, &0u32));
     let client = AuditEscrowClient::new(&env, &contract_id);
-    client.init(&admin, &asset.address(), &fee_to, &0);
     let job_id = b32(&env, 5);
     client.create(&requester, &job_id, &provider, &evaluator, &100, &100);
     client.fund(&requester, &job_id);
@@ -105,9 +102,8 @@ fn submitted_job_can_be_refunded_after_deadline() {
     let fee_to = Address::generate(&env);
     let asset = env.register_stellar_asset_contract_v2(admin.clone());
     token::StellarAssetClient::new(&env, &asset.address()).mint(&requester, &100);
-    let contract_id = env.register(AuditEscrow, ());
+    let contract_id = env.register(AuditEscrow, (&admin, &asset.address(), &fee_to, &0u32));
     let client = AuditEscrowClient::new(&env, &contract_id);
-    client.init(&admin, &asset.address(), &fee_to, &0);
     let job_id = b32(&env, 6);
     client.create(&requester, &job_id, &provider, &evaluator, &100, &10);
     client.fund(&requester, &job_id);
@@ -136,9 +132,8 @@ fn conflicting_roles_are_rejected() {
     let evaluator = Address::generate(&env);
     let fee_to = Address::generate(&env);
     let asset = env.register_stellar_asset_contract_v2(admin.clone());
-    let contract_id = env.register(AuditEscrow, ());
+    let contract_id = env.register(AuditEscrow, (&admin, &asset.address(), &fee_to, &0u32));
     let client = AuditEscrowClient::new(&env, &contract_id);
-    client.init(&admin, &asset.address(), &fee_to, &0);
     client.create(&requester, &b32(&env, 8), &requester, &evaluator, &100, &10);
 }
 
@@ -154,9 +149,11 @@ fn fee_is_snapshotted_when_job_is_created() {
     let new_fee_to = Address::generate(&env);
     let asset = env.register_stellar_asset_contract_v2(admin.clone());
     token::StellarAssetClient::new(&env, &asset.address()).mint(&requester, &100);
-    let contract_id = env.register(AuditEscrow, ());
+    let contract_id = env.register(
+        AuditEscrow,
+        (&admin, &asset.address(), &original_fee_to, &1_000u32),
+    );
     let client = AuditEscrowClient::new(&env, &contract_id);
-    client.init(&admin, &asset.address(), &original_fee_to, &1_000);
     let job_id = b32(&env, 9);
     client.create(&requester, &job_id, &provider, &evaluator, &100, &100);
     client.fund(&requester, &job_id);
@@ -182,9 +179,8 @@ fn provider_cannot_submit_after_deadline() {
     let fee_to = Address::generate(&env);
     let asset = env.register_stellar_asset_contract_v2(admin.clone());
     token::StellarAssetClient::new(&env, &asset.address()).mint(&requester, &100);
-    let contract_id = env.register(AuditEscrow, ());
+    let contract_id = env.register(AuditEscrow, (&admin, &asset.address(), &fee_to, &0u32));
     let client = AuditEscrowClient::new(&env, &contract_id);
-    client.init(&admin, &asset.address(), &fee_to, &0);
     let job_id = b32(&env, 11);
     client.create(&requester, &job_id, &provider, &evaluator, &100, &10);
     client.fund(&requester, &job_id);

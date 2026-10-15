@@ -51,6 +51,7 @@
   function setBusy(value) {
     busy = value;
     document.querySelectorAll("#review-form input, #review-form textarea, #review-form select, #review-form button, [data-example]").forEach((element) => { element.disabled = value; });
+    byId("ai-consent").disabled = value || byId("ai-consent").dataset.available !== "true";
     form.setAttribute("aria-busy", String(value));
   }
   function renderFiles() {
@@ -80,7 +81,7 @@
   }
   function loadBundle(bundle) {
     if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) throw new Error("An audit bundle must be a JSON object.");
-    const allowed = new Set(["name", "purpose", "system_prompt", "files", "tools", "dependencies", "stellar_address", "network", "source_reference"]);
+    const allowed = new Set(["name", "purpose", "system_prompt", "files", "tools", "dependencies", "stellar_address", "network", "source_reference", "architecture", "ai_assistance", "external_processing_consent"]);
     if (Object.keys(bundle).some((key) => !allowed.has(key))) throw new Error("Unknown bundle fields. Use an exported agent-audit.json as the template.");
     if (bundle.files && (Array.isArray(bundle.files) || typeof bundle.files !== "object" || Object.values(bundle.files).some((value) => typeof value !== "string"))) throw new Error("Bundle files must map filenames to source text.");
     if (bundle.tools && !Array.isArray(bundle.tools)) throw new Error("Bundle tools must be an array.");
@@ -89,6 +90,8 @@
     byId("agent-prompt").value = bundle.system_prompt || "";
     files = { ...(bundle.files || {}) };
     dependencies = bundle.dependencies || [];
+    byId("architecture-manifest").value = JSON.stringify(bundle.architecture || {}, null, 2);
+    byId("ai-consent").checked = false;
     byId("stellar-address").value = bundle.stellar_address || "";
     byId("stellar-network").value = bundle.network || "testnet";
     sourceReference = bundle.source_reference || "";
@@ -236,7 +239,7 @@
       details.open = false;
       const summary = node("summary");
       const fallback = finding.id.replace(/^[^-]+-/, "").replaceAll("-", " ");
-      summary.append(node("span", findingTitles[finding.id] || fallback.charAt(0).toUpperCase() + fallback.slice(1)), node("span", finding.severity, "severity"));
+      summary.append(node("span", finding.title || findingTitles[finding.id] || fallback.charAt(0).toUpperCase() + fallback.slice(1)), node("span", finding.severity, "severity"));
       details.append(summary, node("p", finding.detail));
       details.append(node("p", finding.evidence_grade === "confirmed" ? "Direct source or configuration evidence — not a runtime exploit." : "Heuristic signal — requires validation.", "evidence-kind"));
       if (finding.evidence) details.append(node("pre", finding.evidence));
@@ -246,6 +249,26 @@
     });
     if (secondary.length) container.append(observations);
     if (!priorityIds.size) container.prepend(node("p", "No directly evidenced high-priority source findings. Review the remaining observations; this is not a safety clearance.", "help"));
+    const assurance = value.report.assurance;
+    byId("control-results").replaceChildren();
+    if (assurance) {
+      byId("coverage-summary").textContent = `${assurance.surfaces_located} / ${assurance.total} surfaces located. ${assurance.runtime_verified} runtime-verified controls. Presence is not proof of enforcement.`;
+      assurance.controls.forEach((control) => {
+        const item = node("details", undefined, "control-row");
+        const title = node("summary", control.name);
+        title.append(node("span", control.status === "not_provided" ? "Evidence missing" : "Needs validation"));
+        item.append(title, node("p", control.evidence_needed));
+        if (control.source_references.length) item.append(node("code", control.source_references.map((r) => `${r.file}:${r.line}`).join(" · ")));
+        byId("control-results").append(item);
+      });
+    }
+    const ai = value.report.ai_review || {status:"not_requested",observations:[]};
+    byId("ai-results").replaceChildren(node("p", ai.note || "AI review was not requested. The static evidence above is independent of a language model.", "help"));
+    ai.observations.forEach((observation) => {
+      const card = node("article", undefined, "finding");
+      card.append(node("h4", observation.title), node("p", observation.risk), node("code", `${observation.file}:${observation.line}`), node("p", observation.remediation), node("p", "AI hypothesis · requires validation", "evidence-kind"));
+      byId("ai-results").append(card);
+    });
     const gaps = byId("missing-evidence");
     gaps.replaceChildren();
     ["Runtime behavior under adversarial inputs and tool failures", "Owner identity bound to this exact agent version", "A successful Soroban transaction and matching registry readback"].forEach((text) => gaps.append(node("li", text)));
@@ -271,7 +294,7 @@
       const tools = JSON.parse(byId("tool-manifest").value);
       if (!Array.isArray(tools)) throw new Error("Tool permissions must be a JSON array.");
       if (!Object.keys(files).length && !byId("agent-prompt").value.trim() && !byId("stellar-address").value.trim()) throw new Error("Add a public Stellar address, source files or system instructions first.");
-      input = { name: byId("agent-name").value, purpose: byId("agent-purpose").value, system_prompt: byId("agent-prompt").value, files: { ...files }, tools, dependencies, stellar_address:byId("stellar-address").value.trim(), network:byId("stellar-network").value, source_reference:sourceReference };
+      input = { name: byId("agent-name").value, purpose: byId("agent-purpose").value, system_prompt: byId("agent-prompt").value, files: { ...files }, tools, dependencies, stellar_address:byId("stellar-address").value.trim(), network:byId("stellar-network").value, source_reference:sourceReference, architecture:JSON.parse(byId("architecture-manifest").value), ai_assistance:byId("ai-consent").checked, external_processing_consent:byId("ai-consent").checked };
     } catch (failure) { error(failure.message); return; }
     setBusy(true);
     byId("run-review").textContent = "Reviewing source…";
@@ -299,6 +322,57 @@
     const link = node("a"); link.href = url; link.download = filename; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  document.querySelectorAll("[data-result-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-result-view]").forEach((b) => {
+        const selected = b === button;
+        b.setAttribute("aria-pressed", String(selected));
+        byId(`view-${b.dataset.resultView}`).hidden = !selected;
+      });
+    });
+  });
+  fetch("/api/v1/studio/capabilities").then((r) => { if (!r.ok) throw new Error(); return r.json(); }).then((value) => {
+    byId("ai-consent").disabled = !value.ai_available;
+    byId("ai-consent").dataset.available = String(value.ai_available);
+    byId("ai-availability").textContent = value.ai_available ? `I consent to send redacted source to ${value.ai_provider}. Never include secrets; automatic redaction is best effort.` : "Not enabled on this deployment. Static review is available.";
+    value.controls.forEach((control) => {
+      const item = node("article"); item.append(node("strong", control.name), node("p", control.evidence_needed));
+      byId("control-catalogue").append(item);
+    });
+  }).catch(() => { byId("ai-availability").textContent = "AI availability could not be checked. Static review remains available."; });
+  byId("verify-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const output = byId("verify-result");
+    try {
+      const file = byId("verify-file").files[0];
+      if (!file || file.size > 2000000) throw new Error("Choose a report smaller than 2 MB.");
+      const bytes = await file.arrayBuffer();
+      const report = JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(bytes));
+      if (!report.schema || !report.input_hash) throw new Error("The file is not an AgentVeritas audit report.");
+      const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((v) => v.toString(16).padStart(2,"0")).join("");
+      output.textContent = hash === byId("verify-hash").value.toLowerCase() ? "Integrity match. Exact bytes match your fingerprint. Issuer, chain status, expiry and revocation are not checked here." : "Mismatch. This file does not match the expected fingerprint. Do not rely on this copy.";
+    } catch (failure) { output.textContent = failure.message || "Verification failed."; }
+  });
+  byId("policy-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const now = Math.floor(Date.now()/1000);
+    const policy = {agent_id:"demo-treasury",version:"a".repeat(64),network:"testnet",asset:"XLM",allowed_tools:["payment"],allowed_destinations:["approved-treasury"],max_per_action:100000000,max_total:500000000,max_depth:1,expires_at:now+3600,require_approval:false};
+    const action = {nonce:crypto.randomUUID(),agent_id:policy.agent_id,version:policy.version,network:"testnet",tool:"payment",asset:"XLM",destination:"approved-treasury",amount:50000000,depth:0,expires_at:now+60};
+    const scenario = byId("policy-scenario").value;
+    if (scenario === "overspend") action.amount = 110000000;
+    if (scenario === "destination") action.destination = "unrecognized-recipient";
+    if (scenario === "version") action.version = "b".repeat(64);
+    if (scenario === "depth") action.depth = 3;
+    const button = event.target.querySelector("button"); button.disabled = true;
+    try {
+      const response = await fetch("/api/v1/studio/policy", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({policy,action,paused:scenario === "paused",spent:0}),signal:AbortSignal.timeout(10000)});
+      const value = await response.json(); if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : "Policy check unavailable.");
+      byId("policy-decision").textContent = value.allowed ? "Within the policy." : "Action blocked.";
+      const reasons = {emergency_stop:"The emergency stop is active.",version_mismatch:"Source version differs from the approved version.",destination_denied:"The recipient is outside the allowlist.",per_action_limit:"The amount exceeds the 10 XLM action limit.",delegation_depth:"The delegation chain exceeds one level."};
+      byId("policy-reasons").textContent = value.allowed ? "All simulated conditions satisfied. No real approval, reservation or transaction was created." : value.reasons.map((r) => reasons[r] || r.replaceAll("_", " ")).join(" ");
+    } catch (failure) { byId("policy-decision").textContent = "Check unavailable."; byId("policy-reasons").textContent = failure.message; }
+    finally { button.disabled = false; }
+  });
   byId("download-report").addEventListener("click", () => { if (result) { download("agent-review.json", result.report_json); byId("download-note").textContent = "Report exported. Verify its SHA-256 against the fingerprint below."; } });
   byId("download-bundle").addEventListener("click", () => { if (submitted) download("agent-audit.json", JSON.stringify(submitted, null, 2)); });
 })();

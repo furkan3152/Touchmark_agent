@@ -1,0 +1,20 @@
+services:
+  agentveritas:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      EVENT_DATABASE: /app/data/events.db
+      DATABASE_URL: sqlite:////app/data/agentveritas.db
+    volumes:
+      - veritas-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+volumes:
+  veritas-data:

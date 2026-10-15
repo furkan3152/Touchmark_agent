@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Add a Stellar account, contract or agent source. Get clear audit findings without sharing a private key.">
-<title>AgentVeritas — Audit your Stellar agent</title>
+<title>AgentVeritas — Trust, with evidence.</title>
 <link rel="icon" href="/ui/studio-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/studio.css"><script src="/ui/studio.js" defer></script>
 </head>
@@ -11,14 +11,35 @@
 <a class="skip" href="#workspace">Skip to audit</a>
 <header class="site-header">
   <a class="brand" href="/"><img src="/ui/studio-mark.svg" alt="" width="32" height="32">AgentVeritas <span>on Stellar</span></a>
-  <nav aria-label="Main navigation"><a href="#workspace">Audit</a><a href="#plans">Pricing</a><a href="#method">How it works</a></nav>
+  <nav aria-label="Main navigation"><a href="#coverage">The standard</a><a href="#plans">Pricing</a><a href="#verify">Verify a report</a><a class="nav-cta" href="#workspace">Open workspace <span aria-hidden="true">↗</span></a></nav>
 </header>
 <main>
-  <section class="intro"><div><h1>Audit your Stellar agent.</h1><p>What can it do? Where can it go wrong? Start with the evidence.</p></div><span class="free-label">Free to start. No secret keys.</span></section>
-  <section class="workspace" id="workspace" aria-label="Agent audit">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-copy"><p class="eyebrow"><span class="status-dot"></span> AGENT ASSURANCE, BUILT ON STELLAR</p>
+      <h1 id="hero-title">Autonomy.<br>With accountability.</h1>
+      <p class="hero-deck">Before your agent gets the keys,<br>get the whole picture.</p>
+      <p class="hero-detail">Inspect its instructions, code and authority. Find the gaps. Keep the evidence. A clearer standard for agents that act in the real world.</p>
+      <div class="hero-actions"><a class="primary" href="#workspace">Start a free review <span aria-hidden="true">↗</span></a><a class="text-link" href="#coverage">Explore the standard <span aria-hidden="true">↓</span></a></div>
+      <p class="micro">No wallet required · Source is never executed</p>
+    </div>
+    <div class="evidence-art" aria-label="Illustration of a version-bound audit record">
+      <div class="orbit-label">THE EVIDENCE RECORD <span>01 / 03</span></div>
+      <div class="paper paper-back"><span>02 — AUTHORITY</span></div>
+      <div class="paper paper-mid"><span>03 — PROVENANCE</span></div>
+      <div class="paper paper-front"><div class="paper-header"><img src="/ui/studio-mark.svg" width="30" height="30" alt=""><span>AgentVeritas<br><small>AUDIT RECORD</small></span><span class="paper-arrow">↗</span></div>
+        <div class="paper-title">Treasury agent.<br>Every permission<br>has a consequence.</div>
+        <div class="paper-rule"></div><div class="paper-stats"><div><strong>24</strong><span>control areas</span></div><div><strong>7</strong><span>review dimensions</span></div></div>
+        <div class="paper-lines"><span>Source & instructions</span><b>Inspect</b><span>Authority & access</span><b>Challenge</b><span>Evidence & limitations</span><b>Record</b></div>
+        <div class="paper-foot"><span class="record-mark">V</span><span>Bound to a version.<br>Open to verification.</span><span class="paper-code">AV / 001</span></div>
+      </div><p class="illustration-note">Illustrative record · not an issued credential</p>
+    </div>
+  </section>
+  <div class="principle-strip"><span>Trust is a process.</span><span>Inspect the source</span><span>Challenge the authority</span><span>Verify the evidence</span></div>
+  <section class="workspace-heading" id="workspace"><div><p class="eyebrow">01 / THE WORKSPACE</p><h2>Meet your agent.<br>Including its blind spots.</h2></div><p>Bring the source. We will surface the risks,<br>the evidence, and the questions still open.</p></section>
+  <section class="workspace" id="audit-form" aria-label="Agent audit">
     <div class="submission">
       <form id="review-form">
-        <div class="section-heading"><h2>1. Add your agent</h2><label class="network-label" for="stellar-network"><span class="sr-only">Stellar network</span><select id="stellar-network"><option value="testnet">Stellar Testnet</option><option value="mainnet">Stellar Mainnet · read only</option></select></label></div>
+        <div class="section-heading"><h2>Agent intake</h2><label class="network-label" for="stellar-network"><span class="sr-only">Stellar network</span><select id="stellar-network"><option value="testnet">Stellar Testnet</option><option value="mainnet">Stellar Mainnet · read only</option></select></label></div>
         <div class="source-tabs" role="tablist" aria-label="Add agent using">
           <button type="button" id="tab-address" data-source-mode="address" role="tab" aria-selected="true" aria-controls="source-address">Stellar address</button>
           <button type="button" id="tab-github" data-source-mode="github" role="tab" aria-selected="false" aria-controls="source-github" tabindex="-1">GitHub</button>
@@ -44,7 +65,7 @@
         </div>
         <div id="file-list" class="file-list" aria-live="polite"></div>
         <div class="examples"><span>Just exploring?</span><button type="button" data-example="reader">Try a read-only agent</button><button type="button" data-example="payment">Try an unsafe agent</button></div>
-        <div class="section-heading second-step"><h2>2. Tell us its job</h2><span>About 30 seconds</span></div>
+        <div class="section-heading second-step"><h2>Intended behavior</h2><span>Be specific</span></div>
         <label for="agent-name">Agent name</label><input id="agent-name" required maxlength="100" placeholder="e.g. Treasury assistant" autocomplete="off">
         <label for="agent-purpose">What is it allowed to do?</label><textarea id="agent-purpose" required minlength="12" maxlength="2000" rows="2" placeholder="Send approved payments, read balances, research markets…"></textarea>
         <fieldset class="capabilities"><legend>Declared capabilities <span>Choose what it can actually do</span></legend>
@@ -58,14 +79,19 @@
           <label for="tool-manifest">Tool manifest JSON</label><textarea id="tool-manifest" class="code-input" rows="4" spellcheck="false">[]</textarea>
           <p class="help">Imported manifests keep their tool names and configuration. A declared permission is not proof that a limit is enforced.</p>
         </details>
-        <p class="privacy-note">Source is reviewed in memory, not executed or saved. Never upload credentials.</p>
+        <details class="permissions"><summary>Architecture & trust boundaries <span>Optional</span></summary>
+          <label for="architecture-manifest">Architecture manifest JSON</label><textarea id="architecture-manifest" class="code-input" rows="6" spellcheck="false">{}</textarea>
+          <p class="help">Describe mcp_servers, delegates, memory_stores, allowed_domains and controls. Declarations are checked separately from source evidence.</p>
+        </details>
+        <label class="ai-optin"><input type="checkbox" id="ai-consent" disabled><span>Add an AI second opinion <small id="ai-availability">Checking availability…</small></span></label>
+        <p class="privacy-note">Static review stays in memory. Optional AI review sends redacted source to the named provider only with your consent. Never upload credentials.</p>
         <p id="form-error" class="error" role="alert" hidden></p>
         <button id="run-review" class="primary" type="submit">Audit agent — free</button>
         <p id="run-status" class="help" role="status">No wallet connection. No payment. No transaction.</p>
       </form>
     </div>
     <section class="dossier" aria-labelledby="dossier-title" aria-live="polite">
-      <div class="section-heading"><h2 id="dossier-title">3. See your results</h2><span id="dossier-state">Ready when you are</span></div>
+      <div class="section-heading"><h2 id="dossier-title">Evidence dossier</h2><span id="dossier-state">Ready when you are</span></div>
       <div id="empty-report" class="empty-report">
         <div class="document-symbol" aria-hidden="true">?</div><h3>Trust needs a paper trail.</h3>
         <p>Add an agent to see concrete findings, what is missing, and what to check next.</p>
@@ -77,24 +103,36 @@
         <dl class="evidence-counts"><div><dt>Observations</dt><dd id="finding-count">0</dd></div><div><dt>Priority findings</dt><dd id="priority-count">0</dd></div><div><dt>Dimensions</dt><dd id="dimension-count">0</dd></div></dl>
         <div class="result-actions"><button type="button" id="download-report">Download report</button><button type="button" id="download-bundle">Download agent bundle</button></div>
         <p id="download-note" class="help">Download your report before leaving this tab.</p>
-        <h4>What needs attention</h4><div id="findings"></div>
+        <div class="result-tabs" role="group" aria-label="Report view"><button type="button" data-result-view="findings" aria-pressed="true">Findings</button><button type="button" data-result-view="coverage" aria-pressed="false">Coverage</button><button type="button" data-result-view="ai" aria-pressed="false">AI review</button></div>
+        <div id="view-coverage" hidden><h4>24 control areas. No invisible gaps.</h4><p id="coverage-summary" class="help"></p><div id="control-results"></div></div>
+        <div id="view-ai" hidden><h4>A second opinion, grounded in source.</h4><div id="ai-results"></div></div>
+        <div id="view-findings"><h4>What needs attention</h4><div id="findings"></div>
         <h4>What is still missing</h4><ul id="missing-evidence" class="missing-evidence"></ul>
-        <details class="technical"><summary>Evidence details and report hash</summary><div id="dimensions"></div><p class="help">SHA-256 of your report download. Integrity is not a safety guarantee.</p><code id="report-hash"></code><ul id="scope-limits"></ul></details>
+        </div><details class="technical"><summary>Evidence details and report hash</summary><div id="dimensions"></div><p class="help">SHA-256 of your report download. Integrity is not a safety guarantee.</p><code id="report-hash"></code><ul id="scope-limits"></ul></details>
       </div>
     </section>
   </section>
+  <section class="standard-section" id="coverage"><div class="section-top"><div><p class="eyebrow">02 / THE STANDARD</p><h2>Look past the prompt.</h2></div><p>An agent is a system of permissions, dependencies<br>and decisions. Its review should be, too.</p></div>
+    <div class="standard-grid"><article><span class="standard-number">01</span><h3>What it intends.</h3><p>Instructions, goal conflicts, prompt injection, tool manipulation and delegation.</p><span class="tag">Intent & control</span></article><article><span class="standard-number">02</span><h3>What it can touch.</h3><p>Signing authority, spend limits, credentials, network access, memory and private data.</p><span class="tag">Security & authority</span></article><article><span class="standard-number">03</span><h3>What you can prove.</h3><p>Source locations, build provenance, failures, report commitments and evidence gaps.</p><span class="tag">Evidence & accountability</span></article></div>
+    <details class="catalogue"><summary>Explore all 24 control areas <span>+</span></summary><div id="control-catalogue" class="catalogue-grid"></div></details>
+  </section>
+  <section class="stellar-section"><div><p class="eyebrow">03 / STELLAR, WITH A PURPOSE</p><h2>Evidence that travels.<br>Authority that doesn’t.</h2><p>Keep private source off-chain. Bind a report to an exact agent version, its issuer and its lifecycle.</p><a class="text-link" href="#method">Understand the trust model ↗</a></div><div class="stellar-features"><article><span>01</span><div><h3>Authorization, at the contract.</h3><p>Soroban authorization binds signatures to invocation arguments. Application policy still defines what is allowed.</p></div></article><article><span>02</span><div><h3>Payment for work. Not a verdict.</h3><p>SAC escrow separates requester, provider and evaluator. Payment does not buy a passing result.</p></div></article><article><span>03</span><div><h3>A credential with an expiry date.</h3><p>Non-transferable report credentials bind to a version, expire and can be revoked. New contract code; deployment pending.</p></div></article></div></section>
+  <section class="verification-section" id="verify"><div><p class="eyebrow">04 / INDEPENDENT VERIFICATION</p><h2>Check the record.</h2><p>Verify the exact bytes of a downloaded report against a fingerprint you obtained independently. Your file stays in this browser.</p></div><form id="verify-form"><label for="verify-file">Audit report JSON</label><input id="verify-file" type="file" accept=".json" required><label for="verify-hash">Expected SHA-256 fingerprint</label><input id="verify-hash" pattern="[a-fA-F0-9]{64}" maxlength="64" placeholder="64-character report hash" required><button class="secondary" type="submit">Verify integrity ↗</button><p id="verify-result" role="status" class="help">Integrity confirms a file match. It does not prove issuer identity or safety.</p></form></section>
+  <section class="policy-section" id="policy-lab"><div class="section-top"><div><p class="eyebrow">05 / THE AUTHORITY LAB</p><h2>Give autonomy a boundary.</h2></div><p>Try the same deterministic rules used by the enforcement SDK.<br>This simulation never signs or sends a transaction.</p></div><div class="policy-layout"><form id="policy-form"><label for="policy-scenario">Scenario</label><select id="policy-scenario"><option value="normal">Approved destination · within budget</option><option value="overspend">Payment exceeds the per-action limit</option><option value="destination">Payment to an unknown destination</option><option value="version">Agent source changed after review</option><option value="paused">Emergency stop is active</option><option value="depth">Delegate exceeds permitted depth</option></select><button class="secondary" type="submit">Evaluate action ↗</button></form><div class="policy-output"><span class="mono">POLICY / TESTNET / DEMO</span><h3 id="policy-decision">Authority is explicit.</h3><p id="policy-reasons" role="status">10 XLM per action. 50 XLM total. One permitted destination. One delegation level.</p><small>Rule evaluation only; no signed approval or execution.</small></div></div></section>
   <section id="plans" class="pricing-section"><div class="pricing-heading"><h2>Pay for the review.<br>Not a passing score.</h2><p>Free discovery. Fixed-price release reviews. A subscription for teams.</p></div>
     <div class="price-grid">
       <article class="price-card available-plan"><span class="plan-status">Available now</span><h3>Quick check</h3><p class="price">Free</p><p>Address lookup, source review, priority findings and a downloadable report.</p><a href="#workspace">Start an audit</a></article>
-      <article class="price-card"><span class="plan-status">Planned · checkout closed</span><h3>Release audit</h3><p class="price">49 USDC <small>/ version</small></p><p>Bounded runtime tests, one remediation rerun and a version-bound Stellar record.</p><span class="plan-footer">Fixed scope, regardless of result</span></article>
-      <article class="price-card"><span class="plan-status">Planned · checkout closed</span><h3>Team</h3><p class="price">149 USDC <small>/ month</small></p><p>10 automated release reviews, change comparisons and CI alerts.</p><span class="plan-footer">Independent human review quoted separately</span></article>
+      <article class="price-card"><span class="plan-status">Planned · checkout closed</span><h3>Release audit</h3><p class="price">49 USDC <small>/ release</small></p><p>Evidence review, one remediation rerun and a version-bound record. Isolated runtime tests require agreed scope.</p><span class="plan-footer">Fixed scope, regardless of result</span></article>
+      <article class="price-card"><span class="plan-status">Planned · checkout closed</span><h3>Team</h3><p class="price">149 USDC <small>/ month</small></p><p>5 automated release reviews, change comparisons and CI alerts. Additional releases: 19 USDC each.</p><span class="plan-footer">Independent human review quoted separately</span></article>
     </div><p class="help pricing-note">Paid prices are pilot targets, not live offers. No funds are collected. Existing testnet escrow uses XLM; USDC checkout is not enabled.</p>
   </section>
-  <section id="method" class="method"><h2>A Stellar audit,<br>without the jargon.</h2><div>
+  <section id="method" class="method"><h2>Good questions.<br>Straight answers.</h2><div>
     <details><summary>Can I add any Stellar agent?</summary><p>You can submit a public G-account or C-contract address on Testnet or Mainnet, or provide source without a wallet. The address check is read-only. A private agent needs its owner's source or a later authorized runtime test; no service can fully audit hidden behavior from an address alone.</p></details>
     <details><summary>Does Stellar have an agent key?</summary><p>There is no universal agent ID required by this product. Agents may use ordinary Stellar accounts or smart accounts with delegated permissions. We ask for public identifiers only. A private key is authority to act, not evidence of trustworthy behavior.</p></details>
     <details><summary>What does the current audit prove?</summary><p>Seven rule-based dimensions inspect the supplied evidence. They do not execute your agent. The report distinguishes source findings from missing evidence. Owner signatures and successful Soroban state readback are required for a published audit record; this screen does not claim that step is complete.</p></details>
+    <details><summary>Does a credential mean the agent is safe?</summary><p>No. It records an issuer's assessment of a specific version. It cannot reveal hidden behavior or guarantee future behavior. Always check the report scope, issuer, version, expiry and revocation state.</p></details>
+    <details><summary>What is available today?</summary><p>Source review, control coverage, downloads, local hash verification and policy simulation work without keys. AI second opinions require an enabled provider and your consent. Public paid checkout and credential minting remain closed until deployment and funded end-to-end verification.</p></details>
   </div></section>
 </main>
-<footer><span>AgentVeritas · Built for Stellar</span><a href="/operator">Operator console</a><span>Never share your secret key.</span></footer>
+<footer><span>AgentVeritas <span class="footer-motto">Trust, with evidence.</span></span><a href="/operator">Operator console</a><span>Built for Stellar. Designed for accountability.</span></footer>
 </body></html>

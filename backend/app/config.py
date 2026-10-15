@@ -17,12 +17,14 @@ from .stellar.networks import TESTNET, NetworkGuardError, StellarNetwork, resolv
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    stateless_studio: bool = False
     app_name: str = "AgentVeritas Stellar"
     version: str = "0.3.0-stellar"
     admin_api_key: str = ""
     admin_rate_limit_per_minute: int = 60
 
     # LLM; privacy-mode için ayrıca opt-in gerekir.
+    enable_public_ai_review: bool = False
     llm_provider: str = ""
     llm_api_key: str = ""
     llm_model: str = "claude-sonnet-4-20250514"

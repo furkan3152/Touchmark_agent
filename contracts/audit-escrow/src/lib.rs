@@ -6,7 +6,7 @@ use soroban_sdk::{
 };
 
 contractmeta!(key = "name", val = "AgentVeritas Audit Escrow");
-contractmeta!(key = "version", val = "0.1.0");
+contractmeta!(key = "version", val = "0.2.0");
 contractmeta!(key = "asset", val = "SEP-41 Stellar Asset Contract client");
 contractmeta!(key = "purpose", val = "optional agent audit settlement");
 
@@ -120,6 +120,10 @@ pub struct AuditEscrow;
 
 #[contractimpl]
 impl AuditEscrow {
+    pub fn __constructor(env: Env, admin: Address, token: Address, fee_to: Address, fee_bps: u32) {
+        Self::init(env, admin, token, fee_to, fee_bps);
+    }
+
     pub fn init(env: Env, admin: Address, token: Address, fee_to: Address, fee_bps: u32) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic_with_error!(&env, Error::AlreadyInit);
