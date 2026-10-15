@@ -99,7 +99,7 @@ async def verify(run_id):
                         path=f'/vercel/order-data/{run_id}/{suffix}.json'
                         try:
                             async with box.fs.open(path,'rb') as stream: raw=await stream.read(500_001)
-                        except FileNotFoundError: continue
+                        except (FileNotFoundError, provider.SandboxPathNotFoundError): continue
                         if len(raw)>500_000:raise ValueError('Trial evidence exceeds bound')
                         await put_private(client,prefix+'-'+suffix+('-restart' if restart else '')+'.json',raw,origin,token)
                     await put_private(client,prefix+'-checkpoint.json',canonical_json(proof).encode(),origin,token)
