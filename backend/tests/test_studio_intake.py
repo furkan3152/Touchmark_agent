@@ -108,3 +108,26 @@ def test_upstream_failure_remains_unknown_not_found(monkeypatch):
         response = client.post("/api/v1/studio/identify", json={"address": ADDRESS})
     assert response.status_code == 200
     assert response.json()["ledger_presence"] == "unavailable"
+
+
+def test_import_skips_complex_source_instead_of_rejecting_whole_project(monkeypatch):
+    import base64
+    from hashlib import sha1
+    source = {'main.py': b'x = 1\n' * 1800, 'reader.py': b'def answer(prompt):\n return "read only"\n'}
+    blobs = {sha1(f'blob {len(raw)}\0'.encode() + raw).hexdigest(): (name, raw) for name, raw in source.items()}
+    async def respond(self, request, **kwargs):
+        url = str(request.url)
+        if url.endswith('/commits/HEAD'): data = {'sha': 'b' * 40}
+        elif '/git/trees/' in url:
+            data = {'tree': [{'type': 'blob', 'mode': '100644', 'path': name, 'sha': sha, 'size': len(raw)} for sha,(name,raw) in blobs.items()]}
+        else:
+            raw = blobs[url.rsplit('/',1)[1]][1]
+            data = {'encoding':'base64', 'content':base64.b64encode(raw).decode()}
+        return httpx.Response(200, json=data, request=request)
+    monkeypatch.setattr(httpx.AsyncClient, 'send', respond)
+    with TestClient(api.app) as client:
+        response = client.post('/api/v1/studio/import', json={'repository':'https://github.com/example/reader'})
+    assert response.status_code == 200
+    assert list(response.json()['bundle']['files']) == ['reader.py']
+    assert response.json()['import_scope']['omitted_paths'] == ['main.py']
+    assert response.json()['import_scope']['omitted_reasons']
