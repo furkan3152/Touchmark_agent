@@ -14,6 +14,7 @@ class StudioGuard:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or scope["path"] not in {
             "/api/v1/studio/policy", "/api/v1/studio/review", "/api/v1/studio/identify", "/api/v1/studio/import",
+            "/api/v1/studio/discover", "/api/v1/studio/runtime", "/api/v1/studio/stellar/inspect-auth",
         }:
             return await self.app(scope, receive, send)
 

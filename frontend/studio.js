@@ -209,6 +209,7 @@
   function renderDiscovery(plan) {
     if (!plan) return;
     const panel = byId("discovery-results"); panel.hidden = false; panel.replaceChildren();
+    if (plan.agent_identity) panel.append(node("p", "Agent identity: unverified. A callable, framework import or project declaration does not prove that this is the deployed agent.", "blueprint-blocker"));
     panel.append(node("strong", plan.frameworks.length ? plan.frameworks.join(" · ") : "Custom or unidentified framework"));
     panel.append(node("p", `${plan.files_inspected} files inspected. ${plan.entrypoints.length} possible entry points. ${plan.test_suites.length} test suites.`));
     if (plan.required_environment_names.length) panel.append(node("p", `Environment names found: ${plan.required_environment_names.join(", ")}. Values are never requested here.`));

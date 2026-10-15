@@ -24,6 +24,8 @@ The English public Studio now includes a 24-area evidence inventory, explicit ar
 
 **Veritas Blueprint v1** adds an explicit `veritas.json` project map: component paths, a checked entrypoint, declared permission boundaries, import evidence and a source-bound audit plan. Missing files and stale plans block isolated execution. Start with [the protocol and local commands](docs/VERITAS_BLUEPRINT.md) and [the multi-file example](examples/blueprint-reader/veritas.json).
 
+**Independent challenge review:** [the current evidence and gaps](docs/INDEPENDENT_REVIEW_2026-10-15.md) records reproduced defects and a disclosed challenge set, including retained misses. Agent identity stays explicitly unverified. New [authorization-entry inspection examples](examples/stellar-authority/README.md) check nested transfer policy; the [experimental session account](contracts/agent-account/README.md) enforces a narrow on-chain spending boundary. Neither is a comprehensive audit or a production safety certificate.
+
 The new **AuditCredential** Soroban contract issues non-transferable, revocable, expiring report credentials from completed registry validations. Registry v0.2 binds requests to source version and metadata/endpoint hashes; source changes invalidate old credentials. Registry and escrow initialize atomically through constructors. **These are new deployment artifacts: the historical testnet manifest does not verify this release.**
 
 - [Instawards 30-day sprint and budget](docs/INSTAWARDS_SPRINT.md)

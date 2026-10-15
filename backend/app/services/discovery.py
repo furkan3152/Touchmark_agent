@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import json
+import keyword
 import re
 import tomllib
 from hashlib import sha256
@@ -20,10 +21,42 @@ EXCLUDED = {'node_modules', 'vendor', 'dist', 'build', 'target', '__pycache__', 
 
 def safe_source_path(name: str) -> bool:
     path = PurePosixPath(name)
-    return bool(name and len(name) <= 160 and not path.is_absolute() and '\\' not in name
+    return bool(name and len(name) <= 160 and name == str(path) and not any(ord(c) < 32 for c in name) and not path.is_absolute() and '\\' not in name
                 and ':' not in name and all(not p.startswith('.') and p not in EXCLUDED for p in path.parts)
                 and path.suffix.lower() in EXTENSIONS
                 and not re.search(r'(?i)(?:^|/)(?:credentials|secrets?|id_rsa|service.account)(?:[._-]|$)', name))
+
+
+def python_module_path(path: str) -> bool:
+    """The import adapter requires one unambiguous identifier per path segment."""
+    return safe_source_path(path) and path.endswith('.py') and all(
+        part.isidentifier() and not keyword.iskeyword(part) for part in path[:-3].split('/'))
+
+
+def stable_callable(tree: ast.Module, candidate: ast.AST) -> bool:
+    """Reject visible rebinding; this is not proof against dynamic module effects."""
+    name = candidate.name
+    rebound = False
+    class Bindings(ast.NodeVisitor):
+        def visit_Name(self, node):
+            nonlocal rebound
+            if node.id == name and isinstance(node.ctx, (ast.Store, ast.Del)): rebound = True
+        def visit_FunctionDef(self, node):
+            nonlocal rebound
+            if node is not candidate and node.name == name: rebound = True
+        visit_AsyncFunctionDef = visit_FunctionDef
+        def visit_ClassDef(self, node):
+            nonlocal rebound
+            if node.name == name: rebound = True
+        def visit_alias(self, node):
+            nonlocal rebound
+            if (node.asname or node.name.split('.')[0]) == name: rebound = True
+        def visit_ImportFrom(self, node):
+            nonlocal rebound
+            if any(alias.name == '*' for alias in node.names): rebound = True
+            self.generic_visit(node)
+    Bindings().visit(tree)
+    return not rebound
 
 
 def source_digest(files: dict[str, str]) -> str:
@@ -53,7 +86,7 @@ def discover_project(files: dict[str, str]) -> dict:
                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith('_'):
                     params = n.args.posonlyargs + n.args.args
                     # A supported call shape, not a claim that this is an agent.
-                    if len(params) == 1 and not n.decorator_list and not n.args.vararg and not n.args.kwarg and not n.args.kwonlyargs and params[0].arg in {'prompt', 'message', 'query', 'input_text'}:
+                    if python_module_path(path) and stable_callable(tree, n) and len(params) == 1 and not n.decorator_list and not n.args.vararg and not n.args.kwarg and not n.args.kwonlyargs and params[0].arg in {'prompt', 'message', 'query', 'input_text'}:
                         entrypoints.append({'id': f'{path}:{n.name}', 'file': path, 'symbol': n.name,
                             'adapter': 'python_text', 'line': n.lineno, 'confidence': 'candidate',
                             'reason': 'Top-level single-text-input callable; confirm that it invokes the real agent.'})
@@ -84,8 +117,10 @@ def discover_project(files: dict[str, str]) -> dict:
                 dependencies.update(line.strip()[:120] for line in content.splitlines() if line.strip() and not line.startswith('#'))
         except (ValueError, TypeError, AttributeError, RecursionError):
             diagnostics.append({'file': path, 'reason': 'Dependency manifest could not be parsed.'})
+    local_modules = {path.split('/')[0].removesuffix('.py') for path in files if path.endswith('.py')}
+    external_imports = {name for name in imports if name.split('.')[0] not in local_modules}
     for token, label in FRAMEWORKS.items():
-        if any(v == token or v.startswith(token + '.') or v.startswith(token + '/') or v.startswith(token + '=') or token.endswith('/') and v.startswith(token) for v in imports | {re.split(r"[<>=~!\[ ]", d)[0].replace("-", "_") for d in dependencies}):
+        if any(v == token or v.startswith(token + '.') or v.startswith(token + '/') or v.startswith(token + '=') or token.endswith('/') and v.startswith(token) for v in external_imports | {re.split(r"[<>=~!\[ ]", d)[0].replace("-", "_") for d in dependencies}):
             frameworks.add(label)
     from .blueprint import compile_blueprint, suggest_blueprint
     blueprint = compile_blueprint(files)
@@ -95,6 +130,11 @@ def discover_project(files: dict[str, str]) -> dict:
         entrypoints = [blueprint['entrypoint']] if blueprint['status'] == 'mapped' else []
     return {'schema': 'agentveritas.discovery.v1', 'source_sha256': source_digest(files),
             'blueprint': blueprint, 'blueprint_draft': draft,
+            'agent_identity': {'status': 'unverified', 'is_agent_verified': False,
+                'declaration_present': blueprint['status'] != 'not_declared',
+                'framework_indicators': sorted(frameworks),
+                'meaning': 'A callable or framework import does not prove an autonomous agent. A mapped declaration locates submitted code only.',
+                'missing_evidence': ['Real model/tool execution traces', 'Deployed artifact and configuration binding', 'Hidden service and dependency scope']},
             'files_inspected': len(files), 'frameworks': sorted(frameworks),
             'dependencies': sorted(dependencies)[:100], 'required_environment_names': sorted(env_keys)[:40],
             'entrypoints': entrypoints[:30], 'test_suites': tests[:12], 'diagnostics': diagnostics,

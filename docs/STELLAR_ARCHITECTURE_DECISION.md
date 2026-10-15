@@ -1,5 +1,9 @@
 # Stellar Architecture Decision — 2026-08-30
 
+## Review update — 2026-10-15
+
+The [current adversarial review](INDEPENDENT_REVIEW_2026-10-15.md) supersedes readiness claims below. The registry remains permissioned; seven analyzers are not independent validators. Ordered typed invocation builders now match the contract ABI and fail closed when signer roles or exact atomic payment parameters are absent. A read-only authorization-tree inspector and an experimental `AgentSessionAccount` add native policy inspection/enforcement primitives; the new account is not part of the existing Testnet deployment. Official Stellar docs now provide agentic payment integration guides for x402 and MPP, which are relevant future billing adapters, not enabled features here. Source/build verification with SEP-47/55/58 and fee sponsorship are priority integrations. Select features for practical value; no other-chain impossibility claim is required.
+
 ## Decision
 
 The root of trust for agent validation is a custom and versioned Soroban `AgentRegistry` contract. There is no direct "AI agent validation SEP" in the Stellar ecosystem. Therefore, agent identity, assigned validator, report hash, score, and independent reviewer signal are kept in the contract; payment/anchor protocols are not mixed into the validation core.

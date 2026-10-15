@@ -52,8 +52,18 @@ def main():
             del mapped_source['files']['agent/tools.py']
             incomplete = client.post('/api/v1/studio/discover', json=mapped_source).json()
             assert incomplete['blueprint']['status'] == 'blocked' and incomplete['entrypoints'] == []
+            for name, expected in [('matching-transfer', True), ('nested-recipient-change', False)]:
+                auth_request = json.loads((ROOT / 'examples/stellar-authority' / f'{name}.json').read_text())
+                inspected = client.post('/api/v1/studio/stellar/inspect-auth', json=auth_request)
+                assert inspected.status_code == 200, inspected.text
+                evidence = inspected.json()
+                assert evidence['report']['matches_declared_policy'] is expected
+                assert evidence['report']['signature_verified'] is False
+                assert evidence['report']['transaction_executed'] is False
+                assert hashlib.sha256(evidence['report_json'].encode()).hexdigest() == evidence['report_sha256']
             print(json.dumps({'localhost':f'http://127.0.0.1:{port}', 'source_review':'passed', 'discovery':'passed',
-                'blueprint_map_and_missing_file_gate':'passed', 'report_integrity':'passed', 'runtime_auth':'passed', 'operator_surface':'hidden', 'controls':24}))
+                'blueprint_map_and_missing_file_gate':'passed', 'stellar_authority_policy_and_nested_recipient':'passed',
+                'report_integrity':'passed', 'runtime_auth':'passed', 'operator_surface':'hidden', 'controls':24}))
     finally:
         server.terminate()
         try: server.wait(timeout=5)

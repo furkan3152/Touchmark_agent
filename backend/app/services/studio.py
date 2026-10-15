@@ -50,9 +50,10 @@ class ReviewRequest(BaseModel):
         nodes = 0
         seen: set[str] = set()
         for name, content in self.files.items():
+            from .discovery import safe_source_path
             path = PurePosixPath(name)
             if (
-                len(name) > 160 or not name or path.is_absolute() or "\\" in name
+                not safe_source_path(name) or len(name) > 160 or not name or path.is_absolute() or "\\" in name
                 or any(part.startswith(".") for part in path.parts)
                 or ":" in name or name.lower() in seen
                 or path.suffix.lower() not in {".py", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs", ".rs", ".go", ".json", ".md", ".txt", ".toml", ".yaml", ".yml"}

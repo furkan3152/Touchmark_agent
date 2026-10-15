@@ -9,7 +9,7 @@ Protect customer source, secrets, signing authority, audit integrity, payment fu
 | Boundary | Implemented control | Residual risk |
 |---|---|---|
 | Public intake | Pre-parse 128 KiB bound; source file/AST complexity limits; no execution | Supported languages and bounded static analysis can miss dataflow and runtime behavior |
-| GitHub import | Fixed GitHub API destination; public root bundle only; bounded responses | Does not clone or audit an entire repository automatically |
+| GitHub import | Immutable commit, Git blob integrity, Blueprint paths or bounded provisional selection | Does not audit an entire repository automatically; declared scope can omit behavior |
 | AI second opinion | Explicit consent, operator enablement, bounded redacted input, no tools, validated file/line references | Prompt injection and hallucination remain possible; valid citations do not prove a claim |
 | Deterministic result | AI observations kept outside scores and release decisions | Static heuristics have false positives and false negatives |
 | Evidence inventory | 24 visible control areas, absent evidence distinguished from located source | Keyword presence is only surface discovery, never a verified defense |
@@ -31,3 +31,5 @@ Intent and instruction hierarchy; prompt/tool-output injection; identity and aut
 ## High-priority next experiments
 
 Build an isolated runtime adapter with no production signing keys; record actual attempted actions under hostile inputs. Add multi-file/language dataflow and MCP schema-change fixtures. Validate DNS rebinding and redirected egress at the execution layer. Measure detection against independently labeled realistic agents, including benign near-miss examples. Verify tenant isolation and approval races in the actual host integration. These are specific missing evidence, not hidden behind a high score.
+
+Update 2026-10-15: a bounded Python microVM sampler now exists, but does not provide tamper-proof tool traces. Canonical path checks, visible entrypoint rebinding rejection and exact import-origin checks address source-to-runtime substitution examples. The public auth-entry inspector checks one decoded tree against caller-declared limits without verifying signatures, network or ledger freshness. The experimental AgentSessionAccount enforces a separate trusted-token spending policy locally; it is not deployed or production-audited. See the [adversarial review and retained misses](INDEPENDENT_REVIEW_2026-10-15.md).

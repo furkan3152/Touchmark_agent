@@ -115,6 +115,7 @@ class Badge(str, Enum):
 class JobState(str, Enum):
     CREATED = "created"
     AWAITING_SIGNATURE = "awaiting_signature"
+    PREPARATION_BLOCKED = "preparation_blocked"
     FUNDED = "funded"
     RUNNING = "running"
     DELIVERED = "delivered"

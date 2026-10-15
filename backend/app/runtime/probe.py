@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 CHILD = r'''
-import asyncio, contextlib, importlib, inspect, json, os, resource, sys, types
+import asyncio, contextlib, importlib, importlib.util, inspect, json, os, resource, sys, types
 resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
 resource.setrlimit(resource.RLIMIT_AS, (536870912, 536870912))
 resource.setrlimit(resource.RLIMIT_FSIZE, (65536, 65536))
@@ -26,7 +26,12 @@ try:
     sys.modules[package.__name__] = package
     module_path = request['file'][:-3].replace('/', '.')
     if module_path.endswith('.__init__'): module_path = module_path[:-9]
-    module = importlib.import_module(package.__name__ + '.' + module_path)
+    name = package.__name__ + '.' + module_path
+    spec = importlib.util.find_spec(name)
+    expected_path = '/vercel/project/' + request['file']
+    if spec is None or spec.origin != expected_path:
+        raise ValueError('Entry module does not resolve to the reviewed source path')
+    module = importlib.import_module(name)
     result = getattr(module, request['symbol'])(request['input'])
     if inspect.isawaitable(result): result = asyncio.run(result)
     text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)

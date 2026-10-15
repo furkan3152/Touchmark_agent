@@ -146,7 +146,7 @@ def python_edges(files: dict[str, str]) -> list[dict]:
 
 
 def compile_blueprint(files: dict[str, str]) -> dict:
-    from .discovery import source_digest
+    from .discovery import source_digest, python_module_path, stable_callable
     source_hash = source_digest(files)
     base = {'protocol': VERSION, 'source_sha256': source_hash, 'runtime_verified': False}
     if 'veritas.json' not in files:
@@ -174,16 +174,16 @@ def compile_blueprint(files: dict[str, str]) -> dict:
              'confidence': 'declared_and_checked', 'reason': 'Blueprint entrypoint; source signature checked without execution.'}
     if entry_component.path in files:
         try:
-            if not entry_component.path.endswith('.py'): raise ValueError()
+            if not python_module_path(entry_component.path): raise ValueError()
             tree = ast.parse(files[entry_component.path])
             candidates = [n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name == entry['symbol']]
             if len(candidates) != 1: raise ValueError()
             n = candidates[0]; args = n.args
-            if len(args.args + args.posonlyargs) != 1 or args.vararg or args.kwarg or args.kwonlyargs or n.decorator_list:
+            if not stable_callable(tree, n) or len(args.args + args.posonlyargs) != 1 or args.vararg or args.kwarg or args.kwonlyargs or n.decorator_list:
                 raise ValueError()
             entry['line'] = n.lineno
         except (SyntaxError, ValueError, RecursionError):
-            blockers.append('Declared entrypoint must be one undecorated top-level Python callable taking exactly one positional argument.')
+            blockers.append('Declared entrypoint must be one unrebound, undecorated top-level Python callable taking exactly one positional argument, in an unambiguous Python module path.')
     edges = python_edges(files)
     unresolved = [e for e in edges if e['resolution'] != 'supplied_source']
     if any(e['resolution'] == 'unresolved_relative' for e in unresolved):

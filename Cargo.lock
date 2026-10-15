@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "agent-veritas-account"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "agent-veritas-credential"
 version = "0.1.0"
 dependencies = [
