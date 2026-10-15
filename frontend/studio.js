@@ -193,7 +193,7 @@
       const value = await post("import", {repository:byId("github-repository").value.trim()});
       loadBundle({...value.bundle, source_reference:value.source});
       renderDiscovery(value.discovery);
-      byId("import-status").textContent = `Imported ${Object.keys(files).length} files at ${value.revision.slice(0,8)}. ${value.import_scope.eligible_files_omitted} eligible files omitted by limits. This is a bounded source selection.`;
+      byId("import-status").textContent = `Imported ${Object.keys(files).length} files at ${value.revision.slice(0,8)}. ${value.import_scope.eligible_files_omitted} eligible files outside scope or limits. Selection: ${value.import_scope.selection || "provisional discovery"}.`;
     } catch (failure) { error(failure.message); byId("import-status").textContent = "Nothing imported. You can upload files instead."; }
     finally { setBusy(false); }
   });
@@ -216,6 +216,37 @@
     plan.entrypoints.forEach((entry) => list.append(node("li", `${entry.id} — ${entry.reason}`)));
     if (!plan.entrypoints.length) list.append(node("li", "No supported callable detected. Include the real entry module or a thin adapter to it."));
     panel.append(list);
+    const blueprint = plan.blueprint;
+    if (blueprint) {
+      const map = node("section", undefined, "blueprint-map");
+      map.append(node("span", "VERITAS BLUEPRINT / 01", "eyebrow"), node("h3", blueprint.status === "mapped" ? "Your project, mapped." : blueprint.status === "blocked" ? "Resolve the project map." : "Give your agent a project map."), node("p", blueprint.note || "The declaration could not be verified. Execution is blocked."));
+      blueprint.blockers.forEach((message) => map.append(node("p", message, "blueprint-blocker")));
+      if (blueprint.components.length) {
+        const table = node("table", undefined, "blueprint-table");
+        const head = node("thead"); const header = node("tr");
+        ["Component", "Source path", "Evidence"].forEach((label) => header.append(node("th", label))); head.append(header); table.append(head);
+        const body = node("tbody");
+        blueprint.components.forEach((component) => {
+          const row = node("tr"); const path = node("td"); path.append(node("code", component.path));
+          row.append(node("td", `${component.id} · ${component.role}`), path, node("td", component.status)); body.append(row);
+        }); table.append(body); map.append(table);
+        const details = node("details"); details.append(node("summary", `${blueprint.checks.length} planned checks · ${(blueprint.boundaries || []).length} declared boundaries`));
+        const checks = node("ul"); blueprint.checks.forEach((check) => checks.append(node("li", `${check.component}: ${check.id.replaceAll("_", " ")} · ${check.method.replaceAll("_", " ")} · ${check.status}`))); details.append(checks);
+        (blueprint.boundaries || []).forEach((boundary) => details.append(node("p", `${boundary.source} → ${boundary.target}: ${boundary.permission}; approval ${boundary.approval_required ? "declared required" : "not declared required"}. Enforcement unverified.`)));
+        (blueprint.source_edges || []).forEach((edge) => details.append(node("p", `${edge.from}:${edge.line} → ${edge.to} · ${edge.resolution.replaceAll("_", " ")}`)));
+        map.append(details);
+        const undeclared = Object.entries(blueprint.role_coverage || {}).filter(([,status]) => status === "not_declared").map(([role]) => role);
+        if (undeclared.length) map.append(node("p", `Not declared: ${undeclared.join(", ")}. These surfaces are outside the mapped scope, not verified absent.`));
+        (blueprint.analysis_limits || []).forEach((limit) => map.append(node("p", limit)));
+      }
+      if (blueprint.plan_sha256) map.append(node("p", `Plan fingerprint: ${blueprint.plan_sha256}`, "blueprint-fingerprint"));
+      if (plan.blueprint_draft?.manifest) {
+        const button = node("button", "Download veritas.json draft", "text-button"); button.type = "button";
+        button.addEventListener("click", () => download("veritas.json", JSON.stringify({...plan.blueprint_draft.manifest, name: byId("agent-name").value || "My agent", purpose: byId("agent-purpose").value || plan.blueprint_draft.manifest.purpose}, null, 2)));
+        map.append(button, node("p", "Review roles, purpose and boundaries. Place this file at your project root, then upload the folder again."));
+      } else if (plan.blueprint_draft) map.append(node("p", "Choose your real entry point in veritas.json. Automatic discovery cannot resolve an ambiguous or unsupported project."));
+      panel.append(map);
+    }
     const select = byId("runtime-entrypoint"); select.replaceChildren();
     plan.entrypoints.filter((entry) => entry.adapter === "python_text").forEach((entry) => {
       const option = node("option", entry.id); option.value = entry.id; select.append(option);
@@ -237,10 +268,22 @@
       const all = [...event.target.files];
       const eligible = all.map((file) => ({file,path:file.webkitRelativePath.split("/").slice(1).join("/")}))
         .filter(({file,path}) => file.size <= 32000 && path.length <= 160 && !path.split("/").some((part) => part.startsWith(".") || ["node_modules","vendor","target","dist","build","venv","__pycache__"].includes(part)) && /\.(py|js|ts|tsx|jsx|mjs|cjs|rs|go|json|md|txt|toml|ya?ml)$/.test(path) && !/(^|\/)(credentials|secrets?|id_rsa|service.account)([._-]|$)/i.test(path));
-      const rank = (path) => /(^|\/)(package.json|pyproject.toml|requirements.txt)$/.test(path) ? 0 : /\.(py|js|ts)$/.test(path) ? 1 : 2;
+      const declaration = all.find((file) => file.webkitRelativePath.split("/").slice(1).join("/") === "veritas.json");
+      if (declaration && !eligible.some((item) => item.path === "veritas.json")) throw new Error("veritas.json exceeds the upload limit. Automatic fallback is disabled.");
+      let declaredPaths = null;
+      if (declaration) {
+        try {
+          const manifest = JSON.parse(await declaration.text()); declaredPaths = new Set(["veritas.json", ...(manifest.components || []).map((component) => component.path)]);
+          if (!byId("agent-name").value && typeof manifest.name === "string") byId("agent-name").value = manifest.name;
+          if (!byId("agent-purpose").value && typeof manifest.purpose === "string") byId("agent-purpose").value = manifest.purpose;
+        }
+        catch { declaredPaths = new Set(["veritas.json"]); }
+      }
+      const rank = (path) => path === "veritas.json" ? -1 : /(^|\/)(package.json|pyproject.toml|requirements.txt)$/.test(path) ? 0 : /\.(py|js|ts)$/.test(path) ? 1 : 2;
       eligible.sort((a,b) => rank(a.path)-rank(b.path) || a.path.split("/").length-b.path.split("/").length || a.path.localeCompare(b.path));
       const next = {}; let bytes = 0;
       for (const {file,path} of eligible) {
+        if (declaredPaths && !declaredPaths.has(path)) continue;
         if (Object.keys(next).length >= 12 || bytes + file.size > 64000) continue;
         next[path] = await file.text(); bytes += file.size;
       }
@@ -253,15 +296,20 @@
     if (busy || !submitted) return;
     const key = byId("runtime-access").value.trim();
     if (!byId("runtime-consent").checked || !key || !byId("runtime-entrypoint").value) { byId("runtime-status").textContent = "Select a supported entry point, provide the pilot key and authorize execution."; return; }
-    setBusy(true); byId("run-runtime").disabled = true; byId("runtime-status").textContent = "Creating an isolated microVM and executing six behavior probes…";
+    setBusy(true); byId("run-runtime").disabled = true; byId("runtime-status").textContent = "Creating an isolated microVM and executing the bounded probe plan…";
     try {
-      const response = await fetch("/api/v1/studio/runtime", {method:"POST", headers:{"Content-Type":"application/json",Authorization:`Bearer ${key}`}, body:JSON.stringify({source:submitted,entrypoint:byId("runtime-entrypoint").value,execution_consent:true}),signal:AbortSignal.timeout(60000)});
+      const response = await fetch("/api/v1/studio/runtime", {method:"POST", headers:{"Content-Type":"application/json",Authorization:`Bearer ${key}`}, body:JSON.stringify({source:submitted,entrypoint:byId("runtime-entrypoint").value,execution_consent:true,plan_sha256:result?.report?.discovery?.blueprint?.plan_sha256 || null}),signal:AbortSignal.timeout(60000)});
       const value = await response.json(); if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : "Runtime request could not be validated.");
       const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value.report_json)))].map((b)=>b.toString(16).padStart(2,"0")).join("");
       if (hash !== value.report_sha256) throw new Error("Runtime report integrity mismatch.");
       runtimeResult = value; const report = JSON.parse(value.report_json);
       const panel = byId("runtime-results"); panel.replaceChildren();
-      report.observations.forEach((item) => {const card = node("article",undefined,"runtime-observation"); card.append(node("strong",`${item.id.replaceAll("_"," ")} · ${item.status}`),node("p", item.response || item.dependency || item.error || "No usable response."));panel.append(card);});
+      report.observations.forEach((item) => {
+        const card = node("article",undefined,"runtime-observation");
+        card.append(node("strong",`${item.id.replaceAll("_"," ")} · ${item.status}`),node("p", item.response || item.dependency || item.error || "No usable response."));
+        if (item.assertion) card.append(node("p", `Developer text assertion: ${item.assertion.result.replaceAll("_", " ")}. ${item.assertion.meaning}`));
+        panel.append(card);
+      });
       byId("runtime-status").textContent = "Execution finished. These observations do not certify controls or production safety.";
       byId("download-runtime").hidden = false;
     } catch (failure) {byId("runtime-status").textContent = failure.message;}
