@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 CHILD = r'''
-import asyncio, contextlib, importlib, importlib.util, inspect, json, os, resource, sys, types
+import asyncio, contextlib, importlib, importlib.util, importlib.metadata, inspect, json, os, resource, sys, types
 resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
 resource.setrlimit(resource.RLIMIT_AS, (536870912, 536870912))
 resource.setrlimit(resource.RLIMIT_FSIZE, (65536, 65536))
@@ -21,6 +21,26 @@ request = json.loads(sys.argv[1])
 sys.path.insert(0, '/vercel/project')
 sys.path.insert(0, os.path.dirname('/vercel/project/' + request['file']))
 try:
+    environment = request.get('environment')
+    if environment:
+        requested_version = environment['python_version']
+        current_version = '.'.join(str(x) for x in sys.version_info[:2])
+        if not (current_version == requested_version or requested_version == str(sys.version_info.major)):
+            print('\nAV_RESULT:' + json.dumps({'blocked': 'python_version_mismatch', 'dependency': 'python:' + current_version}))
+            sys.exit(0)
+        absent = [name for name in environment['required_environment_names'] if name not in os.environ]
+        if absent:
+            print('\nAV_RESULT:' + json.dumps({'blocked': 'environment_unavailable', 'dependency': ','.join(absent)[:100]}))
+            sys.exit(0)
+        for dependency in environment['dependencies']:
+            if dependency.get('distribution_sha256'):
+                print('\nAV_RESULT:' + json.dumps({'blocked': 'distribution_digest_unverified', 'dependency': dependency['name']}))
+                sys.exit(0)
+            try: actual = importlib.metadata.version(dependency['name'])
+            except importlib.metadata.PackageNotFoundError: actual = None
+            if actual != dependency['version']:
+                print('\nAV_RESULT:' + json.dumps({'blocked': 'dependency_contract_mismatch', 'dependency': dependency['name']}))
+                sys.exit(0)
     package = types.ModuleType('_veritas_submission')
     package.__path__ = ['/vercel/project']
     sys.modules[package.__name__] = package
@@ -32,10 +52,20 @@ try:
     if spec is None or spec.origin != expected_path:
         raise ValueError('Entry module does not resolve to the reviewed source path')
     module = importlib.import_module(name)
-    result = getattr(module, request['symbol'])(request['input'])
-    if inspect.isawaitable(result): result = asyncio.run(result)
-    text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
-    print('\nAV_RESULT:' + json.dumps({'response': text[:8000]}))
+    async def invoke_steps():
+        responses = []
+        for text in request.get('steps') or [request['input']]:
+            result = getattr(module, request['symbol'])(text)
+            if inspect.isawaitable(result): result = await result
+            response = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+            responses.append(response[:request.get('output_char_limit', 8000)])
+        return responses
+    responses = asyncio.run(invoke_steps())
+    output = {'response': responses[-1]}
+    if request.get('steps'): output['step_responses'] = responses
+    print('\nAV_RESULT:' + json.dumps(output))
+except SystemExit:
+    raise
 except ModuleNotFoundError as error:
     print('\nAV_RESULT:' + json.dumps({'blocked': 'missing_dependency', 'dependency': str(error.name)[:100]}))
 except BaseException as error:
@@ -47,7 +77,8 @@ def main():
     config = json.load(open('/vercel/probe-input.json'))
     observations = []
     for case in config['cases']:
-        request = {**config['entrypoint'], 'input': case['input']}
+        request = {**config['entrypoint'], 'input': case['input'], 'steps': case.get('steps'),
+                   'environment': config.get('environment'), 'output_char_limit': config.get('output_char_limit', 8000)}
         with tempfile.TemporaryFile() as log:
             proc = subprocess.Popen([sys.executable, '-I', '-c', CHILD, json.dumps(request)],
                 stdout=log, stderr=log, cwd='/vercel/project', start_new_session=True,

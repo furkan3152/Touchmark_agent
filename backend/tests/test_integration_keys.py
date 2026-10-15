@@ -90,20 +90,22 @@ def test_openrouter_base_url_is_derived(tmp_path):
     assert s.llm_enabled is True
 
 
-def test_explicit_base_url_overrides_provider_default(tmp_path):
-    """Yerel vLLM/LM Studio gibi durumlar için override çalışmalı (sonda / temizlenir)."""
+def test_arbitrary_base_url_disables_provider(tmp_path):
+    """Remote credentials must never be forwarded to arbitrary endpoints."""
     s = _settings(
         tmp_path,
         llm_provider="openrouter",
         llm_api_key="k",
         llm_base_url="http://localhost:1234/v1/",
     )
-    assert s.llm_api_base == "http://localhost:1234/v1"
+    assert s.llm_api_base == ""
+    assert not s.llm_enabled
 
 
-def test_unknown_provider_falls_back_to_openai_base(tmp_path):
+def test_unknown_provider_fails_closed(tmp_path):
     s = _settings(tmp_path, llm_provider="mystery", llm_api_key="k")
-    assert s.llm_api_base == "https://api.openai.com/v1"
+    assert s.llm_api_base == ""
+    assert not s.llm_enabled
 
 
 # ------------------------------------------------------------- entegrasyon raporu

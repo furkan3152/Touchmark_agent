@@ -1,5 +1,7 @@
 # AgentVeritas: evidence, limitations and Stellar direction
 
+> Historical checkpoint. Current official tiers, deployed contracts and verified pilot evidence are documented in [the official pilot release](OFFICIAL_PILOT_2026-10-15.md). Retained audit limitations still apply unless explicitly resolved there.
+
 Review date: 2026-10-15. This is an internal adversarial review with separately assigned reviewers, not an external security firm's audit. The disclosed fixtures are developer-visible. No claim of independent certification or market-wide detection accuracy follows from these results.
 
 ## Customer verdict

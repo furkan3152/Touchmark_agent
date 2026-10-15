@@ -45,11 +45,15 @@ def main():
         OUTPUT.write_text(json.dumps(manifest, indent=2) + '\n')
     server = SorobanServer(RPC)
     kinds = [('registry', 'agent_veritas_registry.wasm', [scval.to_address(admin.public_key)]),
-             ('escrow', 'agent_veritas_escrow.wasm', [scval.to_address(admin.public_key), scval.to_address(manifest['asset']['contract_id']), scval.to_address(treasury.public_key), scval.to_uint32(1500)]),
+             ('escrow', 'agent_veritas_escrow.wasm', None),
              ('credential', 'agent_veritas_credential.wasm', None)]
     for name, filename, constructor in kinds:
         if name in manifest['contracts']: continue
         if name == 'credential': constructor = [scval.to_address(manifest['contracts']['registry']['id'])]
+        if name == 'escrow':
+            constructor = [scval.to_address(admin.public_key), scval.to_address(manifest['asset']['contract_id']),
+                           scval.to_address(treasury.public_key), scval.to_uint32(1500),
+                           scval.to_address(manifest['contracts']['registry']['id'])]
         wasm = Path('target/wasm32v1-none/release', filename).read_bytes()
         digest = hashlib.sha256(wasm).hexdigest()
         wasm_hash = ContractClient.upload_contract_wasm(wasm, admin.public_key, admin, server, network_passphrase=NETWORK)

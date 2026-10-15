@@ -20,20 +20,31 @@
 
 ## October 2026 workspace release
 
+**Veritas Official** is the first operator. Customers choose eight specialist areas and Preview, Assurance or Deep scope. All baseline source rules remain enabled; selected behavior families receive a bounded 0/12/24-case runtime budget. Proposed prices are $3 / $19 / $49; these are not live USD charges. Independent operators come later.
+
+The portable **`.veritas` capsule** binds source contents, intent, forbidden goals, capability rules, environment requirements, fixtures and multi-turn scenarios. It detects changed inputs and contradictory declarations before execution. See [capsule format](docs/VERITAS_CAPSULE.md) and [a stateful example](examples/stateful-reader.veritas).
+
+Current public proofs:
+
+- [Paid Testnet delivery](deployments/testnet-audit-delivery-2026-10-15.json): 20 successful transactions, registry-bound escrow, exact payout, a report credential and a separate stale-version refund test.
+- [Bounded agent authority](deployments/agent-account-testnet-2026-10-15.json): actual authorized SAC transfer, rejected recipient/budget/revoked-key attempts and owner recovery.
+- [24-case isolated execution](deployments/capsule-runtime-pilot-2026-10-15.json): real microVM execution of a controlled, stateful Python fixture, including three-turn observations. It is not a live-model or production-tool test.
+- [Designed report](deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.html), [credential card](deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.svg) and [live readback record](deployments/delivery-render-verification-2026-10-15.json).
+
 The English public Studio now includes a 24-area evidence inventory, explicit architecture declarations (MCP, delegation, memory and egress), opt-in AI hypotheses with source-location validation, local report fingerprint verification, and an interactive authority-policy lab. See [release status](docs/RELEASE_2026-10-15.md) for verification and boundaries.
 
 **Veritas Blueprint v1** adds an explicit `veritas.json` project map: component paths, a checked entrypoint, declared permission boundaries, import evidence and a source-bound audit plan. Missing files and stale plans block isolated execution. Start with [the protocol and local commands](docs/VERITAS_BLUEPRINT.md) and [the multi-file example](examples/blueprint-reader/veritas.json).
 
 **Independent challenge review:** [the current evidence and gaps](docs/INDEPENDENT_REVIEW_2026-10-15.md) records reproduced defects and a disclosed challenge set, including retained misses. Agent identity stays explicitly unverified. New [authorization-entry inspection examples](examples/stellar-authority/README.md) check nested transfer policy; the [experimental session account](contracts/agent-account/README.md) enforces a narrow on-chain spending boundary. Neither is a comprehensive audit or a production safety certificate.
 
-The new **AuditCredential** Soroban contract issues non-transferable, revocable, expiring report credentials from completed registry validations. Registry v0.2 binds requests to source version and metadata/endpoint hashes; source changes invalidate old credentials. Registry and escrow initialize atomically through constructors. **These are new deployment artifacts: the historical testnet manifest does not verify this release.**
+The **AuditCredential** Soroban contract issues unique, non-transferable, revocable, expiring report credentials from completed registry validations. This is a custom audit NFT interface, not a claim of SEP-50 marketplace compatibility. Registry binds requests to source version and metadata/endpoint hashes; source changes invalidate old credentials. The current escrow also enforces the assigned validator, request, source version, report hash and score before settlement. Use the current proof files above; the older deployment manifest is historical.
 
 - [Instawards 30-day sprint and budget](docs/INSTAWARDS_SPRINT.md)
 - [Revenue model and settlement boundaries](docs/REVENUE_MODEL.md)
 - [Deployment and operations](docs/DEPLOYMENT.md)
 - [Threat model and trust boundaries](docs/THREAT_MODEL.md)
 
-The complete operator service uses durable single-worker hosting. The Vercel entrypoint exposes only the stateless public Studio; it does not claim to persist operator jobs or run monitoring. Paid checkout and public credential minting remain disabled pending funded integration verification.
+The operator service requires durable single-worker hosting. Vercel exposes the stateless Studio. Testnet settlement has been verified; production checkout, automated operator fulfillment and public minting are not enabled. AI Gateway integration supports deployment OIDC or a local key, behind private access and source-sharing consent; [configuration and live-check instructions](docs/AI_CONFIGURATION.md) distinguish configuration from a successful model call.
 
 ## Table of Contents
 

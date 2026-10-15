@@ -20,7 +20,11 @@ async def public_surface_only(request, call_next):
     allowed = (path == "/" or path == "/api/v1/health" or path.startswith("/ui/")
                or path in {"/api/v1/studio/review", "/api/v1/studio/identify", "/api/v1/studio/import",
                            "/api/v1/studio/discover", "/api/v1/studio/runtime", "/api/v1/studio/capabilities", "/api/v1/studio/policy",
-                           "/api/v1/studio/stellar/inspect-auth"})
+                           "/api/v1/studio/stellar/inspect-auth", '/api/v1/studio/catalog',
+                           '/api/v1/studio/plan', '/api/v1/studio/audit', '/api/v1/studio/delivery',
+                           '/api/v1/studio/delivery/pilot', '/api/v1/studio/capsule/import', '/api/v1/studio/capsule/export',
+                           '/.well-known/stellar.toml', '/api/v1/studio/ai/check',
+                           '/api/v1/studio/checkout', '/api/v1/studio/checkout/prepare'})
     if not allowed:
         return JSONResponse({"detail": "This deployment exposes the public audit Studio only."}, status_code=404)
     return await call_next(request)

@@ -15,6 +15,10 @@ class StudioGuard:
         if scope["type"] != "http" or scope["path"] not in {
             "/api/v1/studio/policy", "/api/v1/studio/review", "/api/v1/studio/identify", "/api/v1/studio/import",
             "/api/v1/studio/discover", "/api/v1/studio/runtime", "/api/v1/studio/stellar/inspect-auth",
+            '/api/v1/studio/plan', '/api/v1/studio/audit', '/api/v1/studio/delivery',
+            '/api/v1/studio/capsule/import', '/api/v1/studio/capsule/export',
+            '/api/v1/studio/ai/check',
+            '/api/v1/studio/checkout', '/api/v1/studio/checkout/prepare',
         }:
             return await self.app(scope, receive, send)
 
@@ -32,13 +36,14 @@ class StudioGuard:
             return await reject(429, "Review capacity reached. Retry in one minute.")
         self.requests.append(now)
         body = bytearray()
+        body_limit = 1_048_576 if scope['path'] == '/api/v1/studio/delivery' else 131072
         while True:
             message = await receive()
             if message["type"] == "http.disconnect":
                 return
             body.extend(message.get("body", b""))
-            if len(body) > 131072:
-                return await reject(413, "Review request exceeds 128 KiB.")
+            if len(body) > body_limit:
+                return await reject(413, f"Request exceeds {body_limit // 1024} KiB.")
             if not message.get("more_body", False):
                 break
 
