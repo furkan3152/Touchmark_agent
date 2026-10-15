@@ -52,15 +52,15 @@ try:
     if spec is None or spec.origin != expected_path:
         raise ValueError('Entry module does not resolve to the reviewed source path')
     module = importlib.import_module(name)
-    async def invoke_steps():
+    def invoke_steps():
         responses = []
         for text in request.get('steps') or [request['input']]:
             result = getattr(module, request['symbol'])(text)
-            if inspect.isawaitable(result): result = await result
+            if inspect.isawaitable(result): result = asyncio.run(result)
             response = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
             responses.append(response[:request.get('output_char_limit', 8000)])
         return responses
-    responses = asyncio.run(invoke_steps())
+    responses = invoke_steps()
     output = {'response': responses[-1]}
     if request.get('steps'): output['step_responses'] = responses
     print('\nAV_RESULT:' + json.dumps(output))

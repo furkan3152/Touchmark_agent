@@ -518,6 +518,14 @@ def _validate_result(result, order):
             raise OrderError('Runtime infrastructure or missing telemetry blocked the requested case pack.')
         if plan.get('ai_generated_cases_max', 0) and runtime.get('ai_planning') not in {'completed', 'skipped_case_budget'}:
             raise OrderError('The requested AI runtime planning did not complete.')
+        if plan.get('execution_profile'):
+            profile = runtime.get('execution_profile', {})
+            external = runtime.get('broker_evidence', {})
+            if (profile.get('sha256') != plan['execution_profile']['sha256']
+                    or profile.get('id') != plan['execution_profile']['id']
+                    or not isinstance(external.get('events'), list)
+                    or _digest(external['events']) != external.get('sha256')):
+                raise OrderError('Broker evidence is missing or belongs to a different execution profile.')
     _json(result)
 
 
