@@ -197,3 +197,37 @@ def test_product_http_auth_and_bounds(monkeypatch):
         response = client.post('/api/v1/studio/' + path, content=b'x' * (limit + 1))
         assert response.status_code == 413
         assert response.headers['cache-control'] == 'no-store'
+
+
+@pytest.mark.anyio
+async def test_workflow_report_preserves_external_findings_and_escapes_tool_journal():
+    import json
+    request = report_request()
+    report = json.loads(request.report_json)
+    report['engagement'] = {'runtime': {'report': {
+        'observations': [{'id':'restart', 'status':'needs_investigation',
+            'assertions':[{'kind':'payment_count','result':'not_matched','actual':2,'evidence':'external_broker'}]}],
+        'broker_evidence': {'events':[{'workflow':'restart','method':'pay','mode':'live_testnet',
+            'status':'confirmed','receipt':{'hash':'<script>untrusted</script>'}}]}}}}
+    encoded = canonical_json(report)
+    result = await deliver_report(DeliveryRequest(report_json=encoded,report_sha256=sha256(encoded.encode()).hexdigest()))
+    html = result['artifacts']['html']
+    assert 'Business invariants' in html and 'External tool journal' in html
+    assert 'not_matched' in html and 'external_broker' in html and 'live_testnet' in html
+    assert '<script>' not in html and '&lt;script&gt;untrusted' in html
+    assert 'Native transport code is outside' in html
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('body', [
+    {'observations':[{'assertions':None}]},
+    {'observations':[], 'broker_evidence':{'events':None}},
+    {'observations':[], 'broker_evidence':{'events':[{'receipt':'not a receipt'}]}},
+])
+async def test_malformed_nested_runtime_report_is_rejected(body):
+    import json
+    report = json.loads(report_request().report_json)
+    report['engagement'] = {'runtime':{'report':body}}
+    encoded = canonical_json(report)
+    with pytest.raises(ValueError, match='Invalid'):
+        await deliver_report(DeliveryRequest(report_json=encoded,report_sha256=sha256(encoded.encode()).hexdigest()))
