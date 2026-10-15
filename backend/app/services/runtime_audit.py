@@ -112,11 +112,17 @@ async def run_runtime(request: RuntimeRequest, settings, *, provider=None) -> di
             await box.fs.write_text('/vercel/probe.py', (Path(__file__).parents[1] / 'runtime/probe.py').read_text())
             await box.fs.write_text('/vercel/probe-input.json', json.dumps({'entrypoint': entry, 'cases': cases}))
             # The command is fixed operator code. The only untrusted execution occurs inside this microVM.
-            command = await box.run_process('python3', ['-I', '/vercel/probe.py'],
-                kill_after=25, capture_output=True)
-            if command.returncode != 0 or len(command.stdout or '') > 100000:
-                raise ValueError('Isolated runner failed or exceeded its output limit; no completed audit is claimed.')
-            observations = assess_observations(json.loads(command.stdout or '{}'), cases)
+            command = await box.run_process('sh', ['-c',
+                'ulimit -f 256; exec python3 -I /vercel/probe.py > /vercel/result.json 2>/vercel/runner-error.txt'],
+                kill_after=25, capture_output=False)
+            if command.returncode != 0:
+                raise ValueError('Isolated runner failed; no completed audit is claimed.')
+            # Never buffer an unbounded stdout stream from a hostile VM.
+            async with box.fs.open('/vercel/result.json', 'rb') as output:
+                raw = await output.read(100001)
+            if len(raw) > 100000:
+                raise ValueError('Isolated runner exceeded its output limit; no completed audit is claimed.')
+            observations = assess_observations(json.loads(raw), cases)
             sandbox_name = box.name
     report = {'schema': 'agentveritas.runtime.v1', 'run_id': run_id,
         'created_at': datetime.now(timezone.utc).isoformat(), 'source_sha256': source_digest(request.source.files),
