@@ -83,3 +83,41 @@ combined flow. It mounts a persistent Drive in a trusted operator VM and then
 checks the order from a fresh VM. It is not a public production queue, an uptime
 promise or a disaster-recovery guarantee. Never enable SQLite orders inside a
 Vercel Function or put customer execution in the trusted operator worker.
+
+## Combined paid Deep delivery verified
+
+The InvoicePilot order `5b01b7bcae70c69fa0ad17d622384e9a090ebc289093a5ca639bbd07b146d21b`
+completed the ordinary SEP-53-bound order, four requester checkout calls, actual
+Deep execution, private report publication, registry response, escrow completion
+and non-transferable credential issuance. Report SHA-256:
+`130e6a17ea35399e7f1d9935ba40486e06af486d3db536e6bba85c71308bddde`.
+The credential was current and escrow was `Complete` at ledger 5215276.
+Issuance transaction:
+`dd0b8fd3e0ef4d3aef0f44422be28f7ad9ae348ff5a179c0f89d9f351b4a64b9`.
+
+A new VM mounted the same Drive, read the delivered order and identical canonical
+report, and confirmed that the worker claimed no new job and transaction intent
+hashes did not change. The final canary is
+`durable-deep-20261015-02-recovery-3`; its two sessions exited successfully.
+
+This was **not an uninterrupted first-attempt success**. The first combined audit
+failed fulfillment. A diagnostic retry retained an actual report containing a
+`KeyError` from InvoicePilot after a live model response. The original delivery
+gate misclassified that negative agent evidence as missing infrastructure. The
+fix accepts complete, bounded step-error observations only when the runner
+completed and the corresponding broker events contain no provider failure or
+ambiguous side effect. The exact retained report was then delivered without
+rerunning its model calls or agent payments. A separate immutable-checkpoint name
+collision in the canary was also corrected. Failed attempt proofs are retained.
+
+The injection scenario that completed in the three-agent trial produced a
+`KeyError` in the paid diagnostic trial. This model-dependent variation is an
+observed robustness defect, not proof of an unauthorized transfer or proof of
+comprehensive injection resistance. The source score remained 84; that score
+must not be interpreted as a security pass. The report decision is `needs_fixes`.
+
+The tested persistent worker is an operator-controlled canary. The public Vercel
+Studio still does **not** offer automatic paid orders: a supervised, authenticated
+persistent order service, backups and an operational recovery path must be
+provisioned and verified before enabling that customer-facing route. The canary
+must not be described as an already deployed production queue.
