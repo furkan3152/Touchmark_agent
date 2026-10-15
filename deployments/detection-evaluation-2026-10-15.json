@@ -1,0 +1,159 @@
+{
+  "schema": "agentveritas.synthetic-evaluation.v1",
+  "dataset": "disclosed-counterexamples-v1",
+  "fixture_sha256": "5225dd6e799a5ef25cc503f4ca8bc5b75e0f279f2825b8f8973a6257dfccc93e",
+  "analyzer_files_sha256": {
+    "backend/app/services/discovery.py": "54b8529e7057602a6886fa4cff2b8718c0172210ce2c13228495b50f20c05a61",
+    "backend/app/services/blueprint.py": "cb092232369ebab4b77a71f527c09930a2a6bc2c569349d03a23d534db2f9b9d",
+    "backend/app/swarm/agentic_paths.py": "55c22e31ac7f66b298c55d476eee8d13402795026e7cfeef47bdeb549c7332ce",
+    "backend/app/swarm/stellar_native.py": "21a12782594142b793dae19fc62b8219b87b790fab16c6b01ae7370141fe3fc4"
+  },
+  "source_checks": [
+    {
+      "id": "direct_eval",
+      "expected_source_signal": true,
+      "finding_id": "security-path-untrusted-to-command",
+      "observed": true,
+      "outcome": "matched",
+      "report_sha256": "8d92d0eeec429631a5878fa306c0427d7b799dcd8210445eab0b67808b16b487"
+    },
+    {
+      "id": "declared_renamed_input",
+      "expected_source_signal": true,
+      "finding_id": "security-path-untrusted-to-command",
+      "observed": true,
+      "outcome": "matched",
+      "report_sha256": "919a11d5aaabc03a948da89e8f7c606a01f5b646ebec2fec5ca25b348f9107ac"
+    },
+    {
+      "id": "cross_file_eval",
+      "expected_source_signal": true,
+      "finding_id": "security-path-untrusted-to-command",
+      "observed": false,
+      "outcome": "missed",
+      "report_sha256": "59b436862bfe574069c9dbb0fe6c80b14444c69e5bec0d0fa0d4c2f14369073a"
+    },
+    {
+      "id": "dynamic_dispatch_eval",
+      "expected_source_signal": true,
+      "finding_id": "security-path-untrusted-to-command",
+      "observed": false,
+      "outcome": "missed",
+      "report_sha256": "39b6aacfbd1271bffe36f4ed1c575a2520f96333a08b1500c6881236cc3232d3"
+    },
+    {
+      "id": "safe_formatter",
+      "expected_source_signal": false,
+      "finding_id": "security-path-untrusted-to-command",
+      "observed": false,
+      "outcome": "matched",
+      "report_sha256": "8ce6f6aa530b2e62c630ae8b15f99825b95668dab8bd0cc5d479b703d333b69b"
+    },
+    {
+      "id": "quoted_attack_text",
+      "expected_source_signal": false,
+      "finding_id": "security-path-untrusted-to-command",
+      "observed": false,
+      "outcome": "matched",
+      "report_sha256": "cf4f6a3775fbd00347e57957fc73304696a73eb44f721c302f436a684013a21b"
+    },
+    {
+      "id": "secret_logging",
+      "expected_source_signal": true,
+      "finding_id": "security-path-secret-to-exfiltration",
+      "observed": true,
+      "outcome": "matched",
+      "report_sha256": "0e89ad6f36e4ff95bc7d77cdc4b89a84e79af9e3b013e4b7155c3ca77d227cca"
+    },
+    {
+      "id": "ordinary_env_logging",
+      "expected_source_signal": false,
+      "finding_id": "security-path-secret-to-exfiltration",
+      "observed": false,
+      "outcome": "matched",
+      "report_sha256": "ff93d402504d96fbaa74bffa50f2bc65f1c66e30df58eb0e33a401b53d2eb72a"
+    },
+    {
+      "id": "comment_auth_spoof",
+      "expected_source_signal": true,
+      "finding_id": "stellar-native-auditor-soroban-auth-missing",
+      "observed": true,
+      "outcome": "matched",
+      "report_sha256": "51bbb09a020fd437b0daa3f393cb4da79be85c55a1868bb78c1950aa797311bb"
+    },
+    {
+      "id": "mixed_auth_functions",
+      "expected_source_signal": true,
+      "finding_id": "stellar-native-auditor-soroban-auth-missing",
+      "observed": true,
+      "outcome": "matched",
+      "report_sha256": "40aac29470c114ff6954765477260f447fd02d1406cbbbfc2d5b7e03e6bfe052"
+    }
+  ],
+  "agent_identity_checks": [
+    {
+      "id": "plain_formatter",
+      "identity": {
+        "status": "unverified",
+        "is_agent_verified": false,
+        "declaration_present": false,
+        "framework_indicators": [],
+        "meaning": "A callable or framework import does not prove an autonomous agent. A mapped declaration locates submitted code only.",
+        "missing_evidence": [
+          "Real model/tool execution traces",
+          "Deployed artifact and configuration binding",
+          "Hidden service and dependency scope"
+        ]
+      },
+      "entrypoint_candidates": 1
+    },
+    {
+      "id": "framework_import_only",
+      "identity": {
+        "status": "unverified",
+        "is_agent_verified": false,
+        "declaration_present": false,
+        "framework_indicators": [
+          "LangGraph"
+        ],
+        "meaning": "A callable or framework import does not prove an autonomous agent. A mapped declaration locates submitted code only.",
+        "missing_evidence": [
+          "Real model/tool execution traces",
+          "Deployed artifact and configuration binding",
+          "Hidden service and dependency scope"
+        ]
+      },
+      "entrypoint_candidates": 0
+    },
+    {
+      "id": "declared_echo",
+      "identity": {
+        "status": "unverified",
+        "is_agent_verified": false,
+        "declaration_present": true,
+        "framework_indicators": [],
+        "meaning": "A callable or framework import does not prove an autonomous agent. A mapped declaration locates submitted code only.",
+        "missing_evidence": [
+          "Real model/tool execution traces",
+          "Deployed artifact and configuration binding",
+          "Hidden service and dependency scope"
+        ]
+      },
+      "entrypoint_candidates": 1
+    }
+  ],
+  "summary": {
+    "cases": 10,
+    "matched": 8,
+    "missed": 2,
+    "unexpected_signals": 0
+  },
+  "runtime_executed": false,
+  "llm_used": false,
+  "limitations": [
+    "Small developer-visible synthetic set, not a blind independent benchmark.",
+    "Expected labels concern specific static source signals, not proven vulnerabilities.",
+    "No real-world precision, recall, agent identification accuracy or safety rate can be inferred.",
+    "Cross-file and dynamic-dispatch cases are intentionally retained to expose gaps."
+  ]
+}
