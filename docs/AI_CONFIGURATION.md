@@ -156,6 +156,14 @@ the connection and grounding pipeline, not useful detection accuracy. Protected
 deployed HTTP, browser and Freighter journeys remain unverified. Local AI still
 requires a separately configured credential; no build identity was exported.
 
+The later [corrected-input repeat](../deployments/deployed-integrations-exact-input-2026-10-15.json)
+also completed two actual OIDC calls: 329 reported tokens and $0.0002456 in model
+cost, again excluding Sandbox/build charges. It retained a source-quoted but
+unverified model interpretation about the deliberately fixed fixture balance.
+The separate runtime repeat used unchanged fixture source and matched all three
+declared output assertions after the harness input fix. Neither outcome is a
+vulnerability-detection accuracy result.
+
 ## Official sources
 
 - [Gateway authentication](https://vercel.com/docs/ai-gateway/authentication-and-byok)
