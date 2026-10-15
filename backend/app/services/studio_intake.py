@@ -61,7 +61,7 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
             name = PurePosixPath(item["path"]).name
             priority = 0 if name in {"package.json", "pyproject.toml", "requirements.txt"} else 1 if PurePosixPath(name).suffix in {".py", ".ts", ".js", ".mjs"} else 2
             return (priority, item["path"].count("/"), item["path"])
-        files, omitted, total = {}, [], 0
+        files, omitted, omitted_reasons, total = {}, [], [], 0
         for item in sorted(candidates, key=rank):
             name, size = item["path"], item.get("size", 0)
             if name == 'agent-audit.json':
@@ -87,6 +87,13 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
             except UnicodeError:
                 omitted.append(name)
                 continue
+            try:
+                ReviewRequest(name='Repository source', purpose='Inspect the selected repository source.',
+                              files={**files, name: content})
+            except ValueError:
+                omitted.append(name)
+                omitted_reasons.append({'file': name, 'reason': 'Source syntax, path or cumulative analysis complexity limit.'})
+                continue
             files[name] = content
             total += len(raw)
     if not files:
@@ -100,7 +107,7 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
             "discovery": discovery, "executed": False,
             "import_scope": {"complete": not omitted and not tree.get('truncated') and len(files) == len(entries),
                 "tree_truncated": bool(tree.get('truncated')), "files_imported": len(files),
-                "eligible_files_omitted": len(omitted), "omitted_paths": omitted[:50],
+                "eligible_files_omitted": len(omitted), "omitted_paths": omitted[:50], "omitted_reasons": omitted_reasons[:50],
                 "note": "Bounded source selection, not the entire repository. Hidden files, credentials, symlinks, binaries and dependencies are excluded."}}
 
 
