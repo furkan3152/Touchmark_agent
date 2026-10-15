@@ -406,10 +406,41 @@ async def simulate_policy(req: PolicySimulation) -> dict:
             "executed": False, "note": "Simulation only. No action is authorized or submitted."}
 
 
+from .services.runtime_audit import RuntimeRequest, run_runtime
+from .services.discovery import discover_project
+
+_runtime_lock = asyncio.Lock()
+
+
+@app.post("/api/v1/studio/discover")
+async def studio_discover(req: ReviewRequest) -> dict:
+    return discover_project(req.files)
+
+
+@app.post("/api/v1/studio/runtime")
+async def studio_runtime(req: RuntimeRequest, authorization: str = Header(default="")) -> dict:
+    # Separate pilot credential; never expose the operator admin key to a public UI.
+    expected = settings.runtime_api_key
+    if len(expected) < 32 or not authorization.startswith("Bearer ") or not secrets.compare_digest(authorization[7:], expected):
+        raise HTTPException(status_code=401, detail="A valid runtime pilot access key is required.")
+    if _runtime_lock.locked():
+        raise HTTPException(status_code=429, detail="An isolated run is in progress. Retry after it completes.")
+    async with _runtime_lock:
+        try:
+            return await run_runtime(req, settings)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.warning("Runtime provider unavailable: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Isolated execution did not complete. Check Sandbox credentials, quota and provider logs. No runtime assurance is claimed.") from exc
+
+
 @app.get("/api/v1/studio/capabilities")
 async def studio_capabilities() -> dict:
     from .services.assurance import ArchitectureManifest
-    return {"ai_available": settings.enable_public_ai_review and settings.llm_enabled,
+    return {"runtime_available": settings.enable_sandbox_runtime and len(settings.runtime_api_key) >= 32,
+            "runtime_auth_required": True, "runtime_adapter": "python_text",
+            "ai_available": settings.enable_public_ai_review and settings.llm_enabled,
             "ai_provider": settings.llm_provider if settings.enable_public_ai_review else "",
             "controls": ArchitectureManifest.catalogue(), "checkout_enabled": False,
             "certificate_minting_enabled": False}

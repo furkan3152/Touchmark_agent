@@ -1,0 +1,78 @@
+{
+  "network": "testnet",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "purpose": "Disposable pilot; not production governance",
+  "admin": "GDCGJTWMFCIK3EJ4KWRASUQXD7ZZUPOC2E5JXWZLJGOTGDAYGAY3L6YK",
+  "treasury": "GB6M2BNKWTFIHWBGM7LYGZ3ZIICQZJGQ6DXAFQUKU36RILZ3IYSA55UE",
+  "contracts": {
+    "registry": {
+      "id": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "wasm_sha256": "a77262a8430e5c172569845973d927b73701f0a8306311d5c0ffea20d88cd677",
+      "constructor_atomic": true
+    },
+    "escrow": {
+      "id": "CBS4QZBGOLA5E6HQK4A37LHYJBY77KG6BCWYMZ3CSBKHLGXVB2S6ZS6F",
+      "wasm_sha256": "51b09c8f706ed341048cc17d1240fbc59569cdb037626234ce2ab101f26f6767",
+      "constructor_atomic": true
+    },
+    "credential": {
+      "id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+      "wasm_sha256": "f796e4a6d1b877ce3d261eea6c172e922e47540627017f74482a5715d1fa77cf",
+      "constructor_atomic": true
+    }
+  },
+  "transactions": [
+    {
+      "function": "set_valid",
+      "contract": "registry",
+      "hash": "91a39e5f2c864f4ab7b814a1e1014f8a504321f1b069901b0fc990928b4f7f49",
+      "status": "SUCCESS",
+      "ledger": 5206263
+    },
+    {
+      "function": "reg_agent",
+      "contract": "registry",
+      "hash": "7ff283c0460e20839be03c3ba0d4b659059ab62b3f3e05603985b7b502806a9b",
+      "status": "SUCCESS",
+      "ledger": 5206265
+    },
+    {
+      "function": "req_valid",
+      "contract": "registry",
+      "hash": "97900a50e41a21e26e6000203e80ddd2daf134479bb56f7ca744fba14d2864f2",
+      "status": "SUCCESS",
+      "ledger": 5206267
+    },
+    {
+      "function": "respond",
+      "contract": "registry",
+      "hash": "81b955ca7ca5019561c081345f9db4276f30231ba503a9ce20cce1662cb92552",
+      "status": "SUCCESS",
+      "ledger": 5206269
+    },
+    {
+      "function": "issue",
+      "contract": "credential",
+      "hash": "1e69369eb48da056240edd76eab0d52e2fe0be0ee2d38ce18a101cc86106c897",
+      "status": "SUCCESS",
+      "ledger": 5206271
+    },
+    {
+      "function": "revoke",
+      "contract": "credential",
+      "hash": "70fc5f4d86fbe7068798bc11622340c5003ef3699e7b4d5acbbe32b72abbab57",
+      "status": "SUCCESS",
+      "ledger": 5206285
+    }
+  ],
+  "asset": {
+    "code": "XLM",
+    "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+  },
+  "credential_lifecycle_verified": true,
+  "pilot_token_id": "9dd9e5833d5bd4a73c65eb6c3522bc29dfc1fda6b84327724ebe5bf98cd95045",
+  "note": "Synthetic score=0 credential issued, owner read back, then revoked. No audit endorsement.",
+  "owner_readback_verified": true,
+  "current_before_revoke": true,
+  "current_after_revoke": false
+}

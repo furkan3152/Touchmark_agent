@@ -1,6 +1,6 @@
 extern crate std;
 use super::*;
-use agent_veritas_registry::AgentRegistry;
+use agent_veritas_registry::{AgentRegistry, AgentRegistryClient};
 use soroban_sdk::testutils::{Address as _, Ledger};
 
 fn hash(env: &Env, n: u8) -> BytesN<32> {

@@ -32,6 +32,7 @@ class ReviewRequest(BaseModel):
     dependencies: list[str] = Field(default_factory=list, max_length=100)
     stellar_address: str = Field(default="", max_length=56)
     network: Literal["testnet", "mainnet"] = "testnet"
+    source_revision: str = Field(default="", pattern=r"^(?:[a-f0-9]{40})?$")
     source_reference: str = Field(default="", max_length=240)
 
     @model_validator(mode="after")
@@ -54,7 +55,7 @@ class ReviewRequest(BaseModel):
                 len(name) > 160 or not name or path.is_absolute() or "\\" in name
                 or any(part.startswith(".") for part in path.parts)
                 or ":" in name or name.lower() in seen
-                or path.suffix.lower() not in {".py", ".js", ".ts", ".rs", ".go", ".json", ".md", ".txt", ".toml", ".yaml", ".yml"}
+                or path.suffix.lower() not in {".py", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs", ".rs", ".go", ".json", ".md", ".txt", ".toml", ".yaml", ".yml"}
             ):
                 raise ValueError("Use relative source filenames; hidden files and credentials are not accepted.")
             seen.add(name.lower())
@@ -94,7 +95,7 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
     })
     artifact = AgentArtifact(
         source_kind=SourceKind.UPLOAD if request.files or request.system_prompt else SourceKind.ONCHAIN_ADDRESS,
-        source_ref=f"studio:{request.network}:{request.source_reference or request.stellar_address or 'submitted-bundle'}",
+        source_ref=f"studio:{request.network}:{request.source_reference or request.stellar_address or 'submitted-bundle'}:{request.source_revision}",
         name=request.name, description=request.purpose,
         architecture=request.architecture.model_dump(),
         system_prompt=request.system_prompt, code_files=request.files,
@@ -124,10 +125,12 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
             else:
                 scenario["name"] = f"{auditor['dimension'].replace('_', ' ').title()} check {sid}"
             scenario["reason"] = "Recognized static signal present; enforcement unverified." if scenario["passed"] else "Expected static signal not established; further evidence required."
+    from .discovery import discover_project
+    payload["discovery"] = discover_project(request.files)
     payload["assurance"] = build_assurance(artifact, report.findings)
     payload["subject"] = {
         "stellar_address": request.stellar_address, "network": request.network,
-        "source_reference": request.source_reference, "association_verified": False,
+        "source_reference": request.source_reference, "source_revision": request.source_revision, "association_verified": False,
     }
     scope = {
         "analysis": "static rules and bounded source-path analysis",
