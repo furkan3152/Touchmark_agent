@@ -48,7 +48,7 @@ def test_ai_rejects_fabricated_source_locations_and_cannot_change_verdict(settin
     async def fake(self, system, user, **kwargs):
         assert "untrusted" in system.lower()
         return {"observations":[
-            {"file":"agent.py","line":1,"title":"Check input","risk":"Potential injection","remediation":"Validate input"},
+            {"file":"agent.py","line":1,"evidence_quote":"def pay(request):","title":"Check input","risk":"Potential injection","remediation":"Validate input"},
             {"file":"imaginary.py","line":1,"title":"Fake","risk":"Fake","remediation":"Fake"},
             {"file":"agent.py","line":999,"title":"Fake","risk":"Fake","remediation":"Fake"}], "score":100}
     monkeypatch.setattr(LlmClient,"judge",fake)

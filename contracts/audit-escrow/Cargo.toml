@@ -12,4 +12,5 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+agent-veritas-registry = { path = "../agent-registry" }
 

@@ -1,0 +1,68 @@
+{
+  "schema": "veritas.checkout-preparation-verification/v1",
+  "checked_at": "2026-10-15T13:17:38.859353+00:00",
+  "network": "testnet",
+  "mode": "live_readonly_rpc_and_simulation",
+  "status": "verified_preparation_only",
+  "contracts": {
+    "registry": {
+      "id": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "wasm_sha256": "a77262a8430e5c172569845973d927b73701f0a8306311d5c0ffea20d88cd677",
+      "constructor_atomic": true
+    },
+    "credential": {
+      "id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+      "wasm_sha256": "f796e4a6d1b877ce3d261eea6c172e922e47540627017f74482a5715d1fa77cf",
+      "constructor_atomic": true
+    },
+    "escrow": {
+      "id": "CD4OOPXGVL64YSUVZWDBAM2AATNITI5DKY4HXRALYUURH27MQZNF2O4V",
+      "wasm_sha256": "ca95c3f572aa465d9d9a59f651bc0a49050eff0d53cf21e6f0e0b163f2b8488a",
+      "wasm_path": "target/wasm32v1-none/release/agent_veritas_escrow.wasm",
+      "constructor_atomic": true,
+      "registry_bound": true,
+      "registry": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "constructor_argument_order": [
+        "admin",
+        "token",
+        "fee_to",
+        "fee_bps",
+        "registry"
+      ]
+    }
+  },
+  "source_sha256": "6e03feb9ee3cb9116d28913a965b6f13efa80b6161e360d3a217157f80f35f23",
+  "plan_sha256": "d4862ad50024e3be6d2bfa3b1735646c4fc80a5041ddc3984350c435558c49bd",
+  "agent_id": "f0766efcfa3f83a348c86a696b087d26faa13a373475cd95479862551942a407",
+  "request_id": "752df84c1a7a0cc633cb9f02db2c7bd63c33f70603eeda782017532a010e1d2f",
+  "requester": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+  "verified_code_hashes": true,
+  "verified_escrow_configuration": true,
+  "verified_provider_enabled": true,
+  "chain": {
+    "ledger": 5209334,
+    "wallet_funded": true,
+    "registry_state": "absent",
+    "escrow_state": "absent"
+  },
+  "step": "register",
+  "simulation": {
+    "status": "succeeded",
+    "ledger": 5209334,
+    "authorization": "source_account",
+    "is_payment_confirmation": false
+  },
+  "fee_atomic": "382168",
+  "unsigned_transaction_hash": "41d6d45948812aac60dda9da05bf47de565c4cd2b0621fcaf24e34703cb4a5be",
+  "unsigned_xdr_bytes_sha256": "1668fff02f03acad9382fa4a67b715b27b4321b0d3fc10bc20bd0014c07b3948",
+  "signature_count": 0,
+  "transaction_submitted": false,
+  "funds_moved": false,
+  "payment_confirmed": false,
+  "service_source_sha256": "f39228f5978030b355d22c8405024a3ea504237da7977f6fd63c5c4601cf9ac7",
+  "limits": [
+    "Only registration was simulated live in this canary. Remaining checkout steps use decoded XDR unit tests.",
+    "Published official delivery fixture separately exercised real registration, request, escrow creation, funding, report settlement and credential issuance.",
+    "No automatic official audit queue or customer credential is claimed."
+  ]
+}

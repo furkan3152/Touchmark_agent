@@ -11,6 +11,294 @@
   let sourceReference = "";
   let sourceRevision = "";
   let runtimeResult = null;
+  let catalogue = null;
+  let auditPlan = null;
+  let capsule = null;
+  let activeTier = "quick";
+  let selectedModules = new Set();
+  let deliveryState = null;
+
+  function requestError(value, status) {
+    const detail = value.detail;
+    if (Array.isArray(detail)) return detail.map((item) => `${item.loc?.slice(-1).join("") || "Input"}: ${item.msg}`).join("; ");
+    if (typeof detail === "string") return detail;
+    if (detail && typeof detail === "object") return detail.message || detail.reason || (detail.blockers || []).join(" ") || `Request needs attention (HTTP ${status}).`;
+    return `Request could not be completed (HTTP ${status}).`;
+  }
+  function sourceInput() {
+    const tools = JSON.parse(byId("tool-manifest").value);
+    if (!Array.isArray(tools)) throw new Error("Tool permissions must be a JSON array.");
+    if (!Object.keys(files).length && !byId("agent-prompt").value.trim() && !byId("stellar-address").value.trim()) throw new Error("Add a public Stellar address, source files or system instructions first.");
+    return {name:byId("agent-name").value, purpose:byId("agent-purpose").value, system_prompt:byId("agent-prompt").value, files:{...files}, tools, dependencies, stellar_address:byId("stellar-address").value.trim(), network:byId("stellar-network").value, source_reference:sourceReference, source_revision:sourceRevision, architecture:JSON.parse(byId("architecture-manifest").value), ai_assistance:byId("ai-consent").checked, external_processing_consent:byId("ai-consent").checked};
+  }
+  function applyCapsuleLock() {
+    const locked = Boolean(capsule);
+    const ids = ["agent-name","agent-purpose","agent-prompt","tool-manifest","architecture-manifest","stellar-address","stellar-network","source-files","source-folder","import-github","identify-address"];
+    ids.forEach((id) => {byId(id).disabled = locked;});
+    document.querySelectorAll("[data-scope], [data-example], #file-list button, #audit-tiers input, #audit-modules input").forEach((control) => {control.disabled = locked;});
+    byId("edit-capsule-draft").hidden = !locked;
+    byId("export-capsule").textContent = locked ? "Download this capsule ↗" : "Create & download capsule ↗";
+  }
+  function renderCapsuleState(message) {
+    const panel = byId("capsule-state"); panel.replaceChildren(node("strong", message));
+    if (!capsule) return;
+    panel.append(node("p", "Committed inputs and audit selection are locked. Editing as a new draft resets custom policy and scenarios."));
+    panel.append(node("p", `${Object.keys(capsule.source?.files || {}).length} source files · ${capsule.capabilities?.length || 0} capabilities · ${capsule.policy?.rules?.length || 0} policy rules · ${capsule.scenarios?.length || 0} declared scenarios`));
+    if (capsule.subject?.forbidden_goals?.length) panel.append(node("p", `Forbidden goals: ${capsule.subject.forbidden_goals.join("; ")}`));
+    if (capsule.commitments?.capsule_sha256) panel.append(node("code", `CAPSULE / ${capsule.commitments.capsule_sha256}`, "blueprint-fingerprint"));
+  }
+  function auditRequest(source) {
+    if (!selectedModules.size) throw new Error("Choose at least one official reviewer.");
+    return {...(capsule ? {capsule,ai_assistance:source.ai_assistance,external_processing_consent:source.external_processing_consent} : {source}), tier_id:activeTier, module_ids:[...selectedModules], entrypoint:byId("audit-entrypoint").value.trim(), execution_consent:byId("audit-execution-consent").checked};
+  }
+  function updateRunLabel() {
+    const tier = catalogue?.tiers?.find((item) => item.id === activeTier);
+    byId("run-review").textContent = `Run ${tier?.name || "Preview"} review`;
+  }
+  function describeBudget(tier) {
+    const budget = tier.budgets || {};
+    const cases = budget.runtime_cases ?? budget.max_runtime_cases ?? 0;
+    return cases ? `Up to ${cases} runtime cases · isolated execution` : "Source review · no execution";
+  }
+  function tierPrice(tier) {
+    const price = tier.price || {};
+    if (price.live) return `${price.amount} ${price.asset || price.currency || "USD"}`;
+    const target = price.amount ?? price.proposed_usd ?? price.usd;
+    return target !== undefined ? `$${target} proposed · pilot` : "Pilot · no automatic payment";
+  }
+  function renderAuditOptions() {
+    if (!catalogue) return;
+    const tiers = byId("audit-tiers"); tiers.replaceChildren();
+    catalogue.tiers.forEach((tier) => {
+      const label = node("label", undefined, "tier-choice");
+      const radio = node("input"); radio.type = "radio"; radio.name = "audit-tier"; radio.value = tier.id; radio.checked = activeTier === tier.id;
+      radio.addEventListener("change", () => { activeTier = tier.id; invalidate(); updateRunLabel(); renderAuditOptions(); });
+      const copy = node("span"); copy.append(node("strong", tier.name), node("small", describeBudget(tier)), node("em", tierPrice(tier)));
+      label.append(radio, copy); tiers.append(label);
+    });
+    const modules = byId("audit-modules"); modules.replaceChildren();
+    catalogue.modules.forEach((module) => {
+      const label = node("label", undefined, "module-choice");
+      const checkbox = node("input"); checkbox.type = "checkbox"; checkbox.checked = selectedModules.has(module.id); checkbox.value = module.id;
+      checkbox.addEventListener("change", () => { checkbox.checked ? selectedModules.add(module.id) : selectedModules.delete(module.id); invalidate(); byId("module-count").textContent = `${selectedModules.size} selected`; });
+      const copy = node("span"); copy.append(node("strong", module.name), node("small", module.description));
+      if (module.methods?.length) copy.append(node("em", module.methods.map((item) => typeof item === "string" ? item.replaceAll("_", " ") : item.name).join(" · ")));
+      label.append(checkbox, copy); modules.append(label);
+    });
+    byId("module-count").textContent = `${selectedModules.size} selected`;
+    byId("execution-options").hidden = activeTier === "quick";
+    updateRunLabel();
+  }
+  function renderPublicPlans() {
+    const panel = byId("public-plans"); panel.replaceChildren();
+    catalogue.tiers.forEach((tier) => {
+      const card = node("article", undefined, `price-card${tier.id === "quick" ? " available-plan" : ""}`);
+      card.append(node("span", tier.price?.live ? "AVAILABLE" : "PILOT PRICING · NOT CHARGED", "plan-status"), node("h3", tier.name));
+      const amount = tier.price?.amount ?? tier.price?.proposed_usd ?? tier.price?.usd;
+      card.append(node("p", amount !== undefined ? `$${amount}` : "Testnet pilot", "price"), node("p", tier.description || describeBudget(tier)), node("span", describeBudget(tier), "plan-footer"));
+      const link = node("a", `Choose ${tier.name} ↗`); link.href = "#workspace";
+      link.addEventListener("click", () => { if (busy || capsule) return; activeTier = tier.id; invalidate(); renderAuditOptions(); });
+      card.append(link); panel.append(card);
+    });
+    byId("pricing-status").textContent = "Proposed prices are per audit, regardless of findings. Testnet escrow uses test XLM. Production checkout is not active; this workspace never charges automatically.";
+  }
+  function renderAuditPlan(value) {
+    const plan = value.plan; const panel = byId("audit-plan"); panel.hidden = false; panel.replaceChildren();
+    const title = typeof plan.tier === "object" ? plan.tier.name : catalogue?.tiers.find((item) => item.id === plan.tier)?.name || plan.tier;
+    panel.append(node("span", "YOUR AUDIT PLAN", "eyebrow"), node("h3", `${title || "Official"} investigation`));
+    const modules = plan.modules || [];
+    panel.append(node("p", `${modules.length} official reviewers · ${plan.entrypoint?.id || plan.entrypoint || "Source inspection"}`));
+    const budget = plan.budgets || {};
+    const counts = node("div", undefined, "plan-facts");
+    [["Case budget", budget.runtime_cases ?? budget.max_runtime_cases ?? 0], ["Source files", Object.keys(files).length], ["Test asset", plan.price?.testnet_amount ? `${plan.price.testnet_amount} XLM` : "No payment taken"]].forEach(([label,value]) => { const fact = node("div"); fact.append(node("strong",String(value)),node("span",label)); counts.append(fact); }); panel.append(counts);
+    const blockers = plan.blockers || [];
+    if (blockers.length) {
+      const list = node("ul", undefined, "plan-blockers"); blockers.forEach((item) => list.append(node("li", typeof item === "string" ? item : item.message || item.reason))); panel.append(node("strong", "Before this plan can run"), list);
+    } else panel.append(node("p", "Plan prepared. Execution starts only when you run the review.", "help"));
+    panel.append(node("code", `PLAN / ${value.plan_sha256}`, "blueprint-fingerprint"));
+    window.dispatchEvent(new CustomEvent("veritas:plan", {detail:{engagement:auditRequest(sourceInput()),planned:value}}));
+  }
+  byId("preview-audit-plan").addEventListener("click", async () => {
+    if (busy) return;
+    error(); setBusy(true);
+    try { auditPlan = await post("plan", auditRequest(sourceInput())); renderAuditPlan(auditPlan); }
+    catch (failure) {error(failure.message);}
+    finally {setBusy(false);}
+  });
+  byId("export-capsule").addEventListener("click", async () => {
+    if (busy) return;
+    if (capsule) {download("agent.veritas", JSON.stringify(capsule,null,2)); return;}
+    error(); setBusy(true);
+    try {
+      const value = await post("capsule/export", {source:sourceInput(),tier_id:activeTier,module_ids:[...selectedModules]});
+      if (value.compiled?.source) loadBundle(value.compiled.source);
+      capsule = value.capsule;
+      download("agent.veritas", JSON.stringify(capsule, null, 2));
+      renderCapsuleState("Capsule exported. Review its declarations before sharing.");
+    } catch (failure) {error(failure.message);}
+    finally {setBusy(false);}
+  });
+  byId("edit-capsule-draft").addEventListener("click", () => {
+    if (busy) return;
+    capsule = null; invalidate(); applyCapsuleLock();
+    byId("capsule-state").textContent = "New editable draft. Imported custom policy and scenarios are no longer attached. Your original capsule download remains unchanged.";
+  });
+  function renderEngagement(report) {
+    const engagement = report.engagement;
+    if (!engagement) return;
+    const runtime = engagement.runtime;
+    const moduleResults = engagement.module_results || [];
+    byId("dossier-state").textContent = "Official review complete";
+    byId("result-summary").textContent = runtime ? "Source findings and isolated execution evidence are bound to this review. Open questions remain visible in Coverage." : "Source findings are bound to your chosen plan. Coverage distinguishes inspected evidence from checks still required.";
+    if (engagement.plan) renderAuditPlan({plan:engagement.plan,plan_sha256:engagement.plan_sha256});
+    const results = Array.isArray(moduleResults) ? moduleResults : Object.entries(moduleResults).map(([id,value]) => ({id,...value}));
+    if (results.length) {
+      const block = node("section", undefined, "official-results"); block.append(node("h4", "Your official reviewers"));
+      results.forEach((item) => {
+        const row = node("div", undefined, "official-result");
+        const name = item.name || catalogue?.modules.find((module) => module.id === (item.module_id || item.id))?.name || item.module_id || item.id;
+        row.append(node("strong", name), node("span", item.runtime === "sampled" ? `${item.runtime_observation_ids?.length || 0} runtime samples` : "Source reviewed"));
+        if (item.summary || item.note) row.append(node("p", item.summary || item.note));
+        block.append(row);
+      });
+      byId("control-results").prepend(block);
+    }
+    if (runtime) {
+      const evidence = runtime.report || runtime;
+      const observations = evidence.observations || [];
+      byId("runtime-results").replaceChildren();
+      observations.forEach((item) => {
+        const card = node("article", undefined, "runtime-observation");
+        card.append(node("strong", `${item.id?.replaceAll("_", " ") || "Probe"} · ${item.status}`), node("p",item.response || item.dependency || item.error || "No usable response."));
+        if (item.assertion) card.append(node("p",`Declared expectation: ${item.assertion.result?.replaceAll("_", " ") || "not evaluated"}. ${item.assertion.meaning || ""}`));
+        byId("runtime-results").append(card);
+      });
+      byId("runtime-status").textContent = observations.length ? `${observations.length} runtime observations recorded in your audit dossier.` : evidence.note || evidence.reason || `Runtime status: ${evidence.status || "no observations"}.`;
+      if (runtime.report_json) {runtimeResult = runtime; byId("download-runtime").hidden = false;}
+      byId("missing-evidence").firstElementChild?.remove();
+      byId("missing-evidence").prepend(node("li", "Production behavior, external services and controls outside the executed plan remain unverified."));
+    }
+  }
+  function renderCredential(value) {
+    byId("credential-card").dataset.issued = "false";
+    byId("credential-name").textContent = value.report.agent.name;
+    byId("credential-short-hash").textContent = `SHA-256 / ${value.report_sha256.slice(0,12)}`;
+    byId("credential-status").textContent = "Local evidence record · not issued onchain";
+    byId("delivery-note").textContent = "Download a designed report and evidence card. A matching live credential must be verified before this record is presented as issued.";
+  }
+  async function prepareDelivery(credential) {
+    if (!result) throw new Error("Run a review first.");
+    const original = result;
+    const value = await post("delivery", {report_json:original.report_json,report_sha256:original.report_sha256,...(credential ? {credential} : {})});
+    if (result !== original) throw new Error("The source changed while delivery was being prepared. Run a new review.");
+    if (value.report_sha256 !== original.report_sha256) throw new Error("Delivery evidence does not match this report.");
+    deliveryState = value;
+    const verified = value.status === "current";
+    byId("credential-card").dataset.issued = String(verified);
+    byId("credential-status").textContent = verified ? "Current credential · ledger verified" : "Local evidence record · not issued onchain";
+    byId("delivery-note").textContent = verified ? "The ledger record matches this report. Check scope and expiry before relying on the assessment." : "Your designed evidence package is ready. Downloading it does not issue an onchain credential.";
+    const panel = byId("delivery-results"); panel.replaceChildren(node("strong", verified ? "Onchain record verified" : "Evidence package prepared"));
+    if (value.proof?.note || value.proof?.reason) panel.append(node("p", value.proof.note || value.proof.reason));
+    if (value.artifacts?.metadata) {
+      const button = node("button", "Download credential metadata", "text-button"); button.type = "button";
+      button.addEventListener("click", () => download("agent-credential-metadata.json", JSON.stringify(value.artifacts.metadata,null,2))); panel.append(button);
+    }
+    return value;
+  }
+  async function deliveryAction(button, artifact, filename, type) {
+    if (!result || busy) return;
+    const previous = button.textContent; button.disabled = true; button.textContent = "Preparing…";
+    try {
+      const value = deliveryState || await prepareDelivery();
+      if (!value.artifacts?.[artifact]) throw new Error("This report artifact is not available yet.");
+      download(filename,value.artifacts[artifact],type);
+    } catch (failure) {byId("download-note").textContent = failure.message;}
+    finally {button.disabled = false;button.textContent = previous;}
+  }
+  byId("download-designed-report").addEventListener("click", (event) => deliveryAction(event.currentTarget,"html","agent-veritas-report.html","text/html;charset=utf-8"));
+  byId("download-evidence-card").addEventListener("click", (event) => deliveryAction(event.currentTarget,"svg","agent-veritas-evidence.svg","image/svg+xml;charset=utf-8"));
+  byId("prepare-delivery").addEventListener("click", async (event) => {
+    if (!result || busy) return;
+    const button = event.currentTarget; button.disabled = true;
+    try {await prepareDelivery();}
+    catch (failure) {byId("delivery-results").textContent = failure.message;}
+    finally {button.disabled = false;}
+  });
+  byId("verify-credential").addEventListener("click", async (event) => {
+    if (!result || busy) return;
+    const button = event.currentTarget;
+    const credential = {contract_id:byId("credential-contract").value.trim(), token_id:byId("credential-token").value.trim().toLowerCase(), owner:byId("credential-owner").value.trim()};
+    if (!/^C[A-Z2-7]{55}$/.test(credential.contract_id) || !/^[a-f0-9]{64}$/.test(credential.token_id) || !/^[GC][A-Z2-7]{55}$/.test(credential.owner)) {byId("delivery-results").textContent = "Enter the public contract, 64-character token ID and public owner address.";return;}
+    button.disabled = true;
+    try {await prepareDelivery(credential);}
+    catch (failure) {byId("delivery-results").textContent = failure.message;}
+    finally {button.disabled = false;}
+  });
+
+  function renderPilotProof(value) {
+    const evidence = value.evidence;
+    if (!value.available || !evidence || evidence.status !== "verified") {
+      byId("pilot-proof-state").textContent = "Receipt pending verification";
+      byId("pilot-proof-summary").textContent = "The complete pilot receipt is not yet available. A completed lifecycle is displayed here only after its recorded checks pass.";
+      return;
+    }
+    const checks = Array.isArray(evidence.checks) ? evidence.checks : [];
+    const passed = new Set(checks.filter((check) => check.ok === true).map((check) => check.label));
+    const required = ["settlement.provider_exact_payout","settlement.treasury_exact_fee","delivery.same_content_hash","delivery.escrow_complete","delivery.credential_owner","delivery.credential_current"];
+    if (!required.every((label) => passed.has(label)) || checks.some((check) => check.ok === false)) {
+      byId("pilot-proof-state").textContent = "Receipt requires review";
+      byId("pilot-proof-summary").textContent = "The published receipt does not contain all required lifecycle checks. No completed pilot claim is displayed.";
+      return;
+    }
+    const transactions = (evidence.transactions || []).filter((tx) => tx.status === "SUCCESS" && /^[a-f0-9]{64}$/.test(tx.hash));
+    const rejected = (evidence.negative_simulations || []).filter((item) => item.rejected === true && item.transaction_submitted === false);
+    const panel = byId("pilot-proof-content"); panel.hidden = false; panel.replaceChildren();
+    byId("pilot-proof-state").textContent = "Lifecycle verified · Testnet";
+    byId("pilot-proof-summary").textContent = "A real source review funded through escrow. The report hash matched across registry, settlement and credential. Distinct signing roles, operated by Veritas Official.";
+    const atomic = (text) => {
+      if (!/^\d{1,20}$/.test(String(text))) return null;
+      const value = BigInt(text); const whole = value / 10000000n;
+      const remainder = (value % 10000000n).toString().padStart(7,"0").replace(/0+$/, "");
+      return `${whole}${remainder ? "." + remainder : ""}`;
+    };
+    const amount = atomic(evidence.settlement?.amount_atomic);
+    const payout = atomic(evidence.settlement?.provider_payout_atomic);
+    const fee = atomic(evidence.settlement?.fee_atomic);
+    const metrics = node("div",undefined,"proof-metrics");
+    [[amount ? `${amount} test XLM` : "Funded", "Escrow settled"], [String(transactions.length), "Successful ledger transactions"], [String(rejected.length), "Rejected simulations"]].forEach(([metric,label]) => {const item = node("div");item.append(node("strong",metric),node("span",label));metrics.append(item);}); panel.append(metrics);
+    const flow = node("ol",undefined,"proof-lifecycle");
+    [["Report committed","One content fingerprint across all three contracts."],["Payment settled",payout && fee ? `${payout} test XLM to the provider · ${fee} test XLM platform fee.` : "Provider and platform payouts checked against ledger balances."],["Credential issued","Owner and report read back from the official credential contract."]].forEach(([title,detail]) => {const item = node("li");item.append(node("strong",title),node("span",detail));flow.append(item);});panel.append(flow);
+    const details = node("details",undefined,"proof-evidence"); details.append(node("summary","Inspect transactions and boundaries"));
+    const links = node("div",undefined,"proof-links");
+    const labels = {"delivery.fund":"Escrow funding","delivery.respond":"Report commitment","delivery.complete":"Payment settlement","delivery.issue_credential":"Credential issuance"};
+    transactions.filter((tx) => labels[tx.label]).forEach((tx) => {const link=node("a",`${labels[tx.label]} ↗`);link.href=`https://stellar.expert/explorer/testnet/tx/${tx.hash}`;link.target="_blank";link.rel="noopener noreferrer";links.append(link);});
+    Object.entries(evidence.contracts || {}).forEach(([name,contract]) => {if (!/^C[A-Z2-7]{55}$/.test(contract.id || "")) return;const link=node("a",`${name.charAt(0).toUpperCase()+name.slice(1)} contract ↗`);link.href=`https://stellar.expert/explorer/testnet/contract/${contract.id}`;link.target="_blank";link.rel="noopener noreferrer";links.append(link);});
+    const reportURL = value.report_url || evidence.report?.uri || "";
+    if (/^https:\/\/raw\.githubusercontent\.com\/furkan3152\/agentveritas-stellar\/[a-f0-9]{40}\/deployments\/reports\/[a-f0-9]{64}\.json$/.test(reportURL)) {const link=node("a","Read the committed report ↗");link.href=reportURL;link.target="_blank";link.rel="noopener noreferrer";links.append(link);}
+    details.append(links);
+    if (evidence.report?.sha256) details.append(node("code",`REPORT / ${evidence.report.sha256}`,"blueprint-fingerprint"));
+    if (rejected.length) details.append(node("p",`Rejected before transaction submission: ${rejected.map((item) => item.label.replaceAll("_"," ")).join("; ")}. These are RPC simulations, separate from successful ledger transactions.`));
+    details.append(node("p","This report covers bounded static source review of the published fixture. The pilot does not establish live AI behavior, complete security or independent operator consensus."));
+    const recorded = evidence.verified_at || evidence.completed_at || evidence.created_at;
+    if (recorded && !Number.isNaN(Date.parse(recorded))) details.append(node("p",`Receipt recorded ${new Date(recorded).toISOString().slice(0,10)}. Credential status is a recorded readback; current expiry and revocation require a fresh ledger check.`));
+    panel.append(details);
+  }
+  fetch("/api/v1/studio/delivery/pilot").then((response) => {if (!response.ok) throw new Error();return response.json();}).then(renderPilotProof).catch(() => {
+    byId("pilot-proof-state").textContent = "Receipt unavailable";
+    byId("pilot-proof-summary").textContent = "The published lifecycle receipt could not be loaded. Retry later to inspect the Testnet evidence.";
+  });
+
+  fetch("/api/v1/studio/catalog").then((response) => {if (!response.ok) throw new Error(); return response.json();}).then((value) => {
+    if (!Array.isArray(value.tiers) || !Array.isArray(value.modules)) throw new Error();
+    catalogue = value;
+    selectedModules = capsule ? new Set(capsule.audit.modules) : new Set(value.modules.filter((module) => module.default_selected !== false).map((module) => module.id));
+    if (capsule) activeTier = capsule.audit.tier;
+    renderAuditOptions(); renderPublicPlans(); if (!busy) applyCapsuleLock();
+    byId("catalog-status").textContent = "Official catalogue loaded. Reviewers share one accountable platform operator.";
+  }).catch(() => {
+    byId("catalog-status").textContent = "Reviewer catalogue unavailable. Refresh before starting an audit.";
+    byId("audit-tiers").replaceChildren(node("p","Plans could not be loaded.","help"));
+  });
 
   function sourceMode(mode) {
     const panels = { address: "source-address", github: "source-github", files: "source-upload" };
@@ -45,13 +333,18 @@
     result = null;
     submitted = null;
     runtimeResult = null;
+    auditPlan = null;
+    window.dispatchEvent(new CustomEvent("veritas:invalidate"));
+    deliveryState = null;
+    byId("audit-plan").hidden = true;
+    byId("delivery-results").replaceChildren();
     byId("runtime-results").replaceChildren();
     byId("download-runtime").hidden = true;
     byId("discovery-results").hidden = true;
     byId("review-result").hidden = true;
     byId("empty-report").hidden = false;
     byId("dossier-state").textContent = "Awaiting review";
-    byId("run-status").textContent = "Free source review. No transaction or payment.";
+    byId("run-status").textContent = "Review your plan before starting. No automatic transaction or payment.";
     byId("download-note").textContent = "Your report stays in this tab until you leave or run another review.";
   }
   function setBusy(value) {
@@ -59,6 +352,7 @@
     document.querySelectorAll("#review-form input, #review-form textarea, #review-form select, #review-form button, [data-example]").forEach((element) => { element.disabled = value; });
     byId("ai-consent").disabled = value || byId("ai-consent").dataset.available !== "true";
     form.setAttribute("aria-busy", String(value));
+    if (!value) applyCapsuleLock();
   }
   function renderFiles() {
     const list = byId("file-list");
@@ -86,6 +380,7 @@
     } catch { byId("tool-count").textContent = "Invalid JSON"; }
   }
   function loadBundle(bundle) {
+    capsule = null; byId("audit-entrypoint").value = "";
     if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) throw new Error("An audit bundle must be a JSON object.");
     const allowed = new Set(["name", "purpose", "system_prompt", "files", "tools", "dependencies", "stellar_address", "network", "source_reference", "source_revision", "architecture", "ai_assistance", "external_processing_consent"]);
     if (Object.keys(bundle).some((key) => !allowed.has(key))) throw new Error("Unknown bundle fields. Use an exported agent-audit.json as the template.");
@@ -97,7 +392,7 @@
     files = { ...(bundle.files || {}) };
     dependencies = bundle.dependencies || [];
     byId("architecture-manifest").value = JSON.stringify(bundle.architecture || {}, null, 2);
-    byId("ai-consent").checked = false;
+    byId("ai-consent").checked = false; byId("ai-access-settings").hidden = true; byId("ai-access-key").value = "";
     byId("stellar-address").value = bundle.stellar_address || "";
     byId("stellar-network").value = bundle.network || "testnet";
     sourceReference = bundle.source_reference || "";
@@ -128,7 +423,14 @@
     try {
       const selected = [...event.target.files];
       if (selected.some((file) => file.size > 131072)) throw new Error("File too large. Source files must be at most 32 KB; an audit bundle at most 128 KiB.");
-      if (selected.length === 1 && selected[0].name === "agent-audit.json") {
+      if (selected.length === 1 && selected[0].name.endsWith(".veritas")) {
+        const value = await post("capsule/import", {document: await selected[0].text()});
+        loadBundle(value.source); capsule = value.capsule;
+        if (capsule.audit?.tier) activeTier = capsule.audit.tier;
+        if (capsule.audit?.modules) selectedModules = new Set(capsule.audit.modules);
+        renderAuditOptions();
+        renderCapsuleState("Capsule imported and validated.");
+      } else if (selected.length === 1 && selected[0].name === "agent-audit.json") {
         loadBundle(JSON.parse(await selected[0].text()));
       } else {
         const pending = { ...files };
@@ -147,6 +449,10 @@
   form.addEventListener("input", (event) => {
     if (busy) return;
     invalidate(); error();
+    if (!event.target.closest(".audit-builder") && event.target.id !== "ai-consent") {
+      capsule = null;
+      byId("capsule-state").textContent = "Source edited. Export a fresh capsule to bind the updated project.";
+    }
     if (!event.target.matches("[data-scope]")) updateToolCount();
     if (["stellar-address", "stellar-network"].includes(event.target.id)) {
       byId("address-status").textContent = "Click Check address to look up this address on the selected network.";
@@ -169,7 +475,7 @@
   async function post(path, body) {
     const response = await fetch(`/api/v1/studio/${path}`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:AbortSignal.timeout(35000)});
     const data = await response.json();
-    if (!response.ok) throw new Error(Array.isArray(data.detail) ? data.detail.map((item) => item.msg).join("; ") : data.detail || "Request failed. Please retry.");
+    if (!response.ok) throw new Error(requestError(data, response.status));
     return data;
   }
   byId("identify-address").addEventListener("click", async () => {
@@ -252,6 +558,7 @@
     plan.entrypoints.filter((entry) => entry.adapter === "python_text").forEach((entry) => {
       const option = node("option", entry.id); option.value = entry.id; select.append(option);
     });
+    if (select.options.length && !byId("audit-entrypoint").value) byId("audit-entrypoint").value = select.options[0].value;
     byId("runtime-status").textContent = select.options.length ? "Confirm that this callable reaches the real agent. Runtime access is required." : "This project needs an adapter or an operator-reviewed framework image before execution.";
   }
   byId("discover-project").addEventListener("click", async () => {
@@ -299,7 +606,9 @@
     if (!byId("runtime-consent").checked || !key || !byId("runtime-entrypoint").value) { byId("runtime-status").textContent = "Select a supported entry point, provide the pilot key and authorize execution."; return; }
     setBusy(true); byId("run-runtime").disabled = true; byId("runtime-status").textContent = "Creating an isolated microVM and executing the bounded probe plan…";
     try {
-      const response = await fetch("/api/v1/studio/runtime", {method:"POST", headers:{"Content-Type":"application/json",Authorization:`Bearer ${key}`}, body:JSON.stringify({source:submitted,entrypoint:byId("runtime-entrypoint").value,execution_consent:true,plan_sha256:result?.report?.discovery?.blueprint?.plan_sha256 || null}),signal:AbortSignal.timeout(60000)});
+      const runtimeHeaders = {"Content-Type":"application/json",Authorization:`Bearer ${key}`};
+      if (submitted.ai_assistance && byId("ai-access-key").value.trim()) runtimeHeaders["X-AI-Review-Key"] = byId("ai-access-key").value.trim();
+      const response = await fetch("/api/v1/studio/runtime", {method:"POST", headers:runtimeHeaders, body:JSON.stringify({source:submitted,entrypoint:byId("runtime-entrypoint").value,execution_consent:true,plan_sha256:result?.report?.discovery?.blueprint?.plan_sha256 || null}),signal:AbortSignal.timeout(60000)});
       const value = await response.json(); if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : "Runtime request could not be validated.");
       const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value.report_json)))].map((b)=>b.toString(16).padStart(2,"0")).join("");
       if (hash !== value.report_sha256) throw new Error("Runtime report integrity mismatch.");
@@ -413,34 +722,40 @@
     error(); invalidate();
     let input;
     try {
-      const tools = JSON.parse(byId("tool-manifest").value);
-      if (!Array.isArray(tools)) throw new Error("Tool permissions must be a JSON array.");
-      if (!Object.keys(files).length && !byId("agent-prompt").value.trim() && !byId("stellar-address").value.trim()) throw new Error("Add a public Stellar address, source files or system instructions first.");
-      input = { name: byId("agent-name").value, purpose: byId("agent-purpose").value, system_prompt: byId("agent-prompt").value, files: { ...files }, tools, dependencies, stellar_address:byId("stellar-address").value.trim(), network:byId("stellar-network").value, source_reference:sourceReference, source_revision:sourceRevision, architecture:JSON.parse(byId("architecture-manifest").value), ai_assistance:byId("ai-consent").checked, external_processing_consent:byId("ai-consent").checked };
+      input = sourceInput();
     } catch (failure) { error(failure.message); return; }
     setBusy(true);
-    byId("run-review").textContent = "Reviewing source…";
-    byId("run-status").textContent = "Checking the submitted bundle across seven dimensions…";
+    byId("run-review").textContent = "Building evidence…";
+    byId("run-status").textContent = activeTier === "quick" ? "Official reviewers are inspecting the submitted evidence…" : "Preparing your plan, then running the authorized investigation…";
     try {
-      const response = await fetch("/api/v1/studio/review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(45000) });
+      if (!catalogue) throw new Error("The reviewer catalogue is unavailable. Refresh to check the current audit options.");
+      const body = auditRequest(input);
+      auditPlan = await post("plan", body);
+      renderAuditPlan(auditPlan);
+      if (auditPlan.plan.blockers?.length) throw new Error(auditPlan.plan.blockers.map((item) => typeof item === "string" ? item : item.message || item.reason).join(" "));
+      const headers = {"Content-Type":"application/json"};
+      const runtimeKey = byId("audit-runtime-key").value.trim();
+      if (activeTier !== "quick" && runtimeKey) headers.Authorization = `Bearer ${runtimeKey}`;
+      if (input.ai_assistance && byId("ai-access-key").value.trim()) headers["X-AI-Review-Key"] = byId("ai-access-key").value.trim();
+      const response = await fetch("/api/v1/studio/audit", { method: "POST", headers, body: JSON.stringify({...body, plan_sha256:auditPlan.plan_sha256}), signal: AbortSignal.timeout(activeTier === "quick" ? 45000 : 120000) });
       const value = await response.json();
-      if (!response.ok) throw new Error(Array.isArray(value.detail) ? value.detail.map((item) => item.msg).join("; ") : value.detail || `Review failed (HTTP ${response.status}).`);
+      if (!response.ok) throw new Error(requestError(value, response.status));
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value.report_json));
       const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2,"0")).join("");
       if (hash !== value.report_sha256) throw new Error("Report integrity check failed. Run a new review.");
       // Render the committed bytes, not a potentially divergent response view.
       value.report = JSON.parse(value.report_json);
       result = value; submitted = input;
-      renderReport(value);
+      renderReport(value); renderEngagement(value.report); renderCredential(value);
       byId("run-status").textContent = "Review complete. Download your evidence before leaving.";
       if (window.innerWidth <= 720) byId("dossier-title").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     } catch (failure) {
       error(failure.name === "TimeoutError" ? "The review timed out. Retry with a smaller source bundle." : failure.message);
       byId("run-status").textContent = "No completed review. Your inputs are still available to retry.";
-    } finally { setBusy(false); byId("run-review").textContent = "Audit agent — free"; }
+    } finally { setBusy(false); updateRunLabel(); byId("audit-runtime-key").value = ""; byId("ai-access-key").value = ""; }
   });
-  function download(filename, text) {
-    const url = URL.createObjectURL(new Blob([text], { type: "application/json;charset=utf-8" }));
+  function download(filename, text, type = "application/json;charset=utf-8") {
+    const url = URL.createObjectURL(new Blob([text], { type }));
     const link = node("a"); link.href = url; link.download = filename; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -453,6 +768,7 @@
       });
     });
   });
+  byId("ai-consent").addEventListener("change", () => {byId("ai-access-settings").hidden = !byId("ai-consent").checked; if (!byId("ai-consent").checked) byId("ai-access-key").value = "";});
   fetch("/api/v1/studio/capabilities").then((r) => { if (!r.ok) throw new Error(); return r.json(); }).then((value) => {
     byId("ai-consent").disabled = !value.ai_available;
     byId("ai-consent").dataset.available = String(value.ai_available);

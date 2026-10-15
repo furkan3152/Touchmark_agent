@@ -1,5 +1,7 @@
 # AgentVeritas: product and pilot
 
+> Historical checkpoint. Current official tiers, deployed contracts and verified pilot evidence are documented in [the official pilot release](OFFICIAL_PILOT_2026-10-15.md). Retained audit limitations still apply unless explicitly resolved there.
+
 Decision date: 2026-09-11. This document distinguishes the implemented prototype from the proposed paid pilot.
 
 ## One sentence

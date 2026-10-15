@@ -5,10 +5,35 @@ an agent session key may spend only a bounded amount of a specified token to
 one specified recipient, before a specified ledger. A report or prompt cannot
 grant additional authority. The rule runs inside Soroban authorization.
 
-**Status:** experimental, locally tested code. Not independently audited,
-deployed, wired into Studio or offered as a production wallet. Do not deposit
+**Status:** experimental, locally tested and deployed to Stellar Testnet. Not
+independently audited, wired into Studio or offered as a production wallet. Do not deposit
 production funds. This contract does not detect vulnerabilities, prove an
 agent's intentions, or control keys and tools outside this account.
+
+## Verified Testnet pilot
+
+Contract: `CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ`.
+The [public execution evidence](../../deployments/agent-account-testnet-2026-10-15.json)
+records seven successful ledger transactions: WASM upload, deployment, funding,
+opening a session, a signed session transfer of 0.2 test XLM, revocation and
+recovery. It separately records signed RPC **enforcing simulations** rejecting
+a forbidden recipient, cumulative overspend and a revoked session. Rejected
+simulations were not submitted as ledger transactions. Balance and spend
+counter readbacks remained unchanged on each rejection.
+
+The pilot ended with the session revoked and the account balance at zero.
+These are historical execution results, not a claim that any arbitrary agent
+is safe. The contract remains deployed; another bounded session requires its
+owner's authorization. Disposable test identities are kept outside version
+control. The reproducible testnet-only script is:
+
+```bash
+.venv/bin/python scripts/deploy_agent_account_testnet.py
+```
+
+The script pins the tested WASM hash and never accepts a mainnet network or
+production seed. Re-running a completed pilot prints its existing evidence;
+it does not silently open another session or repeat transfers.
 
 ## Authority model
 

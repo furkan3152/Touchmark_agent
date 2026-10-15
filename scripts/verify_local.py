@@ -30,6 +30,8 @@ def main():
             else: raise RuntimeError('Local server failed to start')
             assert client.get('/').status_code == 200
             assert client.get('/ui/studio.js').status_code == 200
+            assert client.get('/ui/checkout.js').status_code == 200
+            assert client.get('/ui/vendor/freighter-api-6.0.1.min.js').status_code == 200
             assert client.get('/api/v1/jobs').status_code == 404
             source = {'name': 'Offline reader fixture', 'purpose': 'Summarize balances without signing or moving funds.',
                       'files': {'src/reader.py': (ROOT / 'examples/runtime-reader/main.py').read_text()}}
@@ -61,9 +63,33 @@ def main():
                 assert evidence['report']['signature_verified'] is False
                 assert evidence['report']['transaction_executed'] is False
                 assert hashlib.sha256(evidence['report_json'].encode()).hexdigest() == evidence['report_sha256']
+            catalog = client.get('/api/v1/studio/catalog').json()
+            assert len(catalog['modules']) == 8 and len(catalog['tiers']) == 3
+            request = {'source': source, 'tier_id': 'quick', 'module_ids': ['intent', 'injection', 'privacy']}
+            quote = client.post('/api/v1/studio/plan', json=request)
+            assert quote.status_code == 200, quote.text
+            request['plan_sha256'] = quote.json()['plan_sha256']
+            audit = client.post('/api/v1/studio/audit', json=request)
+            assert audit.status_code == 200, audit.text
+            completed = audit.json()
+            assert len(completed['report']['engagement']['module_results']) == 3
+            delivery = client.post('/api/v1/studio/delivery', json={k: completed[k] for k in ['report_json', 'report_sha256']})
+            assert delivery.status_code == 200, delivery.text
+            assert delivery.json()['status'] == 'not_issued'
+            assert 'ORIGIN UNVERIFIED' in delivery.json()['artifacts']['svg']
+            package = client.post('/api/v1/studio/capsule/export', json=request)
+            assert package.status_code == 200, package.text
+            imported = client.post('/api/v1/studio/capsule/import', json={'document':json.dumps(package.json()['capsule'])})
+            assert imported.status_code == 200, imported.text
+            assert imported.json()['compiled']['plan_sha256'] == package.json()['compiled']['plan_sha256']
+            stellar_info = client.get('/.well-known/stellar.toml')
+            assert stellar_info.status_code == 200 and stellar_info.headers['access-control-allow-origin'] == '*'
+            assert client.post('/api/v1/studio/ai/check').status_code == 401
+            assert client.post('/api/v1/studio/checkout', json={'engagement': request,
+                'requester': 'GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI'}).status_code == 401
             print(json.dumps({'localhost':f'http://127.0.0.1:{port}', 'source_review':'passed', 'discovery':'passed',
                 'blueprint_map_and_missing_file_gate':'passed', 'stellar_authority_policy_and_nested_recipient':'passed',
-                'report_integrity':'passed', 'runtime_auth':'passed', 'operator_surface':'hidden', 'controls':24}))
+                'report_integrity':'passed', 'runtime_auth':'passed', 'operator_surface':'hidden', 'controls':24, 'official_plan_audit_delivery':'passed', 'capsule_roundtrip':'passed', 'sep1_info':'passed', 'private_ai_gate':'passed'}))
     finally:
         server.terminate()
         try: server.wait(timeout=5)

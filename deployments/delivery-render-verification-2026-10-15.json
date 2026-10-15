@@ -1,0 +1,20 @@
+{
+  "report_sha256": "626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35",
+  "proof": {
+    "status": "current",
+    "network": "testnet",
+    "contract_id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+    "token_id": "8915cc2eb03f845a18b5359ec43ae6229cea15f5cf2bc6ea2819e251f3855b13",
+    "owner": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+    "report_hash_matches": true,
+    "owner_matches": true,
+    "is_current": true,
+    "checked_at_ledger": 5209181,
+    "read_method": "rpc_simulate_readonly",
+    "note": "Current issuer assertion for this report; not a guarantee that the agent is secure."
+  },
+  "artifacts": {
+    "html_sha256": "fc6e197f8738a3d3dc27e1bb86ff9dd42da18e20999225b11e14319ad8dc7634",
+    "svg_sha256": "744554da1a42899ad75308c2fb966c1b1a5bcedfb45d74a23e9450ad01d731dc"
+  }
+}
