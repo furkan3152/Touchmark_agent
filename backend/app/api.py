@@ -83,9 +83,21 @@ async def lifespan(app: FastAPI):
         return
     task = asyncio.create_task(_monitor_loop())
     app.state.monitor_task = task
+    order_task = None
+    if settings.enable_official_orders:
+        from .services.official_fulfillment import OfficialFulfillment
+        service = OfficialFulfillment(settings)
+        app.state.official_fulfillment = service
+        order_task = asyncio.create_task(service.run())
     try:
         yield
     finally:
+        if order_task is not None:
+            order_task.cancel()
+            try:
+                await order_task
+            except asyncio.CancelledError:
+                pass
         task.cancel()
         try:
             await task
@@ -216,7 +228,8 @@ async def health() -> dict:
             "stateless_studio": settings.stateless_studio,
             "llm": settings.llm_enabled,
             "rpc": settings.rpc_enabled,
-            "contract_submission": False,
+            "contract_submission": bool(getattr(app.state, 'official_fulfillment', None)),
+            "contract_submission_scope": 'pinned_testnet_official_provider_and_evaluator_only',
             "ipfs": settings.ipfs_enabled,
             "screening": settings.screening_enabled,
         },
@@ -233,9 +246,12 @@ async def chain_status_view() -> dict:
 
 @app.get("/api/v1/chain/signing-boundary")
 async def signing_boundary() -> dict:
+    official = bool(getattr(app.state, 'official_fulfillment', None))
     return {
-        "backend_signing": False,
-        "secret_storage": False,
+        "backend_signing": official,
+        "secret_storage": official,
+        "signing_scope": 'pinned_testnet_official_provider_and_evaluator_only' if official else 'disabled',
+        "customer_transactions": 'external_wallet_signature_required',
         "external_signing_required": True,
         "success_requires": ["successful transaction", "registry state/event readback"],
     }
@@ -445,12 +461,168 @@ async def studio_checkout(req: CheckoutRequest, authorization: str = Header(defa
 
 
 @app.post('/api/v1/studio/checkout/prepare')
-async def studio_checkout_prepare(req: CheckoutStepRequest, authorization: str = Header(default='')) -> dict:
+async def studio_checkout_prepare(req: CheckoutStepRequest, authorization: str = Header(default=''),
+                                  x_order_id: str = Header(default=''), x_order_token: str = Header(default='')) -> dict:
     require_pilot_key(authorization)
     try:
+        if req.step == 'fund':
+            service = _official_service()
+            summary = service.store.get(x_order_id, x_order_token)
+            if (summary['order_id'] != req.quote.request_id or summary['requester'] != req.quote.requester
+                    or summary['plan_sha256'] != req.quote.plan_sha256
+                    or summary['source_sha256'] != req.quote.source_sha256
+                    or summary['status'] != 'awaiting_payment'):
+                raise ValueError('Create a matching private official order before funding.')
         return await prepare_checkout_step(req, settings)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+from .services.audit_orders import OrderSubmission, create_order, activate_order, recover_order
+from .services.order_identity import make_order_challenge
+from .services.official_fulfillment import order_capabilities
+
+
+def _official_service():
+    capability = order_capabilities(settings)
+    service = getattr(app.state, 'official_fulfillment', None)
+    if not capability['available'] or service is None or not service.health['running']:
+        raise HTTPException(status_code=503, detail=capability['reason'] or 'The persistent official worker is not running.')
+    return service
+
+
+def _official_store():
+    """Read/recovery/refund access survives a paused worker or rotated service key."""
+    if settings.stateless_studio:
+        raise HTTPException(status_code=503, detail='Private orders require the persistent operator service.')
+    service = getattr(app.state, 'official_fulfillment', None)
+    if service is not None:
+        return service.store
+    from .services.audit_orders import AuditOrderStore
+    path = Path(settings.official_orders_database)
+    if not path.is_file():
+        raise HTTPException(status_code=503, detail='The private order database is not available.')
+    try:
+        return AuditOrderStore(path, deployment='local' if settings.official_orders_local_pilot else 'persistent',
+                               durable_storage=settings.official_orders_storage_durable)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail='The private order database is not available on persistent storage.') from exc
+
+
+@app.get('/api/v1/studio/orders/capabilities')
+async def studio_order_capabilities() -> dict:
+    value = order_capabilities(settings)
+    service = getattr(app.state, 'official_fulfillment', None)
+    if value['available'] and (service is None or not service.health['running']):
+        value.update(available=False, automatic_settlement=False, reason='The persistent official worker is not running.')
+    return value
+
+
+@app.post('/api/v1/studio/orders/challenge')
+async def studio_order_challenge(req: OrderSubmission, authorization: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    _official_store()
+    try:
+        return make_order_challenge(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/orders')
+async def studio_create_order(req: OrderSubmission, authorization: str = Header(default=''),
+                               x_ai_review_key: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    service = _official_service()
+    try:
+        source, _, _ = normalize(req.engagement)
+        if source.ai_assistance:
+            require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
+        return await create_order(req, settings, service.store)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get('/api/v1/studio/orders/{order_id}')
+async def studio_get_order(order_id: str, authorization: str = Header(default=''),
+                            x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    try:
+        return _official_store().get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+
+
+@app.post('/api/v1/studio/orders/recover')
+async def studio_recover_order(req: OrderSubmission, authorization: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    store = _official_store()
+    try:
+        return await recover_order(req, settings, store)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get('/api/v1/studio/orders/{order_id}/result')
+async def studio_order_result(order_id: str, authorization: str = Header(default=''),
+                               x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    store = _official_store()
+    try:
+        store.get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+    try:
+        return store.result(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail='The committed report is not ready.') from exc
+
+
+@app.post('/api/v1/studio/orders/{order_id}/activate')
+@app.post('/api/v1/studio/orders/{order_id}/retry')
+async def studio_activate_order(order_id: str, authorization: str = Header(default=''),
+                                  x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    service = _official_service()
+    try:
+        service.store.get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+    try:
+        return await activate_order(order_id, x_order_token, settings, service.store)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/orders/{order_id}/refund/prepare')
+async def studio_order_refund(order_id: str, authorization: str = Header(default=''),
+                              x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    store = _official_store()
+    try:
+        store.get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+    from .services.order_refunds import prepare_order_refund
+    try:
+        return await prepare_order_refund(store._private(order_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/orders/{order_id}/refund/reconcile')
+async def studio_reconcile_refund(order_id: str, authorization: str = Header(default=''),
+                                  x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    store = _official_store()
+    try:
+        store.get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+    from .services.order_refunds import reconcile_order_refund
+    try:
+        return await reconcile_order_refund(order_id, x_order_token, store)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post('/api/v1/studio/ai/check')

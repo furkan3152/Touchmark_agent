@@ -12,14 +12,15 @@ class StudioGuard:
         self.requests = deque(maxlen=30)
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["path"] not in {
+        guarded_order = (scope.get('path', '').startswith('/api/v1/studio/orders') and scope.get('method') == 'POST')
+        if scope["type"] != "http" or (not guarded_order and scope["path"] not in {
             "/api/v1/studio/policy", "/api/v1/studio/review", "/api/v1/studio/identify", "/api/v1/studio/import",
             "/api/v1/studio/discover", "/api/v1/studio/runtime", "/api/v1/studio/stellar/inspect-auth",
             '/api/v1/studio/plan', '/api/v1/studio/audit', '/api/v1/studio/delivery',
             '/api/v1/studio/capsule/import', '/api/v1/studio/capsule/export',
             '/api/v1/studio/ai/check',
             '/api/v1/studio/checkout', '/api/v1/studio/checkout/prepare',
-        }:
+        }):
             return await self.app(scope, receive, send)
 
         async def reject(status, detail):

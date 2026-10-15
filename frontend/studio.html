@@ -5,7 +5,7 @@
 <meta name="description" content="Choose official AgentVeritas reviewers. Map, challenge and document your AI agent with a version-bound evidence dossier on Stellar.">
 <title>AgentVeritas — Trust, with evidence.</title>
 <link rel="icon" href="/ui/studio-mark.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/ui/studio.css"><script src="/ui/studio.js" defer></script><script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script><script src="/ui/checkout.js" defer></script>
+<link rel="stylesheet" href="/ui/studio.css"><script src="/ui/studio.js" defer></script><script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script><script src="/ui/checkout.js" defer></script><script src="/ui/orders.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#workspace">Skip to audit</a>
@@ -109,19 +109,32 @@
         </section>
         <label class="ai-optin"><input type="checkbox" id="ai-consent" disabled><span>Add an AI second opinion <small id="ai-availability">Checking availability…</small></span></label>
         <div id="ai-access-settings" hidden><label for="ai-access-key">AI review pilot access key</label><input id="ai-access-key" type="password" autocomplete="off" placeholder="Provided by your workspace operator"><p class="help">This authorizes the bounded AI request. Your model provider credentials are never requested in this workspace.</p></div>
-        <p class="privacy-note">Static review stays in memory. Optional AI review sends redacted source to the named provider only with your consent. Never upload credentials.</p>
+        <p class="privacy-note">An immediate source review stays in memory. Official orders store the submitted source with your explicit consent. Optional AI review sends redacted source to the named provider only with your consent. Never upload credentials.</p>
         <p id="form-error" class="error" role="alert" hidden></p>
         <button id="run-review" class="primary" type="submit">Run Preview review</button>
         <p id="run-status" class="help" role="status">No wallet connection. No payment. No transaction.</p>
       </form>
-      <details class="checkout-panel" id="checkout-panel"><summary><span>Try the Testnet payment flow</span><span class="official-badge">PILOT</span></summary>
-        <p class="help">Fund a scoped audit with test XLM. Your wallet signs each step. Official report delivery still requires the operator to review and sign; payment does not automatically queue an audit.</p>
+      <details class="checkout-panel" id="checkout-panel"><summary><span>Order an official Testnet review</span><span class="official-badge">PILOT</span></summary>
+        <p class="help">Create your private order, then fund its scoped review with test XLM. Your wallet signs each payment step. Available automation runs the review and completes report delivery after funding is verified.</p>
         <div class="checkout-connect"><button type="button" id="checkout-connect" class="secondary">Connect Freighter ↗</button><a href="https://www.freighter.app/" target="_blank" rel="noopener noreferrer">Get the wallet</a></div>
         <label for="checkout-requester">Requester’s public Testnet account</label><input id="checkout-requester" maxlength="56" placeholder="G…" spellcheck="false" autocomplete="off">
         <label for="checkout-key">Checkout pilot access key</label><input id="checkout-key" type="password" autocomplete="off" placeholder="Provided by your workspace operator">
         <button type="button" id="checkout-quote" class="secondary">Get a Testnet quote</button><button type="button" id="checkout-refresh" class="text-button" hidden>Refresh ledger state</button>
         <p id="checkout-status" class="help" role="status">Preview your audit plan above, then request a quote.</p>
         <div id="checkout-quote-result" hidden></div>
+        <section class="order-intake" aria-labelledby="order-intake-title"><h4 id="order-intake-title">One order. The whole review.</h4>
+          <p id="order-availability" class="help" role="status">Checking official order availability…</p>
+          <label class="ai-optin order-consent"><input id="order-consent" type="checkbox"><span>I authorize this scoped official review.<small>Retain my submitted source for the official review, store the report privately, settle its funded Testnet escrow automatically, and publish its report hash and token record on Stellar Testnet. Selected runtime and AI consent still apply.</small></span></label>
+          <button type="button" id="order-create" class="secondary" disabled>Prepare private order ↗</button>
+          <div id="order-challenge" hidden><label for="order-challenge-message">Wallet ownership message</label><textarea id="order-challenge-message" readonly rows="5" class="code-input" spellcheck="false"></textarea><p class="help">This message binds your wallet to this exact review scope and consent. It does not transfer funds or sign a transaction.</p><button id="order-sign-create" type="button" class="secondary">Sign ownership & create order ↗</button></div>
+          <p id="order-intake-status" class="help" role="status">Get a quote first. Keep the private order receipt to resume later.</p>
+        </section>
+        <details class="order-resume"><summary>Resume an existing order</summary>
+          <label for="order-resume-id">Order ID</label><input id="order-resume-id" maxlength="64" spellcheck="false" autocomplete="off" placeholder="64-character order ID">
+          <label for="order-resume-token">Private order access token</label><input id="order-resume-token" type="password" maxlength="64" autocomplete="off" placeholder="From your private receipt">
+          <button type="button" id="order-resume" class="secondary">Open order ↗</button><label class="text-button" for="order-receipt-file">Or import your private receipt</label><input id="order-receipt-file" type="file" accept=".json" class="sr-only">
+          <p class="help">Use the pilot key above and your private receipt. Source, access tokens and pilot keys are never saved in browser storage.</p><button type="button" id="order-recover" class="text-button" disabled>Lost the receipt? Recover access with your wallet</button><p class="help">Load the same project and audit selection, get its quote, then prove requester ownership. Recovery rotates the private token; the previous receipt stops working.</p>
+        </details>
         <div id="checkout-transaction" hidden><p id="checkout-transaction-detail" class="help"></p><label for="checkout-xdr">Prepared transaction XDR</label><textarea id="checkout-xdr" readonly rows="3" class="code-input" spellcheck="false"></textarea>
           <div class="result-actions"><button type="button" id="checkout-download">Download unsigned XDR</button><button type="button" id="checkout-sign">Review & sign in Freighter</button><button type="button" id="checkout-submit" hidden>Submit signed transaction</button></div>
           <p class="help">Signing stays in your wallet. Submit is a separate action. A submitted hash is not proof of funding; the next step is read from the ledger.</p>
@@ -130,6 +143,15 @@
     </div>
     <section class="dossier" aria-labelledby="dossier-title" aria-live="polite">
       <div class="section-heading"><h2 id="dossier-title">Evidence dossier</h2><span id="dossier-state">Ready when you are</span></div>
+      <section id="official-order" class="official-order" hidden aria-labelledby="order-title">
+        <div class="order-header"><span class="eyebrow">YOUR OFFICIAL REVIEW</span><span id="order-state" class="order-state">Awaiting payment</span></div>
+        <h3 id="order-title">A clear path to your report.</h3><p id="order-description"></p>
+        <ol id="order-progress" class="order-progress" aria-label="Official review progress"></ol>
+        <div id="order-issue" class="order-issue" hidden></div>
+        <div class="result-actions"><button id="order-refresh" type="button">Refresh status</button><button id="order-activate" type="button" hidden>Check funding & continue</button><button id="order-refund" type="button" hidden>Check refund eligibility</button><button id="order-retry" type="button" hidden>Retry official processing</button><button id="order-open-report" type="button" hidden>Open report ↗</button><button id="order-receipt" type="button">Save private receipt</button></div>
+        <p id="order-status-note" class="help" role="status"></p>
+        <details class="order-identity"><summary>Order identity & privacy</summary><code id="order-id"></code><code id="order-source-hash"></code><code id="order-plan-hash"></code><p class="help">The receipt grants access to this private order. Store it securely. No wallet private key is included. Sharing an order ID alone does not grant access.</p></details>
+      </section>
       <div id="empty-report" class="empty-report">
         <div class="document-symbol" aria-hidden="true">?</div><h3>Trust needs a paper trail.</h3>
         <p>Add an agent to see concrete findings, what is missing, and what to check next.</p>
@@ -194,7 +216,7 @@
     <details><summary>Does Stellar have an agent key?</summary><p>There is no universal agent ID required by this product. Agents may use ordinary Stellar accounts or smart accounts with delegated permissions. We ask for public identifiers only. A private key is authority to act, not evidence of trustworthy behavior.</p></details>
     <details><summary>What does an audit establish?</summary><p>Official reviewers inspect the supplied source and declared boundaries. Authorized runtime plans execute supported Python entry points in isolated microVMs. The dossier keeps source findings, runtime observations, AI hypotheses and chain evidence distinct. Each claim is bound to the evidence actually collected; an untested surface remains an open question.</p></details>
     <details><summary>Does a credential mean the agent is safe?</summary><p>No. It records an issuer's assessment of a specific version. It cannot reveal hidden behavior or guarantee future behavior. Always check the report scope, issuer, version, expiry and revocation state.</p></details>
-    <details><summary>What is available today?</summary><p>The workspace shows the available reviewers, plan budgets and provider status for this deployment. Source review works without keys. Runtime execution needs pilot access and explicit consent; AI review needs a configured provider and separate consent. Credential delivery always reports its actual preparation or verification state. Testnet uses test assets only.</p></details>
+    <details><summary>What is available today?</summary><p>The workspace checks the available reviewers, providers and official order service on this deployment. Immediate source review works without keys. An enabled official order service saves the consented scope before funding, runs the review and completes Testnet delivery. Private receipts control access to the report; its hash and token record are public. Runtime and AI review keep their separate consent and access requirements. Testnet uses test assets only.</p></details>
   </div></section>
 </main>
 <footer><span>AgentVeritas <span class="footer-motto">Trust, with evidence.</span></span><a href="/operator">Operator console</a><span>Built for Stellar. Designed for accountability.</span></footer>

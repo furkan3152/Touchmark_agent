@@ -1,5 +1,7 @@
 # Testnet wallet checkout
 
+**2026-10-15 update:** funding now requires a saved private order, SEP-53 requester proof and a running official fulfillment service. Automatic delivery, private report storage, access recovery and refund preparation are described in [OFFICIAL_FULFILLMENT.md](OFFICIAL_FULFILLMENT.md). The Vercel Studio blocks funding until persistent fulfillment is available. The older four-step description below remains the wallet transaction sequence, not the complete order lifecycle.
+
 The checkout prepares real unsigned Soroban transactions against the verified delivery deployment in `deployments/testnet-audit-delivery-2026-10-15.json`. It never loads a seed, signs a transaction, submits a transaction, or charges Mainnet funds. The wallet signs and submits only after explicit user action. Testnet XLM has no monetary value.
 
 ## Configuration
