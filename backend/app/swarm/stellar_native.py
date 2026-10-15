@@ -8,6 +8,91 @@ from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioR
 from .base import BaseAuditor
 
 
+def _rust_code(source: str) -> str:
+    """Mask Rust comments/literals, retaining offsets; this is not a Rust parser."""
+    result = list(source)
+    i = 0
+    while i < len(source):
+        end = None
+        if source.startswith('//', i):
+            end = source.find('\n', i)
+            if end < 0: end = len(source)
+        elif source.startswith('/*', i):
+            depth, end = 1, i + 2
+            while end < len(source) and depth:
+                if source.startswith('/*', end): depth += 1; end += 2
+                elif source.startswith('*/', end): depth -= 1; end += 2
+                else: end += 1
+        else:
+            raw = re.match(r'(?:br|r)(#{0,255})"', source[i:])
+            if raw:
+                closing = '"' + raw.group(1)
+                found = source.find(closing, i + len(raw.group()))
+                end = len(source) if found < 0 else found + len(closing)
+            elif source[i] == '"':
+                end = i + 1
+                while end < len(source):
+                    if source[end] == '\\': end += 2
+                    elif source[end] == '"': end += 1; break
+                    else: end += 1
+            elif source[i] == "'":
+                # Do not consume lifetimes such as &'a Address.
+                char = re.match(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'", source[i:])
+                if char: end = i + len(char.group())
+        if end is not None:
+            for pos in range(i, min(end, len(source))):
+                if result[pos] != '\n': result[pos] = ' '
+            i = end
+        else:
+            i += 1
+    return ''.join(result)
+
+
+_FUNCTION = re.compile(r'\b(?P<public>pub(?:\s*\([^)]*\))?\s+)?(?:(?:async|unsafe|const)\s+)*fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b')
+_PERSISTENT = r'\.\s*storage\s*\(\s*\)\s*\.\s*persistent\s*\(\s*\)'
+_MUTATION = re.compile(r'\.\s*(?:set|remove|update|try_update|transfer|transfer_from|mint|burn|approve)\s*\(')
+_MUTATING_NAME = re.compile(r'^(?:set|reg|upd|fund|submit|complete|refund|initialize|init|mint|burn|transfer|approve|revoke|publish|issue|pause|withdraw|deposit|bind|add|remove)')
+_AUTH = re.compile(r'\.\s*require_auth(?:_for_args)?\s*\(')
+
+
+def _rust_functions(source: str) -> list[dict]:
+    """Bound public function bodies conservatively, without resolving Rust types/macros."""
+    code = _rust_code(source)
+    functions = []
+    for match in _FUNCTION.finditer(code):
+        start = code.find('{', match.end())
+        semicolon = code.find(';', match.end())
+        if start < 0 or 0 <= semicolon < start: continue
+        depth, end = 1, start + 1
+        while end < len(code) and depth:
+            if code[end] == '{': depth += 1
+            elif code[end] == '}': depth -= 1
+            end += 1
+        if depth: continue
+        functions.append({'name': match['name'], 'public': bool(match['public']),
+                          'start': match.start(), 'body_start': start + 1, 'end': end,
+                          'line': code.count('\n', 0, match.start()) + 1})
+    results = []
+    for fn in functions:
+        if not fn['public']: continue
+        # Merely defining a protected nested function does not guard its parent.
+        body = list(code[fn['body_start']:fn['end'] - 1])
+        for nested in functions:
+            if fn['body_start'] <= nested['start'] < nested['end'] < fn['end']:
+                for i in range(nested['start'] - fn['body_start'], nested['end'] - fn['body_start']):
+                    if body[i] != '\n': body[i] = ' '
+        results.append({**fn, 'body': ''.join(body)})
+    return results
+
+
+def _has_persistent_ttl(body: str) -> bool:
+    if re.search(_PERSISTENT + r'\s*\.\s*extend_ttl\s*\(', body): return True
+    # Recognize a local storage binding, but do not mistake instance TTL for
+    # persistent-entry TTL. Key matching/path reachability still need review.
+    aliases = re.findall(r'\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[A-Za-z_][A-Za-z0-9_]*' + _PERSISTENT + r'\s*;', body)
+    return any(re.search(r'\b' + re.escape(alias) + r'\s*\.\s*extend_ttl\s*\(', body) for alias in aliases)
+
+
 class StellarNativeAuditor(BaseAuditor):
     name = "stellar-native-auditor"
     dimension = Dimension.STELLAR_NATIVE
@@ -17,9 +102,9 @@ class StellarNativeAuditor(BaseAuditor):
     ) -> tuple[list[Finding], list[ScenarioResult], str]:
         findings: list[Finding] = []
         surface = artifact.text_surface()
-        rust = "\n".join(
-            content for name, content in artifact.code_files.items() if name.endswith(".rs")
-        )
+        rust_files = {name: content for name, content in artifact.code_files.items() if name.endswith('.rs')}
+        rust = '\n'.join(_rust_code(content) for content in rust_files.values())
+        functions = [{**fn, 'file': name} for name, content in rust_files.items() for fn in _rust_functions(content)]
         lower = surface.lower()
 
         if re.search(r"\bS[A-Z2-7]{55}\b", surface):
@@ -34,32 +119,44 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
 
-        mutating = bool(re.search(r"pub\s+fn\s+(?:set|reg|upd|fund|submit|complete|refund)", rust))
-        if mutating and "require_auth" not in rust:
+        # Constructor deployment authorization and custom-account __check_auth
+        # are separate boundaries; requiring require_auth inside them is unsound.
+        mutating = [fn for fn in functions if fn['name'] not in {'__constructor', '__check_auth'}
+                    and (_MUTATING_NAME.search(fn['name']) or _MUTATION.search(fn['body']))]
+        auth_gaps = [fn for fn in mutating if not _AUTH.search(fn['body'])]
+        persistent = [fn for fn in functions if re.search(_PERSISTENT, fn['body'])]
+        ttl_gaps = [fn for fn in persistent if not _has_persistent_ttl(fn['body'])]
+        def locations(items):
+            return '; '.join(f"{fn['file']}:{fn['line']} {fn['name']}" for fn in items)
+        if auth_gaps:
             findings.append(
                 self.finding(
                     "soroban-auth-missing",
-                    Severity.CRITICAL,
-                    "Soroban yazma işlevlerinde require_auth kanıtı yok",
-                    "Durum değiştiren entrypoint'ler bulundu ancak Address.require_auth görünmüyor.",
-                    remediation="Her rolü state'ten okuyun, eşleştirin ve ilgili Address için require_auth çağırın.",
-                    confidence=0.94,
+                    Severity.HIGH,
+                    "Soroban authorization paths require review",
+                    "Potentially mutating public functions lack a direct require_auth call in their own body. Authorization may exist in a helper or caller; this lexical review does not establish an exploitable authorization bypass.",
+                    evidence=locations(auth_gaps),
+                    remediation="Trace each entrypoint's actual authorization path, including helpers and invocation context, and run unauthorized-caller tests bound to the exact action arguments.",
+                    grade=EvidenceGrade.INFERRED,
+                    confidence=0.75,
                 )
             )
 
-        if "storage().persistent()" in rust and "extend_ttl" not in rust:
+        if ttl_gaps:
             findings.append(
                 self.finding(
                     "persistent-ttl",
                     Severity.HIGH,
-                    "Persistent state TTL yenilemesi görünmüyor",
-                    "Agent/validation state arşivlenebilir; uygulama state'i kalıcı sanabilir.",
-                    remediation="Okuma/yazma yollarında kontrollü extend_ttl politikası ve arşiv geri-yükleme testi ekleyin.",
-                    confidence=0.9,
+                    "Persistent state lifetime paths require review",
+                    "These public functions reference persistent storage without a recognized persistent-entry extend_ttl call in the same body. A helper or external maintenance policy may handle lifetime; its effectiveness was not verified.",
+                    evidence=locations(ttl_gaps),
+                    remediation="Trace the lifetime policy for each affected key, distinguish instance TTL from persistent-entry TTL, and test archival, restoration and missing-state behavior.",
+                    grade=EvidenceGrade.INFERRED,
+                    confidence=0.75,
                 )
             )
 
-        if "storage().temporary()" in rust and re.search(r"agent|valid|escrow|balance", lower):
+        if re.search(r'\.\s*storage\s*\(\s*\)\s*\.\s*temporary\s*\(', rust) and re.search(r"agent|valid|escrow|balance", lower):
             findings.append(
                 self.finding(
                     "temporary-critical-state",
@@ -123,19 +220,24 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
 
-        scenarios = [
-            ScenarioResult(
+        scenarios = []
+        if mutating:
+            scenarios.append(ScenarioResult(
                 scenario_id="ST-001",
-                name="Soroban role auth",
-                passed=not mutating or "require_auth" in rust,
-                reason="Durum değiştiren fonksiyonlarda require_auth aranır.",
-            ),
-            ScenarioResult(
+                name="Soroban authorization call presence",
+                passed=not auth_gaps,
+                reason="Per-function lexical call presence only; signer identity, control flow, helper authorization and runtime enforcement remain unverified.",
+                evidence=locations(mutating),
+            ))
+        if persistent:
+            scenarios.append(ScenarioResult(
                 scenario_id="ST-002",
-                name="Persistent TTL",
-                passed="storage().persistent()" not in rust or "extend_ttl" in rust,
-                reason="Arşivlenebilir state için TTL politikası aranır.",
-            ),
+                name="Persistent-entry TTL call presence",
+                passed=not ttl_gaps,
+                reason="Per-function lexical call presence only; key binding, execution paths, helper policies and restoration remain unverified.",
+                evidence=locations(persistent),
+            ))
+        scenarios.extend([
             ScenarioResult(
                 scenario_id="ST-003",
                 name="Event durability",
@@ -143,7 +245,7 @@ class StellarNativeAuditor(BaseAuditor):
                 or bool(re.search(r"cursor|pagingtoken|sqlite|dedup|unique", lower)),
                 reason="RPC retention yerine durable cursor/dedup aranır.",
             ),
-        ]
+        ])
         if deep:
             scenarios.append(
                 ScenarioResult(
@@ -156,4 +258,4 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
         source = artifact.onchain.data_source
-        return findings, scenarios, f"Stellar/Soroban yüzeyi denetlendi; onchain kaynak={source}."
+        return findings, scenarios, f"Stellar/Soroban source review; onchain source={source}. Rust checks are bounded lexical evidence, not a compiler, call graph, authorization proof or runtime test. Constructor and custom-account authorization need separate verification."

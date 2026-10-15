@@ -408,6 +408,7 @@ async def simulate_policy(req: PolicySimulation) -> dict:
 
 from .services.runtime_audit import RuntimeRequest, run_runtime
 from .services.discovery import discover_project
+from .stellar.auth_inspector import AuthorizationInspectionRequest, inspect_authorization_entry
 
 _runtime_lock = asyncio.Lock()
 
@@ -415,6 +416,17 @@ _runtime_lock = asyncio.Lock()
 @app.post("/api/v1/studio/discover")
 async def studio_discover(req: ReviewRequest) -> dict:
     return discover_project(req.files)
+
+
+@app.post("/api/v1/studio/stellar/inspect-auth")
+async def studio_inspect_auth(req: AuthorizationInspectionRequest) -> dict:
+    # Pure bounded decoding: no RPC, signatures, model calls or transaction submission.
+    from .reporting.generator import canonical_json
+    from hashlib import sha256
+    report = inspect_authorization_entry(req)
+    encoded = canonical_json(report)
+    return {"report": report, "report_json": encoded,
+            "report_sha256": sha256(encoded.encode()).hexdigest()}
 
 
 @app.post("/api/v1/studio/runtime")
@@ -439,6 +451,7 @@ async def studio_runtime(req: RuntimeRequest, authorization: str = Header(defaul
 async def studio_capabilities() -> dict:
     from .services.assurance import ArchitectureManifest
     return {"runtime_available": settings.enable_sandbox_runtime and len(settings.runtime_api_key) >= 32,
+            "soroban_auth_inspection_available": True,
             "runtime_auth_required": True, "runtime_adapter": "python_text",
             "ai_available": settings.enable_public_ai_review and settings.llm_enabled,
             "ai_provider": settings.llm_provider if settings.enable_public_ai_review else "",
@@ -601,9 +614,9 @@ async def create_job(req: JobCreate) -> dict:
                 status_code=409,
                 detail={
                     "job_id": job.id,
-                    "state": "awaiting_signature",
+                    "state": exc.state,
                     "reason": str(exc),
-                    "invocation": job.escrow.tx_ref if job.escrow else "",
+                    "invocation": job.escrow.tx_ref if job.escrow and exc.state == "awaiting_signature" else "",
                 },
             ) from exc
         except EscrowIndeterminateError as exc:
@@ -624,9 +637,9 @@ async def fund_job(job_id: str, req: FundRequest) -> dict:
             status_code=409,
             detail={
                 "job_id": job_id,
-                "state": "awaiting_signature",
+                "state": exc.state,
                 "reason": str(exc),
-                "invocation": job.escrow.tx_ref if job and job.escrow else "",
+                "invocation": job.escrow.tx_ref if job and job.escrow and exc.state == "awaiting_signature" else "",
             },
         ) from exc
     except EscrowIndeterminateError as exc:
@@ -640,6 +653,17 @@ async def run_job(job_id: str) -> dict:
         job = await pipeline.run_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ExternalSignatureRequired as exc:
+        job = pipeline.store.get_job(job_id)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "job_id": job_id,
+                "state": exc.state,
+                "reason": str(exc),
+                "invocation": job.escrow.tx_ref if job and job.escrow and exc.state == "awaiting_signature" else "",
+            },
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _job_view(job)
@@ -713,9 +737,9 @@ async def validation_request(hook: ValidationRequestHook) -> dict:
             status_code=409,
             detail={
                 "job_id": job.id,
-                "state": "awaiting_signature",
+                "state": exc.state,
                 "reason": str(exc),
-                "invocation": job.escrow.tx_ref if job.escrow else "",
+                "invocation": job.escrow.tx_ref if job.escrow and exc.state == "awaiting_signature" else "",
             },
         ) from exc
     job = await pipeline.run_job(job.id)
