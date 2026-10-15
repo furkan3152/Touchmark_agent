@@ -170,6 +170,10 @@
     if (runtime) {
       const evidence = runtime.report || runtime;
       const observations = evidence.observations || [];
+      const attention = observations.filter((item) => item.status !== "observed");
+      if (attention.length) {
+        byId("result-summary").textContent = `${attention.length} of ${observations.length} runtime cases require attention. Open Runtime for failed checks, exceptions and incomplete evidence. Source findings are listed separately.`;
+      }
       byId("runtime-results").replaceChildren();
       observations.forEach((item) => {
         const card = node("article", undefined, "runtime-observation");

@@ -83,6 +83,7 @@ async def verify(run_id, restart_only=False):
             raise ValueError('Durable report bytes changed')
         evidence['checks'].append({'id':'fresh_vm_same_drive_no_reexecution', 'passed':True})
         evidence['status'] = 'verified'
+        evidence['checks'] = list({check['id']:check for check in evidence['checks']}.values())
         publish(evidence)
         return
     if not state.get('engagement'):
