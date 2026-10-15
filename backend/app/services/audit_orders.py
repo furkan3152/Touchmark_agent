@@ -471,6 +471,36 @@ async def reconcile_pending_orders(store: AuditOrderStore, settings, *, checkout
     return outcomes
 
 
+def _observed_workflow_exception(observation, runtime):
+    """A completed runner may report a real agent exception as negative evidence.
+
+    Missing runner output, provider failures and ambiguous side effects must not
+    become paid fulfillment merely because an error string exists in VM output.
+    """
+    if not runtime.get('execution_profile') or observation.get('exit_code') != 0:
+        return False
+    case = next((c for c in runtime.get('cases', []) if c.get('id') == observation.get('id')), {})
+    steps = case.get('workflow', {}).get('steps', [])
+    outcomes = observation.get('step_outcomes')
+    if (not steps or not isinstance(outcomes, list) or len(outcomes) != len(steps)
+            or observation.get('steps_observed') != len(steps)
+            or any(not isinstance(o, dict) or o.get('step') != i for i, o in enumerate(outcomes))):
+        return False
+    errors = [o.get('error') for o in outcomes if o.get('error')]
+    agent_errors = {'KeyError','ValueError','PermissionError','TypeError','AssertionError',
+                    'IndexError','AttributeError','ZeroDivisionError','RuntimeError'}
+    if not errors or any(error not in agent_errors for error in errors):
+        return False
+    bounds = observation.get('external_event_range')
+    events = runtime.get('broker_evidence', {}).get('events')
+    if (not isinstance(events, list) or not isinstance(bounds, list) or len(bounds) != 2
+            or any(type(i) is not int for i in bounds) or not 0 <= bounds[0] <= bounds[1] <= len(events)):
+        return False
+    return all(isinstance(event, dict) and event.get('workflow') == observation['id']
+               and event.get('status') in {'completed','confirmed','denied'}
+               for event in events[bounds[0]:bounds[1]])
+
+
 def _validate_result(result, order):
     if not isinstance(result, dict):
         raise OrderError('Executor returned no canonical report.')
@@ -513,8 +543,12 @@ def _validate_result(result, order):
             status = observation.get('status')
             if status in {'observed', 'needs_investigation', 'timeout'}:
                 continue
-            if status == 'inconclusive' and isinstance(observation.get('error'), str) and observation['error']:
-                continue
+            if status == 'inconclusive':
+                if runtime.get('execution_profile'):
+                    if _observed_workflow_exception(observation, runtime):
+                        continue
+                elif isinstance(observation.get('error'), str) and observation['error']:
+                    continue
             raise OrderError('Runtime infrastructure or missing telemetry blocked the requested case pack.')
         if plan.get('ai_generated_cases_max', 0) and runtime.get('ai_planning') not in {'completed', 'skipped_case_budget'}:
             raise OrderError('The requested AI runtime planning did not complete.')
