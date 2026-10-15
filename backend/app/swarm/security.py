@@ -183,7 +183,7 @@ class SecurityAuditor(BaseAuditor):
                 severity,
                 attack.name,
                 attack.detail,
-                evidence=f"denenen payload: {attack.payload}",
+                evidence=f"Unexecuted test input: {attack.payload}",
                 remediation=attack.remediation,
                 references=[attack.owasp],
                 # Savunma cümlesinin yokluğu istismarın kanıtı değildir.

@@ -63,3 +63,22 @@ async def test_capsule_approval_cannot_be_bypassed_by_broker():
         response=await b.handle({'id':'c'*32,'method':'balance','args':{'account':b.recipient.public_key}})
         assert response['error']=='PermissionError'
     finally:b.close()
+
+
+def test_instruction_extraction_parses_literals_without_imports():
+    from backend.app.services.studio import instruction_literals
+    source={'agent.py':'raise RuntimeError("must never import")\nasync def act(model):\n    return await model.decide("Only pay approved invoices; never change destinations.", {})\n'}
+    result=instruction_literals(source)
+    assert len(result)==1 and result[0]['line']==3 and result[0]['runtime_verified'] is False
+
+
+def test_runtime_profile_is_bound_to_plan_and_native_missing_env_blocks_before_payment():
+    from backend.app.services.audit_product import EngagementRequest,build_plan
+    c,_=subject()
+    request=EngagementRequest(capsule=c.model_dump(mode='json'),tier_id='deep',module_ids=c.audit.modules,execution_consent=True)
+    plan=build_plan(request,Settings(_env_file=None,enable_sandbox_runtime=True,enable_brokered_runtime=True))['plan']
+    assert plan['planned_runtime_cases']==5 and len(plan['execution_profile']['sha256'])==64
+    old=parse_capsule((ROOT/'research/customer-trial-2026-10-15/invoicepilot.veritas').read_bytes())
+    request=EngagementRequest(capsule=old.model_dump(mode='json'),tier_id='deep',module_ids=old.audit.modules,execution_consent=True)
+    plan=build_plan(request,Settings(_env_file=None,enable_sandbox_runtime=True))['plan']
+    assert any('before payment' in x for x in plan['blockers'])

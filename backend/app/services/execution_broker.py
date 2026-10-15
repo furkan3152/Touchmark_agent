@@ -14,8 +14,9 @@ from ..swarm.llm import LlmClient
 from ..reporting.generator import canonical_json
 
 class ExecutionBroker:
-    def __init__(self,spec,settings,capsule):
+    def __init__(self,spec,settings,capsule,*,journal=None):
         self.spec,self.settings=spec,settings
+        self.journal=journal
         allowed={r.capability:r for r in capsule.policy.rules if r.allow}
         self.actions={c.action for c in capsule.capabilities if c.id in allowed}
         self.action_rules={action:[allowed[c.id] for c in capsule.capabilities if c.action==action and c.id in allowed] for action in self.actions}
@@ -26,10 +27,34 @@ class ExecutionBroker:
         self.workflow=None;self.fault_used=False;self.start=0
         self.public_accounts={'payer':self.payer.public_key,'recipient':self.recipient.public_key}
     async def prepare(self):
-        async with httpx.AsyncClient(timeout=40,follow_redirects=False) as client:
-            for key in (self.payer,self.recipient):
-                response=await client.get('https://friendbot.stellar.org',params={'addr':key.public_key})
-                response.raise_for_status()
+        self.funding_evidence = None
+        if self.settings.audit_testnet_funding_secret:
+            funding = Keypair.from_secret(self.settings.audit_testnet_funding_secret)
+            account = await asyncio.to_thread(self.server.load_account, funding.public_key)
+            tx = (TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)
+                .append_create_account_op(self.payer.public_key, '2')
+                .append_create_account_op(self.recipient.public_key, '1')
+                .add_text_memo('Veritas isolated audit').set_timeout(60).build())
+            tx.sign(funding)
+            if self.journal:
+                await self.journal.save('funding-intent','accounts',{'transaction_hash':tx.hash_hex(),'signed_xdr':tx.to_xdr(),'public_accounts':self.public_accounts})
+            try: value = await asyncio.to_thread(self.server.submit_transaction, tx)
+            except Exception:
+                # Do not rebuild or resend after an ambiguous submission.
+                try: value = await asyncio.to_thread(self.server.transactions().transaction(tx.hash_hex()).call)
+                except Exception: raise ValueError('Testnet funding outcome is unknown; reconcile the exact transaction before retrying.') from None
+            if value.get('hash') != tx.hash_hex() or value.get('successful') is not True:
+                raise ValueError('Testnet funding was not confirmed.')
+            self.funding_evidence = {'transaction_hash': tx.hash_hex(), 'ledger': value['ledger'],
+                'amount_xlm': '3', 'network': 'testnet', 'source': funding.public_key}
+            if self.journal:await self.journal.save('funding-result','accounts',self.funding_evidence)
+        else:
+            async with httpx.AsyncClient(timeout=40,follow_redirects=False) as client:
+                for key in (self.payer,self.recipient):
+                    response=await client.get('https://friendbot.stellar.org',params={'addr':key.public_key})
+                    if response.status_code != 200:
+                        try: await asyncio.to_thread(self.server.load_account, key.public_key)
+                        except Exception: raise ValueError(f'Testnet faucet unavailable (HTTP {response.status_code}); configure a dedicated Testnet funding pool.') from None
         balance=await asyncio.to_thread(self.balance,self.recipient.public_key)
         self.replacements={'$recipient':self.recipient.public_key,'$payer':self.payer.public_key,
             '$target':str(Decimal(balance)+Decimal('0.0000100')),'$broker':'veritas-broker-no-credential'}
@@ -84,8 +109,10 @@ class ExecutionBroker:
                 event['mode']='declared_fixture';return self.resolve(self.workflow.model_reply)
             if self.model_calls>=self.spec.max_model_calls:raise PermissionError('Model budget exhausted')
             self.model_calls+=1;model=LlmClient(self.settings)
+            if self.journal:await self.journal.save('model-attempt',event['request_id'],{'input_sha256':event['input_sha256'],'model':self.settings.llm_model,'max_tokens':500})
             result=await model.judge(args['instruction'],json.dumps(args['context']),max_tokens=500)
             event.update(mode='live_model',provider_call=model.last_call)
+            if self.journal:await self.journal.save('model-result',event['request_id'],model.last_call)
             if result is None:raise ValueError('Model response unavailable')
             event['output_sha256']=sha256(canonical_json(result).encode()).hexdigest();return result
         if method in {'balance','recent'}:
@@ -117,6 +144,7 @@ class ExecutionBroker:
             .append_payment_op(self.recipient.public_key,Asset.native(),format(amount,'.7f'))
             .add_text_memo(args['reference']).set_timeout(60).build())
         tx.sign(self.payer);event['transaction_hash']=tx.hash_hex()
+        if self.journal:await self.journal.save('payment-intent',event['request_id'],{'transaction_hash':tx.hash_hex(),'signed_xdr':tx.to_xdr(),'workflow':self.workflow.id})
         try:result=await asyncio.to_thread(self.server.submit_transaction,tx)
         except Exception:
             # Reconcile this exact hash once; never submit a new transaction.
@@ -128,6 +156,7 @@ class ExecutionBroker:
         if readback.get('hash')!=tx.hash_hex() or readback.get('successful') is not True:raise ValueError('Readback mismatch')
         receipt={'hash':tx.hash_hex(),'ledger':readback['ledger'],'successful':True,'destination':self.recipient.public_key,'amount':format(amount,'.7f'),'reference':args['reference']}
         event['receipt']=receipt;event['status']='confirmed'
+        if self.journal:await self.journal.save('payment-result',event['request_id'],receipt)
         if fault=='after_accept':
             event['fault']='acknowledgement_lost';raise TimeoutError('Injected after ledger confirmation')
         return receipt

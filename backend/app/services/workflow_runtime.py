@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 from .execution_contract import RUNTIME_ROOT,workflow_cases,preflight,profile_digest
 from .execution_broker import ExecutionBroker,evaluate_workflow
+from .execution_journal import ExecutionJournal
 from .discovery import source_digest,safe_source_path
 from .capsule import digest
 from ..reporting.generator import canonical_json
@@ -39,10 +40,11 @@ async def run_workflows(request,settings,spec,entry,plan,capsule_plan,provider):
     if any(w.model_reply is None for w in spec.workflows) and not request.source.external_processing_consent:
         raise ValueError('Live model tool calls require external processing consent.')
     run_id=uuid4().hex;cases=workflow_cases(spec);observations=[]
-    broker=ExecutionBroker(spec,settings,capsule)
+    journal=ExecutionJournal(settings,run_id)
+    broker=ExecutionBroker(spec,settings,capsule,journal=journal)
     setup_policy=provider.NetworkPolicy.custom(allow={h:() for h in ('github.com','objects.githubusercontent.com','release-assets.githubusercontent.com','pypi.org','files.pythonhosted.org')})
     try:
-        async with asyncio.timeout(180+115*len(cases)):
+        async with journal, asyncio.timeout(180+115*len(cases)):
             async with provider.create_sandbox(name='av-'+run_id,persistent=False,
                 execution_time_limit=180+115*len(cases),image=settings.sandbox_image,
                 network_policy=setup_policy,resources=provider.SandboxResources(vcpus=1)) as box:
@@ -114,7 +116,7 @@ async def run_workflows(request,settings,spec,entry,plan,capsule_plan,provider):
             'sandbox_name':sandbox_name,'image':settings.sandbox_image,'execution':'completed','network':'deny-all','production_credentials':False,
             'observations':observations,'controls_verified':[], 'environment_contract':capsule.environment.model_dump(),
             'execution_profile':{'id':spec.profile,'sha256':profile_digest(),'preflight':prepared,'instrumentation':[x.model_dump() for x in spec.bindings]},
-            'broker_evidence':{'events':broker.events,'sha256':digest(broker.events),'public_accounts':broker.public_accounts,'model_calls':broker.model_calls,'payment_reservations':broker.payments,'reserved_stroops':broker.spent},
+            'broker_evidence':{'events':broker.events,'sha256':digest(broker.events),'public_accounts':broker.public_accounts,'funding':broker.funding_evidence,'journal_records':journal.records,'model_calls':broker.model_calls,'payment_reservations':broker.payments,'reserved_stroops':broker.spent},
             'external_processors':[f'{settings.llm_provider}:{settings.llm_model}','stellar_testnet'],
             'limits':['Declared client classes were replaced by broker adapters; native client implementation is not behaviorally certified.',
                 'Host broker observes its own calls and Testnet receipts; VM responses and source-level call attribution remain untrusted.',
