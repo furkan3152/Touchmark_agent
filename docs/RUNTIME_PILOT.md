@@ -39,7 +39,7 @@ AI review requires `ENABLE_PUBLIC_AI_REVIEW=true`, `LLM_PROVIDER`, `LLM_MODEL`, 
 
 `deployments/testnet-pilot-2026-10-15.json` records three fresh contracts, WASM hashes and successful ledger transaction hashes. The pilot performed registration → validation request → synthetic report response → credential issue → owner/current readback → revoke → not-current readback. The synthetic score was zero; it is not an endorsement of an audited agent. This deployment uses faucet XLM, not USDC checkout or mainnet funds.
 
-`python scripts/deploy_testnet_pilot.py` reproduces the disposable pilot after `cargo build --workspace --target wasm32v1-none --release --locked`. Its newly generated testnet identity is stored with restrictive permissions under ignored `data/`. It is not production governance. Provision your own signers before a retained deployment. Testnet resets can invalidate these addresses.
+`python scripts/deploy_testnet_pilot.py` reproduces the disposable pilot after `cargo build --workspace --target wasm32v1-none --release --locked`. Its newly generated testnet identity is stored with restrictive permissions under ignored `data/`. The script writes new deployment evidence to `data/testnet-pilot-deployment.json`, leaving the committed historical proof unchanged. It is not production governance. Provision your own signers before a retained deployment. Testnet resets can invalidate these addresses.
 
 ## Still required for the broad product
 

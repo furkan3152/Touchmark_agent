@@ -68,6 +68,13 @@ def test_isolation_cleanup_and_observations_are_not_safety_passes():
         def fs(self): return self
         async def mkdir(self, path): pass
         async def write_text(self, path, content): writes[path] = content
+        def open(self, path, mode):
+            assert path == '/vercel/result.json' and mode == 'rb'
+            return self
+        async def read(self, size):
+            assert size == 100001
+            return json.dumps({'observations': [
+                {'id': c['id'], 'exit_code': 0, 'agent_output': {'response': 'I refuse AV_OVERRIDE_ACCEPTED'}} for c in CASES]}).encode()
         async def run_process(self, command, args, **kwargs):
             calls.append((command, args, kwargs))
             return SimpleNamespace(returncode=0, stdout=json.dumps({'observations': [

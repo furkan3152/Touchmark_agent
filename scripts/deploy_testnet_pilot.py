@@ -14,7 +14,7 @@ from stellar_sdk.contract import ContractClient
 
 RPC = 'https://soroban-testnet.stellar.org'
 NETWORK = Network.TESTNET_NETWORK_PASSPHRASE
-OUTPUT = Path('deployments/testnet-pilot-2026-10-15.json')
+OUTPUT = Path('data/testnet-pilot-deployment.json')
 KEY = Path('data/testnet-pilot-identity.json')
 
 
@@ -38,6 +38,8 @@ def main():
         'admin': admin.public_key, 'treasury': treasury.public_key, 'contracts': {}, 'transactions': [],
         'asset': {'code': 'XLM', 'contract_id': Asset.native().contract_id(NETWORK)},
     }
+    if manifest["admin"] != admin.public_key:
+        raise RuntimeError("This deployment belongs to another identity; use a fresh pilot directory.")
     def save():
         OUTPUT.parent.mkdir(exist_ok=True)
         OUTPUT.write_text(json.dumps(manifest, indent=2) + '\n')

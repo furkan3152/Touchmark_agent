@@ -82,10 +82,10 @@ def discover_project(files: dict[str, str]) -> dict:
                         'confidence': 'declared', 'reason': f'Python console entry point: {str(value)[:200]}'})
             elif basename.startswith('requirements') and suffix == '.txt':
                 dependencies.update(line.strip()[:120] for line in content.splitlines() if line.strip() and not line.startswith('#'))
-        except (ValueError, TypeError, AttributeError):
+        except (ValueError, TypeError, AttributeError, RecursionError):
             diagnostics.append({'file': path, 'reason': 'Dependency manifest could not be parsed.'})
     for token, label in FRAMEWORKS.items():
-        if any(v == token or v.startswith(token + '.') or v.startswith(token + '/') or v.startswith(token + '=') or token.endswith('/') and v.startswith(token) for v in imports | dependencies):
+        if any(v == token or v.startswith(token + '.') or v.startswith(token + '/') or v.startswith(token + '=') or token.endswith('/') and v.startswith(token) for v in imports | {re.split(r"[<>=~!\[ ]", d)[0].replace("-", "_") for d in dependencies}):
             frameworks.add(label)
     return {'schema': 'agentveritas.discovery.v1', 'source_sha256': source_digest(files),
             'files_inspected': len(files), 'frameworks': sorted(frameworks),
