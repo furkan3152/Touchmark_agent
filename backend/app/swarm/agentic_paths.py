@@ -221,7 +221,9 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
         confirmed = bool(direct)
         findings.append(Finding(
             id=fid, dimension=Dimension.SECURITY,
-            severity=severity if confirmed else severity.downgrade(1),
+            # A file path its caller chooses is the caller's own business unless input from
+            # outside reaches it; that case is confirmed above.
+            severity=severity if confirmed else severity.downgrade(2 if category == "path_traversal" else 1),
             title=title,
             detail=detail if confirmed else detail + " The value enters through a public function whose callers are not in the submitted source, so the input origin is unresolved.",
             evidence=_evidence(chosen),
@@ -246,8 +248,9 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     lexical_command: list[_Hit] = []
     lexical_financial: list[_Hit] = []
     lexical_exfil: list[_Hit] = []
+    analysed = set(profile.analysed_files)
     for filename, content in artifact.code_files.items():
-        if filename.lower().endswith(".py") or not filename.lower().endswith(_IMPLEMENTATION_SUFFIXES):
+        if filename in analysed or filename.lower().endswith(".py") or not filename.lower().endswith(_IMPLEMENTATION_SUFFIXES):
             continue
         commands, financial, exfil = _scan_file(filename, content)
         lexical_command += commands

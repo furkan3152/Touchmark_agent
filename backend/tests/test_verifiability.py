@@ -13,12 +13,31 @@ from backend.app.swarm.orchestrator import AuditSwarm
 from backend.tests.test_deep_review import ScriptedClient, call, reply
 
 TS_AGENT = {
-    "src/pay.ts": 'import { Keypair } from "@stellar/stellar-sdk";\n'
+    "src/pay.ts": 'import { Keypair, Operation, TransactionBuilder } from "@stellar/stellar-sdk";\n'
+                  'import { MAX } from "./util";\n'
+                  'const ALLOW = new Set(["GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"]);\n'
                   'export async function pay(to: string, amount: string) {\n'
                   '  if (!ALLOW.has(to) || Number(amount) > MAX) throw new Error("denied");\n'
                   '  const kp = Keypair.fromSecret(process.env.WALLET_SECRET!);\n'
-                  '  return server.submitTransaction(build(kp, to, amount));\n}\n',
+                  '  const tx = new TransactionBuilder(await server.loadAccount(kp.publicKey()), opts)\n'
+                  '    .addOperation(Operation.payment({ destination: to, asset, amount })).setTimeout(30).build();\n'
+                  '  tx.sign(kp);\n'
+                  '  return server.submitTransaction(tx);\n}\n',
     "src/util.ts": "export const MAX = 50;\n",
+}
+#: The same authority in a file the parser cannot read (merge-conflict debris): its
+#: controls are invisible to data flow, so only a full reading can judge them.
+UNPARSABLE = {
+    "src/pay.ts": TS_AGENT["src/pay.ts"] + "<<<<<<< HEAD ))) {{{ \n" * 60,
+    "src/util.ts": TS_AGENT["src/util.ts"],
+}
+UNGUARDED = {
+    "src/pay.ts": 'import { Keypair } from "@stellar/stellar-sdk";\n'
+                  'server.tool("pay", "pay", { to: z.string(), amount: z.string() }, async ({ to, amount }) => {\n'
+                  '  const kp = Keypair.fromSecret(process.env.WALLET_SECRET!);\n'
+                  '  const tx = new TransactionBuilder(acc, o).addOperation(Operation.payment({ destination: to, asset, amount })).build();\n'
+                  '  tx.sign(kp);\n'
+                  '  return server.submitTransaction(tx);\n});\n',
 }
 
 
@@ -32,8 +51,17 @@ def run(art, reviewer=None):
         art, "job", AuditTier.DEEP, deep_reviewer=reviewer))
 
 
-def test_typescript_authority_without_deep_review_cannot_pass():
-    report = run(artifact())
+def test_typescript_controls_are_verified_by_data_flow():
+    guarded = run(artifact())
+    assert "security-controls-unverifiable" not in {f.id for f in guarded.findings}
+    assert guarded.decision == "pass"
+    unguarded = run(artifact(UNGUARDED))
+    assert "security-path-untrusted-to-financial-sink" in {f.id for f in unguarded.findings if f.is_risk}
+    assert unguarded.decision == "needs_fixes"
+
+
+def test_unparsable_authority_without_deep_review_cannot_pass():
+    report = run(artifact(UNPARSABLE))
     by_id = {f.id: f for f in report.findings}
     assert by_id["security-controls-unverifiable"].kind.value == "evidence_gap"
     for rule in ("economic-no-spend-policy", "security-path-controls-not-enforced"):
@@ -46,11 +74,11 @@ def test_completed_deep_review_that_read_every_file_closes_the_gap():
     client = ScriptedClient([
         reply(call("describe_operating_model", purpose="pay", triggers="operator", example_run="pay vendor",
                    trust_boundaries=["operator"], assets_at_risk=["XLM"]),
-              call("read_source", path="src/pay.ts", start_line=1, end_line=6),
+              call("read_source", path="src/pay.ts", start_line=1, end_line=70),
               call("read_source", path="src/util.ts", start_line=1, end_line=1)),
         reply(call("finish", summary="allowlist and cap enforced before signing")),
     ])
-    report = run(artifact(), DeepReviewer(client, model="claude-sonnet-5-5"))
+    report = run(artifact(UNPARSABLE), DeepReviewer(client, model="claude-sonnet-5-5"))
     assert "security-controls-unverifiable" not in {f.id for f in report.findings}
     assert report.deep_review["unverifiable_controls_resolved"] is True
     assert report.decision == "pass"
@@ -61,7 +89,7 @@ def test_partial_reading_keeps_the_gap():
         reply(call("read_source", path="src/util.ts", start_line=1, end_line=1)),
         reply(call("finish", summary="skimmed")),
     ])
-    report = run(artifact(), DeepReviewer(client, model="claude-sonnet-5-5"))
+    report = run(artifact(UNPARSABLE), DeepReviewer(client, model="claude-sonnet-5-5"))
     assert "security-controls-unverifiable" in {f.id for f in report.findings}
     assert report.decision == "needs_evidence"
 

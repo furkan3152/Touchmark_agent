@@ -88,9 +88,17 @@ def test_deep_does_not_invent_python_execution_paths(settings, run, code):
     assert not any(f.id in path_ids for f in verdict.findings)
 
 
-def test_non_python_text_matching_is_not_confirmed_dataflow(settings, run):
-    artifact = _artifact(code_files={"agent.js": "const payload = req.body;\nsoroban.invoke_contract(payload);"})
-    verdict = run(SecurityAuditor(settings).run(artifact, deep=True))
+def test_javascript_data_flow_is_confirmed_and_unparsable_text_stays_inferred(settings, run):
+    handler = ("app.post('/invoke', (req, res) => {\n"
+               "  const payload = req.body;\n"
+               "  soroban.invoke_contract(payload);\n"
+               "});\n")
+    verdict = run(SecurityAuditor(settings).run(_artifact(code_files={"agent.js": handler}), deep=True))
+    finding = next(f for f in verdict.findings if f.id == "security-path-untrusted-to-financial-sink")
+    assert finding.evidence_grade.value == "confirmed"
+    # A file the parser cannot read falls back to lexical candidates, never confirmed.
+    broken = "const payload = req.body;\n" + "<<<<<<< ))) {{{ \n" * 40 + "soroban.invoke_contract(payload);\n"
+    verdict = run(SecurityAuditor(settings).run(_artifact(code_files={"agent.js": broken}), deep=True))
     finding = next(f for f in verdict.findings if f.id == "security-path-untrusted-to-financial-sink")
     assert finding.evidence_grade.value == "inferred"
 

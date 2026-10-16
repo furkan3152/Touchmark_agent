@@ -327,15 +327,23 @@ class AuditSwarm:
         from .capabilities import unverifiable_control_files
         closed = (result.status == "completed"
                   and set(unverifiable_control_files(artifact)) <= set(result.files_read))
+        # Files the parser could not read are covered only when the review read each of them;
+        # an analyser crash (profile error) is never closed this way.
+        unparsed = set(artifact.code_profile.get("unparsed_files", []))
+        parsed_gap_closed = (result.status == "completed" and bool(unparsed)
+                             and not artifact.code_profile.get("error") and unparsed <= set(result.files_read))
         updated = []
         for verdict in verdicts:
-            findings = [f for f in verdict.findings if not (closed and f.id == "security-controls-unverifiable")]
+            findings = [f for f in verdict.findings
+                        if not (closed and f.id == "security-controls-unverifiable")
+                        and not (parsed_gap_closed and f.id == "security-source-analysis-incomplete")]
             findings += by_dimension.get(verdict.dimension, [])
             if findings != verdict.findings:
                 verdict = self._rescore(verdict, findings)
             updated.append(verdict)
         record = result.report()
         record["unverifiable_controls_resolved"] = closed
+        record["unparsed_files_read"] = parsed_gap_closed
         return updated, record
 
     @property
