@@ -40,7 +40,7 @@ NETWORKS = {
         TESTNET,
         "Stellar Testnet",
         "Test SDF Network ; September 2015",
-        "https://soroban-testnet.stellar.org",
+        "https://soroban-rpc.testnet.stellar.gateway.fm",
         "https://horizon-testnet.stellar.org",
         "https://stellar.expert/explorer/testnet",
         "https://friendbot.stellar.org",

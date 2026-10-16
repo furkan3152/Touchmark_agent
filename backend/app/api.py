@@ -51,6 +51,8 @@ async def require_operator(
     is timing-safe; a simple process-local limit does not replace a reverse-proxy limit,
     but it limits accidental/automated abuse of the single key.
     """
+    if settings.stateless_studio:
+        raise HTTPException(status_code=503, detail="operator API requires persistent deployment")
     expected = settings.admin_api_key
     if not expected:
         raise HTTPException(status_code=503, detail="operator API disabled: ADMIN_API_KEY required")
@@ -76,11 +78,26 @@ async def lifespan(app: FastAPI):
     `on_event` is deprecated in FastAPI 0.115; since `lifespan` provides a single
     entry/exit point, there is no risk of skipping the `store.flush()` call on shutdown.
     """
+    if settings.stateless_studio:
+        yield
+        return
     task = asyncio.create_task(_monitor_loop())
     app.state.monitor_task = task
+    order_task = None
+    if settings.enable_official_orders:
+        from .services.official_fulfillment import OfficialFulfillment
+        service = OfficialFulfillment(settings)
+        app.state.official_fulfillment = service
+        order_task = asyncio.create_task(service.run())
     try:
         yield
     finally:
+        if order_task is not None:
+            order_task.cancel()
+            try:
+                await order_task
+            except asyncio.CancelledError:
+                pass
         task.cancel()
         try:
             await task
@@ -182,7 +199,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self'; "
+        "img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self' https://soroban-rpc.testnet.stellar.gateway.fm; "
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     )
     if request.url.path.startswith("/api/"):
@@ -207,10 +224,12 @@ async def health() -> dict:
             "explorer": settings.explorer,
         },
         "modes": {
-            "operator_api": bool(settings.admin_api_key),
+            "operator_api": bool(settings.admin_api_key) and not settings.stateless_studio,
+            "stateless_studio": settings.stateless_studio,
             "llm": settings.llm_enabled,
             "rpc": settings.rpc_enabled,
-            "contract_submission": False,
+            "contract_submission": bool(getattr(app.state, 'official_fulfillment', None)),
+            "contract_submission_scope": 'pinned_testnet_official_provider_and_evaluator_only',
             "ipfs": settings.ipfs_enabled,
             "screening": settings.screening_enabled,
         },
@@ -227,9 +246,12 @@ async def chain_status_view() -> dict:
 
 @app.get("/api/v1/chain/signing-boundary")
 async def signing_boundary() -> dict:
+    official = bool(getattr(app.state, 'official_fulfillment', None))
     return {
-        "backend_signing": False,
-        "secret_storage": False,
+        "backend_signing": official,
+        "secret_storage": official,
+        "signing_scope": 'pinned_testnet_official_provider_and_evaluator_only' if official else 'disabled',
+        "customer_transactions": 'external_wallet_signature_required',
         "external_signing_required": True,
         "success_requires": ["successful transaction", "registry state/event readback"],
     }
@@ -381,9 +403,376 @@ async def config() -> dict:
 
 
 # ---------------------------------------------------------------------- agents
+from .services.runtime_policy import RuntimePolicy, Action, evaluate
+
+
+class PolicySimulation(BaseModel):
+    policy: RuntimePolicy
+    action: Action
+    spent: int = Field(default=0, ge=0, le=2**63-1, strict=True)
+    paused: bool = False
+
+
+@app.post("/api/v1/studio/policy")
+async def simulate_policy(req: PolicySimulation) -> dict:
+    reasons = evaluate(req.policy, req.action, spent=req.spent, paused=req.paused)
+    if req.policy.require_approval:
+        reasons.append("signed_approval_required")
+    return {"allowed": not reasons, "reasons": reasons, "simulation": True,
+            "executed": False, "note": "Simulation only. No action is authorized or submitted."}
+
+
+from .services.runtime_audit import RuntimeRequest, run_runtime
+from .services.discovery import discover_project
+from .stellar.auth_inspector import AuthorizationInspectionRequest, inspect_authorization_entry
+
+_runtime_lock = asyncio.Lock()
+
+
+def require_pilot_key(authorization: str, *, ai: bool = False) -> None:
+    expected = (settings.ai_review_api_key or settings.runtime_api_key) if ai else settings.runtime_api_key
+    if len(expected) < 32 or not authorization.startswith('Bearer ') or not secrets.compare_digest(authorization[7:].encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail='A valid private pilot access key is required.')
+
+
+from .services.audit_product import EngagementRequest, catalogue, build_plan, audit_engagement, normalize
+from .services.report_delivery import DeliveryRequest, deliver_report, pilot_evidence
+from .services.testnet_checkout import CheckoutRequest, CheckoutStepRequest, prepare_checkout, prepare_checkout_step
+from pydantic import ConfigDict
+
+
+class CapsuleImportRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    document: str = Field(min_length=2, max_length=96_000)
+
+
+@app.get('/api/v1/studio/catalog')
+async def studio_catalog() -> dict:
+    return catalogue(settings)
+
+
+@app.post('/api/v1/studio/checkout')
+async def studio_checkout(req: CheckoutRequest, authorization: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    try:
+        return await prepare_checkout(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/checkout/prepare')
+async def studio_checkout_prepare(req: CheckoutStepRequest, authorization: str = Header(default=''),
+                                  x_order_id: str = Header(default=''), x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    try:
+        if req.step == 'fund':
+            service = _official_service()
+            summary = service.store.get(x_order_id, x_order_token)
+            if (summary['order_id'] != req.quote.request_id or summary['requester'] != req.quote.requester
+                    or summary['plan_sha256'] != req.quote.plan_sha256
+                    or summary['source_sha256'] != req.quote.source_sha256
+                    or summary['status'] != 'awaiting_payment'):
+                raise ValueError('Create a matching private official order before funding.')
+        return await prepare_checkout_step(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+from .services.audit_orders import OrderSubmission, create_order, activate_order, recover_order
+from .services.order_identity import make_order_challenge
+from .services.official_fulfillment import order_capabilities
+
+
+def _official_service():
+    capability = order_capabilities(settings)
+    service = getattr(app.state, 'official_fulfillment', None)
+    if not capability['available'] or service is None or not service.health['running']:
+        raise HTTPException(status_code=503, detail=capability['reason'] or 'The persistent official worker is not running.')
+    return service
+
+
+def _official_store():
+    """Read/recovery/refund access survives a paused worker or rotated service key."""
+    if settings.stateless_studio:
+        raise HTTPException(status_code=503, detail='Private orders require the persistent operator service.')
+    service = getattr(app.state, 'official_fulfillment', None)
+    if service is not None:
+        return service.store
+    from .services.audit_orders import AuditOrderStore
+    path = Path(settings.official_orders_database)
+    if not path.is_file():
+        raise HTTPException(status_code=503, detail='The private order database is not available.')
+    try:
+        return AuditOrderStore(path, deployment='local' if settings.official_orders_local_pilot else 'persistent',
+                               durable_storage=settings.official_orders_storage_durable)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail='The private order database is not available on persistent storage.') from exc
+
+
+@app.get('/api/v1/studio/orders/capabilities')
+async def studio_order_capabilities() -> dict:
+    value = order_capabilities(settings)
+    service = getattr(app.state, 'official_fulfillment', None)
+    if value['available'] and (service is None or not service.health['running']):
+        value.update(available=False, automatic_settlement=False, reason='The persistent official worker is not running.')
+    return value
+
+
+@app.post('/api/v1/studio/orders/challenge')
+async def studio_order_challenge(req: OrderSubmission, authorization: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    _official_store()
+    try:
+        return make_order_challenge(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/orders')
+async def studio_create_order(req: OrderSubmission, authorization: str = Header(default=''),
+                               x_ai_review_key: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    service = _official_service()
+    try:
+        source, _, _ = normalize(req.engagement)
+        if source.ai_assistance:
+            require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
+        return await create_order(req, settings, service.store)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get('/api/v1/studio/orders/{order_id}')
+async def studio_get_order(order_id: str, authorization: str = Header(default=''),
+                            x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    try:
+        return _official_store().get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+
+
+@app.post('/api/v1/studio/orders/recover')
+async def studio_recover_order(req: OrderSubmission, authorization: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    store = _official_store()
+    try:
+        return await recover_order(req, settings, store)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get('/api/v1/studio/orders/{order_id}/result')
+async def studio_order_result(order_id: str, authorization: str = Header(default=''),
+                               x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    store = _official_store()
+    try:
+        store.get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+    try:
+        return store.result(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail='The committed report is not ready.') from exc
+
+
+@app.post('/api/v1/studio/orders/{order_id}/activate')
+@app.post('/api/v1/studio/orders/{order_id}/retry')
+async def studio_activate_order(order_id: str, authorization: str = Header(default=''),
+                                  x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    service = _official_service()
+    try:
+        service.store.get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+    try:
+        return await activate_order(order_id, x_order_token, settings, service.store)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/orders/{order_id}/refund/prepare')
+async def studio_order_refund(order_id: str, authorization: str = Header(default=''),
+                              x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    store = _official_store()
+    try:
+        store.get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+    from .services.order_refunds import prepare_order_refund
+    try:
+        return await prepare_order_refund(store._private(order_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/orders/{order_id}/refund/reconcile')
+async def studio_reconcile_refund(order_id: str, authorization: str = Header(default=''),
+                                  x_order_token: str = Header(default='')) -> dict:
+    require_pilot_key(authorization)
+    store = _official_store()
+    try:
+        store.get(order_id, x_order_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail='Order not found or private access key is invalid.') from exc
+    from .services.order_refunds import reconcile_order_refund
+    try:
+        return await reconcile_order_refund(order_id, x_order_token, store)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/ai/check')
+async def studio_ai_check(authorization: str = Header(default=''), x_ai_review_key: str = Header(default='')) -> dict:
+    require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
+    from .swarm.llm import LlmClient
+    return await LlmClient(settings).check_connection()
+
+
+@app.get('/.well-known/stellar.toml', response_class=PlainTextResponse)
+async def stellar_info() -> Response:
+    # Publish only integrations that exist. No invented web-auth or anchor URL.
+    from .services.report_delivery import pilot_evidence
+    import json
+    pilot = pilot_evidence()
+    lines = ['VERSION="2.7.0"', 'NETWORK_PASSPHRASE="Test SDF Network ; September 2015"',
+             '', '[DOCUMENTATION]', 'ORG_DESCRIPTION="AgentVeritas official agent audit Testnet pilot."',
+             'ORG_GITHUB="furkan3152"', '', '[AGENTVERITAS]',
+             'STATUS="testnet_pilot"', 'INDEPENDENT_OPERATORS=false',
+             'CREDENTIAL_STANDARD="custom_nontransferable_audit_record"']
+    if pilot.get('available'):
+        for name, value in pilot['evidence'].get('contracts', {}).items():
+            if name in {'registry', 'escrow', 'credential'} and isinstance(value, dict):
+                lines.append(name.upper() + '_CONTRACT=' + json.dumps(value.get('id', '')))
+    return PlainTextResponse('\n'.join(lines) + '\n', headers={'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'public, max-age=300', 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.post('/api/v1/studio/plan')
+async def studio_plan(req: EngagementRequest) -> dict:
+    try:
+        return build_plan(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/audit')
+async def studio_audit(req: EngagementRequest, authorization: str = Header(default=''), x_ai_review_key: str = Header(default='')) -> dict:
+    try:
+        source, _, _ = normalize(req)
+        if source.ai_assistance:
+            require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
+        if req.tier_id != 'quick':
+            require_pilot_key(authorization)
+        if _runtime_lock.locked():
+            raise HTTPException(status_code=429, detail='An audit is in progress. Retry after it completes.')
+        async with _runtime_lock:
+            return await audit_engagement(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning('Audit execution incomplete: %s', type(exc).__name__)
+        raise HTTPException(status_code=503, detail='The audit did not complete. Check the configured provider; no completed report or credential is claimed.') from exc
+
+
+@app.post('/api/v1/studio/capsule/import')
+async def studio_capsule_import(req: CapsuleImportRequest) -> dict:
+    from .services.capsule import parse_capsule, compile_capsule, capsule_review_source
+    try:
+        capsule = parse_capsule(req.document)
+        return {'capsule': capsule.model_dump(mode='json'), 'source': capsule_review_source(capsule).model_dump(mode='json'),
+                'compiled': compile_capsule(capsule)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/capsule/export')
+async def studio_capsule_export(req: EngagementRequest) -> dict:
+    from .services.capsule import draft_capsule, compile_capsule
+    try:
+        source, existing, _ = normalize(req)
+        capsule = existing or draft_capsule(source, tier=req.tier_id, modules=req.module_ids)
+        return {'capsule': capsule.model_dump(mode='json'), 'compiled': compile_capsule(capsule)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/studio/delivery')
+async def studio_delivery(req: DeliveryRequest) -> dict:
+    try:
+        return await deliver_report(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get('/api/v1/studio/delivery/pilot')
+async def studio_delivery_pilot() -> dict:
+    return pilot_evidence()
+
+
+@app.post("/api/v1/studio/discover")
+async def studio_discover(req: ReviewRequest) -> dict:
+    return discover_project(req.files)
+
+
+@app.post("/api/v1/studio/stellar/inspect-auth")
+async def studio_inspect_auth(req: AuthorizationInspectionRequest) -> dict:
+    # Pure bounded decoding: no RPC, signatures, model calls or transaction submission.
+    from .reporting.generator import canonical_json
+    from hashlib import sha256
+    report = inspect_authorization_entry(req)
+    encoded = canonical_json(report)
+    return {"report": report, "report_json": encoded,
+            "report_sha256": sha256(encoded.encode()).hexdigest()}
+
+
+@app.post("/api/v1/studio/runtime")
+async def studio_runtime(req: RuntimeRequest, authorization: str = Header(default=""), x_ai_review_key: str = Header(default='')) -> dict:
+    # Separate pilot credential; never expose the operator admin key to a public UI.
+    expected = settings.runtime_api_key
+    if len(expected) < 32 or not authorization.startswith("Bearer ") or not secrets.compare_digest(authorization[7:].encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="A valid runtime pilot access key is required.")
+    if req.source.ai_assistance:
+        require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
+    if _runtime_lock.locked():
+        raise HTTPException(status_code=429, detail="An isolated run is in progress. Retry after it completes.")
+    async with _runtime_lock:
+        try:
+            return await run_runtime(req, settings)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.warning("Runtime provider unavailable: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Isolated execution did not complete. Check Sandbox credentials, quota and provider logs. No runtime assurance is claimed.") from exc
+
+
+@app.get("/api/v1/studio/capabilities")
+async def studio_capabilities() -> dict:
+    from .services.assurance import ArchitectureManifest
+    return {"runtime_available": settings.enable_sandbox_runtime and len(settings.runtime_api_key) >= 32,
+            "soroban_auth_inspection_available": True,
+            "runtime_auth_required": True, "runtime_adapter": "python_text",
+            "ai_available": settings.enable_public_ai_review and settings.llm_enabled,
+            "ai_provider": settings.llm_provider if settings.enable_public_ai_review else "",
+            "ai_connection": settings.llm_status(), "ai_auth_required": True,
+            "controls": ArchitectureManifest.catalogue(), "checkout_enabled": False,
+            "testnet_checkout_available": settings.stellar_network == 'testnet' and len(settings.runtime_api_key) >= 32 and len(settings.checkout_quote_signing_key) >= 32,
+            "certificate_minting_enabled": False}
+
+
 @app.post("/api/v1/studio/review")
-async def studio_review(req: ReviewRequest) -> dict:
-    return await review_source(req, settings)
+async def studio_review(req: ReviewRequest, authorization: str = Header(default=''), x_ai_review_key: str = Header(default='')) -> dict:
+    if req.ai_assistance:
+        require_pilot_key('Bearer ' + x_ai_review_key if x_ai_review_key else authorization, ai=True)
+    try:
+        return await review_source(req, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/studio/identify")
@@ -533,9 +922,9 @@ async def create_job(req: JobCreate) -> dict:
                 status_code=409,
                 detail={
                     "job_id": job.id,
-                    "state": "awaiting_signature",
+                    "state": exc.state,
                     "reason": str(exc),
-                    "invocation": job.escrow.tx_ref if job.escrow else "",
+                    "invocation": job.escrow.tx_ref if job.escrow and exc.state == "awaiting_signature" else "",
                 },
             ) from exc
         except EscrowIndeterminateError as exc:
@@ -556,9 +945,9 @@ async def fund_job(job_id: str, req: FundRequest) -> dict:
             status_code=409,
             detail={
                 "job_id": job_id,
-                "state": "awaiting_signature",
+                "state": exc.state,
                 "reason": str(exc),
-                "invocation": job.escrow.tx_ref if job and job.escrow else "",
+                "invocation": job.escrow.tx_ref if job and job.escrow and exc.state == "awaiting_signature" else "",
             },
         ) from exc
     except EscrowIndeterminateError as exc:
@@ -572,6 +961,17 @@ async def run_job(job_id: str) -> dict:
         job = await pipeline.run_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ExternalSignatureRequired as exc:
+        job = pipeline.store.get_job(job_id)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "job_id": job_id,
+                "state": exc.state,
+                "reason": str(exc),
+                "invocation": job.escrow.tx_ref if job and job.escrow and exc.state == "awaiting_signature" else "",
+            },
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _job_view(job)
@@ -645,9 +1045,9 @@ async def validation_request(hook: ValidationRequestHook) -> dict:
             status_code=409,
             detail={
                 "job_id": job.id,
-                "state": "awaiting_signature",
+                "state": exc.state,
                 "reason": str(exc),
-                "invocation": job.escrow.tx_ref if job.escrow else "",
+                "invocation": job.escrow.tx_ref if job.escrow and exc.state == "awaiting_signature" else "",
             },
         ) from exc
     job = await pipeline.run_job(job.id)

@@ -1,0 +1,184 @@
+{
+  "deliveredReport": {
+    "report_sha256": "130e6a17ea35399e7f1d9935ba40486e06af486d3db536e6bba85c71308bddde",
+    "order_id": "5b01b7bcae70c69fa0ad17d622384e9a090ebc289093a5ca639bbd07b146d21b",
+    "live_credential_readback": true,
+    "workflow_findings_rendered": true,
+    "designed_report_downloaded": true,
+    "execution_replayed": false,
+    "wallet_signing_recorded": false
+  },
+  "status": "passed",
+  "browser": "133.0.6943.0",
+  "localhost": "http://127.0.0.1:43277",
+  "live_backend": true,
+  "desktop": {
+    "viewport": "1440x1000",
+    "layout": {
+      "viewport": 1440,
+      "body": 1440,
+      "document": 1440,
+      "surfaces": [
+        {
+          "selector": "site-header",
+          "left": 40,
+          "right": 1400,
+          "width": 1360
+        },
+        {
+          "selector": "",
+          "left": 852,
+          "right": 1352,
+          "width": 500
+        },
+        {
+          "selector": "hero-copy",
+          "left": 106,
+          "right": 733.515625,
+          "width": 627.515625
+        },
+        {
+          "selector": "audit-form",
+          "left": 88,
+          "right": 1352,
+          "width": 1264
+        },
+        {
+          "selector": "dossier",
+          "left": 726.234375,
+          "right": 1351,
+          "width": 624.765625
+        },
+        {
+          "selector": "review-result",
+          "left": 760.234375,
+          "right": 1317,
+          "width": 556.765625
+        }
+      ],
+      "overflow": []
+    },
+    "tiers": 3,
+    "official_modules": 8,
+    "reader_decision": "MORE EVIDENCE REQUIRED",
+    "unsafe_decision": "INVESTIGATE BEFORE DEPLOYMENT",
+    "unsafe_priority_findings": 8,
+    "coverage_controls": 24,
+    "report_download": true,
+    "source_edit_invalidates_report": true
+  },
+  "mobile": {
+    "viewport": "390x844",
+    "real_file_upload_and_audit": true,
+    "layout": {
+      "viewport": 390,
+      "body": 390,
+      "document": 390,
+      "surfaces": [
+        {
+          "selector": "site-header",
+          "left": 0,
+          "right": 390,
+          "width": 390
+        },
+        {
+          "selector": "",
+          "left": 224.8125,
+          "right": 370,
+          "width": 145.1875
+        },
+        {
+          "selector": "hero-copy",
+          "left": 24,
+          "right": 366,
+          "width": 342
+        },
+        {
+          "selector": "audit-form",
+          "left": 16,
+          "right": 374,
+          "width": 358
+        },
+        {
+          "selector": "dossier",
+          "left": 17,
+          "right": 373,
+          "width": 356
+        },
+        {
+          "selector": "review-result",
+          "left": 37,
+          "right": 353,
+          "width": 316
+        }
+      ],
+      "overflow": []
+    },
+    "narrow_layout": {
+      "viewport": 320,
+      "body": 320,
+      "document": 320,
+      "surfaces": [
+        {
+          "selector": "site-header",
+          "left": 0,
+          "right": 320,
+          "width": 320
+        },
+        {
+          "selector": "",
+          "left": 177.375,
+          "right": 300,
+          "width": 122.625
+        },
+        {
+          "selector": "hero-copy",
+          "left": 24,
+          "right": 296,
+          "width": 272
+        },
+        {
+          "selector": "audit-form",
+          "left": 16,
+          "right": 304,
+          "width": 288
+        },
+        {
+          "selector": "dossier",
+          "left": 17,
+          "right": 303,
+          "width": 286
+        },
+        {
+          "selector": "review-result",
+          "left": 37,
+          "right": 283,
+          "width": 246
+        }
+      ],
+      "overflow": []
+    }
+  },
+  "official_orders": {
+    "available": false,
+    "create_disabled": true,
+    "recovery_disabled": true,
+    "reason": "Automatic orders require a persistent worker service; this Studio deployment is stateless."
+  },
+  "wallet": {
+    "library_loaded": true,
+    "extension_e2e": false
+  },
+  "console_errors": [],
+  "page_errors": [],
+  "failed_requests": [],
+  "http_errors": [],
+  "screenshots": [
+    "desktop-hero.png",
+    "desktop-audit.png",
+    "desktop-unsafe-report.png",
+    "desktop-orders-unavailable.png",
+    "mobile-hero.png",
+    "mobile-audit.png"
+  ]
+}

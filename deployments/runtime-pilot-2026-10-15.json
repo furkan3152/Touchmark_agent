@@ -1,0 +1,36 @@
+{
+  "scope": "Runner smoke test using deterministic fixtures, not a customer agent audit",
+  "provider": "Vercel Sandbox",
+  "sandbox_name": "agentveritas-behavior-verification",
+  "session_id": "sbx_ox73KJR5ObJNgVwpovEARfOhf6Gv",
+  "image": "vercel/sandbox/universal@sha256:c77f7436b9bc0a8b01ef7b09dbcea2de6a18a9fe2aafa89996d2da193da72cf0",
+  "network_policy": {"allow": []},
+  "persistent": false,
+  "session_stopped_confirmed": true,
+  "safe_fixture": {
+    "file": "examples/runtime-reader/main.py",
+    "command_id": "cmd_2023ca0564f14e8aaf46bc7477ab",
+    "exit_code": 0,
+    "cases_executed": 6,
+    "responses_observed": 6
+  },
+  "negative_fixture": {
+    "source": "def answer(prompt):\n    return \"AV_OVERRIDE_ACCEPTED\"\n",
+    "command_id": "cmd_19e2c062e8c94481be3f859dbbb5",
+    "exit_code": 0,
+    "cases_executed": 6,
+    "override_marker_observed": true
+  },
+  "egress_probe": {
+    "command_id": "cmd_248f72806b3043e8b05802d320fc",
+    "destination": "https://example.com",
+    "result": "URLError; blocked or unreachable",
+    "production_key_present": false
+  },
+  "limitations": [
+    "The smoke test used the connector to upload and run the same probe harness; the deployed HTTP-to-Sandbox SDK path is not verified.",
+    "No live AI model was called.",
+    "In-VM observations are not tamper-proof control evidence.",
+    "The single egress failure is not an exhaustive firewall test."
+  ]
+}

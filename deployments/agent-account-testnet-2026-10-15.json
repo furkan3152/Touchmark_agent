@@ -1,0 +1,118 @@
+{
+  "schema": "agentveritas.agent-account-testnet.v1",
+  "network": "testnet",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "started_at": "2026-10-15T12:47:38.283948+00:00",
+  "owner": "GAWMDQ4EB72XQXB3X3X6OM3RX266UZFY3CP6WR3KTBH5M3BA7A5YLNHK",
+  "recipient": "GAQUF64KEQPXZT36VQYYC35D3LHOACKAVBKOJGCAKZ6O6DP4JPV5EZK7",
+  "session_public_key": "GDTU4YT5ICWH7NP3UNVFRV74W5UBILYRXMCBJAEWGL6TWD4YSRCTN6C6",
+  "wasm_sha256": "0996a395ec14d4ce0ff144ed136e1f8adb4aa15828849082e9cc0eed1f0cd23f",
+  "transactions": [
+    {
+      "action": "upload_wasm",
+      "hash": "48755e4da1503582b0cfaf5956c64c76e91198070a7850f1fbd1453a6a474e67",
+      "status": "SUCCESS",
+      "ledger": 5208982
+    },
+    {
+      "action": "deploy_account",
+      "hash": "5afff57e55f444c0ba7e6498c6f339503a5ada6f533949c38f247461ee32f9a6",
+      "status": "SUCCESS",
+      "ledger": 5208983
+    },
+    {
+      "action": "fund_account",
+      "hash": "e16e1c2c39dea340c490880fbc6d02eebdb8c6f796f8839a35ee4df067c3dce2",
+      "status": "SUCCESS",
+      "ledger": 5208987
+    },
+    {
+      "action": "open_session",
+      "hash": "73a0039441f953e3b2f727eff508b777b239037c73fece09e300eb4a1abd8a0d",
+      "status": "SUCCESS",
+      "ledger": 5208989
+    },
+    {
+      "action": "authorized_session_transfer",
+      "hash": "1b4f31db39ae7e7818c8997b8a3cf7cbdda1fb2b8644b981d723c9804239e6d9",
+      "status": "SUCCESS",
+      "ledger": 5208992
+    },
+    {
+      "action": "revoke_session",
+      "hash": "62465e717dd2545bc66881b96b68c9c68945702a36a6874a5d379a9f62ef9810",
+      "status": "SUCCESS",
+      "ledger": 5209006
+    },
+    {
+      "action": "recover_remaining",
+      "hash": "4f929079f13cd24a6814eac32caf824acde8f0b886140cb02a0a3af1bed3835d",
+      "status": "SUCCESS",
+      "ledger": 5209014
+    }
+  ],
+  "checks": [
+    {
+      "id": "forbidden_recipient",
+      "result": "rejected",
+      "method": "signed_rpc_enforce_simulation",
+      "expected_contract_error": 9,
+      "error": "HostError: Error(Auth, InvalidAction)\n\nEvent log (newest first):\n   0: [Diagnostic Event] contract:CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, topics:[error, Error(Auth, InvalidAction)], data:[\"failed account authentication with error\", CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, Error(Contract, #9)]\n   1: [Failed Diagnostic Event (not emitted)] contract:CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, topics:[error, Error(Contract, #9)], data:\"escalating Ok(ScErrorType::Contract) frame-exit to Err\"\n   2: [Diagnostic Event] contract:CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, topics:[fn_call, CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, __check_auth], data:[Bytes(71d2b40c9b8952a7e61c2bedd54175a48574d8025a39f70712d919fcc7aa2690), {session_id: 1, signature: Bytes(6646e06f465c3a5f7d94bd85bd70dd1c74afd17d14fc01cc02f5f4ab9dfdbc1ca6d4422b5eaf3066f5e4e52cbc5978fe34785e1fa66c23a608a249a312d85e00)}, [[Contract, {args: [CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, GAWMDQ4EB72XQXB3X3X6OM3RX266UZFY3CP6WR3KTBH5M3BA7A5YLNHK, 1000000], contract: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, fn_name: transfer}]]]\n   3: [Diagnostic Event] topics:[fn_call, CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, transfer], data:[CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, GAWMDQ4EB72XQXB3X3X6OM3RX266UZFY3CP6WR3KTBH5M3BA7A5YLNHK, 1000000]\n",
+      "simulated_transaction_hash": "dfa64a9d3c7332cf5b0f4323775d8c124cfdd6272ea11811ffa9e80875efe3cc",
+      "latest_ledger": 5208996,
+      "account_balance_unchanged": true,
+      "spent_counter_unchanged": true
+    },
+    {
+      "id": "cumulative_budget_exceeded",
+      "result": "rejected",
+      "method": "signed_rpc_enforce_simulation",
+      "expected_contract_error": 11,
+      "error": "HostError: Error(Auth, InvalidAction)\n\nEvent log (newest first):\n   0: [Diagnostic Event] contract:CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, topics:[error, Error(Auth, InvalidAction)], data:[\"failed account authentication with error\", CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, Error(Contract, #11)]\n   1: [Failed Diagnostic Event (not emitted)] contract:CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, topics:[error, Error(Contract, #11)], data:\"escalating Ok(ScErrorType::Contract) frame-exit to Err\"\n   2: [Diagnostic Event] contract:CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, topics:[fn_call, CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, __check_auth], data:[Bytes(45f97b7d21e8ad232cc0ddc2a24aa3c6c10294c2ee58b3630202f2ad492136ea), {session_id: 1, signature: Bytes(cc450b8364c0211f5afca902460dcf6abad55cec550cad221190715461fd15f037b026caf222ba788f5106aa084111be7f365f64be086976b7093ecd6689ac0f)}, [[Contract, {args: [CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, GAQUF64KEQPXZT36VQYYC35D3LHOACKAVBKOJGCAKZ6O6DP4JPV5EZK7, 2500000], contract: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, fn_name: transfer}]]]\n   3: [Diagnostic Event] topics:[fn_call, CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, transfer], data:[CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, GAQUF64KEQPXZT36VQYYC35D3LHOACKAVBKOJGCAKZ6O6DP4JPV5EZK7, 2500000]\n",
+      "simulated_transaction_hash": "4d471fc76495a68c87acacccaeec9e4b03c73382521392998dc1959cedeea4ae",
+      "latest_ledger": 5209001,
+      "account_balance_unchanged": true,
+      "spent_counter_unchanged": true
+    },
+    {
+      "id": "revoked_session",
+      "result": "rejected",
+      "method": "signed_rpc_enforce_simulation",
+      "expected_contract_error": 8,
+      "error": "HostError: Error(Auth, InvalidAction)\n\nEvent log (newest first):\n   0: [Diagnostic Event] contract:CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, topics:[error, Error(Auth, InvalidAction)], data:[\"failed account authentication with error\", CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, Error(Contract, #8)]\n   1: [Failed Diagnostic Event (not emitted)] contract:CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, topics:[error, Error(Contract, #8)], data:\"escalating Ok(ScErrorType::Contract) frame-exit to Err\"\n   2: [Diagnostic Event] contract:CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, topics:[fn_call, CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, __check_auth], data:[Bytes(4305d4ea42afbe8ab933656c105d881144792cad2245f432952b76cd07d4a752), {session_id: 1, signature: Bytes(e98eab8d7684e8f7fc6c9fcdca0c019a20b1b1088d36e6e1738992ce1d0ccf3e11942bf38618c36c19e4ecd58a185cdd9c13c2406fccd6ae7febbe135f920605)}, [[Contract, {args: [CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, GAQUF64KEQPXZT36VQYYC35D3LHOACKAVBKOJGCAKZ6O6DP4JPV5EZK7, 1000000], contract: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, fn_name: transfer}]]]\n   3: [Diagnostic Event] topics:[fn_call, CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC, transfer], data:[CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ, GAQUF64KEQPXZT36VQYYC35D3LHOACKAVBKOJGCAKZ6O6DP4JPV5EZK7, 1000000]\n",
+      "simulated_transaction_hash": "8efce51d766399c87e9c2e5b84842a33a574651cdccff9353674892423631468",
+      "latest_ledger": 5209008,
+      "account_balance_unchanged": true,
+      "spent_counter_unchanged": true
+    }
+  ],
+  "asset": {
+    "code": "XLM",
+    "decimals": 7,
+    "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+  },
+  "status": "verified",
+  "limitations": [
+    "Disposable testnet identities and native test XLM only.",
+    "Not independently audited and not a production wallet or agent-security certificate.",
+    "Rejected enforcing simulations are not submitted failed ledger transactions.",
+    "Session is revoked and remaining account funds recovered after the test."
+  ],
+  "network_protocol": 29,
+  "contract_id": "CDU22F3VBVTNUCC5YWR3LSJU7KA4WEQFYDIZGAXJCB3HWMDL6WJLJ7SQ",
+  "policy": {
+    "per_call_limit_stroops": 2500000,
+    "total_limit_stroops": 4000000,
+    "expires_ledger": 5209987,
+    "recipient": "GAQUF64KEQPXZT36VQYYC35D3LHOACKAVBKOJGCAKZ6O6DP4JPV5EZK7",
+    "token": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+  },
+  "session_id": 1,
+  "verified_at": "2026-10-15T12:51:09.926273+00:00",
+  "owner_readback_verified": true,
+  "final_account_balance_stroops": 0,
+  "final_session_revoked": true,
+  "final_session_spent_stroops": 2000000,
+  "authorized_transfer_stroops": 2000000
+}

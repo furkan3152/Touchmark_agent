@@ -1,12 +1,16 @@
 #![no_std]
 
+// Share the wire ABI, never link the registry implementation into escrow WASM.
+#[path = "../../audit-credential/src/registry_interface.rs"]
+mod registry_interface;
+use registry_interface::{AgentRec, AgentRegistryClient, ValState, ValidRec};
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contractmeta, contracttype,
     panic_with_error, token, Address, BytesN, Env,
 };
 
 contractmeta!(key = "name", val = "AgentVeritas Audit Escrow");
-contractmeta!(key = "version", val = "0.1.0");
+contractmeta!(key = "version", val = "0.3.0");
 contractmeta!(key = "asset", val = "SEP-41 Stellar Asset Contract client");
 contractmeta!(key = "purpose", val = "optional agent audit settlement");
 
@@ -40,6 +44,18 @@ pub struct AuditJob {
     pub score: u32,
 }
 
+/// Identity accepted when the requester created the paid audit.
+/// A later registry update cannot silently change the scope of settlement.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryBinding {
+    pub agent_id: BytesN<32>,
+    pub owner: Address,
+    pub version: u32,
+    pub meta_hash: BytesN<32>,
+    pub end_hash: BytesN<32>,
+}
+
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
@@ -47,7 +63,9 @@ enum DataKey {
     Token,
     FeeTo,
     FeeBps,
+    Registry,
     Job(BytesN<32>),
+    Binding(BytesN<32>),
 }
 
 #[contracterror]
@@ -68,6 +86,8 @@ pub enum Error {
     Overflow = 12,
     TooLate = 13,
     BadHash = 14,
+    InvalidValidation = 15,
+    StaleIdentity = 16,
 }
 
 #[contractevent(topics = ["audit_esc", "created"])]
@@ -120,7 +140,25 @@ pub struct AuditEscrow;
 
 #[contractimpl]
 impl AuditEscrow {
-    pub fn init(env: Env, admin: Address, token: Address, fee_to: Address, fee_bps: u32) {
+    pub fn __constructor(
+        env: Env,
+        admin: Address,
+        token: Address,
+        fee_to: Address,
+        fee_bps: u32,
+        registry: Address,
+    ) {
+        Self::init(env, admin, token, fee_to, fee_bps, registry);
+    }
+
+    pub fn init(
+        env: Env,
+        admin: Address,
+        token: Address,
+        fee_to: Address,
+        fee_bps: u32,
+        registry: Address,
+    ) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic_with_error!(&env, Error::AlreadyInit);
         }
@@ -132,6 +170,7 @@ impl AuditEscrow {
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::FeeTo, &fee_to);
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+        env.storage().instance().set(&DataKey::Registry, &registry);
         env.storage().instance().extend_ttl(TTL_MIN, TTL_EXTEND);
     }
 
@@ -168,6 +207,20 @@ impl AuditEscrow {
         if env.storage().persistent().has(&key) {
             panic_with_error!(&env, Error::Exists);
         }
+        // job_id is the existing registry request id, not an unrelated invoice id.
+        let (validation, agent) = Self::current_validation(&env, &job_id, &requester, &provider);
+        let binding = RegistryBinding {
+            agent_id: validation.agent_id,
+            owner: agent.owner,
+            version: validation.version,
+            meta_hash: validation.meta_hash,
+            end_hash: validation.end_hash,
+        };
+        let binding_key = DataKey::Binding(job_id.clone());
+        env.storage().persistent().set(&binding_key, &binding);
+        env.storage()
+            .persistent()
+            .extend_ttl(&binding_key, TTL_MIN, TTL_EXTEND);
         let job = AuditJob {
             requester: requester.clone(),
             provider: provider.clone(),
@@ -210,6 +263,10 @@ impl AuditEscrow {
         if job.state != JobState::Created {
             panic_with_error!(&env, Error::BadState);
         }
+        if env.ledger().sequence() >= job.deadline {
+            panic_with_error!(&env, Error::TooLate);
+        }
+        Self::bound_validation(&env, &job_id, &job);
         let token = Self::token(&env);
         token::Client::new(&env, &token).transfer(
             &requester,
@@ -246,6 +303,10 @@ impl AuditEscrow {
         if env.ledger().sequence() >= job.deadline {
             panic_with_error!(&env, Error::TooLate);
         }
+        let validation = Self::bound_validation(&env, &job_id, &job);
+        if validation.state != ValState::Complete || validation.rep_hash != del_hash {
+            panic_with_error!(&env, Error::InvalidValidation);
+        }
         job.del_hash = del_hash.clone();
         job.state = JobState::Submitted;
         Self::put_job(&env, &key, &job);
@@ -268,6 +329,13 @@ impl AuditEscrow {
         }
         if env.ledger().sequence() >= job.deadline {
             panic_with_error!(&env, Error::TooLate);
+        }
+        let validation = Self::bound_validation(&env, &job_id, &job);
+        if validation.state != ValState::Complete || validation.rep_hash != job.del_hash {
+            panic_with_error!(&env, Error::InvalidValidation);
+        }
+        if validation.score != score {
+            panic_with_error!(&env, Error::BadScore);
         }
         let fee = job
             .amount
@@ -344,6 +412,68 @@ impl AuditEscrow {
 
     pub fn get_job(env: Env, job_id: BytesN<32>) -> AuditJob {
         Self::read_job(&env, &DataKey::Job(job_id))
+    }
+
+    pub fn get_binding(env: Env, job_id: BytesN<32>) -> RegistryBinding {
+        let key = DataKey::Binding(job_id);
+        let binding = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotFound));
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_MIN, TTL_EXTEND);
+        binding
+    }
+
+    pub fn get_registry(env: Env) -> Address {
+        env.storage().instance().extend_ttl(TTL_MIN, TTL_EXTEND);
+        env.storage()
+            .instance()
+            .get(&DataKey::Registry)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInit))
+    }
+
+    fn current_validation(
+        env: &Env,
+        job_id: &BytesN<32>,
+        requester: &Address,
+        provider: &Address,
+    ) -> (ValidRec, AgentRec) {
+        let registry = Self::get_registry(env.clone());
+        let client = AgentRegistryClient::new(env, &registry);
+        let validation = client.get_valid(job_id);
+        if validation.requester != *requester
+            || validation.validator != *provider
+            || !client.is_valid(provider)
+        {
+            panic_with_error!(env, Error::InvalidValidation);
+        }
+        let agent = client.get_agent(&validation.agent_id);
+        if !agent.active
+            || agent.version != validation.version
+            || agent.meta_hash != validation.meta_hash
+            || agent.end_hash != validation.end_hash
+        {
+            panic_with_error!(env, Error::StaleIdentity);
+        }
+        (validation, agent)
+    }
+
+    fn bound_validation(env: &Env, job_id: &BytesN<32>, job: &AuditJob) -> ValidRec {
+        let (validation, agent) =
+            Self::current_validation(env, job_id, &job.requester, &job.provider);
+        let binding = Self::get_binding(env.clone(), job_id.clone());
+        if binding.agent_id != validation.agent_id
+            || binding.owner != agent.owner
+            || binding.version != validation.version
+            || binding.meta_hash != validation.meta_hash
+            || binding.end_hash != validation.end_hash
+        {
+            panic_with_error!(env, Error::StaleIdentity);
+        }
+        validation
     }
 
     fn require_admin(env: &Env, supplied: &Address) {

@@ -23,7 +23,10 @@ from ..reporting.generator import canonical_json, render_markdown, report_to_dic
 from ..reporting.ipfs import IpfsPublisher
 from ..swarm import AuditSwarm
 from .badges import BadgeRegistry
-from .escrow import EscrowIndeterminateError, EscrowService, ExternalSignatureRequired
+from .escrow import (
+    EscrowIndeterminateError, EscrowService, ExternalSignatureRequired,
+    InvocationPreparationBlocked,
+)
 from .store import Store
 
 
@@ -54,6 +57,9 @@ class AuditPipeline:
             artifact.agent_wallet or artifact.id, job.id
         )
         job.escrow = self.escrow.open(job.id, tier, requester)
+        if job.escrow.mode == "unavailable":
+            job.state = JobState.PREPARATION_BLOCKED
+            job.error = job.escrow.note
         job.log(
             f"job açıldı · tier={tier.value} · opsiyonel escrow={job.escrow.amount_usdc} "
             f"{self.settings.resolved_escrow_asset_code} · "
@@ -77,6 +83,12 @@ class AuditPipeline:
             job.escrow = self.escrow.open(job.id, job.tier, funder)
         try:
             await self.escrow.fund(job.escrow, funder)
+        except InvocationPreparationBlocked as exc:
+            job.state = JobState.PREPARATION_BLOCKED
+            job.error = str(exc)
+            job.log(f"INVOCATION PREPARATION BLOCKED: {exc}")
+            self.store.put_job(job)
+            raise
         except ExternalSignatureRequired as exc:
             job.state = JobState.AWAITING_SIGNATURE
             job.error = str(exc)
@@ -103,6 +115,8 @@ class AuditPipeline:
         job = self._job(job_id)
         if job.state in (JobState.SETTLED, JobState.COMPLETED):
             return job
+        if job.state is JobState.PREPARATION_BLOCKED:
+            raise InvocationPreparationBlocked(job.error or "Invocation preparation is blocked")
         if job.state in (
             JobState.AWAITING_SIGNATURE,
             JobState.RUNNING,
@@ -140,7 +154,13 @@ class AuditPipeline:
                     await self.escrow.refund(job.escrow, "swarm_failure")
                     job.state = JobState.REFUNDED
                     job.log("escrow iade edildi")
-                except (EscrowIndeterminateError, ExternalSignatureRequired) as refund_exc:
+                except InvocationPreparationBlocked as refund_exc:
+                    job.state = JobState.PREPARATION_BLOCKED
+                    job.error += f"; refund preparation blocked: {refund_exc}"
+                except ExternalSignatureRequired as refund_exc:
+                    job.state = JobState.AWAITING_SIGNATURE
+                    job.error += f"; refund signature required: {refund_exc}"
+                except EscrowIndeterminateError as refund_exc:
                     job.state = JobState.INDETERMINATE
                     job.error += f"; refund belirsiz: {refund_exc}"
             return self.store.put_job(job)
@@ -163,7 +183,17 @@ class AuditPipeline:
                         job.escrow, report.report_uri, int(round(report.overall_score))
                     )
                 await self.escrow.settle(job.escrow, payouts)
-            except (EscrowIndeterminateError, ExternalSignatureRequired) as exc:
+            except InvocationPreparationBlocked as exc:
+                job.state = JobState.PREPARATION_BLOCKED
+                job.error = str(exc)
+                job.log(f"SETTLEMENT PREPARATION BLOCKED: {exc}")
+                return self.store.put_job(job)
+            except ExternalSignatureRequired as exc:
+                job.state = JobState.AWAITING_SIGNATURE
+                job.error = str(exc)
+                job.log(f"SETTLEMENT SIGNATURE REQUIRED: {exc}")
+                return self.store.put_job(job)
+            except EscrowIndeterminateError as exc:
                 job.state = JobState.INDETERMINATE
                 job.error = str(exc)
                 job.log(f"SETTLEMENT BELİRSİZ: {exc}")

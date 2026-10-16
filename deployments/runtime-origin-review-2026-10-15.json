@@ -1,0 +1,16 @@
+{
+  "scope": "Exact source import-origin guard; deterministic fixture, not an agent security audit",
+  "session_id": "sbx_cWGIAg885JSS5zUH01fQn1Qe4qib",
+  "session_stopped_confirmed": true,
+  "command_id": "cmd_b642a13b1d7143758f518bd9fcc2",
+  "command_exit_code": 0,
+  "cases": {
+    "relative_import_and_policy_files": "executed expected fixture",
+    "dotted_filename_import_collision": "rejected with ValueError before alternate module execution"
+  },
+  "supervisor_sha256": "70ad51b5c02bd047ae464f6362f38d9e3bc8aa234ac064174cfe7127ee03bc7d",
+  "limitations": [
+    "Connector invoked the real microVM harness; deployed HTTP-to-Sandbox path still unverified.",
+    "Fixture-only behavior, no live model or production tools."
+  ]
+}

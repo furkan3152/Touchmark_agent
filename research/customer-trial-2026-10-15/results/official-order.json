@@ -1,0 +1,66 @@
+{
+  "schema": "veritas.customer-trial-order/v1",
+  "network": "testnet",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "status": "blocked",
+  "created_at": "2026-10-15T20:24:58.276883+00:00",
+  "fixture": "research/customer-trial-2026-10-15/invoicepilot.veritas (separately sealed Quick tier)",
+  "tier_id": "quick",
+  "amount_atomic": "1000000",
+  "asset": "testnet_faucet_XLM",
+  "contracts": {
+    "registry": {
+      "id": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "wasm_sha256": "a77262a8430e5c172569845973d927b73701f0a8306311d5c0ffea20d88cd677",
+      "constructor_atomic": true
+    },
+    "credential": {
+      "id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+      "wasm_sha256": "f796e4a6d1b877ce3d261eea6c172e922e47540627017f74482a5715d1fa77cf",
+      "constructor_atomic": true
+    },
+    "escrow": {
+      "id": "CD4OOPXGVL64YSUVZWDBAM2AATNITI5DKY4HXRALYUURH27MQZNF2O4V",
+      "wasm_sha256": "ca95c3f572aa465d9d9a59f651bc0a49050eff0d53cf21e6f0e0b163f2b8488a",
+      "wasm_path": "target/wasm32v1-none/release/agent_veritas_escrow.wasm",
+      "constructor_atomic": true,
+      "registry_bound": true,
+      "registry": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "constructor_argument_order": [
+        "admin",
+        "token",
+        "fee_to",
+        "fee_bps",
+        "registry"
+      ]
+    }
+  },
+  "roles": {
+    "requester": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+    "provider": "GDE6VWFICHOE7PEGVT7TUMR24WB3ETW7K62RHLJYPEBX5MDIVUFZAI4A",
+    "evaluator": "GCAO46UTNNLBRZSHZOUBJXGROQXZ2BHLV55EALQYUDRPC45AJRKO4EMC",
+    "admin": "GDCGJTWMFCIK3EJ4KWRASUQXD7ZZUPOC2E5JXWZLJGOTGDAYGAY3L6YK",
+    "treasury": "GB6M2BNKWTFIHWBGM7LYGZ3ZIICQZJGQ6DXAFQUKU36RILZ3IYSA55UE"
+  },
+  "checkout_transactions": [],
+  "checks": [
+    {
+      "id": "sep53_requester_order_scope",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "First-party requester, provider and evaluator share one operator; they are not independent validators.",
+    "The frozen InvoicePilot source received a separately scoped Quick static audit. No AI model or runtime execution is claimed.",
+    "The report is stored privately; its SHA-256 and token-free private URI are public on Testnet.",
+    "Local SQLite worker proof is not evidence of a durable serverless production queue.",
+    "A current audit credential records scoped provenance, not a guarantee of security.",
+    "The separate Deep trial observed 0 successful agent responses. This credential does not certify behavioral safety.",
+    "Read-only diagnosis: Testnet RPC could not verify this checkout. No checkout transaction intent or confirmed transaction was recorded. Automatic review rejected an unchanged paid-flow retry."
+  ],
+  "order_id": "b2dfda7a71dce1594f3a9aedf755f87c92bdb47f446a095367e11c7369b96e99",
+  "failure_code": "checkout_rpc_unverified",
+  "retry_auto_review_rejected": true,
+  "credential_issued": false,
+  "payment_confirmed": false
+}

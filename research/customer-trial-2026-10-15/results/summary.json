@@ -1,0 +1,12 @@
+{
+  "video_sha256": "653724595d60262b3b9f93b891690038db4cb1519a95eddf336914f3d77c6f59",
+  "video_seconds": 54.28,
+  "report_sha256": "f8ad8f46a5badf6b66673918be0f6593519da0976bbee56831067e16cdb14f16",
+  "live_model_calls": 4,
+  "audit_model_calls": 3,
+  "successful_ledger_transactions": 4,
+  "runtime_observed": 0,
+  "runtime_blocked": 72,
+  "paid_delivery": "blocked",
+  "independent_benchmark": false
+}
