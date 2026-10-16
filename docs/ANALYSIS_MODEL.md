@@ -122,20 +122,27 @@ as `result.score_breakdown`, and the demo shows it under "Why this score?".
 3. **Points to score:** `100 × e^(−risk points / 100)`. Small problems cost about one
    point per point (5 points → 95). Large ones stay ordered instead of all reaching 0:
    150 points → 22, 300 points → 5.
-4. **Bands keep the decision honest.**
-   - A confirmed critical risk places the result proportionally in 0–39.
-   - Any other actionable risk places it in 40–64.
-   - Without an actionable risk, the score is the raw value.
+4. **Ceilings keep the decision honest, without charging twice.**
+   - A confirmed critical risk keeps the score at 39 or below.
+   - Any other actionable risk keeps it at 64 or below, under the pass mark.
+   - Below the ceiling the raw score stands. Only the range above (ceiling − 10) is
+     squeezed into the last 10 points, so risky agents never look passable and still
+     differ from one another.
+   - An earlier version rescaled the whole raw score into the band (×0.39 for a critical).
+     That charged the same risks twice and pushed most failing agents under 20.
+   - The model choosing a payment's recipient and amount is grouped with "no spend
+     policy" as one root cause.
 
 **Assurance limits the badge, not the number.** Unverified ownership or ledger evidence,
 or an incomplete core review, keeps the badge at CAUTION. It no longer replaces the score
 with 84. Under the previous rule every clean report showed exactly 84.
 
-On the 14 repositories audited in this session, scores now run from 6.8 to 99.6, in the
-order of how serious the verified issues are:
-- Command injection plus unbounded payments: lowest.
-- Only unpinned dependencies: about 95.
-- The safe demo agent: 99.6.
+On the 14 repositories audited in this session:
+- Clean reports score 94–99.6.
+- An agent with three high Soroban and file risks scores 57.8.
+- Agents with an unbounded model-controlled payment score 28–34, in order of how much
+  else is wrong.
+- Command injection plus payments and account control scores 18.4.
 
 A `pass` therefore always scores 65 or more, and a report with an actionable risk never
 does. `pass` is scoped to the reviewed material. It is not a safety certificate.
