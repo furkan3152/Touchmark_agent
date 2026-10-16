@@ -381,8 +381,11 @@ class SecurityAuditor(BaseAuditor):
                 )
             )
 
+        # Name-based exposure applies to tools the agent offers. Code-observed execution is
+        # judged by data flow and the deep review, not by its presence alone.
         dangerous = [
-            t.name for t in artifact.tools if any(d in t.name.lower() for d in DANGEROUS_TOOL_NAMES)
+            t.name for t in artifact.tools
+            if t.origin == "declared" and any(d in t.name.lower() for d in DANGEROUS_TOOL_NAMES)
         ]
         if dangerous:
             out.append(
