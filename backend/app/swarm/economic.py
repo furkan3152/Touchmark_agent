@@ -155,11 +155,11 @@ class EconomicAuditor(BaseAuditor):
                             "bakiyeyi riske atar."
                         ),
                         evidence=(
-                            "anti-sinyaller: " + ", ".join(policy.negations) + " · "
+                            "negations: " + ", ".join(policy.negations) + " · "
                             if denied
                             else ""
                         )
-                        + "imza yetkili araçlar: "
+                        + "signing tools: "
                         + ", ".join(t.name for t in artifact.tools if t.requires_signature),
                         remediation="Günlük ve işlem başına USDC tavanı belirleyip zincir tarafında "
                         "policy kontratı ile zorunlu kılın.",
@@ -194,7 +194,7 @@ class EconomicAuditor(BaseAuditor):
                         "MEV/slippage koruması yok",
                         "Stellar path payment/SDEX işlemi için strict-send, strict-receive, "
                         "limit offer veya açık slippage tavanı tanımlı değil.",
-                        evidence=f"fiyat maruziyeti: {swap_evidence}",
+                        evidence=f"price exposure: {swap_evidence}",
                         remediation="Maksimum slippage belirleyin; strict-send/strict-receive "
                         "sınırlarını veya limit offer fiyatını zincir çağrısında zorlayın.",
                         grade=EvidenceGrade.CONFIRMED,

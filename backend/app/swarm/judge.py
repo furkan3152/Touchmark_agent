@@ -237,7 +237,7 @@ class SynthesisJudge:
                 severity=Severity.CRITICAL,
                 title="Birleşik kod yürütme ve Stellar imza yetkisi blast radius'u",
                 detail="Aynı agent güven sınırı hem kod/komut yürütme hem Stellar/Soroban işlem imzalama yetkisi taşıyor.",
-                evidence="komut araçları=" + ", ".join(t.name for t in dangerous_tools)
+                evidence="command tools=" + ", ".join(t.name for t in dangerous_tools)
                 + "; imza araçları=" + ", ".join(t.name for t in signing_tools),
                 evidence_grade=EvidenceGrade.CONFIRMED,
                 remediation="Kod yürütme ile imzalamayı ayrı güven alanlarına bölün; sandbox'a secret seed vermeyin ve imzayı Soroban policy/insan onayına bağlayın.",
@@ -250,7 +250,7 @@ class SynthesisJudge:
                 severity=Severity.HIGH,
                 title="Ağ içeriği ile kod yürütme yetkisi aynı agentta birleşiyor",
                 detail="Agent dış içerik alıp kod/komut çalıştırabiliyor; saldırgan tool çıktısı yürütmeye zincirlenebilir.",
-                evidence="ağ araçları=" + ", ".join(t.name for t in network_tools)
+                evidence="network tools=" + ", ".join(t.name for t in network_tools)
                 + "; komut araçları=" + ", ".join(t.name for t in dangerous_tools),
                 evidence_grade=EvidenceGrade.INFERRED,
                 remediation="Ağ çıktısını şemayla doğrulayın; yürütmeyi ağsız ve Stellar anahtarsız sandbox'a ayırın.",
