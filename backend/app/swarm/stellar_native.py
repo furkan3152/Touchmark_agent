@@ -108,12 +108,18 @@ class StellarNativeAuditor(BaseAuditor):
         lower = surface.lower()
 
         if re.search(r"\bS[A-Z2-7]{55}\b", surface):
+            seed_locations = [
+                f"{name}:{content[:m.start()].count(chr(10)) + 1} (S{m.group(0)[1:5]}…redacted)"
+                for name, content in artifact.code_files.items()
+                for m in re.finditer(r"\bS[A-Z2-7]{55}\b", content)
+            ][:5]
             findings.append(
                 self.finding(
                     "stellar-secret-seed",
                     Severity.CRITICAL,
                     "Stellar secret seed kaynakta görünüyor",
                     "S... secret seed doğrudan kod/manifest yüzeyinde bulundu.",
+                    evidence="; ".join(seed_locations) or "secret seed pattern in submitted manifest text",
                     remediation="Seed'i derhal döndürün; haricî signer/HSM kullanın ve geçmişten temizleyin.",
                     confidence=0.99,
                 )

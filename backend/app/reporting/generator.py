@@ -73,7 +73,9 @@ def report_to_dict(report: AuditReport, artifact: AgentArtifact) -> dict:
         "result": {
             "overall_score": report.overall_score,
             "badge": report.badge.value,
+            "decision": report.decision,
             "severity_counts": report.counts(),
+            "evidence_gap_count": sum(1 for f in report.findings if not f.is_risk),
             "disagreement_index": report.disagreement_index,
             "dimension_scores": [d.model_dump(mode="json") for d in report.dimension_scores],
             "assurance_level": report.assurance_level.value,

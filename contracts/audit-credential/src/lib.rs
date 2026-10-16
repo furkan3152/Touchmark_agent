@@ -10,6 +10,9 @@ use soroban_sdk::{
 const TTL_MIN: u32 = 17_280;
 const TTL_EXTEND: u32 = 518_400;
 const MAX_VALIDITY: u64 = 90 * 86_400;
+/// Lowest registry score that can carry a credential. It matches the auditor's
+/// pass threshold: every report with an open high or critical risk scores below it.
+pub const PASS_SCORE: u32 = 65;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +49,8 @@ pub enum Error {
     Expiry = 4,
     Unauthorized = 5,
     EmptyReason = 6,
+    BelowPassScore = 7,
+    AlreadyRevoked = 8,
 }
 
 #[contractevent(topics = ["audit", "issued"])]
@@ -97,6 +102,11 @@ impl AuditCredential {
             || !client.is_valid(&validation.validator)
         {
             panic_with_error!(&env, Error::InvalidValidation);
+        }
+        // A credential states that the audit passed: no actionable risk was open.
+        // The auditor caps every report with an actionable risk below PASS_SCORE.
+        if validation.score < PASS_SCORE {
+            panic_with_error!(&env, Error::BelowPassScore);
         }
         let now = env.ledger().timestamp();
         if expires_at <= now || expires_at - now > MAX_VALIDITY {
@@ -157,6 +167,10 @@ impl AuditCredential {
         }
         if reason_hash == BytesN::from_array(&env, &[0; 32]) {
             panic_with_error!(&env, Error::EmptyReason);
+        }
+        // The first revocation reason is permanent; nobody can overwrite it.
+        if record.revoked {
+            panic_with_error!(&env, Error::AlreadyRevoked);
         }
         record.revoked = true;
         record.reason_hash = reason_hash.clone();

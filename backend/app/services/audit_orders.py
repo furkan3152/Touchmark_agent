@@ -31,7 +31,7 @@ from stellar_sdk import StrKey
 
 from ..reporting.generator import canonical_json
 from .audit_product import EngagementRequest, build_plan
-from .order_settlement import SettlementPending
+from .order_settlement import SettlementPending, credential_eligible
 from .report_delivery import DeliveryRequest, decode_report
 from .testnet_checkout import (CheckoutRequest, CheckoutStepRequest, Quote,
                               _deployment, _verify_quote, prepare_checkout)
@@ -594,14 +594,15 @@ def _validate_publication(publication, result):
 
 def _validate_delivery(delivery, order, result, publication):
     quote = order['quote']
+    eligible = credential_eligible(result)
     expected = {'schema': 'veritas.testnet-order-delivery/v1', 'status': 'delivered', 'network': 'testnet',
                 'request_id': order['id'], 'agent_id': quote['agent_id'], 'report_sha256': result['report_sha256'],
                 'report_uri': publication['report_uri'], 'credential_contract_id': quote['contracts']['credential'],
                 'escrow_contract_id': quote['contracts']['escrow'], 'owner': quote['requester'],
-                'is_current': True, 'payment_state': 'Complete', 'independent_evaluator': False}
+                'is_current': eligible, 'payment_state': 'Complete', 'independent_evaluator': False}
     if (not isinstance(delivery, dict) or any(delivery.get(k) != v for k, v in expected.items())
-            or delivery.get('is_current') is not True or delivery.get('independent_evaluator') is not False
-            or delivery.get('token_id') != order['id']
+            or delivery.get('is_current') is not eligible or delivery.get('independent_evaluator') is not False
+            or delivery.get('token_id') != (order['id'] if eligible else None)
             or type(delivery.get('checked_at_ledger')) is not int or delivery['checked_at_ledger'] < order['checked_ledger']):
         raise OrderError('Settlement adapter did not verify this exact report, owner and completed escrow.')
 
