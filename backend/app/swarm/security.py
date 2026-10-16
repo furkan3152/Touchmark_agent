@@ -41,6 +41,33 @@ ISOLATION_SIGNALS = ("sandbox", "docker", "firecracker", "isolat", "tee", "encla
 LOCKFILE_NAMES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "cargo.lock", "poetry.lock",
                   "uv.lock", "pipfile.lock", "go.sum", "bun.lockb", "bun.lock")
 
+
+_CREDENTIAL_TITLE = re.compile(r"anahtar|key|secret|credential", re.I)
+_PLACEHOLDER = re.compile(r"test|dev(?:elopment)?|example|sample|local|dummy|placeholder|changeme|change-me|"
+                          r"do-?not-?use|fake|mock|xxxx|your[-_]", re.I)
+
+
+def _placeholder(match: str) -> bool:
+    """A literal that is plainly not a live credential: a development placeholder, an EVM
+    address (0x + 40 hex) or a run of one character."""
+    value = re.search(r"[\"']([^\"']*)[\"']", match)
+    text = value.group(1) if value else match
+    return (bool(_PLACEHOLDER.search(text)) or bool(re.fullmatch(r"0x[0-9a-fA-F]{40}", text))
+            or len(set(text.replace("0x", ""))) <= 2)
+
+
+def _without_comments(name: str, content: str) -> str:
+    """Blank out comments (keeping line numbers) so prose such as "the eval (…)" is not code."""
+    def blank(m: re.Match) -> str:
+        return m.group(1) + re.sub(r"[^\n]", " ", m.group(2))
+    if name.endswith((".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".rs")):
+        content = re.sub(r"()(/\*[\s\S]*?\*/)", blank, content)
+        return re.sub(r"(?m)(^|[\s;{}(),])(//[^\n]*)", blank, content)
+    if name.endswith(".py"):
+        return re.sub(r"(?m)(^|\s)(#[^\n]*)", blank, content)
+    return content
+
+
 class SecurityAuditor(BaseAuditor):
     name = "security-redteamer"
     dimension = Dimension.SECURITY
@@ -255,11 +282,20 @@ class SecurityAuditor(BaseAuditor):
         if not artifact.code_files:
             return out
 
+        analysed = set(artifact.code_profile.get("analysed_files", []))
+        code = {name: _without_comments(name, content) for name, content in artifact.code_files.items()}
         for pattern, title, severity, detail in DANGEROUS_CODE_PATTERNS:
             rx = re.compile(pattern)
             hits: list[str] = []
-            for fname, content in artifact.code_files.items():
+            execution = severity is not Severity.CRITICAL and not _CREDENTIAL_TITLE.search(title)
+            for fname, content in code.items():
+                if execution and fname in analysed:
+                    # The data-flow analysis decides whether input reaches eval/exec in
+                    # these files; a name match would only repeat or contradict it.
+                    continue
                 for m in rx.finditer(content):
+                    if _CREDENTIAL_TITLE.search(title) and _placeholder(m.group(0)):
+                        continue
                     line = content[: m.start()].count("\n") + 1
                     hits.append(f"{fname}:{line}")
                     if len(hits) >= 5:
