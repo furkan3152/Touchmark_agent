@@ -9,7 +9,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
@@ -778,6 +778,21 @@ async def studio_review(req: ReviewRequest, authorization: str = Header(default=
 @app.post("/api/v1/studio/identify")
 async def studio_identify(req: AddressRequest) -> dict:
     return await identify_address(req)
+
+
+class ResolveRequest(BaseModel):
+    reference: str = Field(min_length=10, max_length=300)
+    network: Literal["testnet", "mainnet"] = "testnet"
+
+
+@app.post("/api/v1/studio/resolve")
+async def studio_resolve(req: ResolveRequest) -> dict:
+    """Read-only: what an agent reference resolves to and what each step proves."""
+    from .services.agent_resolver import AgentResolver
+    try:
+        return await AgentResolver(settings, req.network).resolve(req.reference)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/studio/import")
