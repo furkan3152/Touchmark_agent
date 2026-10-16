@@ -66,6 +66,15 @@ def parse_github(url: str) -> tuple[str, str, str]:
     return owner, repo, ref.split("/")[0] if ref else ""
 
 
+def github_subpath(url: str) -> str:
+    """The folder a `/tree/<ref>/<path>` link points at ("" for the repository root)."""
+    m = _GITHUB.match(url.strip())
+    parts = (m.group(3) or "").split("/")[1:] if m else []
+    if any(p in {"", ".", ".."} for p in parts):
+        return ""
+    return "/".join(parts)
+
+
 def _card_fields(card: dict) -> dict:
     """Pull source, endpoint and wallet out of the common agent-card shapes."""
     source = card.get("source") if isinstance(card.get("source"), dict) else {}
@@ -266,6 +275,8 @@ class AgentResolver:
             owner, repo, rev = parse_github(ref)
             out["source"].update(repository=f"https://github.com/{owner}/{repo}", revision=rev,
                                  binding="user_supplied", verified=False)
+            if github_subpath(ref):
+                out["source"]["path"] = github_subpath(ref)
         if kind == "endpoint":
             out["endpoint"] = ref
         if out["source"]["repository"] and not _SHA.match(out["source"]["revision"] or ""):
@@ -397,9 +408,16 @@ async def audit_reference(reference: str, settings: Settings, *, network: str = 
                     raise ValueError(f"The repository could not be fetched: {exc}") from exc
                 resolution["steps"].append({"check": "source_fetch", "result": "unavailable", "evidence": str(exc)[:300]})
                 root = None
+            if root is not None and source.get("path"):
+                # A link to one folder of a repository audits that folder only.
+                sub = (root / source["path"]).resolve()
+                if not sub.is_dir() or not sub.is_relative_to(root.resolve()):
+                    raise ValueError(f"The folder {source['path']} does not exist in the repository.")
+                root = sub
             if root is not None:
                 resolution["steps"].append({"check": "source_fetch", "result": "fetched",
-                                            "evidence": f"{source['repository']} @ {source['revision']}"})
+                                            "evidence": f"{source['repository']} @ {source['revision']}"
+                                                        + (f" /{source['path']}" if source.get("path") else "")})
                 result = await audit_repository(root, name=name, purpose=purpose, settings=settings,
                                                 network=network, stellar_address=stellar_address, deep=deep,
                                                 source_reference=source["repository"], revision=source["revision"],

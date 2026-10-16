@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Paste a GitHub repository or a Stellar agent reference. AgentVeritas audits the code and, if it passes, issues a credential on Stellar testnet.">
+<title>AgentVeritas — Audit an agent</title>
+<link rel="icon" href="/ui/studio-mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/demo.css">
+<script src="/ui/demo.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="/"><img src="/ui/studio-mark.svg" alt="" width="30" height="30">AgentVeritas <span>on Stellar</span></a>
+  <nav><a href="https://github.com/furkan3152/agentveritas-stellar" rel="noopener">GitHub</a><a href="/studio">Full studio</a></nav>
+</header>
+
+<main>
+  <section class="intro">
+    <p class="eyebrow"><span class="dot"></span>AI AGENT VERIFICATION ON STELLAR</p>
+    <h1>Should this agent get the keys?</h1>
+    <p class="lede">Paste an agent's GitHub repository or Stellar reference. AgentVeritas reads the code, traces what the model can make it do, and, if it passes, issues a verifiable credential on Stellar testnet.</p>
+  </section>
+
+  <form id="audit-form" class="input-card" autocomplete="off">
+    <label for="reference">Agent reference</label>
+    <div class="input-row">
+      <input id="reference" name="reference" required minlength="3" maxlength="300"
+             placeholder="https://github.com/owner/repo   ·   agent id   ·   C… contract   ·   G… account">
+      <button id="run" type="submit">Audit <span aria-hidden="true">→</span></button>
+    </div>
+    <div class="examples" aria-label="Examples">
+      <span>Try:</span>
+      <button type="button" data-ref="https://github.com/furkan3152/agentveritas-stellar/tree/main/examples/demo/unsafe-treasury-agent">Unsafe treasury agent</button>
+      <button type="button" data-ref="https://github.com/furkan3152/agentveritas-stellar/tree/main/examples/demo/safe-treasury-agent">Safe treasury agent</button>
+    </div>
+  </form>
+
+  <ol id="steps" class="steps" hidden>
+    <li data-step="resolve"><b>1</b>Resolve &amp; pin the source</li>
+    <li data-step="analyse"><b>2</b>Trace model input to keys, payments and network</li>
+    <li data-step="decide"><b>3</b>Decide and commit the report</li>
+    <li data-step="credential"><b>4</b>Credential on Stellar</li>
+  </ol>
+
+  <p id="error" class="error" role="alert" hidden></p>
+
+  <section id="result" class="result" hidden aria-live="polite">
+    <div class="verdict">
+      <div class="score"><svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="52" class="track"/><circle id="ring" cx="60" cy="60" r="52" class="ring"/></svg><span id="score">–</span><small>/ 100</small></div>
+      <div>
+        <p id="decision" class="decision">–</p>
+        <h2 id="headline">–</h2>
+        <p id="source" class="source"></p>
+        <p id="counts" class="counts"></p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <article class="panel">
+        <h3>What can go wrong</h3>
+        <ul id="risks" class="findings"></ul>
+        <details id="gaps-box"><summary>Evidence not yet provided <span id="gap-count"></span></summary><ul id="gaps" class="findings small"></ul></details>
+      </article>
+
+      <article class="panel credential">
+        <h3>Stellar credential</h3>
+        <div id="cred-idle">
+          <p id="cred-note" class="note"></p>
+          <button id="issue" type="button" hidden>Issue credential on Stellar testnet</button>
+        </div>
+        <div id="cred-done" hidden>
+          <p class="ok">Issued and read back from the ledger</p>
+          <dl>
+            <dt>Token</dt><dd><code id="token"></code></dd>
+            <dt>Score on chain</dt><dd id="chain-score"></dd>
+            <dt>Report hash</dt><dd id="chain-hash"></dd>
+            <dt>Valid until</dt><dd id="expires"></dd>
+            <dt>Contract</dt><dd><a id="contract" target="_blank" rel="noopener"></a></dd>
+          </dl>
+          <ol id="txs" class="txs"></ol>
+        </div>
+        <div class="hash">
+          <span>Report SHA-256</span><code id="report-hash"></code>
+          <button id="download" type="button" class="ghost">Download report JSON</button>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="how">
+    <div><h3>Reads the code, not the claims</h3><p>Python, JavaScript and TypeScript are parsed into data flow. A tool's declared permissions never override what the code can do.</p></div>
+    <div><h3>Stellar-aware</h3><p>Payments, signing, trustlines, Soroban auth and TTL, x402 and SEP-10/45 boundaries. Contracts are read from the ledger and their WASM hash is recomputed.</p></div>
+    <div><h3>Credentials that can't lie</h3><p>The Soroban credential contract only accepts a completed validation from an approved validator, bound to the report hash, with score ≥ 65.</p></div>
+  </section>
+</main>
+
+<footer class="foot">Testnet demo · Deterministic analysers only (the paid AI review is not run here) · A pass is not a guarantee of safety.</footer>
+</body>
+</html>

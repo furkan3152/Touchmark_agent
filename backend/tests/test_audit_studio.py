@@ -58,12 +58,15 @@ def test_studio_limits_body_before_json_decoding():
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_home_opens_studio_and_preserves_operator_console():
+def test_home_opens_demo_and_preserves_studio_and_operator_console():
     with TestClient(api.app) as client:
         home = client.get("/")
+        studio = client.get("/studio")
         operator = client.get("/operator")
     assert home.status_code == 200
-    assert 'id="review-form"' in home.text
+    assert 'id="audit-form"' in home.text
+    assert studio.status_code == 200
+    assert 'id="review-form"' in studio.text
     assert operator.status_code == 200
     assert 'id="reportCard"' in operator.text
 
