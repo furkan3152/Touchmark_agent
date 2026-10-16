@@ -102,6 +102,13 @@ def oversight_enforced(artifact: AgentArtifact, prompt_lower: str) -> bool:
     """
     if artifact.human_oversight:
         return True
+    # A co-signer required by the ledger is an enforced control, stronger than any code check.
+    account = artifact.chain_authority.get("account", {})
+    agent = account.get("agent_key", {})
+    if account.get("status") == "found" and (
+            (agent.get("is_signer") and not agent.get("can_pay_alone"))
+            or (not agent and account.get("multisig_required_for_payments"))):
+        return True
     if has_source(artifact):
         profile = artifact.code_profile
         controls = profile.get("controls", {})

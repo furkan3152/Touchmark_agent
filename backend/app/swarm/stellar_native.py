@@ -264,4 +264,81 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
         source = artifact.onchain.data_source
+        findings += self._authority_findings(artifact)
         return findings, scenarios, f"Stellar/Soroban source review; onchain source={source}. Rust checks are bounded lexical evidence, not a compiler, call graph, authorization proof or runtime test. Constructor and custom-account authorization need separate verification."
+
+    # ------------------------------------------------------------ ledger authority
+    def _authority_findings(self, artifact: AgentArtifact) -> list[Finding]:
+        """Findings from public ledger state: signers, thresholds, trustlines, SEP-1, SEP-29."""
+        facts = artifact.chain_authority or {}
+        out: list[Finding] = []
+        account = facts.get("account", {})
+        address = account.get("address", "")
+        signs = any(t.requires_signature for t in artifact.tools)
+        if account.get("status") == "not_found":
+            out.append(self.finding("onchain-account-missing", Severity.MEDIUM,
+                "The supplied agent account does not exist on this network",
+                "Horizon has no account for the supplied address, so its authority cannot be verified.",
+                evidence=f"{facts.get('network')}: {address} not found",
+                remediation="Supply the funded account the agent signs with, on the network it runs on."))
+        if account.get("status") == "found":
+            agent = account.get("agent_key")
+            if agent and agent.get("can_administer_alone"):
+                out.append(self.finding("onchain-agent-key-administers-account", Severity.HIGH,
+                    "The agent key alone can change signers or merge the account",
+                    "Its weight meets the high threshold. Whoever controls the agent (including through prompt "
+                    "injection) can add a signer, change thresholds or merge the account and take every asset.",
+                    evidence=f"{address}: agent key weight {agent['weight']} >= high threshold "
+                             f"{account['thresholds']['high']}",
+                    remediation="Give the agent key a weight below the high threshold (and ideally below medium), "
+                                "with administration reserved to an offline key."))
+            elif agent and not agent.get("is_signer"):
+                out.append(self.finding("onchain-agent-key-not-signer", Severity.MEDIUM,
+                    "The declared agent key is not a signer of the agent account",
+                    "Transactions signed with it will fail, or the agent signs for a different account than declared.",
+                    evidence=f"{address}: {agent['key']} not in signers",
+                    remediation="Declare the key the agent actually signs with, or add it as a scoped signer."))
+            elif not agent and signs and account.get("single_key_can_pay"):
+                out.append(self.finding("onchain-agent-key-undeclared", Severity.MEDIUM,
+                    "The agent's signing key is not declared",
+                    "A single signer on this account can pay alone. Without the agent's public key the audit cannot "
+                    "tell whether the agent holds that authority.",
+                    evidence=f"{address}: single-key payment authority present",
+                    remediation="Declare the agent's public signing key so its on-chain weight can be verified."))
+            if agent and agent.get("is_signer") and not agent.get("can_pay_alone"):
+                out.append(self.finding("onchain-cosigner-required", Severity.INFO,
+                    "Payments require a co-signer on the ledger",
+                    "The agent key's weight is below the medium threshold, so no payment executes without another "
+                    "signer. This is an enforced control, independent of the agent's code.",
+                    evidence=f"{address}: agent weight {agent['weight']} < medium threshold {account['thresholds']['medium']}",
+                    remediation="Keep the co-signer independent of the agent's runtime."))
+            for line in account.get("trustlines", []):
+                if line.get("unlimited"):
+                    out.append(self.finding(f"onchain-unlimited-trustline-{len(out)}", Severity.LOW,
+                        "A trustline has no holding limit",
+                        "The account will accept any amount of this asset, including spam or assets the issuer can freeze.",
+                        evidence=f"{address}: {line['asset']} limit {line['limit']}",
+                        remediation="Set trustline limits to what the agent needs."))
+            sep1 = facts.get("sep1")
+            if not account.get("home_domain") or (sep1 and not sep1.get("account_listed")):
+                out.append(self.finding("onchain-identity-unbound", Severity.LOW,
+                    "The account is not bound to a published SEP-1 identity",
+                    "No home domain lists this account in its stellar.toml ACCOUNTS, so users cannot tie it to an operator.",
+                    evidence=f"{address}: home_domain={account.get('home_domain') or 'none'}; "
+                             f"sep1={sep1.get('status') if sep1 else 'not_checked'}",
+                    remediation="Set home_domain and list the account in https://<domain>/.well-known/stellar.toml."))
+        for dest in facts.get("destinations", []):
+            if dest.get("status") == "found" and dest.get("memo_required") and not dest.get("code_attaches_memo"):
+                out.append(self.finding(f"onchain-memo-required-{len(out)}", Severity.HIGH,
+                    "Payments go to an account that requires a memo, but the code never sets one",
+                    "The destination publishes SEP-29 config.memo_required (typical for exchanges and custodians). "
+                    "Payments without a memo are not credited to any customer and are usually unrecoverable.",
+                    evidence=f"{dest['location']}: {dest['address']} memo_required=true",
+                    remediation="Attach the destination's required memo, and refuse to pay memo-required accounts without one."))
+            elif dest.get("status") == "not_found":
+                out.append(self.finding(f"onchain-destination-missing-{len(out)}", Severity.MEDIUM,
+                    "A hard-coded payment destination does not exist on this network",
+                    "Payments to it fail; create_account would be needed, which sends a different amount semantics.",
+                    evidence=f"{dest['location']}: {dest['address']} not found on {facts.get('network')}",
+                    remediation="Verify destinations on the target network before deployment."))
+        return out

@@ -56,6 +56,8 @@ class ReviewRequest(BaseModel):
     tools: list[ToolSpec] = Field(default_factory=list, max_length=20)
     dependencies: list[str] = Field(default_factory=list, max_length=100)
     stellar_address: str = Field(default="", max_length=56)
+    #: Public key the agent signs with; lets the audit verify its on-chain weight.
+    agent_signing_key: str = Field(default="", max_length=56)
     network: Literal["testnet", "mainnet"] = "testnet"
     source_revision: str = Field(default="", pattern=r"^(?:[a-f0-9]{40})?$")
     source_reference: str = Field(default="", max_length=240)
@@ -64,6 +66,8 @@ class ReviewRequest(BaseModel):
     def bound_source(self) -> "ReviewRequest":
         if not self.name.strip() or len(self.purpose.strip()) < 12:
             raise ValueError("Provide an agent name and a meaningful purpose (at least 12 characters).")
+        if self.agent_signing_key and not is_valid_stellar_address(self.agent_signing_key, account_only=True):
+            raise ValueError("agent_signing_key must be a public G... key.")
         if self.stellar_address and not is_valid_stellar_address(self.stellar_address):
             raise ValueError("Use a public Stellar G-account or C-contract address, never a secret key.")
         if self.source_reference:
@@ -124,7 +128,17 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
     })
     embedded_instructions = instruction_literals(request.files) if not request.system_prompt.strip() else []
     candidate_prompt = request.system_prompt or '\n\n'.join(item['text'] for item in embedded_instructions)
+    chain_facts: dict = {}
+    if settings.enable_onchain_verification:
+        from ..stellar.authority import AuthorityReader
+        account = request.stellar_address if request.stellar_address.startswith("G") else ""
+        try:
+            chain_facts = await AuthorityReader(request.network).collect(
+                account, agent_key=request.agent_signing_key, code_files=request.files)
+        except Exception:  # ledger reads must never fail the source review
+            chain_facts = {"network": request.network, "source": "horizon", "status": "unavailable"}
     artifact = AgentArtifact(
+        chain_authority=chain_facts,
         source_kind=SourceKind.UPLOAD if request.files or request.system_prompt else SourceKind.ONCHAIN_ADDRESS,
         source_ref=f"studio:{request.network}:{request.source_reference or request.stellar_address or 'submitted-bundle'}:{request.source_revision}",
         name=request.name, description=request.purpose,
