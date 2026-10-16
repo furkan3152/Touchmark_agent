@@ -163,3 +163,66 @@ The deep reviewer (`backend/app/services/deep_review.py`) received the evidence 
 ### Fix made during the run
 
 The live run exposed one defect: a model finding quoted a secret literal verbatim. Findings, flow verdicts and summaries now pass through the same redaction as other outputs, after the quote has been verified against the source.
+
+## 7. Comparison with manual review on open-source agents (2026-10-16)
+
+Twelve public Stellar agent repositories (MCP servers, agent SDKs, x402 gateways,
+wallet skills) were run through `scripts/audit_repository.py` with deep review. Eight
+of them were also reviewed by hand, independently, without access to the system's
+reports. Third-party findings are not published here; maintainers should be contacted
+privately.
+
+### Agreement on the most serious issues
+
+The manual reviews found 29 high or critical issues.
+
+| | Matched by the system |
+|---|---|
+| Final run | 21 of 29 (about 72%) |
+| Either of two runs | 25 of 29 (about 86%) |
+
+The issues the system missed were mostly in two places:
+
+- **Files outside the review budget.** For example, a 4,000-line code generator. The
+  report lists these files and is marked incomplete.
+- **Documentation promises that the code does not keep.**
+
+The deep review is not deterministic. An issue found in one run can be missing from the
+next, so a single run should be read as a lower bound.
+
+### Decisions
+
+- **Pass:** one repository passed. It has no payment or signing path, and its remaining
+  findings were medium. The manual review agreed that nothing in it can move funds.
+- **Needs fixes:** every repository with a confirmed payment, signing or execution
+  defect received `needs_fixes`.
+- **Spread of scores:** with graded caps, scores ranged from 21 to 61 instead of
+  clustering at 39 and 64.
+
+### False positives found and fixed
+
+The comparison exposed false positives, all now fixed and covered by tests in
+`backend/tests/test_oss_false_positives.py`:
+
+- **Dependencies:**
+  - comments and comparisons in source code read as floating dependency versions;
+  - version ranges flagged although a lockfile pins them.
+- **Payment destinations:**
+  - test files, deny lists, asset issuers and example text treated as payment destinations;
+  - destinations checked on a network the code does not use.
+- **Contract accounts and signing:**
+  - a contract id or a `webauthn` field taken as contract-account login (SEP-45);
+  - holding a key treated as signing authority when the project never transacts.
+- **Code execution and secrets:**
+  - `RegExp.exec` and `db.exec` treated as code execution;
+  - a masked secret in a log line treated as exfiltration.
+- **Soroban contracts:** authorization or TTL renewal done in a helper reported as missing.
+  These are now medium review items. High is kept for functions with no check anywhere.
+
+### Logic flaws found and fixed
+
+- **Missing material lowered the score.** A coverage gap capped the score below a pass,
+  so a missing prompt produced `needs_fixes` instead of `needs_evidence`. Coverage now
+  limits only the decision.
+- **Coverage ratio above 1.** Reading manifests counted towards coverage, which could
+  push the ratio over 1. Only source files count now.
