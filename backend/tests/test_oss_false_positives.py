@@ -61,6 +61,10 @@ def test_contract_id_alone_does_not_raise_sep45():
     login = AgentArtifact(source_kind=SourceKind.REPO, name="login", code_files={
         "auth.ts": "// smart wallet login\nconst challenge = await buildChallenge(); // SEP-10 web auth\n"})
     assert "stellar_native-sep45-boundary" in run(StellarNativeAuditor, login)
+    # An EVM product with ERC-4337 smart wallets and a login route has no SEP-45 boundary.
+    evm = AgentArtifact(source_kind=SourceKind.REPO, name="evm", code_files={
+        "wallet.ts": "// smart wallet (ERC-4337) via viem\napp.post('/auth', siweLogin);\n"})
+    assert "stellar_native-sep45-boundary" not in run(StellarNativeAuditor, evm)
 
 
 def test_comments_and_comparisons_in_code_are_not_floating_dependencies():
@@ -163,3 +167,25 @@ def test_configured_base_url_with_variable_path_is_not_ssrf():
             "def fetch(url: str):\n"
             "    return httpx.get(url).text\n")
     assert [f for f in analyse_code({"tool.py": tool}).flows if f.category == "ssrf"]
+
+
+def test_repository_selection_keeps_records_and_security_files(tmp_path):
+    from backend.app.services.repo_audit import select_repository
+    (tmp_path / "LICENSE").write_text("MIT License\n")
+    (tmp_path / ".github/workflows").mkdir(parents=True)
+    (tmp_path / ".github/workflows/ci.yml").write_text("on: push\n")
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(5):
+        (src / f"util{i}.ts").write_text("export const fetchIt = () => fetch(url); // payment secret\n" * 3)
+    (src / "auth.ts").write_text("export function check(k: string) { return k.length > 0; }\n")
+    files, selection = select_repository(tmp_path, max_files=2)
+    assert {"LICENSE", ".github/workflows/ci.yml", "src/auth.ts"} <= set(files)
+    manifest = selection["manifest"]
+    assert manifest["complete"] is False and len(manifest["source_files_not_selected"]) == 4
+
+
+def test_source_outside_the_budget_keeps_analysis_incomplete():
+    artifact = AgentArtifact(source_kind=SourceKind.REPO, name="big", code_files={"a.ts": "export const x = 1;\n"},
+                             raw_metadata={"source_not_selected": ["src/auth.ts"]})
+    assert "security-source-analysis-incomplete" in run(SecurityAuditor, artifact)

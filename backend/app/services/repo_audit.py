@@ -52,6 +52,20 @@ SIGNALS = re.compile(
     r"anthropic|openai|messages\.create|mcp|policy|limit|allowlist|approve", re.I)
 
 
+#: Files that decide who may do what. They are kept first when a repository exceeds the budget.
+SECURITY_PATH = re.compile(r"(?:^|[/_.-])(?:auth\w*|router|routes?|middleware|guards?|netguard|polic(?:y|ies)|"
+                           r"permissions?|admin|webhooks?|sessions?|keys|approvals?|x402|paymaster|signer|wallet)"
+                           r"(?:[/_.-]|$)", re.I)
+LICENSE_NAMES = {"license", "license.md", "license.txt", "licence", "licence.md", "copying"}
+
+
+def _is_repository_record(rel: Path) -> bool:
+    posix = rel.as_posix().lower()
+    return ((len(rel.parts) == 1 and rel.name.lower() in LICENSE_NAMES)
+            or (posix.startswith(".github/workflows/") and posix.endswith((".yml", ".yaml")))
+            or posix == ".gitlab-ci.yml")
+
+
 def _skipped(rel: Path) -> bool:
     parts = [p.lower() for p in rel.parts[:-1]]
     name = rel.name.lower()
@@ -76,8 +90,8 @@ def _lockfiles(root: Path) -> dict[str, str]:
     return found
 
 
-def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_000,
-                      max_file_bytes: int = 120_000) -> tuple[dict[str, str], dict]:
+def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12_000_000,
+                      max_file_bytes: int = 400_000) -> tuple[dict[str, str], dict]:
     """Choose the agent-defining source within a budget. Returns (files, manifest)."""
     root = root.resolve()
     candidates, instructions, manifests, skipped, oversized = [], {}, {}, 0, []
@@ -85,6 +99,10 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(root)
+        if _is_repository_record(rel) and path.stat().st_size <= 64_000:
+            # License and CI definitions are provenance evidence, not source.
+            manifests[rel.as_posix()] = path.read_text(errors="replace")
+            continue
         if rel.name.lower() in README_NAMES and len(rel.parts) == 1:
             instructions[rel.as_posix()] = path.read_text(errors="replace")[:6_000]
             continue
@@ -111,7 +129,8 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
             if len(rel.parts) <= 3 and size <= 64_000:
                 manifests[rel.as_posix()] = text
             continue
-        score = len(SIGNALS.findall(text)) + (5 if rel.parts[0] in {"src", "lib", "app", "agent", "server"} else 0)
+        score = (len(SIGNALS.findall(text)) + (5 if rel.parts[0] in {"src", "lib", "app", "agent", "server"} else 0)
+                 + (40 if SECURITY_PATH.search(rel.as_posix()) else 0))
         candidates.append((score, rel.as_posix(), text))
     candidates.sort(key=lambda c: (-c[0], c[1]))
     files, used, left_out = {}, 0, []
@@ -124,7 +143,7 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
     source_count = len(files)
     files.update(manifests)
     manifest = {"source_files_selected": source_count, "manifest_files": sorted(manifests), "source_bytes_selected": used,
-                "source_files_not_selected": left_out[:200], "files_skipped_as_tests_or_builds": skipped,
+                "source_files_not_selected": left_out[:500], "files_skipped_as_tests_or_builds": skipped,
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
@@ -205,6 +224,8 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         source_ref=f"repo:{source_reference or root.name}@{revision}",
         name=name, description=description, system_prompt=instructions[:12_000],
         code_files=files, tools=registered_tools(files), dependencies=_dependencies(root), chain_authority=chain, lockfiles=_lockfiles(root),
+        raw_metadata={"source_not_selected": (selection["manifest"]["source_files_not_selected"]
+                                              + selection["manifest"]["files_too_large"])},
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
         agent_contract_id=(contract_facts or {}).get("contract_id", ""),
         owner_verification_note="Not checked during repository review.",
