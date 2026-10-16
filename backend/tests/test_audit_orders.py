@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from backend.app.config import Settings
 from backend.app.services import audit_orders as orders
+from backend.app.services import order_settlement as settlement
 from backend.app.services import testnet_checkout as checkout
 from backend.app.services.audit_product import EngagementRequest, audit_engagement, build_plan
 from backend.app.services.studio import ReviewRequest
@@ -529,3 +530,51 @@ def test_business_exception_does_not_mask_infrastructure_failure(fault):
     if fault == 'wrong_workflow': event['workflow'] = 'other'
     if fault == 'invalid_range': observation['external_event_range'] = [0,2]
     assert not orders._observed_workflow_exception(observation, runtime)
+
+
+@pytest.mark.anyio
+async def test_settlement_pending_stays_claimable_without_spending_attempts(tmp_path, config):
+    now = [time.time()]
+    store, live, created = await setup_order(tmp_path, config, clock=lambda: now[0])
+    await activate(store, live, created, config)
+    calls = []
+    async def pending(order, result, publication):
+        calls.append(order['id'])
+        if len(calls) < 8:
+            raise settlement.SettlementPending('awaiting ledger')
+        return await chain(order, result, publication)
+    outcome = await run(store, live, config, chain_adapter=pending)
+    assert outcome['status'] == 'settling' and outcome['failure_code'] == 'settlement_pending'
+    assert await run(store, live, config, chain_adapter=pending) is None
+    for _ in range(6):
+        now[0] += orders.SETTLEMENT_RETRY_SECONDS
+        assert (await run(store, live, config, chain_adapter=pending))['status'] == 'settling'
+    now[0] += orders.SETTLEMENT_RETRY_SECONDS
+    assert (await run(store, live, config, chain_adapter=pending))['status'] == 'delivered'
+
+
+@pytest.mark.anyio
+async def test_expired_intent_releases_the_shared_signer_lane(tmp_path, config):
+    store, live, first = await setup_order(tmp_path, config)
+    await activate(store, live, first, config)
+    live.state = 'absent'
+    second = await orders.create_order(submission(config, '# second\n'), config, store, checkout_reader=live)
+    await activate(store, live, second, config)
+    a, b = store.claim('a'), store.claim('b')
+    for claim in (a, b):
+        store._checkpoint(claim['id'], claim['lease_token'], 'settling')
+    intent = {'network': 'testnet', 'signer': checkout._deployment()['roles']['provider'],
+              'sequence': 123, 'tx_hash': 'a' * 64, 'signed_xdr': 'immutable-signed-envelope', 'status': 'pending'}
+    store.reserve_chain_intent(a['id'], 'respond', intent, lease_token=a['lease_token'])
+    with pytest.raises(orders.OrderError, match='awaiting reconciliation'):
+        store.reserve_chain_intent(b['id'], 'respond', {**intent, 'tx_hash': 'b' * 64}, lease_token=b['lease_token'])
+    with pytest.raises(orders.OrderError, match='unresolved'):
+        store.expire_chain_intent(a['id'], 'respond', 'c' * 64, lease_token=a['lease_token'])
+    store.expire_chain_intent(a['id'], 'respond', intent['tx_hash'], lease_token=a['lease_token'])
+    assert store.get_chain_intent(a['id'], 'respond') is None
+    # The unconsumed sequence is reusable by the next order on the same signer.
+    replacement = {**intent, 'tx_hash': 'b' * 64, 'status': 'prepared'}
+    assert store.reserve_chain_intent(b['id'], 'respond', replacement, lease_token=b['lease_token'])['tx_hash'] == 'b' * 64
+    with store._connect() as db:
+        archived = db.execute('SELECT order_id, tx_hash FROM audit_order_expired_intents').fetchall()
+    assert [tuple(r) for r in archived] == [(a['id'], 'a' * 64)]

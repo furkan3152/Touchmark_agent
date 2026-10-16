@@ -26,6 +26,8 @@ from . import testnet_checkout as checkout
 
 STEPS = ('respond', 'submit', 'complete', 'issue')
 TERMINAL = {'confirmed', 'observed', 'failed'}
+# Seconds past a signed envelope's max_time before it is treated as unlandable.
+EXPIRY_MARGIN = 300
 
 
 class SettlementPending(ValueError):
@@ -150,6 +152,26 @@ class TestnetChain:
 
     async def status(self, intent):
         return await asyncio.to_thread(self._rpc_tx, intent, False)
+
+    async def expired(self, intent):
+        return await asyncio.to_thread(self._expired, intent)
+
+    @staticmethod
+    def _expired(intent, now=None):
+        """True only when the envelope can never execute: its time bound has passed,
+        the network has no receipt and the signer has not consumed its sequence."""
+        envelope = TransactionEnvelope.from_xdr(intent['signed_xdr'], checkout.PASSPHRASE)
+        max_time = envelope.transaction.preconditions.time_bounds.max_time
+        if (now if now is not None else time.time()) < max_time + EXPIRY_MARGIN:
+            return False
+        client = RequestsClient(num_retries=0, request_timeout=12, post_timeout=12)
+        try:
+            server = SorobanServer(checkout.RPC_URL, client)
+            if server.get_transaction(intent['tx_hash']).status.value != 'NOT_FOUND':
+                return False
+            return server.load_account(intent['signer']).sequence < intent['sequence']
+        finally:
+            client.close()
 
     async def broadcast(self, intent):
         return await asyncio.to_thread(self._rpc_tx, intent, True)
@@ -321,6 +343,11 @@ class TestnetOrderSettlement:
                 continue
             if intent and intent.get('status') in TERMINAL:
                 raise ValueError('A terminal transaction intent has no matching live contract state; operator review is required.')
+            if intent and await self.chain.expired(intent):
+                # The envelope can never land; archive it so this order and the signer lane can proceed.
+                await _await(self.store.expire_chain_intent(order['id'], step, intent['tx_hash'],
+                                                            lease_token=order['lease_token']))
+                intent = None
             if not intent:
                 candidate = await self.chain.prepare(step, quote, digest, uri, score, int(time.time()) + 7 * 86400)
                 intent = await _await(self.store.reserve_chain_intent(order['id'], step, candidate,
