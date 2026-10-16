@@ -116,6 +116,8 @@ class AuditSwarm:
         job_id: str,
         tier: AuditTier = AuditTier.BASIC,
         reward_pool_usdc: float = 0.0,
+        deep_reviewer=None,
+        chain_facts: dict | None = None,
     ) -> AuditReport:
         t0 = time.perf_counter()
         deep = tier == AuditTier.DEEP
@@ -165,6 +167,10 @@ class AuditSwarm:
         if failures or len(verdicts) != len(self.auditors):
             raise RuntimeError("Audit quorum not completed: " + "; ".join(failures))
 
+        deep_record: dict = {}
+        if deep_reviewer is not None:
+            verdicts, deep_record = await self._deep_review(deep_reviewer, artifact, verdicts, chain_facts)
+
         score, badge, dim_scores, findings, notes, disagreement, assurance = (
             self.judge.synthesise(artifact, verdicts, tier=tier)
         )
@@ -183,6 +189,8 @@ class AuditSwarm:
         processors: list[str] = []
         if judge_llm_consulted or any(verdict.llm_consulted for verdict in verdicts):
             processors.append(f"{self.settings.llm_provider}:{self.settings.llm_model}")
+        if deep_record.get("status") not in (None, "not_run", "unavailable"):
+            processors.append(f"anthropic:{deep_record.get('model')}")
 
         limitations = [
             "Static and scenario-based audit is not an independent security certificate.",
@@ -250,11 +258,34 @@ class AuditSwarm:
                 ),
             },
             deterministic=not processors,
+            deep_review=deep_record,
             external_processors=processors,
         )
         self._last_payouts = payouts
 
         return report
+
+    async def _deep_review(self, reviewer, artifact, verdicts, chain_facts):
+        """Add verified model findings to the matching dimension. Never removes a finding."""
+        from .base import BaseAuditor
+        from .policy import classify_finding
+        existing = [f for v in verdicts for f in v.findings]
+        result = await reviewer.review(artifact, existing, chain_facts)
+        by_dimension: dict = {}
+        for finding in result.findings:
+            by_dimension.setdefault(finding.dimension, []).append(classify_finding(finding))
+        updated = []
+        for verdict in verdicts:
+            extra = by_dimension.get(verdict.dimension, [])
+            if extra:
+                findings = verdict.findings + extra
+                verdict = verdict.model_copy(update={
+                    "findings": findings,
+                    "score": BaseAuditor.score_from(findings, verdict.scenarios),
+                    "coverage": {**verdict.coverage, "findings": len(findings)},
+                })
+            updated.append(verdict)
+        return updated, result.report()
 
     @property
     def last_payouts(self) -> dict[str, float]:

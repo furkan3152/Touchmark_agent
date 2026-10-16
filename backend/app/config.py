@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     llm_max_response_bytes: int = Field(default=128_000, ge=4096, le=256_000)
     llm_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
     allow_external_llm_for_private_audits: bool = False
+    # Deep review: grounded, tool-using Claude investigation (services/deep_review.py).
+    # Runs only with per-request consent; the key comes from ANTHROPIC_API_KEY.
+    enable_deep_review: bool = False
+    anthropic_api_key: str = Field(default="", repr=False, exclude=True)
+    deep_review_model: str = "claude-sonnet-5-5"
+    deep_review_effort: str = Field(default="high", pattern="^(low|medium|high|xhigh|max)$")
+    deep_review_max_turns: int = Field(default=24, ge=4, le=60)
+    deep_review_timeout_seconds: float = Field(default=240.0, ge=30.0, le=900.0)
     # Gerçek endpoint'e adversarial payload yalnız izole hedefte açık opt-in ile gönderilir.
     enable_active_agent_probes: bool = False
 
