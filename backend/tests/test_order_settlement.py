@@ -31,6 +31,12 @@ class Journal:
         self.writes.append(('reserve', step))
         return deepcopy(self.intents[step])
 
+    def expire_chain_intent(self, order, step, tx_hash, *, lease_token):
+        assert self.allow_write, 'lease lost'
+        assert self.intents[step]['tx_hash'] == tx_hash
+        del self.intents[step]
+        self.writes.append(('expire', step))
+
     def update_chain_intent(self, order, step, tx_hash, updates, *, lease_token):
         assert self.allow_write, 'lease lost'
         assert self.intents[step]['tx_hash'] == tx_hash
@@ -50,6 +56,7 @@ class FakeChain:
         self.apply = True
         self.issue_fail = False
         self.fail_prepare = None
+        self.unlandable = set()
 
     async def snapshot(self, quote):
         return deepcopy(self.state)
@@ -69,6 +76,9 @@ class FakeChain:
 
     async def status(self, intent):
         return self.receipts.get(intent['tx_hash'], {'status': 'NOT_FOUND'})
+
+    async def expired(self, intent):
+        return intent['tx_hash'] in self.unlandable
 
     async def broadcast(self, intent):
         step = next(step for step, value in self.journal.intents.items() if value['tx_hash'] == intent['tx_hash'])
@@ -292,3 +302,50 @@ async def test_history_missing_uses_observed_not_fabricated_success(flow):
     assert receipt['transactions'][0]['status'] == 'observed'
     assert receipt['transactions'][0]['ledger'] is None
     assert [s for s, _ in chain.sent].count('respond') == 1
+
+
+@pytest.mark.anyio
+async def test_unlandable_pending_intent_is_archived_and_replaced(flow):
+    adapter, order, result, publication, chain, journal = flow
+    chain.apply = False
+    with pytest.raises(settlement.SettlementPending):
+        await adapter(order, result, publication)
+    stuck = journal.intents['respond']
+    assert stuck['status'] == 'pending'
+    chain.unlandable.add(stuck['tx_hash'])
+    chain.apply = True
+    receipt = await adapter(order, result, publication)
+    assert receipt['status'] == 'delivered'
+    assert ('expire', 'respond') in journal.writes
+    assert journal.intents['respond']['tx_hash'] != stuck['tx_hash']
+    assert [s for s, _ in chain.prepared].count('respond') == 2
+
+
+def test_envelope_is_not_expired_before_its_time_bound(flow, monkeypatch):
+    adapter, order, result, publication, chain, journal = flow
+    tx = (TransactionBuilder(Account(Keypair.random().public_key, 7), checkout.PASSPHRASE)
+          .append_manage_data_op('k', b'v').set_timeout(180).build())
+    intent = {'signed_xdr': tx.to_xdr(), 'tx_hash': tx.hash_hex(), 'signer': tx.transaction.source.account_id,
+              'sequence': tx.transaction.sequence}
+    def offline(*args, **kwargs):
+        pytest.fail('No RPC call is needed while the time bound is open')
+    monkeypatch.setattr(settlement, 'SorobanServer', offline)
+    max_time = tx.transaction.preconditions.time_bounds.max_time
+    assert settlement.TestnetChain._expired(intent, now=max_time + settlement.EXPIRY_MARGIN - 1) is False
+
+    class Server:
+        def __init__(self, sequence, status='NOT_FOUND'):
+            self.sequence, self.status = sequence, status
+        def __call__(self, *args):
+            return self
+        def get_transaction(self, tx_hash):
+            return type('R', (), {'status': type('S', (), {'value': self.status})})()
+        def load_account(self, signer):
+            return Account(signer, self.sequence)
+    late = max_time + settlement.EXPIRY_MARGIN
+    monkeypatch.setattr(settlement, 'SorobanServer', Server(intent['sequence'] - 1))
+    assert settlement.TestnetChain._expired(intent, now=late) is True
+    monkeypatch.setattr(settlement, 'SorobanServer', Server(intent['sequence']))
+    assert settlement.TestnetChain._expired(intent, now=late) is False
+    monkeypatch.setattr(settlement, 'SorobanServer', Server(intent['sequence'] - 1, 'FAILED'))
+    assert settlement.TestnetChain._expired(intent, now=late) is False
