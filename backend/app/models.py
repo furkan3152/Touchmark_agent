@@ -233,6 +233,8 @@ class AgentArtifact(BaseModel):
     #: Capabilities, controls and data flows derived from source by the analyser.
     #: Filled during the audit; never part of the submitted input commitment.
     code_profile: dict[str, Any] = Field(default_factory=dict)
+    #: On-ledger authority facts read at audit time (stellar.authority). Evidence, not input.
+    chain_authority: dict[str, Any] = Field(default_factory=dict)
 
     def text_surface(self) -> str:
         """Denetçilerin tarayacağı birleşik metin yüzeyi."""

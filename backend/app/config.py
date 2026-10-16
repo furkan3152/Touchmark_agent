@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     allow_external_llm_for_private_audits: bool = False
     # Deep review: grounded, tool-using Claude investigation (services/deep_review.py).
     # Runs only with per-request consent; the key comes from ANTHROPIC_API_KEY.
+    # Read public ledger state (signers, thresholds, SEP-1, SEP-29) for supplied addresses.
+    enable_onchain_verification: bool = False
     enable_deep_review: bool = False
     anthropic_api_key: str = Field(default="", repr=False, exclude=True)
     deep_review_model: str = "claude-sonnet-5-5"

@@ -54,7 +54,7 @@ def _canonical(payload: object) -> bytes:
 def artifact_commitment(artifact: AgentArtifact) -> str:
     """Denetlenen girdiyi yerel kimlik ve ham metadata'dan bağımsız bağlar."""
     artifact_payload = artifact.model_dump(
-        mode="json", exclude={"id", "created_at", "raw_metadata", "code_profile"}
+        mode="json", exclude={"id", "created_at", "raw_metadata", "code_profile", "chain_authority"}
     )
     payload = {"policy": AUDIT_POLICY_VERSION, "artifact": artifact_payload}
     return "sha256:" + hashlib.sha256(_canonical(payload)).hexdigest()
@@ -112,6 +112,8 @@ EVIDENCE_GAP_RULES = frozenset({
     "reliability-no-endpoint", "reliability-no-error-handling", "reliability-no-cost-controls",
     "security-no-auditable-surface", "security-no-isolation", "security-all-tools-networked",
     "security-source-analysis-incomplete",
+    "stellar_native-onchain-account-missing", "stellar_native-onchain-agent-key-undeclared",
+    "stellar_native-onchain-identity-unbound",
 })
 #: Gaps that make a pass impossible: the reviewed scope itself is incomplete.
 BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface"})
