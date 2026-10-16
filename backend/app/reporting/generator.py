@@ -73,7 +73,10 @@ def report_to_dict(report: AuditReport, artifact: AgentArtifact) -> dict:
         "result": {
             "overall_score": report.overall_score,
             "badge": report.badge.value,
+            "decision": report.decision,
             "severity_counts": report.counts(),
+            "evidence_gap_count": sum(1 for f in report.findings if f.kind.value == "evidence_gap"),
+            "warning_count": sum(1 for f in report.findings if f.kind.value == "warning"),
             "disagreement_index": report.disagreement_index,
             "dimension_scores": [d.model_dump(mode="json") for d in report.dimension_scores],
             "assurance_level": report.assurance_level.value,
@@ -109,6 +112,8 @@ def report_to_dict(report: AuditReport, artifact: AgentArtifact) -> dict:
             for v in report.verdicts
         ],
         "judge_notes": report.judge_notes,
+        "deep_review": report.deep_review,
+        "onchain_authority": artifact.chain_authority,
         "attestation": report.attestation.model_dump(mode="json") if report.attestation else None,
     }
 

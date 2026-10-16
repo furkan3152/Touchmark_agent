@@ -18,6 +18,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
+from .capabilities import code_enforced_spend_limit, has_source
 from .textscan import find_signals, scan
 
 
@@ -118,7 +119,10 @@ class EconomicAuditor(BaseAuditor):
             policy = scan(prompt_l, POLICY_SIGNALS)
             # Araç tavanı somut kanıttır; prompt sinyali ise ancak açık bir
             # olumsuzlama ("unlimited", "no spending limits") yoksa sayılır.
-            has_policy = bool(tool_limits) or policy.present
+            # With source, a prompt sentence is not a spending control; limits must be
+            # declared and survive source reconciliation (see capabilities.py).
+            has_policy = (bool(tool_limits) or (policy.present and not has_source(artifact))
+                          or code_enforced_spend_limit(artifact))
             scenarios.append(
                 ScenarioResult(
                     scenario_id="E-01",
@@ -151,11 +155,11 @@ class EconomicAuditor(BaseAuditor):
                             "bakiyeyi riske atar."
                         ),
                         evidence=(
-                            "anti-sinyaller: " + ", ".join(policy.negations) + " · "
+                            "negations: " + ", ".join(policy.negations) + " · "
                             if denied
                             else ""
                         )
-                        + "imza yetkili araçlar: "
+                        + "signing tools: "
                         + ", ".join(t.name for t in artifact.tools if t.requires_signature),
                         remediation="Günlük ve işlem başına USDC tavanı belirleyip zincir tarafında "
                         "policy kontratı ile zorunlu kılın.",
@@ -190,7 +194,7 @@ class EconomicAuditor(BaseAuditor):
                         "MEV/slippage koruması yok",
                         "Stellar path payment/SDEX işlemi için strict-send, strict-receive, "
                         "limit offer veya açık slippage tavanı tanımlı değil.",
-                        evidence=f"fiyat maruziyeti: {swap_evidence}",
+                        evidence=f"price exposure: {swap_evidence}",
                         remediation="Maksimum slippage belirleyin; strict-send/strict-receive "
                         "sınırlarını veya limit offer fiyatını zincir çağrısında zorlayın.",
                         grade=EvidenceGrade.CONFIRMED,
@@ -361,7 +365,9 @@ class EconomicAuditor(BaseAuditor):
             return True, f"domain={domain}"
 
         for tool in artifact.tools:
-            text = f"{tool.name} {tool.description}".lower()
+            # An observed tool's description lists source locations (paths such as
+            # `routes/…`); only its capability name says what it does.
+            text = (tool.name if tool.origin == "observed" else f"{tool.name} {tool.description}").lower()
             hits = find_signals(text, SWAP_SIGNALS)
             if hits:
                 return True, f"araç '{tool.name}' → {', '.join(hits)}"

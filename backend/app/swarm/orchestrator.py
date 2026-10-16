@@ -25,12 +25,14 @@ from .llm import LlmClient
 from .reliability import ReliabilityAuditor
 from .security import SecurityAuditor
 from .provenance import ProvenanceAuditor
+from .capabilities import effective_artifact
 from .policy import (
     AUDIT_POLICY_VERSION,
     artifact_commitment,
     audit_surface_coverage,
     evidence_summary,
     finding_set_commitment,
+    review_decision,
 )
 
 
@@ -114,10 +116,15 @@ class AuditSwarm:
         job_id: str,
         tier: AuditTier = AuditTier.BASIC,
         reward_pool_usdc: float = 0.0,
+        deep_reviewer=None,
+        chain_facts: dict | None = None,
     ) -> AuditReport:
         t0 = time.perf_counter()
         deep = tier == AuditTier.DEEP
         self._validate_roster()
+        # Commit to what was submitted, then judge what the source can actually do.
+        input_hash = artifact_commitment(artifact)
+        artifact = effective_artifact(artifact)
 
         results = await asyncio.gather(
             *(
@@ -160,6 +167,11 @@ class AuditSwarm:
         if failures or len(verdicts) != len(self.auditors):
             raise RuntimeError("Audit quorum not completed: " + "; ".join(failures))
 
+        verdicts = self._apply_verifiability(artifact, verdicts)
+        deep_record: dict = {}
+        if deep_reviewer is not None:
+            verdicts, deep_record = await self._deep_review(deep_reviewer, artifact, verdicts, chain_facts)
+
         score, badge, dim_scores, findings, notes, disagreement, assurance = (
             self.judge.synthesise(artifact, verdicts, tier=tier)
         )
@@ -178,6 +190,8 @@ class AuditSwarm:
         processors: list[str] = []
         if judge_llm_consulted or any(verdict.llm_consulted for verdict in verdicts):
             processors.append(f"{self.settings.llm_provider}:{self.settings.llm_model}")
+        if deep_record.get("status") not in (None, "not_run", "unavailable"):
+            processors.append(f"anthropic:{deep_record.get('model')}")
 
         limitations = [
             "Static and scenario-based audit is not an independent security certificate.",
@@ -192,6 +206,7 @@ class AuditSwarm:
         if processors:
             limitations.append("External LLM used; report is not deterministic.")
         surface_coverage = audit_surface_coverage(artifact)
+        decision = review_decision(findings, surface_coverage, score)
         if tier is AuditTier.DEEP and not surface_coverage["deep_core_complete"]:
             limitations.append(
                 "Deep audit core surface incomplete: "
@@ -211,6 +226,7 @@ class AuditSwarm:
             duration_ms=int((time.perf_counter() - t0) * 1000),
             overall_score=score,
             badge=badge,
+            decision=decision,
             dimension_scores=dim_scores,
             verdicts=verdicts,
             findings=findings,
@@ -219,7 +235,7 @@ class AuditSwarm:
             completed_dimensions=[v.dimension.value for v in verdicts],
             limitations=limitations,
             policy_version=AUDIT_POLICY_VERSION,
-            input_hash=artifact_commitment(artifact),
+            input_hash=input_hash,
             finding_set_hash=finding_set_commitment(findings),
             assurance_level=assurance,
             evidence_summary=evidence_summary(findings),
@@ -233,6 +249,9 @@ class AuditSwarm:
                     1 for v in verdicts for scenario in v.scenarios if scenario.passed
                 ),
                 "surface_coverage": surface_coverage,
+                "observed_capabilities": artifact.code_profile.get("capabilities", {}),
+                "enforced_controls": artifact.code_profile.get("controls", {}),
+                "observed_tools": [t.name for t in artifact.tools if t.origin == "observed"],
                 "attack_paths": sum(
                     1
                     for finding in findings
@@ -240,11 +259,93 @@ class AuditSwarm:
                 ),
             },
             deterministic=not processors,
+            deep_review=deep_record,
             external_processors=processors,
         )
         self._last_payouts = payouts
 
         return report
+
+    @staticmethod
+    def _rescore(verdict, findings):
+        from .base import BaseAuditor
+        return verdict.model_copy(update={
+            "findings": findings, "score": BaseAuditor.score_from(findings, verdict.scenarios),
+            "coverage": {**verdict.coverage, "findings": len(findings)}})
+
+    def _apply_verifiability(self, artifact, verdicts):
+        """Turn unverifiable absence claims into gaps, and add a blocking gap for them.
+
+        "No spending limit" is evidence only where the analyser can see limits. Authority
+        in TypeScript or Rust is judged by the deep review; until it reads those files the
+        review cannot pass.
+        """
+        from ..models import Dimension, EvidenceGrade, Finding, FindingKind, Severity
+        from .capabilities import unverifiable_control_files
+        from .policy import ABSENCE_OF_CONTROL_RULES, DECLARATION_RULES
+        unverifiable = unverifiable_control_files(artifact)
+        declared_any = any(t.origin == "declared" for t in artifact.tools)
+        updated = []
+        for verdict in verdicts:
+            changed = False
+            findings = []
+            for finding in verdict.findings:
+                if ((unverifiable and finding.id in ABSENCE_OF_CONTROL_RULES)
+                        or (not declared_any and finding.id in DECLARATION_RULES)):
+                    reason = ("Controls in " + ", ".join(unverifiable[:5]) + " are not visible to data-flow analysis; "
+                              "the deep review judges them." if finding.id in ABSENCE_OF_CONTROL_RULES
+                              else "No tool declaration was supplied, so there is nothing to contradict.")
+                    finding = finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP,
+                                                         "detail": finding.detail + " " + reason})
+                    changed = True
+                findings.append(finding)
+            if verdict.dimension is Dimension.SECURITY and unverifiable:
+                findings.append(Finding(
+                    id="security-controls-unverifiable", dimension=Dimension.SECURITY, severity=Severity.MEDIUM,
+                    title="Signing or execution authority is in code the rules cannot verify",
+                    detail="Spending limits, recipient checks and approvals in these files must be read to be "
+                           "judged. A passing decision requires a completed deep review that read all of them.",
+                    evidence=", ".join(unverifiable[:20]), evidence_grade=EvidenceGrade.CONFIRMED,
+                    remediation="Run the deep review, or move signing behind a Python policy layer or an on-chain "
+                                "spending policy that can be verified.",
+                    auditor=verdict.auditor, confidence=0.9, kind=FindingKind.EVIDENCE_GAP))
+                changed = True
+            updated.append(self._rescore(verdict, findings) if changed else verdict)
+        return updated
+
+    async def _deep_review(self, reviewer, artifact, verdicts, chain_facts):
+        """Add verified model findings to the matching dimension. Never removes a finding."""
+        from .base import BaseAuditor
+        from .policy import classify_finding
+        existing = [f for v in verdicts for f in v.findings]
+        result = await reviewer.review(artifact, existing, chain_facts or artifact.chain_authority or None)
+        by_dimension: dict = {}
+        for finding in result.findings:
+            by_dimension.setdefault(finding.dimension, []).append(classify_finding(finding))
+        # The unverifiable-controls gap is closed by evidence (every such file was read in a
+        # completed review), never by the model's opinion of those files.
+        from .capabilities import unverifiable_control_files
+        closed = (result.status == "completed"
+                  and set(unverifiable_control_files(artifact)) <= set(result.files_read))
+        # Files the parser could not read are covered only when the review read each of them;
+        # an analyser crash (profile error) is never closed this way.
+        unparsed = set(artifact.code_profile.get("unparsed_files", []))
+        parsed_gap_closed = (result.status == "completed" and bool(unparsed)
+                             and not artifact.code_profile.get("error") and unparsed <= set(result.files_read)
+                             and not artifact.raw_metadata.get("source_not_selected"))
+        updated = []
+        for verdict in verdicts:
+            findings = [f for f in verdict.findings
+                        if not (closed and f.id == "security-controls-unverifiable")
+                        and not (parsed_gap_closed and f.id == "security-source-analysis-incomplete")]
+            findings += by_dimension.get(verdict.dimension, [])
+            if findings != verdict.findings:
+                verdict = self._rescore(verdict, findings)
+            updated.append(verdict)
+        record = result.report()
+        record["unverifiable_controls_resolved"] = closed
+        record["unparsed_files_read"] = parsed_gap_closed
+        return updated, record
 
     @property
     def last_payouts(self) -> dict[str, float]:

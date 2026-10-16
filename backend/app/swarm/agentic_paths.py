@@ -31,9 +31,12 @@ _SOURCE_NAMES = {
     "input", "user_input", "prompt", "payload", "query", "message", "messages",
     "command", "cmd", "code", "request", "webhook",
 }
+#: A secret passed through a masking, hashing or public-key step on the same line is not leaked.
+_SANITISED_RE = re.compile(r"mask|redact|hash|digest|fingerprint|public_?key|publicKey|\.length\b|\blen\(", re.I)
 _COMMAND_SINK_RE = re.compile(
-    r"\beval\s*\(|\bexec\s*\(|os\.system\s*\(|subprocess\.(?:run|call|popen)\s*\(|"
-    r"child_process\.(?:exec|spawn)\s*\(|\bCommand::new\s*\(",
+    # `exec(` as a function, not a method: RegExp.exec / db.exec are not code execution.
+    r"(?<![.\w])eval\s*\(|(?<![.\w])exec\s*\(|os\.system\s*\(|subprocess\.(?:run|call|popen)\s*\(|"
+    r"child_process\.(?:exec|execSync|spawn)\s*\(|\b(?:execSync|spawnSync|execFile)\s*\(|\bCommand::new\s*\(",
     re.I,
 )
 # Stellar Classic transaction submission and Soroban invocation/authorization
@@ -100,8 +103,6 @@ def _function_params(line: str) -> set[str]:
 
 
 def _scan_file(filename: str, content: str, external_entrypoints: set[str] | None = None) -> tuple[list[_Hit], list[_Hit], list[_Hit]]:
-    if filename.lower().endswith(".py"):
-        return _scan_python(filename, content, external_entrypoints)
     tainted: set[str] = set()
     secrets: set[str] = set()
     commands: list[_Hit] = []
@@ -128,146 +129,75 @@ def _scan_file(filename: str, content: str, external_entrypoints: set[str] | Non
             financial.append(_Hit(filename, number, referenced_taint[0], line))
 
         referenced_secrets = sorted(_names(line) & secrets)
-        if referenced_secrets and _EXFIL_SINK_RE.search(line):
+        if referenced_secrets and _EXFIL_SINK_RE.search(line) and not _SANITISED_RE.search(line):
             if not assignment or assignment.group("var") not in referenced_secrets:
                 exfil.append(_Hit(filename, number, referenced_secrets[0], line))
     return commands[:5], financial[:5], exfil[:5]
 
 
-def _scan_python(filename: str, content: str, external_entrypoints: set[str] | None = None) -> tuple[list[_Hit], list[_Hit], list[_Hit]]:
-    """Bounded intraprocedural analysis; parses source, never imports or executes it.
+_PATH_RULES = {
+    # category: (finding id, severity for direct input, title, detail, remediation, references)
+    "command": ("security-path-untrusted-to-command", Severity.CRITICAL,
+        "External input reaches a process or code-execution boundary",
+        "Input-derived data appears in an eval, exec or process call. Inspect whether an attacker controls executable content or arguments. A static path alone does not prove arbitrary code execution.",
+        "Remove dynamic execution. Otherwise use an isolated worker without network access or Stellar signing keys, with allowlisted commands and arguments.",
+        ["OWASP LLM05 Improper Output Handling", "CWE-78"]),
+    "financial": ("security-path-untrusted-to-financial-sink", Severity.CRITICAL,
+        "External input reaches a Stellar transaction boundary",
+        "A static input-to-transaction path is visible: the recipient or an unbounded amount of a signed Stellar operation comes from untrusted input. Authorization names and comments do not prove enforcement. This is not proof of a successful exploit.",
+        "Enforce typed inputs, recipient allowlists, fail-closed spending limits, replay protection and explicit approval before signing. Test each boundary with rejected requests.",
+        ["Soroban authorization", "OWASP LLM06 Excessive Agency"]),
+    "foreign_signing": ("security-path-external-transaction-signed", Severity.CRITICAL,
+        "An externally supplied transaction is signed with the agent key",
+        "A transaction envelope parsed from request or model input is signed or submitted without inspecting its operations. Whoever supplies the envelope chooses what the agent key authorizes.",
+        "Never sign arbitrary envelopes. Build transactions server-side, or decode and allowlist every operation, source, destination and amount before signing.",
+        ["Stellar transaction signing", "OWASP LLM06 Excessive Agency"]),
+    "account_control": ("security-path-untrusted-account-control", Severity.CRITICAL,
+        "Untrusted input changes account authority",
+        "Signer, threshold, trustline or merge operations are built from untrusted input and signed. A prompt injection or forged request can add a signer or merge the account.",
+        "Remove account-administration tools from the agent, or require an out-of-band human approval and fixed parameters for each change.",
+        ["Stellar set_options", "OWASP LLM06 Excessive Agency"]),
+    "ssrf": ("security-path-untrusted-to-network", Severity.HIGH,
+        "Untrusted input chooses a server-side request URL",
+        "A URL derived from model or request input is fetched without a fixed host. The agent can be steered to internal services, cloud metadata endpoints or attacker hosts.",
+        "Allowlist hosts and schemes, resolve and pin addresses, block private ranges and do not return raw responses to the model.",
+        ["CWE-918", "OWASP LLM06 Excessive Agency"]),
+    "path_traversal": ("security-path-untrusted-to-file", Severity.HIGH,
+        "Untrusted input chooses a file path",
+        "A file path derived from model or request input is opened without a containment check. Relative segments such as ../ can reach configuration and key files.",
+        "Resolve the path and require it to stay inside a fixed directory (Path.resolve().is_relative_to(base)); allowlist extensions.",
+        ["CWE-22"]),
+    "secret_via_model": ("security-path-secret-handled-by-model", Severity.HIGH,
+        "The model is asked to handle secret keys",
+        "A model-callable tool takes secret key material as an argument. Keys pass through the model's context, client transcripts and provider logs, and any key the model has seen can be replayed into other calls.",
+        "Keep keys out of tool arguments: sign with a key held by the server or an external signer, and pass only public keys or unsigned XDR through the model.",
+        ["OWASP LLM02 Sensitive Information Disclosure", "CWE-522"]),
+    "x402_unbounded": ("security-path-x402-payment-unbounded", Severity.HIGH,
+        "Paid requests pay whatever the server asks",
+        "An x402/MPP client wrapper signs the payment a 402 response requests, with no maximum amount or requirement selector. A malicious or compromised paid endpoint chooses the recipient, asset and amount.",
+        "Configure a maximum per payment and an allowlist of payees and assets in the wrapper (or a requirements selector that enforces them), and track spend across calls.",
+        ["OWASP LLM06 Excessive Agency", "x402 client payment policy"]),
+    "secret_to_model": ("security-path-secret-to-model", Severity.CRITICAL,
+        "Secret material is sent to the language model",
+        "A secret value is placed into a model request. It leaves the trust boundary to the model provider and can be extracted from the conversation by prompt injection.",
+        "Keep keys out of prompts and tool results. Sign in a separate component the model cannot read, and rotate any key that was sent.",
+        ["OWASP LLM02 Sensitive Information Disclosure"]),
+    "secret_exfiltration": ("security-path-secret-to-exfiltration", Severity.CRITICAL,
+        "A signing secret reaches a logging or network boundary",
+        "A variable derived from secret material appears in a logging or network call. Confirm the sink semantics and remove secret material from the output path.",
+        "Keep Stellar keys in an external signer. Remove secret logging, redact diagnostics, and rotate credentials if they were exposed.",
+        ["OWASP LLM02 Sensitive Information Disclosure", "CWE-532"]),
+}
 
-    Branches are conservatively joined. A path is a static observation, not an
-    exploit or proof that an external authorization implementation can be bypassed.
-    Dynamic dispatch, cross-file calls and arbitrary sanitizers are not resolved.
-    """
-    try:
-        tree = ast.parse(content)
-    except (SyntaxError, ValueError, RecursionError):
-        return [], [], []
-    commands: list[_Hit] = []
-    financial: list[_Hit] = []
-    exfil: list[_Hit] = []
-    lines = content.splitlines()
-    declared_inputs = {node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                       and node.name in (external_entrypoints or set())}
 
-    def qualified(node: ast.AST) -> str:
-        if isinstance(node, ast.Name):
-            return node.id
-        if isinstance(node, ast.Attribute):
-            return qualified(node.value) + "." + node.attr
-        return ""
-
-    def tags(node: ast.AST | None, state: dict[str, set[str]]) -> set[str]:
-        if node is None or isinstance(node, (ast.Constant, ast.Lambda)):
-            return set()
-        if isinstance(node, ast.Name):
-            return state.get(node.id, set()).copy()
-        found: set[str] = set()
-        child_tags = [(child, tags(child, state)) for child in ast.iter_child_nodes(node)]
-        for _, value in child_tags:
-            found |= value
-        if isinstance(node, (ast.Call, ast.Attribute, ast.Subscript)):
-            label = qualified(node.func if isinstance(node, ast.Call) else node)
-            if _SOURCE_RE.search(label + "("):
-                found.add("external")
-            # Environment access is sensitive only when the referenced key is a secret.
-            if label in {"os.getenv", "os.environ.get"} and isinstance(node, ast.Call):
-                if node.args and isinstance(node.args[0], ast.Constant) and _SECRET_NAME_RE.search(str(node.args[0].value)):
-                    found.add("secret")
-            if isinstance(node, ast.Subscript) and qualified(node.value) == "os.environ":
-                if isinstance(node.slice, ast.Constant) and _SECRET_NAME_RE.search(str(node.slice.value)):
-                    found.add("secret")
-        if isinstance(node, ast.Call):
-            arguments: set[str] = set()
-            for child, value in child_tags:
-                if child is not node.func:
-                    arguments |= value
-            # Receiver state is not a method's return value. A wallet can contain
-            # a key while returning only a public receipt. Keep this uncertainty
-            # distinct from directly passing a secret to print()/HTTP.
-            receiver_tags = tags(node.func.value, state) if isinstance(node.func, ast.Attribute) else set()
-            if 'secret' in receiver_tags and 'secret' not in arguments:
-                found.discard('secret')
-                found.add('secret_possible')
-            callee = qualified(node.func) + "("
-            hit = _Hit(filename, node.lineno, ",".join(sorted(arguments)), lines[node.lineno - 1], EvidenceGrade.CONFIRMED)
-            if "external" in arguments:
-                if _COMMAND_SINK_RE.search(callee):
-                    commands.append(hit)
-                if _FINANCIAL_SINK_RE.search(callee):
-                    financial.append(hit)
-            if "secret" in arguments and _EXFIL_SINK_RE.search(callee):
-                exfil.append(hit)
-            elif 'secret_possible' in arguments and _EXFIL_SINK_RE.search(callee):
-                exfil.append(_Hit(filename, node.lineno, 'unresolved_method_return',
-                    lines[node.lineno - 1], EvidenceGrade.INFERRED))
-        return found
-
-    def bind(target: ast.AST, value: set[str], state: dict[str, set[str]]) -> None:
-        if isinstance(target, ast.Name):
-            state[target.id] = value.copy()
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            for element in target.elts:
-                bind(element, value, state)
-
-    def block(statements: list[ast.stmt], state: dict[str, set[str]]) -> None:
-        for stmt in statements:
-            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                local = {key: value.copy() for key, value in state.items()}
-                args = [*stmt.args.posonlyargs, *stmt.args.args, *stmt.args.kwonlyargs]
-                for arg in args:
-                    local[arg.arg] = {"external"} if stmt in declared_inputs or arg.arg.lower() in _SOURCE_NAMES else set()
-                block(stmt.body, local)
-            elif isinstance(stmt, ast.ClassDef):
-                block(stmt.body, state.copy())
-            elif isinstance(stmt, (ast.Assign, ast.AnnAssign)):
-                value = tags(stmt.value, state)
-                for target in stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]:
-                    bind(target, value, state)
-            elif isinstance(stmt, ast.If):
-                tags(stmt.test, state)
-                branches = []
-                for body in (stmt.body, stmt.orelse):
-                    branch = {key: value.copy() for key, value in state.items()}
-                    block(body, branch)
-                    branches.append(branch)
-                for key in set(branches[0]) | set(branches[1]):
-                    state[key] = branches[0].get(key, set()) | branches[1].get(key, set())
-            elif isinstance(stmt, (ast.For, ast.AsyncFor, ast.While, ast.Try)):
-                # A loop/exception path may execute zero times: retain incoming taint.
-                branch = {key: value.copy() for key, value in state.items()}
-                if isinstance(stmt, (ast.For, ast.AsyncFor)):
-                    bind(stmt.target, tags(stmt.iter, state), branch)
-                elif isinstance(stmt, ast.While):
-                    tags(stmt.test, state)
-                block(stmt.body, branch)
-                for key, value in branch.items():
-                    state[key] = state.get(key, set()) | value
-                for handler in getattr(stmt, "handlers", []):
-                    block(handler.body, state)
-                block(stmt.orelse, state)
-                block(getattr(stmt, "finalbody", []), state)
-            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
-                for item in stmt.items:
-                    value = tags(item.context_expr, state)
-                    if item.optional_vars:
-                        bind(item.optional_vars, value, state)
-                block(stmt.body, state)
-            else:
-                tags(stmt, state)
-                if isinstance(stmt, (ast.Return, ast.Raise)):
-                    break
-
-    block(tree.body, {})
-    return commands[:5], financial[:5], exfil[:5]
+def _evidence(flows) -> str:
+    return "; ".join(f"{flow.location.render()} [{', '.join(sorted(flow.labels - {'secret'})) or 'secret'} -> {flow.function}]"
+                     for flow in flows[:5])
 
 
 def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding]:
-    command_hits: list[_Hit] = []
-    financial_hits: list[_Hit] = []
-    exfil_hits: list[_Hit] = []
+    from .codeflow import analyse_code
+
     entrypoints: dict[str, set[str]] = {}
     if 'veritas.json' in artifact.code_files:
         from ..services.blueprint import parse_blueprint
@@ -277,78 +207,92 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             entrypoints[component.path] = {blueprint.entrypoint.symbol}
         except ValueError:
             pass  # Invalid declaration is reported by discovery; never import source.
-    for filename, content in artifact.code_files.items():
-        if not filename.lower().endswith(_IMPLEMENTATION_SUFFIXES):
-            continue
-        commands, financial, exfil = _scan_file(filename, content, entrypoints.get(filename))
-        command_hits.extend(commands)
-        financial_hits.extend(financial)
-        exfil_hits.extend(exfil)
-
-    # Do not let adding a heuristic-only file dilute directly observed evidence.
-    command_hits = [hit for hit in command_hits if hit.grade is EvidenceGrade.CONFIRMED] or command_hits
-    financial_hits = [hit for hit in financial_hits if hit.grade is EvidenceGrade.CONFIRMED] or financial_hits
-    exfil_hits = [hit for hit in exfil_hits if hit.grade is EvidenceGrade.CONFIRMED] or exfil_hits
-
+    profile = analyse_code(artifact.code_files, entrypoints)
     findings: list[Finding] = []
-    if command_hits:
+
+    by_category: dict[str, list] = {}
+    for flow in profile.flows:
+        by_category.setdefault(flow.category, []).append(flow)
+    for category, (fid, severity, title, detail, remediation, refs) in _PATH_RULES.items():
+        flows = by_category.get(category, [])
+        if category == "secret_exfiltration" and not flows and by_category.get("secret_possible"):
+            possible = by_category["secret_possible"]
+            findings.append(Finding(
+                id=fid, dimension=Dimension.SECURITY, severity=Severity.LOW,
+                title="Review an unresolved return value from a secret-bearing object",
+                detail="A method on an object initialized with a secret returns a value that is logged or sent. The return may be a public receipt; no secret disclosure is established.",
+                evidence=_evidence(possible), evidence_grade=EvidenceGrade.INFERRED,
+                remediation=remediation, references=refs, auditor=auditor, confidence=0.35))
+            continue
+        if not flows:
+            continue
+        direct = [f for f in flows if f.direct or category.startswith("secret")]
+        chosen = direct or flows
+        confirmed = bool(direct)
         findings.append(Finding(
-            id="security-path-untrusted-to-command", dimension=Dimension.SECURITY,
-            severity=Severity.CRITICAL,
-            title="External input reaches a process or code-execution boundary",
-            detail="Input-derived data appears in an eval, exec or process call. Inspect whether an attacker controls executable content or arguments. A static path alone does not prove arbitrary code execution.",
-            evidence="; ".join(hit.evidence() for hit in command_hits),
-            evidence_grade=command_hits[0].grade,
-            remediation="Remove dynamic execution. Otherwise use an isolated worker without network access or Stellar signing keys, with allowlisted commands and arguments.",
-            references=["OWASP LLM05 Improper Output Handling", "CWE-78"],
-            auditor=auditor, confidence=0.98,
+            id=fid, dimension=Dimension.SECURITY,
+            # A file path its caller chooses is the caller's own business unless input from
+            # outside reaches it; that case is confirmed above.
+            severity=severity if confirmed else severity.downgrade(2 if category == "path_traversal" else 1),
+            title=title,
+            detail=detail if confirmed else detail + " The value enters through a public function whose callers are not in the submitted source, so the input origin is unresolved.",
+            evidence=_evidence(chosen),
+            evidence_grade=EvidenceGrade.CONFIRMED if confirmed else EvidenceGrade.INFERRED,
+            remediation=remediation, references=refs, auditor=auditor,
+            confidence=0.97 if confirmed else 0.75,
         ))
-    if financial_hits:
+
+    if profile.nonblocking_controls:
         findings.append(Finding(
-            id="security-path-untrusted-to-financial-sink", dimension=Dimension.SECURITY,
-            severity=Severity.CRITICAL,
-            title="External input reaches a Stellar transaction boundary",
-            detail="A static input-to-transaction path is visible. Authorization names and comments do not prove enforcement; validate the recipient, amount and signing policy with negative tests. This is not proof of a successful exploit.",
-            evidence="; ".join(hit.evidence() for hit in financial_hits),
-            evidence_grade=financial_hits[0].grade,
-            remediation="Enforce typed inputs, Soroban require_auth, recipient allowlists, spending limits, replay protection and explicit approval. Test each boundary with rejected requests.",
-            references=["Soroban authorization", "OWASP LLM06 Excessive Agency"],
-            auditor=auditor, confidence=0.96,
+            id="security-path-control-not-blocking", dimension=Dimension.SECURITY,
+            severity=Severity.HIGH,
+            title="A spending limit check does not stop the action",
+            detail="A comparison against a cap or limit only logs a warning; execution continues to the signed operation. The control exists in name but is not enforced.",
+            evidence="; ".join(loc.render() for loc in profile.nonblocking_controls[:5]),
+            evidence_grade=EvidenceGrade.CONFIRMED,
+            remediation="Raise or return when the limit is exceeded, before any transaction is built or signed, and cover the rejection with a test.",
+            references=["CWE-693 Protection Mechanism Failure"], auditor=auditor, confidence=0.95,
         ))
-    if exfil_hits:
-        direct_secret = exfil_hits[0].grade is EvidenceGrade.CONFIRMED
-        findings.append(Finding(
-            id="security-path-secret-to-exfiltration", dimension=Dimension.SECURITY,
-            severity=Severity.CRITICAL if direct_secret else Severity.LOW,
-            title="A signing secret reaches a logging or network boundary" if direct_secret else "Review an unresolved return value from a secret-bearing object",
-            detail=("A variable derived from a secret environment value appears in a logging or network call. Confirm the sink semantics and remove secret material from the output path." if direct_secret else
-                "A method on an object initialized with a secret returns a value that is logged or sent. The return may be a public receipt. Cross-file return semantics are unresolved; no secret disclosure is established."),
-            evidence="; ".join(hit.evidence() for hit in exfil_hits),
-            evidence_grade=exfil_hits[0].grade,
-            remediation="Keep Stellar keys in an external signer. Remove secret logging, redact diagnostics, and rotate credentials if they were exposed.",
-            references=["OWASP LLM02 Sensitive Information Disclosure", "CWE-532"],
-            auditor=auditor, confidence=0.98 if direct_secret else 0.35,
-        ))
-    executable = {
-        name: content
-        for name, content in artifact.code_files.items()
-        if name.lower().endswith(_IMPLEMENTATION_SUFFIXES)
-    }
-    signing_tools = [
-        tool
-        for tool in artifact.tools
-        if tool.requires_signature or bool(set(tool.scopes) & _SIGNING_SCOPES)
-    ]
-    if signing_tools and executable and not _CONTROL_RE.search("\n".join(executable.values())):
+
+    # Non-Python sources keep lexical candidates; they are never reported as confirmed data flow.
+    lexical_command: list[_Hit] = []
+    lexical_financial: list[_Hit] = []
+    lexical_exfil: list[_Hit] = []
+    analysed = set(profile.analysed_files)
+    for filename, content in artifact.code_files.items():
+        if filename in analysed or filename.lower().endswith(".py") or not filename.lower().endswith(_IMPLEMENTATION_SUFFIXES):
+            continue
+        commands, financial, exfil = _scan_file(filename, content)
+        lexical_command += commands
+        lexical_financial += financial
+        lexical_exfil += exfil
+    known = {f.id for f in findings}
+    for hits, fid in ((lexical_command, "security-path-untrusted-to-command"),
+                      (lexical_financial, "security-path-untrusted-to-financial-sink"),
+                      (lexical_exfil, "security-path-secret-to-exfiltration")):
+        if hits and fid not in known:
+            rule = next(r for r in _PATH_RULES.values() if r[0] == fid)
+            findings.append(Finding(
+                id=fid, dimension=Dimension.SECURITY, severity=rule[1].downgrade(1), title=rule[2],
+                detail=rule[3] + " Detected lexically in non-Python source; data flow is not resolved.",
+                evidence="; ".join(hit.evidence() for hit in hits), evidence_grade=EvidenceGrade.INFERRED,
+                remediation=rule[4], references=rule[5], auditor=auditor, confidence=0.6))
+
+    executable = {name for name in artifact.code_files if name.lower().endswith(_IMPLEMENTATION_SUFFIXES)}
+    signing = any(tool.requires_signature or set(tool.scopes) & _SIGNING_SCOPES for tool in artifact.tools) or any(
+        profile.has(cap) for cap in ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation"))
+    enforced = any(profile.controls.get(kind) for kind in ("allowlist", "amount_cap", "approval", "transaction_inspection"))
+    if signing and executable and not enforced:
         findings.append(Finding(
             id="security-path-controls-not-enforced", dimension=Dimension.SECURITY,
             severity=Severity.HIGH,
-            title="Stellar finansal kontrollerinin uygulama düzeyi kanıtı yok",
-            detail="Agent imza/harcama araçları ilan ediyor fakat kaynakta require_auth, allowlist, limit veya sequence/idempotency zorlaması görülmedi. Prompt beyanı enforce edilebilir kontrol değildir.",
-            evidence="imza araçları=" + ", ".join(t.name for t in signing_tools)
-            + "; incelenen kaynaklar=" + ", ".join(sorted(executable)),
+            title="No enforced Stellar spending control in source",
+            detail="The agent can sign or move funds, but no fail-closed recipient allowlist, amount cap, approval gate or transaction inspection was found in the source. Prompt statements are not enforceable controls.",
+            evidence="files with signing or payment authority=" + (", ".join(sorted({
+                loc.file for cap in ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation", "payment")
+                for loc in profile.capabilities.get(cap, [])})) or ", ".join(sorted(executable)[:10])),
             evidence_grade=EvidenceGrade.INFERRED,
-            remediation="Kontrolleri Soroban require_auth/policy ve uygulama kodunda fail-closed zorlayın; negatif ve bypass testlerini CI'a ekleyin.",
+            remediation="Enforce recipient allowlists, amount caps and approval in code that raises before signing; add negative tests.",
             references=["Soroban authorization", "OWASP LLM06 Excessive Agency"],
             auditor=auditor, confidence=0.82,
         ))

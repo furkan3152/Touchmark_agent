@@ -9,6 +9,7 @@ from backend.app.models import (
     Badge,
     Dimension,
     EvidenceGrade,
+    FindingKind,
     Finding,
     ScenarioResult,
     Severity,
@@ -68,28 +69,39 @@ def test_score_from_has_diminishing_returns():
     assert one > score
 
 
-def test_score_from_penalises_failed_scenarios():
+def test_score_from_penalises_failed_executed_scenarios():
     scenarios = [
-        ScenarioResult(scenario_id="S-1", name="a", passed=True),
-        ScenarioResult(scenario_id="S-2", name="b", passed=False),
+        ScenarioResult(scenario_id="S-1", name="a", passed=True, executed=True),
+        ScenarioResult(scenario_id="S-2", name="b", passed=False, executed=True),
     ]
     with_fail = BaseAuditor.score_from([], scenarios)
     all_pass = BaseAuditor.score_from(
-        [], [ScenarioResult(scenario_id="S-1", name="a", passed=True)]
+        [], [ScenarioResult(scenario_id="S-1", name="a", passed=True, executed=True)]
     )
     assert all_pass == 100.0
-    assert with_fail == 94.0  # 1/2 başarısız INFERRED senaryo → 6 puan
+    assert with_fail == 94.0  # 1/2 failed INFERRED executed scenario -> 6 points
+
+
+def test_static_signal_checks_never_lower_the_score():
+    scenarios = [ScenarioResult(scenario_id="S-1", name="a", passed=False)]
+    assert BaseAuditor.score_from([], scenarios) == 100.0
+
+
+def test_evidence_gaps_never_lower_the_score():
+    gap = finding("a", Severity.HIGH).model_copy(update={"kind": FindingKind.EVIDENCE_GAP})
+    assert BaseAuditor.score_from([gap], []) == 100.0
 
 
 def test_confirmed_failed_scenario_gets_full_penalty():
     scenarios = [
-        ScenarioResult(scenario_id="S-1", name="a", passed=True),
+        ScenarioResult(scenario_id="S-1", name="a", passed=True, executed=True),
         ScenarioResult(
             scenario_id="S-2",
             name="b",
             passed=False,
             evidence_grade=EvidenceGrade.CONFIRMED,
             evidence="canlı Stellar probe başarısız",
+            executed=True,
         ),
     ]
     assert BaseAuditor.score_from([], scenarios) == 90.0

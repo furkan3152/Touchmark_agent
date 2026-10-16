@@ -24,11 +24,13 @@
   }
   function matchQuote(quote){return capability&&order&&order.order_id===quote.request_id&&order.requester===quote.requester&&order.plan_sha256===quote.plan_sha256&&order.source_sha256===quote.source_sha256;}
   function verifiedDelivery(value){const d=value.delivery;return value.status==="delivered"&&d?.is_current===true&&d.report_sha256===value.report_sha256&&HEX.test(d.token_id||"")&&/^C[A-Z2-7]{55}$/.test(d.credential_contract_id||"")&&/^[GC][A-Z2-7]{55}$/.test(d.owner||"")&&Number.isInteger(d.checked_at_ledger);}
+  // A completed review that did not pass: payment settled, no credential by design.
+  function deliveredWithoutCredential(value){const d=value.delivery;return value.status==="delivered"&&d?.credential_status==="not_eligible"&&d.is_current===false&&d.token_id===null&&d.payment_state==="Complete"&&d.report_sha256===value.report_sha256&&Number.isInteger(d.checked_at_ledger);}
   function render(value){
     if(!capability||value.order_id!==capability.order_id||!STATES.includes(value.status))throw new Error("The returned order does not match this private receipt.");
     order=value;updateCreate();
     const section=byId("official-order");section.hidden=false;section.dataset.state=value.status;
-    const stateNames={awaiting_payment:"Awaiting payment",queued:"Queued",running:"Review in progress",report_ready:"Report ready",settling:"Settling on Stellar",delivered:verifiedDelivery(value)?"Delivered":"Delivery needs verification",failed:"Action needed",refunded:"Refund confirmed"};
+    const stateNames={awaiting_payment:"Awaiting payment",queued:"Queued",running:"Review in progress",report_ready:"Report ready",settling:"Settling on Stellar",delivered:verifiedDelivery(value)?"Delivered":deliveredWithoutCredential(value)?"Delivered · no credential":"Delivery needs verification",failed:"Action needed",refunded:"Refund confirmed"};
     byId("order-state").textContent=stateNames[value.status];
     const copy={
       awaiting_payment:["Your scope is saved.","Complete the wallet funding steps. The official review starts after the funded escrow is verified."],
@@ -36,13 +38,13 @@
       running:["The evidence is taking shape.","Official reviewers are processing the saved scope. Only completed checks will appear as evidence in the report."],
       report_ready:["Your report is ready.","Open the findings now. Payment settlement and credential delivery have their own verified steps."],
       settling:["The record is moving onchain.","The worker is committing the report, settling the scoped escrow and issuing its credential. Delivery is shown after ledger readback."],
-      delivered:verifiedDelivery(value)?["Your report. Your record.","The service recorded matching report, owner and credential readbacks. Open the dossier to check the credential against the live ledger."]:["The delivery needs a closer look.","A delivered status arrived without a complete matching credential receipt. Open the report and verify its chain record before relying on delivery."],
+      delivered:verifiedDelivery(value)?["Your report. Your record.","The service recorded matching report, owner and credential readbacks. Open the dossier to check the credential against the live ledger."]:deliveredWithoutCredential(value)?["Your report is delivered.","The audit did not pass, so no credential was issued. The review payment settled. Open the report for the fixes or evidence that are required."]:["The delivery needs a closer look.","A delivered status arrived without a complete matching credential receipt. Open the report and verify its chain record before relying on delivery."],
       failed:["Your order needs attention.","Processing stopped at a reported failure. Your existing report, when available, remains accessible. This does not imply a refund."],
       refunded:["The escrow refund is recorded.","The service reports a confirmed refund for this order. Any available report remains a record of work already completed."]
     };
     byId("order-title").textContent=copy[value.status][0];byId("order-description").textContent=copy[value.status][1];
     const progress=byId("order-progress");progress.replaceChildren();const index=STEPS.findIndex(([id])=>id===value.status);
-    STEPS.forEach(([id,label],i)=>{const item=node("li");const complete=index>=0&&i<index||(value.status==="delivered"&&verifiedDelivery(value));item.dataset.state=complete?"complete":i===index?"active":"pending";item.append(node("span",complete?"✓":String(i+1).padStart(2,"0"),"order-step-number"),node("strong",label),node("span",complete?"Recorded":i===index?"Current":"Pending","order-step-status"));progress.append(item);});
+    STEPS.forEach(([id,label],i)=>{const item=node("li");const complete=index>=0&&i<index||(value.status==="delivered"&&(verifiedDelivery(value)||deliveredWithoutCredential(value)));item.dataset.state=complete?"complete":i===index?"active":"pending";item.append(node("span",complete?"✓":String(i+1).padStart(2,"0"),"order-step-number"),node("strong",label),node("span",complete?"Recorded":i===index?"Current":"Pending","order-step-status"));progress.append(item);});
     const issue=byId("order-issue");issue.hidden=value.status!=="failed";issue.replaceChildren();
     if(value.status==="failed"){
       const reasons={payment_not_confirmed:"Funding could not be verified. Check the escrow state before attempting further payment.",runtime_unavailable:"The isolated runtime provider is unavailable.",audit_failed:"The scoped audit did not finish.",publication_failed:"The private report could not be stored for delivery.",settlement_failed:"The Stellar settlement did not complete.",credential_failed:"The credential could not be issued or verified.",deadline_expired:"The escrow deadline has passed."};
@@ -146,7 +148,7 @@
       if(!HEX.test(envelope.report_sha256||"")||envelope.report_sha256!==captured.report_sha256)throw new Error("The report does not match this order's recorded commitment.");
       const d=verifiedDelivery(captured)?captured.delivery:null;const credential=d?{contract_id:d.credential_contract_id,token_id:d.token_id,owner:d.owner}:null;
       await new Promise((resolve,reject)=>window.dispatchEvent(new CustomEvent("veritas:order-report",{detail:{envelope,credential,order_id:captured.order_id,resolve,reject}})));
-      status(credential?"Report opened and its credential checked against the live ledger. Review the Credential tab for the returned status.":"Report opened. An onchain credential is not yet verified for this order.");
+      status(credential?"Report opened and its credential checked against the live ledger. Review the Credential tab for the returned status.":deliveredWithoutCredential(captured)?"Report opened. This audit did not pass, so no credential was issued.":"Report opened. An onchain credential is not yet verified for this order.");
     }catch(error){status(error.message);}finally{setWorking(false);}
   });
 

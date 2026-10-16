@@ -1,0 +1,211 @@
+{
+ "schema": "veritas.oss-trial/v1",
+ "date": "2026-10-16",
+ "model": "claude-sonnet-5-5",
+ "effort": "high",
+ "passes": 2,
+ "method": "Public repositories cloned at the listed revision and audited with scripts/audit_repository.py. Source is parsed, never executed. Purposes come from each README; forbidden goals are the same four wallet-safety goals for all.",
+ "disclosure": "Per-finding details are withheld from this public record. Maintainers should be contacted privately before details are published.",
+ "logic_fixes_from_this_trial": [
+  "absence-of-control rules became evidence gaps for code the data flow cannot read (TypeScript, Rust), with a blocking gap closed only by a completed deep review that read every such file",
+  "undeclared-capability is a gap when nothing was declared",
+  "placeholder seeds are ignored and test-only seeds are medium",
+  "name-based execution rules apply to declared tools only",
+  "keyword PII rule is an evidence gap"
+ ],
+ "results": [
+  {
+   "repository": "https://github.com/AstroForgeLabs/stellar-agentkit",
+   "revision": "713e34f",
+   "files_selected": 6,
+   "selection_complete": true,
+   "decision": "needs_fixes",
+   "score": 64.0,
+   "risk_findings_by_severity": {
+    "high": 1,
+    "medium": 10,
+    "low": 3
+   },
+   "evidence_gaps": 25,
+   "model_findings_by_category": {
+    "unauthorized-payment": 1,
+    "intent-mismatch": 1,
+    "functional-defect": 4,
+    "prompt-injection": 1,
+    "ssrf": 1,
+    "replay-or-idempotency": 1,
+    "stellar-protocol-misuse": 2,
+    "reliability-failure": 1
+   },
+   "model_claims_rejected": 0,
+   "deep_review": {
+    "status": "completed",
+    "passes": [
+     {
+      "new_findings": 8,
+      "pass": 1,
+      "status": "completed"
+     },
+     {
+      "new_findings": 4,
+      "pass": 2,
+      "status": "completed"
+     }
+    ],
+    "file_coverage": 1.0,
+    "unverifiable_controls_resolved": true,
+    "usage": {
+     "cache_creation_input_tokens": 35073,
+     "cache_read_input_tokens": 36372,
+     "input_tokens": 16,
+     "output_tokens": 13358
+    }
+   }
+  },
+  {
+   "repository": "https://github.com/DarkLvrd/stellar-x402-mcp",
+   "revision": "6a07b49",
+   "files_selected": 14,
+   "selection_complete": true,
+   "decision": "needs_fixes",
+   "score": 64.0,
+   "risk_findings_by_severity": {
+    "medium": 6,
+    "low": 3
+   },
+   "evidence_gaps": 16,
+   "model_findings_by_category": {
+    "intent-mismatch": 2,
+    "functional-defect": 2,
+    "unauthorized-payment": 1,
+    "reliability-failure": 1
+   },
+   "model_claims_rejected": 0,
+   "deep_review": {
+    "status": "completed",
+    "passes": [
+     {
+      "new_findings": 2,
+      "pass": 1,
+      "status": "completed"
+     },
+     {
+      "new_findings": 4,
+      "pass": 2,
+      "status": "completed"
+     }
+    ],
+    "file_coverage": 1.0,
+    "unverifiable_controls_resolved": true,
+    "usage": {
+     "cache_creation_input_tokens": 32657,
+     "cache_read_input_tokens": 49162,
+     "input_tokens": 18,
+     "output_tokens": 9790
+    }
+   }
+  },
+  {
+   "repository": "https://github.com/JoseCToscano/stellar-mcp",
+   "revision": "28d70bf",
+   "files_selected": 99,
+   "selection_complete": false,
+   "decision": "needs_fixes",
+   "score": 64.0,
+   "risk_findings_by_severity": {
+    "critical": 1,
+    "high": 9,
+    "medium": 12,
+    "low": 3
+   },
+   "evidence_gaps": 21,
+   "model_findings_by_category": {
+    "unauthorized-payment": 2,
+    "code-execution": 2,
+    "control-bypass": 2,
+    "foreign-transaction-signing": 2,
+    "secret-exposure": 4,
+    "intent-mismatch": 1,
+    "functional-defect": 4,
+    "path-traversal": 1
+   },
+   "model_claims_rejected": 0,
+   "deep_review": {
+    "status": "completed",
+    "passes": [
+     {
+      "new_findings": 10,
+      "pass": 1,
+      "status": "completed"
+     },
+     {
+      "new_findings": 8,
+      "pass": 2,
+      "status": "completed"
+     }
+    ],
+    "file_coverage": 0.263,
+    "unverifiable_controls_resolved": false,
+    "usage": {
+     "cache_creation_input_tokens": 150624,
+     "cache_read_input_tokens": 1077618,
+     "input_tokens": 54,
+     "output_tokens": 25128
+    }
+   }
+  },
+  {
+   "repository": "https://github.com/mpprouter/stellar-agent-wallet-skill",
+   "revision": "894116a",
+   "files_selected": 46,
+   "selection_complete": true,
+   "decision": "needs_fixes",
+   "score": 39.0,
+   "risk_findings_by_severity": {
+    "critical": 3,
+    "high": 3,
+    "medium": 17,
+    "low": 8
+   },
+   "evidence_gaps": 18,
+   "model_findings_by_category": {
+    "foreign-transaction-signing": 1,
+    "unauthorized-payment": 2,
+    "economic-loss": 1,
+    "intent-mismatch": 2,
+    "functional-defect": 4,
+    "control-bypass": 4,
+    "ssrf": 1,
+    "replay-or-idempotency": 1,
+    "stellar-protocol-misuse": 2,
+    "dependency-risk": 1,
+    "reliability-failure": 1,
+    "secret-exposure": 1
+   },
+   "model_claims_rejected": 0,
+   "deep_review": {
+    "status": "completed",
+    "passes": [
+     {
+      "new_findings": 10,
+      "pass": 1,
+      "status": "completed"
+     },
+     {
+      "new_findings": 11,
+      "pass": 2,
+      "status": "completed"
+     }
+    ],
+    "file_coverage": 0.761,
+    "unverifiable_controls_resolved": true,
+    "usage": {
+     "cache_creation_input_tokens": 216169,
+     "cache_read_input_tokens": 2482663,
+     "input_tokens": 86,
+     "output_tokens": 37397
+    }
+   }
+  }
+ ]
+}

@@ -10,6 +10,7 @@ from stellar_sdk import Keypair
 
 from backend.app import api
 from backend.app.config import Settings
+from backend.app.services.order_settlement import credential_eligible
 from backend.app.services import audit_orders as orders, testnet_checkout as checkout
 from backend.app.services.audit_product import audit_engagement
 from backend.app.stellar.ownership import sep53_payload_hash
@@ -91,11 +92,12 @@ async def test_http_private_order_identity_funding_worker_report_and_recovery(bo
 
         async def settle(order, result, publication):
             return {'schema': 'veritas.testnet-order-delivery/v1', 'status': 'delivered', 'network': 'testnet',
-                'request_id': order['id'], 'agent_id': order['quote']['agent_id'], 'token_id': order['id'],
+                'request_id': order['id'], 'agent_id': order['quote']['agent_id'],
+                'token_id': order['id'] if credential_eligible(result) else None,
                 'report_sha256': result['report_sha256'], 'report_uri': publication['report_uri'],
                 'credential_contract_id': checkout.PINNED_CONTRACTS['credential'],
                 'escrow_contract_id': checkout.PINNED_CONTRACTS['escrow'], 'owner': key.public_key,
-                'is_current': True, 'payment_state': 'Complete', 'checked_at_ledger': 5_200_100,
+                'is_current': credential_eligible(result), 'payment_state': 'Complete', 'checked_at_ledger': 5_200_100,
                 'independent_evaluator': False}
 
         result = await orders.run_order_once(store, 'http-test', settings=settings, executor=audit_engagement,
