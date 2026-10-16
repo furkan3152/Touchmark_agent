@@ -226,3 +226,31 @@ The comparison exposed false positives, all now fixed and covered by tests in
   limits only the decision.
 - **Coverage ratio above 1.** Reading manifests counted towards coverage, which could
   push the ratio over 1. Only source files count now.
+
+### Every finding checked against the source
+
+All 199 findings the final run reported on the 12 repositories were checked against the
+code at the exact GitHub commit (`git ls-remote` confirmed each local copy matched).
+
+How they were checked:
+- **Critical and high:** read by hand.
+- **Medium and low:** checked by independent verifiers. Every rejection and a random
+  sample of confirmations were then re-read by hand.
+
+| Result | Findings | Share |
+|---|---|---|
+| Correct as described | 161 | 81% |
+| Real but overstated, or latent | 32 | 16% |
+| False | 5 | 2.5% |
+| Needs a network lookup | 1 | 0.5% |
+
+- **Severe findings:** all 10 critical findings were correct. Of the 36 high findings,
+  32 were correct, 3 overstated and 1 false.
+- **Rules versus AI:** four of the five false findings came from lexical rules. The
+  fifth came from the AI trusting narrow SDK typings for the Horizon submit response.
+  All five are fixed, with regression tests.
+- **Severity:** the largest systematic error was severity set one level too high,
+  usually for code that is latent, mocked or never called. 76 findings were affected.
+  The review prompt now has a severity rubric for these cases.
+- **Decisions:** every `needs_fixes` decision rests on at least one verified critical or
+  high finding. The repository that passed had no verified high or critical issue.
