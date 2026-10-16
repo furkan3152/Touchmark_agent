@@ -16,7 +16,7 @@ from __future__ import annotations
 from ..models import AgentArtifact, ToolSpec
 from .codeflow import CodeProfile, analyse_code
 
-_IMPLEMENTATION = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")
+_IMPLEMENTATION = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".mts", ".cts")
 _SIGNING_SCOPE_WORDS = ("sign", "wallet", "transfer", "spend", "payment", "account")
 _EXEC_WORDS = ("shell", "exec", "bash", "eval", "python", "run_code", "subprocess")
 #: Capabilities that exercise authority. Building an unsigned operation (payment or
@@ -97,13 +97,29 @@ def effective_artifact(artifact: AgentArtifact) -> AgentArtifact:
 def unverifiable_control_files(artifact: AgentArtifact) -> list[str]:
     """Files holding signing/payment authority whose controls the data flow cannot see.
 
-    Fail-closed controls are verified by Python data flow. Authority found in other
-    languages (TypeScript, Rust, ...) can only be judged by reading that code.
+    Fail-closed controls are verified by data flow for Python and JavaScript/TypeScript.
+    Authority found in files the analysis could not parse, or in other languages, can
+    only be judged by reading that code.
     """
     capabilities = artifact.code_profile.get("capabilities", {})
+    analysed = set(artifact.code_profile.get("analysed_files", []))
     files = {loc.split(":", 1)[0] for cap in FINANCIAL_CAPABILITIES + ("payment", "account_control", "code_execution")
              for loc in capabilities.get(cap, [])}
-    return sorted(f for f in files if not f.lower().endswith(".py"))
+    return sorted(f for f in files if f not in analysed and not f.lower().endswith(".py"))
+
+
+def code_enforced_spend_limit(artifact: AgentArtifact) -> bool:
+    """The source caps or gates every untrusted payment: an amount bound or approval
+    gate is enforced, no untrusted amount reaches signing unbounded, and no untrusted
+    value reaches a financial sink. Such a limit counts even if no manifest declares it."""
+    if not has_source(artifact):
+        return False
+    profile = artifact.code_profile
+    controls = profile.get("controls", {})
+    gated = bool(controls.get("amount_cap") or controls.get("approval"))
+    unsafe = {"financial", "account_control", "foreign_signing"}
+    return gated and not profile.get("unbounded_amounts") and not any(
+        f["category"] in unsafe for f in profile.get("flows", []))
 
 
 def human_approval_enforced(artifact: AgentArtifact, prompt_lower: str) -> bool:

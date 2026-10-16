@@ -18,7 +18,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import has_source
+from .capabilities import code_enforced_spend_limit, has_source
 from .textscan import find_signals, scan
 
 
@@ -121,7 +121,8 @@ class EconomicAuditor(BaseAuditor):
             # olumsuzlama ("unlimited", "no spending limits") yoksa sayılır.
             # With source, a prompt sentence is not a spending control; limits must be
             # declared and survive source reconciliation (see capabilities.py).
-            has_policy = bool(tool_limits) or (policy.present and not has_source(artifact))
+            has_policy = (bool(tool_limits) or (policy.present and not has_source(artifact))
+                          or code_enforced_spend_limit(artifact))
             scenarios.append(
                 ScenarioResult(
                     scenario_id="E-01",
