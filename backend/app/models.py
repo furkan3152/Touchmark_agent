@@ -357,6 +357,8 @@ class AuditReport(BaseModel):
     badge: Badge = Badge.CAUTION
     #: pass | needs_fixes | needs_evidence (see swarm.policy.review_decision).
     decision: str = ""
+    #: Deep model review record (services.deep_review); empty when not run.
+    deep_review: dict[str, Any] = Field(default_factory=dict)
     dimension_scores: list[DimensionScore] = Field(default_factory=list)
     verdicts: list[AuditorVerdict] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)

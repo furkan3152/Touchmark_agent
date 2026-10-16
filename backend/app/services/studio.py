@@ -105,10 +105,13 @@ class ReviewRequest(BaseModel):
 
 
 async def review_source(request: ReviewRequest, settings: Settings) -> dict:
+    from .deep_review import reviewer_from_settings
+    deep_reviewer = None
     if request.ai_assistance:
         if not request.external_processing_consent:
             raise ValueError("Explicit consent is required to send source to the configured AI provider.")
-        if not settings.enable_public_ai_review or not settings.llm_enabled:
+        deep_reviewer = reviewer_from_settings(settings)
+        if deep_reviewer is None and (not settings.enable_public_ai_review or not settings.llm_enabled):
             raise ValueError("AI review is unavailable. Run a static review or ask the operator to enable the provider.")
     # Copy explicit settings, then disable every external integration. Server .env
     # cannot silently turn a free source review into an external upload or probe.
@@ -132,7 +135,7 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         agent_contract_id=request.stellar_address if request.stellar_address.startswith("C") else "",
         owner_verification_note="Not checked during source review.",
     )
-    report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP)
+    report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=deep_reviewer)
     from ..reporting.english import english_finding
     from ..swarm.policy import actionable_risks, finding_set_commitment
     report.findings = [english_finding(f) for f in report.findings]
@@ -177,7 +180,15 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         ],
     }
     payload["ai_review"] = {"status": "not_requested", "observations": []}
-    if request.ai_assistance:
+    if deep_reviewer is not None:
+        payload["ai_review"] = {"status": report.deep_review.get("status"), "mode": "deep_review",
+                                "observations": [], "scores_changed": bool(report.deep_review.get("accepted_findings"))}
+        scope["external_processors"] = [f"anthropic:{settings.deep_review_model}"]
+        scope["limits"].append("Source was sent to Anthropic with consent for a grounded deep review. "
+                               "Model findings are accepted only with a verified source quote and can never remove a rule finding.")
+        payload["result"]["external_processors"] = scope["external_processors"]
+        payload["result"]["deterministic"] = False
+    elif request.ai_assistance:
         import asyncio
         from .ai_review import second_opinion
         try:
