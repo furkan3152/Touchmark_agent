@@ -94,6 +94,18 @@ def effective_artifact(artifact: AgentArtifact) -> AgentArtifact:
     return artifact.model_copy(update={"tools": tools + added, "code_profile": profile.summary()})
 
 
+def unverifiable_control_files(artifact: AgentArtifact) -> list[str]:
+    """Files holding signing/payment authority whose controls the data flow cannot see.
+
+    Fail-closed controls are verified by Python data flow. Authority found in other
+    languages (TypeScript, Rust, ...) can only be judged by reading that code.
+    """
+    capabilities = artifact.code_profile.get("capabilities", {})
+    files = {loc.split(":", 1)[0] for cap in FINANCIAL_CAPABILITIES + ("payment", "account_control", "code_execution")
+             for loc in capabilities.get(cap, [])}
+    return sorted(f for f in files if not f.lower().endswith(".py"))
+
+
 def oversight_enforced(artifact: AgentArtifact, prompt_lower: str) -> bool:
     """Human oversight is an attested flag or an approval gate in code.
 
