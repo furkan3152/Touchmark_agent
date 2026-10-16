@@ -20,7 +20,7 @@ from ..models import (
     SwarmMemberStats,
 )
 from .llm import LlmClient
-from .policy import PASS_SCORE, actionable_risks, assurance_level, audit_surface_coverage
+from .policy import PASS_SCORE, actionable_risks, assurance_level, audit_surface_coverage, warnings
 
 BADGE_THRESHOLDS: tuple[tuple[float, Badge], ...] = (
     (85.0, Badge.SAFE),
@@ -30,6 +30,24 @@ BADGE_THRESHOLDS: tuple[tuple[float, Badge], ...] = (
 HIGH_RISK_CEILING = PASS_SCORE - 1  # any actionable risk keeps the report below a pass
 CAUTION_CEILING = 84.0  # incomplete assurance never reaches SAFE
 BLOCKLIST_CEILING = 39.0  # a confirmed critical risk
+FLOOR_CEILING = 5.0
+
+
+def graded_ceiling(actionable: list[Finding]) -> float | None:
+    """Score cap for a report with actionable risks, graded instead of a flat plateau.
+
+    Any actionable risk keeps the score below a pass (64 at most); a confirmed critical
+    keeps it in the blocklist band (39 at most). Within its band the cap falls with every
+    further risk, weighted by severity, evidence grade and confidence, with diminishing
+    returns, so one inferred high risk and five confirmed ones no longer score the same.
+    """
+    if not actionable:
+        return None
+    ordered = sorted(actionable, key=lambda f: -f.penalty)
+    critical = any(f.severity is Severity.CRITICAL and f.evidence_grade.blocks_badge for f in ordered)
+    top = BLOCKLIST_CEILING if critical else HIGH_RISK_CEILING
+    weight = sum(f.penalty / (1.0 + 0.5 * i) for i, f in enumerate(ordered))
+    return round(max(FLOOR_CEILING, top - min(top - FLOOR_CEILING, 0.4 * weight)), 1)
 
 
 class SynthesisJudge:
@@ -88,21 +106,25 @@ class SynthesisJudge:
         # Ceilings come only from risk findings. Evidence gaps never lower the score;
         # they limit assurance and the decision instead (policy.review_decision).
         risks = [f for f in findings if f.is_risk]
-        gaps = len(findings) - len(risks)
+        warned = warnings(findings)
+        gaps = len(findings) - len(risks) - len(warned)
         actionable = actionable_risks(findings)
-        crit_confirmed = sum(1 for f in risks if f.severity is Severity.CRITICAL and f.evidence_grade.blocks_badge)
+        ceiling = graded_ceiling(actionable)
 
         score = base
-        if crit_confirmed:
-            score = min(score, BLOCKLIST_CEILING)
+        if ceiling is not None:
+            score = min(score, ceiling)
+            crit = sum(1 for f in actionable if f.severity is Severity.CRITICAL and f.evidence_grade.blocks_badge)
             notes.append(
-                f"{crit_confirmed} confirmed critical risk(s): authority should not be granted; "
-                f"score capped at {BLOCKLIST_CEILING}."
+                f"{len(actionable)} high or critical risk(s) require fixes"
+                + (f", {crit} of them confirmed critical" if crit else "")
+                + f"; score capped at {ceiling} (the cap falls with the number, severity and "
+                "certainty of the risks)."
             )
-        elif actionable:
-            score = min(score, HIGH_RISK_CEILING)
+        if warned:
             notes.append(
-                f"{len(actionable)} high or critical risk(s) require fixes; score capped at {HIGH_RISK_CEILING}."
+                f"{len(warned)} warning(s): the agent acts without a human approval step. "
+                "This lowers the score slightly and does not block a pass."
             )
         if gaps:
             notes.append(

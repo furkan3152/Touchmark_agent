@@ -31,15 +31,16 @@ def make_repo(root: Path) -> Path:
 
 def test_selection_ranks_agent_code_and_skips_tests_and_vendored_code(tmp_path):
     files, selection = select_repository(make_repo(tmp_path))
-    assert list(files) == ["src/pay.ts", "src/util.ts"]
+    assert list(files) == ["src/pay.ts", "src/util.ts", "package.json"]
     manifest = selection["manifest"]
+    assert manifest["manifest_files"] == ["package.json"] and manifest["source_files_selected"] == 2
     assert manifest["files_skipped_as_tests_or_builds"] == 2 and manifest["complete"] is True
     assert manifest["instruction_files"] == ["SKILL.md"]
 
 
 def test_selection_budget_is_reported(tmp_path):
     files, selection = select_repository(make_repo(tmp_path), max_files=1)
-    assert list(files) == ["src/pay.ts"]
+    assert list(files) == ["src/pay.ts", "package.json"]
     assert selection["manifest"]["complete"] is False
     assert selection["manifest"]["source_files_not_selected"] == ["src/util.ts"]
 

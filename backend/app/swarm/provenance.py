@@ -13,6 +13,17 @@ from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioR
 from .base import BaseAuditor
 
 
+MANIFEST_NAMES = ("package.json", "requirements.txt", "requirements.in", "pyproject.toml", "setup.cfg",
+                  "cargo.toml", "go.mod", "dockerfile", "pipfile", "gemfile")
+
+
+def _is_manifest(name: str) -> bool:
+    base = name.lower().rsplit("/", 1)[-1]
+    return (base in MANIFEST_NAMES or base.startswith(("requirements", "dockerfile"))
+            or base.endswith((".dockerfile", ".hbs.dockerfile")) or base.startswith("dockerfile.")
+            or (("/.github/workflows/" in "/" + name.lower()) and base.endswith((".yml", ".yaml"))))
+
+
 class ProvenanceAuditor(BaseAuditor):
     name = "provenance-auditor"
     dimension = Dimension.PROVENANCE
@@ -21,8 +32,10 @@ class ProvenanceAuditor(BaseAuditor):
         self, artifact: AgentArtifact, deep: bool
     ) -> tuple[list[Finding], list[ScenarioResult], str]:
         findings: list[Finding] = []
-        names = {name.lower() for name in artifact.code_files}
-        joined = "\n".join(artifact.code_files.values())
+        names = {name.lower() for name in artifact.code_files} | {n.lower() for n in artifact.lockfiles}
+        # Version ranges live in manifests and build files, not in application source:
+        # `/**` comments and `a >= b` comparisons in code are not floating dependencies.
+        joined = "\n".join(text for name, text in artifact.code_files.items() if _is_manifest(name))
 
         lock_markers = (
             "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "cargo.lock",

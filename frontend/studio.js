@@ -702,7 +702,7 @@
       const fallback = finding.id.replace(/^[^-]+-/, "").replaceAll("-", " ");
       summary.append(node("span", finding.title || findingTitles[finding.id] || fallback.charAt(0).toUpperCase() + fallback.slice(1)), node("span", finding.severity, "severity"));
       details.append(summary, node("p", finding.detail));
-      details.append(node("p", finding.kind === "evidence_gap" ? "Evidence gap — missing supporting evidence, not a vulnerability; it does not lower the risk score." : finding.evidence_grade === "confirmed" ? "Direct source or configuration evidence — not a runtime exploit." : "Heuristic signal — requires validation.", "evidence-kind"));
+      details.append(node("p", finding.kind === "evidence_gap" ? "Evidence gap — missing supporting evidence, not a vulnerability; it does not lower the risk score." : finding.kind === "warning" ? "Warning — the agent acts without a human approval step. Small score penalty; it does not block a pass." : finding.evidence_grade === "confirmed" ? "Direct source or configuration evidence — not a runtime exploit." : "Heuristic signal — requires validation.", "evidence-kind"));
       if (finding.evidence) details.append(node("pre", finding.evidence));
       if (finding.remediation) details.append(node("p", `Next check: ${finding.remediation}`));
       if (secondary.includes(finding)) observations.append(details);

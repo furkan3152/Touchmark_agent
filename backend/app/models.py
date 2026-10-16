@@ -74,6 +74,9 @@ class EvidenceGrade(str, Enum):
         return self is EvidenceGrade.CONFIRMED
 
 
+WARNING_PENALTY_SHARE = 0.25
+
+
 class FindingKind(str, Enum):
     """What a finding asserts.
 
@@ -82,10 +85,15 @@ class FindingKind(str, Enum):
     observable (no lockfile, no ownership proof, no defensive prompt wording).
     Gaps limit assurance and block a passing decision on their own terms, but they
     are not vulnerabilities and never lower the risk score.
+    WARNING: the agent acts without a human approval step (autonomy). That is a
+    design choice the operator can accept, so it lowers the score a little and is
+    shown as a warning, but never makes a review fail. Unbounded spend, missing
+    allowlists and other authority defects stay risks.
     """
 
     RISK = "risk"
     EVIDENCE_GAP = "evidence_gap"
+    WARNING = "warning"  # a real but operator-accepted exposure (e.g. autonomy without approval)
 
 
 class AssuranceLevel(str, Enum):
@@ -228,6 +236,9 @@ class AgentArtifact(BaseModel):
     domain: str = "general"
 
     onchain: OnchainActivity = Field(default_factory=OnchainActivity)
+    #: Dependency lockfiles found with the source (path -> sha256). They pin direct and
+    #: transitive versions even when the manifest uses ranges.
+    lockfiles: dict[str, str] = Field(default_factory=dict)
     raw_metadata: dict[str, Any] = Field(default_factory=dict)
     architecture: dict[str, Any] = Field(default_factory=dict)
     #: Capabilities, controls and data flows derived from source by the analyser.
@@ -266,10 +277,15 @@ class Finding(BaseModel):
 
     @property
     def penalty(self) -> float:
-        """Skordan düşülecek etkin ceza. Kanıt boşlukları risk skorunu düşürmez."""
-        if not self.is_risk:
+        """Skordan düşülecek etkin ceza. Kanıt boşlukları risk skorunu düşürmez.
+
+        Warnings lower the score by a quarter of a risk of the same severity and never
+        make a report fail on their own.
+        """
+        if self.kind is FindingKind.EVIDENCE_GAP:
             return 0.0
-        return self.severity.weight * self.evidence_grade.penalty_multiplier * max(0.4, self.confidence)
+        full = self.severity.weight * self.evidence_grade.penalty_multiplier * max(0.4, self.confidence)
+        return full * (WARNING_PENALTY_SHARE if self.kind is FindingKind.WARNING else 1.0)
 
 
 class ScenarioResult(BaseModel):

@@ -37,6 +37,9 @@ DANGEROUS_TOOL_NAMES = ("shell", "exec", "bash", "eval", "python", "run_code", "
 ISOLATION_SIGNALS = ("sandbox", "docker", "firecracker", "isolat", "tee", "enclave")
 
 
+LOCKFILE_NAMES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "cargo.lock", "poetry.lock",
+                  "uv.lock", "pipfile.lock", "go.sum", "bun.lockb", "bun.lock")
+
 class SecurityAuditor(BaseAuditor):
     name = "security-redteamer"
     dimension = Dimension.SECURITY
@@ -439,8 +442,11 @@ class SecurityAuditor(BaseAuditor):
         out: list[Finding] = []
         if not artifact.dependencies:
             return out
+        locked = bool(artifact.lockfiles) or any(
+            name.lower().endswith(LOCKFILE_NAMES) for name in artifact.code_files)
 
-        unpinned = [
+        # A lockfile pins every version the manifest leaves as a range.
+        unpinned = [] if locked else [
             d
             for d in artifact.dependencies
             if not re.search(r"[=@]\s*\d", d) or any(m in d for m in UNPINNED_MARKERS)
