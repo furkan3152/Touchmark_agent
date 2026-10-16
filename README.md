@@ -29,7 +29,7 @@
 
 | An unsafe agent: refused | The same agent, fixed: credentialed on Stellar |
 |---|---|
-| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: needs fixes, score 14" width="420"> | <img src="docs/media/demo-credential.png" alt="Safe treasury agent: pass, score 84, credential issued on testnet" width="420"> |
+| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: needs fixes, score 17.7" width="420"> | <img src="docs/media/demo-credential.png" alt="Safe treasury agent: pass, score 99.6, credential issued on testnet" width="420"> |
 
 Both agents are in [`examples/demo`](examples/demo). They are the same MCP treasury agent:
 - **Unsafe:** the model chooses the payment recipient, the amount and the URL to fetch.
@@ -65,6 +65,8 @@ flowchart LR
 - **Sinks:** signing, payments, account authority, contract calls, shell, network, files and logs.
 
 A path is cleared only by a control that **fails closed**: an allowlist, an upper bound, a confined path, a pinned network destination or an approval. A spend limit that the code does not enforce is reported, not credited.
+
+**The score is itemised.** Each finding costs risk points: its severity, times its evidence grade, times its confidence, times how many places it affects. Restatements of one root cause count once. The score is `100 × e^(−points/100)`, so small problems cost about a point each and serious ones stay ordered instead of all reaching 0. Every report shows the calculation under "Why this score?". [Details](docs/ANALYSIS_MODEL.md#how-the-score-is-computed-policy-2026-10-163).
 
 **One decision rule** drives the demo, the full Studio and the credential:
 - `needs_fixes`: an actionable risk exists.

@@ -378,6 +378,8 @@ class AuditReport(BaseModel):
     #: Deep model review record (services.deep_review); empty when not run.
     deep_review: dict[str, Any] = Field(default_factory=dict)
     dimension_scores: list[DimensionScore] = Field(default_factory=list)
+    #: The score itemised: 100 minus each finding's cost, then the band (judge.score_breakdown).
+    score_breakdown: dict[str, Any] = Field(default_factory=dict)
     verdicts: list[AuditorVerdict] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     judge_notes: list[str] = Field(default_factory=list)
