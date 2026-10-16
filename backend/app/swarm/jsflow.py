@@ -80,6 +80,12 @@ _WALLET_HOOK = re.compile(r"^use(?:\w*Wallet\w*|Freighter|Stellar\w*|Albedo|Kit)
 _SIGN_FOREIGN = re.compile(r"(?:^|\.)(?:signTransaction|signAuthEntry|signXdr|signAndSubmit|signAndSend\w*|signAndSendTransaction)$")
 _AUTHORIZE = re.compile(r"(?:^|\.)(?:authorizeEntry|authorizeInvocation)$")
 _APPROVAL_CALL = re.compile(r"approv|authori[sz]|verify|confirm|permi(?:t|ssion)|allowed|isAllowed|checkAuth|requireAuth", re.I)
+_SECRET_ARG = re.compile(r"secret|seed|mnemonic|private_?key|privateKey|signing_?key|signingKey|^sk$", re.I)
+#: x402 / MPP client wrappers that pay whatever a 402 response asks unless given a ceiling.
+_X402_PAYER = re.compile(r"(?:^|\.)(?:wrapFetchWithPayment\w*|withPaymentInterceptor|wrapAxiosWithPayment\w*|"
+                         r"createPayingFetch|createPaymentFetch)$")
+_X402_LIMITS = {"maxValue", "maxAmount", "maxPaymentAmount", "maxAmountRequired", "policy", "policies",
+                "paymentRequirementsSelector", "selector", "budget", "maxPrice", "spendLimit"}
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s$]+(?:/|$)")
 _NAME_SOURCES = {"userinput", "prompt", "payload", "command", "cmd", "code", "webhook", "query", "message", "body",
                  "request", "req", "event", "ctx"}
@@ -257,6 +263,7 @@ class JsProject:
         self.called: set[str] = set()
         self.model_entries: set[str] = set()
         self.constraints: dict[str, dict[str, str]] = {}  # function key -> {prop: enum|max}
+        self.tool_schemas: dict[str, set[str]] = {}  # model entry -> argument names in its schema
         self.schemas: dict[str, dict[str, dict[str, str]]] = {}  # module -> schema const -> constraints
         self.class_attrs: dict[str, dict[str, set[str]]] = {}
         self.wallet_names: dict[str, set[str]] = {}
@@ -644,10 +651,15 @@ class JsProject:
         return self._zod_shape(node) or {}
 
     # ------------------------------------------------------------- entrypoints
-    def _mark_entry(self, key: str, label: str, reason: str, constraints: dict[str, str] | None = None) -> None:
+    def _mark_entry(self, key: str, label: str, reason: str, constraints: dict[str, str] | None = None,
+                    schema_names: set[str] | None = None) -> None:
         if label == "model":
             self.model_entries.add(key)
-        for params in self.entry[key]:
+            if schema_names:
+                self.tool_schemas.setdefault(key, set()).update(schema_names)
+        # A tool handler's model input is its first parameter; later ones are the framework's
+        # context (MCP `extra`, AI-SDK options) or operator configuration (agent kits).
+        for params in (self.entry[key][:1] if label == "model" else self.entry[key]):
             params.add(label)
         if constraints:
             self.constraints.setdefault(key, {}).update(constraints)
@@ -675,6 +687,7 @@ class JsProject:
                 # MCP / agent frameworks: register a handler as an LLM tool.
                 if _TOOL_REGISTER.search(label) or short in {"DynamicStructuredTool", "DynamicTool", "StructuredTool", "FunctionTool"}:
                     schema: dict[str, str] = {}
+                    arg_names: set[str] = set()
                     for a in args:
                         if _unwrap(a) is not None and _unwrap(a).type == "object":
                             props = _props(a)
@@ -683,16 +696,21 @@ class JsProject:
                                     schema.update(self._schema_for(module, props[key]))
                             if not any(k in props for k in _SCHEMA_KEYS | _HANDLER_KEYS | {"description", "name", "title"}):
                                 schema.update(self._shape_from_object(a))
+                                arg_names.update(props)
+                            for key_name in _SCHEMA_KEYS:
+                                inner = _unwrap(props.get(key_name))
+                                if inner is not None and inner.type == "object":
+                                    arg_names.update(_props(inner))
                             for hk in _HANDLER_KEYS:
                                 fk = self._function_arg(props.get(hk), module.path)
                                 if fk:
-                                    self._mark_entry(fk, "model", "LLM tool handler", schema)
+                                    self._mark_entry(fk, "model", "LLM tool handler", schema, arg_names)
                         elif _unwrap(a) is not None and _unwrap(a).type == "identifier":
                             schema.update(self._schema_for(module, a))
                     for a in args:
                         fk = self._function_arg(a, module.path)
                         if fk:
-                            self._mark_entry(fk, "model", "LLM tool handler", schema)
+                            self._mark_entry(fk, "model", "LLM tool handler", schema, arg_names)
                     continue
                 if short == "setRequestHandler" and args and "CallTool" in _txt(args[0]):
                     for a in args[1:]:
@@ -904,6 +922,20 @@ class JsProject:
         constraints = self.constraints.get(key, {})
         for (pname, pattern), tags in zip(fn.params, self.entry[key]):
             interp.bind(pattern, set(tags), state, source_key=pname, constraints=constraints)
+        if record and key in self.model_entries:
+            names = set()
+            for pname, pattern in fn.params:
+                if pname:
+                    names.add(pname)
+                elif pattern is not None and pattern.type == "object_pattern":
+                    names |= {_txt(c.child_by_field_name("key") or c.child_by_field_name("left") or c)
+                              for c in pattern.named_children}
+            names |= set(self.tool_schemas.get(key, ()))
+            secret_names = sorted(n for n in names if _SECRET_ARG.search(n))
+            if secret_names:
+                loc = fn.node
+                self.flow("secret_via_model", module, fn, loc, {"model", "secret"},
+                          "tool arguments carry secret keys: " + ", ".join(secret_names))
         if constraints and record:
             # Schema constraints are enforced before the handler runs (the SDK rejects the call).
             if "enum" in constraints.values():
@@ -1144,6 +1176,10 @@ class _JsInterp:
             # Whoever starts the process chooses argv: the operator, or an agent driving a CLI skill.
             return {"caller"}
         base = self.tags(obj, state)
+        if "model" in base and _SECRET_ARG.search(prop) and "signer" not in base:
+            # A secret read out of model-supplied arguments: the key passed through the model.
+            self._flow("secret_via_model", node, {"model", "secret"}, f"tool argument `{prop}` carries a secret key")
+            return base | {"secret"}
         if "signer" in base:
             return {"secret"} if prop in {"secret", "rawSecretKey", "_secretKey", "secretKey"} else set()
         if "secret" in base and not _SECRET_ENV.search(prop):
@@ -1244,6 +1280,23 @@ class _JsInterp:
             if "secret" in every:
                 self._flow("secret_to_model", node, every, "secret material is placed in a model request")
             return {"model"}
+        if _X402_PAYER.search(label):
+            # The wrapped fetch signs whatever payment a 402 response requests. Without a
+            # ceiling or selector, the paid server chooses recipient, asset and amount.
+            self._cap("payment", node)
+            self._cap("stellar_signing", node)
+            options = set()
+            for a in arg_nodes:
+                a_u = _unwrap(a)
+                if a_u is not None and a_u.type == "object":
+                    options |= set(_props(a_u))
+                    for value in _props(a_u).values():
+                        inner = _unwrap(value)
+                        if inner is not None and inner.type == "object":
+                            options |= set(_props(inner))
+            if not options & _X402_LIMITS and not self.approved:
+                self._flow("x402_unbounded", node, {"external"}, "402 responses decide the payment; no maximum or selector is set")
+            return every | receiver
         if _HTTP_CALL.search(label):
             self._cap("network_fetch", node)
             url = arg_nodes[0] if arg_nodes else None
@@ -1673,6 +1726,9 @@ class _JsInterp:
                 if prop.type == "shorthand_property_identifier_pattern":
                     name = _txt(prop)
                     tags = set(state.get(f"{source_key}.{name}", value)) if source_key else set(value)
+                    if "model" in tags and _SECRET_ARG.search(name) and "signer" not in tags:
+                        self._flow("secret_via_model", prop, {"model", "secret"}, f"tool argument `{name}` carries a secret key")
+                        tags |= {"secret"}
                     kind = constraints.get(name)
                     state[name] = (tags - UNTRUSTED) | {"checked"} if kind == "enum" else tags | {"bounded"} if kind == "max" else tags
                 elif prop.type == "pair_pattern":

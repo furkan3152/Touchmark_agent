@@ -264,7 +264,33 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
 
-        # Only when nothing in the code checks the outcome (getTransaction status,
+        # Payment verification by transaction hash must check that the transaction succeeded:
+        # Horizon returns failed transactions (and their operations) by hash too.
+        unchecked = []
+        for name, content in artifact.code_files.items():
+            if not name.lower().endswith((".py", ".js", ".mjs", ".cjs", ".ts", ".tsx")):
+                continue
+            looks_up = re.search(r"\.transactions\(\)\s*\.\s*transaction\(|forTransaction\(|for_transaction\(|"
+                                 r"/transactions/\$\{|/transactions/\{|get_transaction\(|getTransaction\(", content)
+            pays = re.search(r"\bamount\b", content) and re.search(r"destination|payTo|pay_to|\.to\b|recipient", content)
+            verifies = re.search(r"verif|validat", name + content[:4000], re.I)
+            checks = re.search(r"\.successful\b|\[[\"']successful[\"']\]|[\"']SUCCESS[\"']|transaction_successful", content)
+            if looks_up and pays and verifies and not checks:
+                line = content[:looks_up.start()].count("\n") + 1
+                unchecked.append(f"{name}:{line}")
+        if unchecked:
+            findings.append(self.finding(
+                "payment-success-unchecked", Severity.HIGH,
+                "Payment verification does not check that the transaction succeeded",
+                "The code looks a payment transaction up by hash and checks its fields, but never checks `successful`. "
+                "Horizon and RPC return failed transactions by hash, with their memo and operations, so a transaction "
+                "that failed on chain (fee paid, no transfer) can pass as payment.",
+                evidence="; ".join(unchecked[:5]),
+                remediation="Require `successful === true` (Horizon) or `status === 'SUCCESS'` (RPC) before reading the "
+                            "operations, and verify the payment operation itself.",
+                grade=EvidenceGrade.INFERRED, confidence=0.8))
+
+
         # `successful`, a SUCCESS comparison); a comment alone is weak evidence.
         confirms = re.search(r"gettransaction\s*\(|get_transaction\s*\(|\.successful\b|"
                              r"[\"']success[\"']|status\s*===?\s*[\"']success", lower)
