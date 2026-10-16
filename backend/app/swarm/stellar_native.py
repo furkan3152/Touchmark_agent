@@ -195,7 +195,12 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
 
-        if "contract account" in lower or re.search(r"\bC[A-Z2-7]{55}\b", surface):
+        # SEP-45 is web authentication for contract accounts. A contract id alone (a token
+        # SAC, a policy contract) is not a contract-account login, so require both.
+        contract_accounts = "contract account" in lower or "smart account" in lower or "smart wallet" in lower
+        web_auth = re.search(r"sep-?10\b|web[ _-]?auth|challenge transaction|challenge_transaction|"
+                             r"build_challenge|read_challenge|/auth\b", lower)
+        if contract_accounts and web_auth:
             if "sep-45" not in lower and "sep45" not in lower:
                 findings.append(
                     self.finding(

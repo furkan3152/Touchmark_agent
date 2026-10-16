@@ -104,6 +104,12 @@ TOOLS = [
 ]
 
 
+def _reviewable(artifact) -> set[str]:
+    """Source files whose reading counts towards coverage (manifests are not code)."""
+    from ..swarm.provenance import _is_manifest
+    return {name for name in artifact.code_files if not _is_manifest(name)}
+
+
 @dataclass
 class DeepReviewResult:
     status: str = "not_run"
@@ -262,7 +268,7 @@ class DeepReviewer:
 
     # ------------------------------------------------------------------ loop
     async def review(self, artifact: AgentArtifact, findings: list[Finding], chain: dict | None = None) -> DeepReviewResult:
-        result = DeepReviewResult(model=self.model, total_files=len(artifact.code_files))
+        result = DeepReviewResult(model=self.model, total_files=len(_reviewable(artifact)))
         try:
             await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=self.timeout_seconds)
             if result.status == "not_run":
@@ -281,7 +287,7 @@ class DeepReviewer:
                 instruction = ("Begin with describe_operating_model, then assess every flow, then investigate "
                                "and record findings, then finish.")
             else:
-                unread = sorted(set(artifact.code_files) - result.files_read)
+                unread = sorted(_reviewable(artifact) - result.files_read)
                 prior = "\n".join(f"- {f.id}: {f.title} ({f.evidence[:120]})" for f in result.findings) or "- none"
                 instruction = (
                     f"Challenge pass {number}. A previous reviewer already recorded:\n{prior}\n"

@@ -24,8 +24,14 @@ from uuid import uuid4
 from ..config import Settings
 from ..models import AgentArtifact, AuditTier, SourceKind
 from ..reporting.generator import canonical_json, report_to_dict
+from ..swarm.provenance import _is_manifest
 
 SOURCE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", ".go", ".sol")
+#: Code generators ship the agent as templates (server.py.hbs, tools.ts.tmpl). A template
+#: whose stem is a source file is reviewed like source.
+TEMPLATE_SUFFIXES = (".hbs", ".handlebars", ".j2", ".jinja", ".jinja2", ".tmpl", ".mustache", ".ejs")
+LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "poetry.lock", "uv.lock",
+             "Pipfile.lock", "go.sum", "bun.lock", "bun.lockb")
 INSTRUCTION_NAMES = {"skill.md", "agents.md", "claude.md", "system_prompt.md", "prompt.md", "instructions.md"}
 SKIP_DIRS = {"node_modules", "dist", "build", "out", ".git", "target", "vendor", "__pycache__", "coverage",
              ".next", ".turbo", ".venv", "venv", "test", "tests", "__tests__", "spec", "fixtures", "e2e",
@@ -45,11 +51,27 @@ def _skipped(rel: Path) -> bool:
             or name.startswith("test_"))
 
 
+def _is_source(name: str) -> bool:
+    name = name.lower()
+    if name.endswith(TEMPLATE_SUFFIXES):
+        name = name.rsplit(".", 1)[0]
+    return name.endswith(SOURCE_SUFFIXES)
+
+
+def _lockfiles(root: Path) -> dict[str, str]:
+    found = {}
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root)
+        if path.is_file() and not path.is_symlink() and path.name in LOCKFILES and not _skipped(rel):
+            found[rel.as_posix()] = sha256(path.read_bytes()).hexdigest()
+    return found
+
+
 def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_000,
                       max_file_bytes: int = 120_000) -> tuple[dict[str, str], dict]:
     """Choose the agent-defining source within a budget. Returns (files, manifest)."""
     root = root.resolve()
-    candidates, instructions, skipped, oversized = [], {}, 0, []
+    candidates, instructions, manifests, skipped, oversized = [], {}, {}, 0, []
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
@@ -57,7 +79,8 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
         if rel.name.lower() in INSTRUCTION_NAMES and not _skipped(rel):
             instructions[rel.as_posix()] = path.read_text(errors="replace")[:20_000]
             continue
-        if not rel.name.lower().endswith(SOURCE_SUFFIXES):
+        manifest_file = _is_manifest(rel.as_posix())
+        if not (_is_source(rel.name) or manifest_file):
             continue
         if _skipped(rel):
             skipped += 1
@@ -70,6 +93,12 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
             text = path.read_text()
         except UnicodeDecodeError:
             continue
+        if manifest_file and not _is_source(rel.name):
+            # Manifests and Dockerfiles declare version ranges and base images. They are
+            # small and reviewed outside the source budget.
+            if len(rel.parts) <= 3 and size <= 64_000:
+                manifests[rel.as_posix()] = text
+            continue
         score = len(SIGNALS.findall(text)) + (5 if rel.parts[0] in {"src", "lib", "app", "agent", "server"} else 0)
         candidates.append((score, rel.as_posix(), text))
     candidates.sort(key=lambda c: (-c[0], c[1]))
@@ -80,7 +109,9 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
             left_out.append(rel)
             continue
         files[rel], used = text, used + size
-    manifest = {"source_files_selected": len(files), "source_bytes_selected": used,
+    source_count = len(files)
+    files.update(manifests)
+    manifest = {"source_files_selected": source_count, "manifest_files": sorted(manifests), "source_bytes_selected": used,
                 "source_files_not_selected": left_out[:200], "files_skipped_as_tests_or_builds": skipped,
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
                 "complete": not left_out and not oversized,
@@ -89,13 +120,23 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
 
 
 def _dependencies(root: Path) -> list[str]:
+    """Direct dependencies, at the exact version the lockfile resolves when there is one."""
     deps: list[str] = []
     package = root / "package.json"
     if package.is_file():
+        locked: dict[str, str] = {}
+        lock = root / "package-lock.json"
+        if lock.is_file():
+            try:
+                for key, meta in (json.loads(lock.read_text()).get("packages") or {}).items():
+                    if key.startswith("node_modules/") and key.count("node_modules/") == 1 and isinstance(meta, dict):
+                        locked[key[len("node_modules/"):]] = str(meta.get("version", ""))
+            except (ValueError, OSError):
+                locked = {}
         try:
             data = json.loads(package.read_text())
             for section in ("dependencies", "peerDependencies"):
-                deps += [f"{k}@{v}" for k, v in sorted((data.get(section) or {}).items())]
+                deps += [f"{k}@{locked.get(k) or v}" for k, v in sorted((data.get(section) or {}).items())]
         except (ValueError, OSError):
             pass
     for name in ("requirements.txt",):
@@ -134,7 +175,7 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         source_kind=SourceKind.REPO,
         source_ref=f"repo:{source_reference or root.name}@{revision}",
         name=name, description=description, system_prompt=instructions[:12_000],
-        code_files=files, dependencies=_dependencies(root), chain_authority=chain,
+        code_files=files, dependencies=_dependencies(root), chain_authority=chain, lockfiles=_lockfiles(root),
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
         owner_verification_note="Not checked during repository review.",
     )
