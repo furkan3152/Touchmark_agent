@@ -397,4 +397,34 @@ class StellarNativeAuditor(BaseAuditor):
                     "Payments to it fail; create_account would be needed, which sends a different amount semantics.",
                     evidence=f"{dest['location']}: {dest['address']} not found on {facts.get('network')}",
                     remediation="Verify destinations on the target network before deployment."))
+        contract = facts.get("contract") or {}
+        if contract.get("status") == "found" and contract.get("executable") == "wasm":
+            if contract.get("upgradeable"):
+                out.append(self.finding("onchain-contract-upgradeable", Severity.LOW,
+                    "The deployed contract can replace its own code",
+                    "The contract exposes an upgrade entry point, so its administrator can swap the WASM after this "
+                    "review. The review applies to the WASM hash recorded below only.",
+                    evidence=f"{contract.get('contract_id')}: wasm {contract.get('wasm_hash')}",
+                    remediation="Bind credentials to the WASM hash, gate upgrade behind a timelock or multisig, "
+                                "and re-review after every upgrade."))
+            if contract.get("code") in {"archived_or_missing", "too_large"}:
+                out.append(self.finding("onchain-contract-code-unavailable", Severity.MEDIUM,
+                    "The deployed contract code could not be read",
+                    "The ledger references a WASM that is archived or too large to fetch, so its functions were not inspected.",
+                    evidence=f"{contract.get('contract_id')}: {contract.get('code')}",
+                    remediation="Restore the contract code entry or supply the source and build attestation."
+                    ).model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
+        binding = facts.get("source_binding") or {}
+        if binding.get("onchain") and not binding.get("verified"):
+            how = {"wasm_metadata": "only named in the WASM metadata", "unbound_card": "named in an unregistered card",
+                   "registry_card": "named in the registry card by branch, not by commit",
+                   "user_supplied": "supplied by the requester", "none": "not identified"}.get(binding.get("binding"), "not proven")
+            out.append(self.finding("onchain-source-unbound", Severity.MEDIUM,
+                "The reviewed source is not proven to be the deployed agent",
+                f"The source repository is {how}. Nothing ties the reviewed commit to the code or identity on chain, "
+                "so a pass would describe the repository, not the deployed agent.",
+                evidence=f"binding={binding.get('binding')}",
+                remediation="Publish a GitHub build attestation for the WASM hash (SEP-55 style), or register the agent "
+                            "with a card that pins the commit and whose hash the registry records."
+                ).model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
         return out

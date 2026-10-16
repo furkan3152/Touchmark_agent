@@ -184,8 +184,8 @@ def _dependencies(root: Path) -> list[str]:
 async def audit_repository(root: str | Path, *, name: str, purpose: str, settings: Settings,
                            forbidden_goals: list[str] | None = None, network: str = "testnet",
                            stellar_address: str = "", agent_signing_key: str = "",
-                           deep: bool = True, source_reference: str = "", revision: str = "") -> dict:
-    from ..swarm.orchestrator import AuditSwarm
+                           deep: bool = True, source_reference: str = "", revision: str = "",
+                           contract_facts: dict | None = None, source_binding: dict | None = None) -> dict:
     from .deep_review import reviewer_from_settings
 
     root = Path(root)
@@ -195,43 +195,89 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     instructions = "\n\n".join(f"[{path}]\n{text}" for path, text in selection["instructions"].items())
     goals = forbidden_goals or []
     description = purpose + ("\nForbidden goals: " + "; ".join(goals) if goals else "")
-    chain: dict = {}
-    if settings.enable_onchain_verification and (stellar_address or files):
-        from ..stellar.authority import AuthorityReader
-        try:
-            chain = await AuthorityReader(network).collect(stellar_address, agent_key=agent_signing_key, code_files=files)
-        except Exception:
-            chain = {"network": network, "status": "unavailable"}
+    chain = await _chain_facts(settings, network, stellar_address, agent_signing_key, files)
+    if contract_facts:
+        chain["contract"] = contract_facts
+    if source_binding:
+        chain["source_binding"] = source_binding
     artifact = AgentArtifact(
         source_kind=SourceKind.REPO,
         source_ref=f"repo:{source_reference or root.name}@{revision}",
         name=name, description=description, system_prompt=instructions[:12_000],
         code_files=files, tools=registered_tools(files), dependencies=_dependencies(root), chain_authority=chain, lockfiles=_lockfiles(root),
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
+        agent_contract_id=(contract_facts or {}).get("contract_id", ""),
         owner_verification_note="Not checked during repository review.",
     )
-    isolated = settings.model_copy(update={
-        "stellar_network": "offline", "llm_provider": "", "llm_api_key": "", "pinata_jwt": "",
-        "enable_active_agent_probes": False, "enable_audit_escrow": False, "enable_ofac_screening": False})
     reviewer = reviewer_from_settings(settings) if deep else None
     if reviewer is not None:
         reviewer.max_turns = max(reviewer.max_turns, 40)
         reviewer.timeout_seconds = max(reviewer.timeout_seconds, 900.0)
-    report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=reviewer)
+    payload_extra = {"repository": {"reference": source_reference, "revision": revision,
+                                    "source_sha256": sha256(canonical_json(files).encode()).hexdigest(),
+                                    **selection["manifest"]}}
+    notes = [] if selection["manifest"]["complete"] else [
+        "Repository selection was budget-limited; unselected files were not reviewed. "
+        "See repository.source_files_not_selected."]
+    return await _run_and_package(artifact, settings, reviewer, name, purpose, goals, payload_extra, notes)
+
+
+async def audit_onchain(resolution: dict, *, name: str, purpose: str, settings: Settings, network: str = "testnet",
+                        stellar_address: str = "", deep: bool = False) -> dict:
+    """Audit an agent known only by on-chain identity: what the ledger proves, nothing more.
+
+    Without source the review cannot pass; the report states exactly what was verified
+    (registry record, card hash, endpoint hash, contract code, account authority).
+    """
+    del deep  # the deep review reads source; there is none
+    contract = resolution.get("contract") or {}
+    chain = await _chain_facts(settings, network, stellar_address, "", {})
+    if contract:
+        chain["contract"] = contract
+    chain["source_binding"] = {**resolution.get("source", {}), "onchain": True}
+    card = resolution.get("card") or {}
+    tools = [ToolSpec(name=f["name"], origin="registered", description="Contract function: " + ", ".join(
+                 f"{i['name']}: {i['type']}" for i in f["inputs"])[:300])
+             for f in contract.get("functions", []) if not f["name"].startswith("__")][:60]
+    tools += [ToolSpec(name=s, origin="registered", description="Skill declared in the agent card") for s in card.get("skills", [])]
+    artifact = AgentArtifact(
+        source_kind=SourceKind.ONCHAIN_ADDRESS, source_ref=resolution.get("reference", ""), name=name,
+        description=purpose, tools=tools[:60], chain_authority=chain,
+        agent_wallet=stellar_address, agent_contract_id=contract.get("contract_id", ""),
+        owner_verification_note="Ownership is shown by the registry record owner when one was found.",
+    )
+    return await _run_and_package(artifact, settings, None, name, purpose, [], {}, [
+        "No source code is bound to this agent; only on-chain evidence was reviewed. See resolution.steps."])
+
+
+async def _chain_facts(settings: Settings, network: str, stellar_address: str, agent_signing_key: str,
+                       files: dict[str, str]) -> dict:
+    if not settings.enable_onchain_verification or not (stellar_address or files):
+        return {}
+    from ..stellar.authority import AuthorityReader
+    try:
+        return await AuthorityReader(network).collect(stellar_address, agent_key=agent_signing_key, code_files=files)
+    except Exception:
+        return {"network": network, "status": "unavailable"}
+
+
+async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer, name: str, purpose: str,
+                           goals: list[str], payload_extra: dict, notes: list[str]) -> dict:
+    from ..swarm.orchestrator import AuditSwarm
     from ..reporting.english import english_finding
     from ..swarm.policy import actionable_risks, finding_set_commitment
+    isolated = settings.model_copy(update={
+        "stellar_network": "offline", "llm_provider": "", "llm_api_key": "", "pinata_jwt": "",
+        "enable_active_agent_probes": False, "enable_audit_escrow": False, "enable_ofac_screening": False})
+    report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=reviewer)
     report.findings = [english_finding(f) for f in report.findings]
     report.finding_set_hash = finding_set_commitment(report.findings)
     payload = report_to_dict(report, artifact)
-    payload["repository"] = {"reference": source_reference, "revision": revision,
-                             "source_sha256": sha256(canonical_json(files).encode()).hexdigest(),
-                             **selection["manifest"]}
+    payload.update(payload_extra)
     payload["subject"] = {"name": name, "purpose": purpose, "forbidden_goals": goals}
     payload["review_decision"] = report.decision
     payload["priority_finding_ids"] = [f.id for f in actionable_risks(report.findings)]
-    if not selection["manifest"]["complete"]:
-        payload["judge_notes"].append("Repository selection was budget-limited; unselected files were not reviewed. "
-                                      "See repository.source_files_not_selected.")
+    payload["judge_notes"].extend(notes)
     encoded = canonical_json(payload)
     return {"decision": report.decision, "report": payload, "report_json": encoded,
             "report_sha256": sha256(encoded.encode()).hexdigest()}

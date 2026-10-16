@@ -113,7 +113,8 @@ EVIDENCE_GAP_RULES = frozenset({
     "security-no-auditable-surface", "security-no-isolation", "security-all-tools-networked",
     "security-source-analysis-incomplete", "compliance-pii-without-safeguards",
     "stellar_native-onchain-account-missing", "stellar_native-onchain-agent-key-undeclared",
-    "stellar_native-onchain-identity-unbound",
+    "stellar_native-onchain-identity-unbound", "stellar_native-onchain-source-unbound",
+    "stellar_native-onchain-contract-code-unavailable",
 })
 #: Autonomy without a human approval step. Operators may run agents unattended on
 #: purpose, so these are warnings: a small score penalty, never a failing decision.
@@ -121,7 +122,7 @@ EVIDENCE_GAP_RULES = frozenset({
 WARNING_RULES = frozenset({"compliance-no-human-oversight", "intent-full-autonomy-over-funds"})
 #: Gaps that make a pass impossible: the reviewed scope itself is incomplete.
 BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface",
-                           "security-controls-unverifiable"})
+                           "security-controls-unverifiable", "stellar_native-onchain-source-unbound"})
 
 #: Rules that assert a control is absent. They are only evidence when the analyser can
 #: see controls in the language that holds the capability (Python data flow today).
