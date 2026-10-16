@@ -45,7 +45,11 @@ TOPICS: dict[str, str] = {
 - Sequence numbers serialize an account. Parallel agents sharing one source account collide; use channel accounts or a sequence lock.
 - A submit timeout or 504 does not mean failure. Re-check by hash before re-signing, or the agent pays twice.
 - Fee bumps let another account pay fees for an inner transaction; signing the inner transaction still authorizes its operations.
-- Signing an envelope received from outside authorizes every operation in it. Decode and allowlist operations, source accounts, destinations and amounts first.""",
+- Signing an envelope received from outside authorizes every operation in it. Decode and allowlist operations, source accounts, destinations and amounts first.
+- Horizon facts that are easy to get wrong:
+  - a synchronous POST /transactions returns the full transaction resource (id, successful, created_at, source_account, fee_charged, operation_count ...), the same shape as GET /transactions/{hash}; SDK typings for the submit response are narrower than the real body;
+  - GET /transactions/{hash} and /transactions/{hash}/operations also return FAILED transactions (successful=false), so payment verification must check `successful`;
+  - js-stellar-sdk and py-stellar-sdk `submitTransaction` / `submit_transaction` run the SEP-29 memo-required check by default unless explicitly skipped.""",
     "key_management": """Key management
 - Secret seeds (S...) must never appear in source, logs, model prompts, tool results or error messages.
 - Keys should live in an external signer, KMS or a separate process the model cannot read.

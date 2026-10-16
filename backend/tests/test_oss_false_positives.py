@@ -146,3 +146,20 @@ def test_masked_secret_in_a_log_is_not_exfiltration():
             "console.log(`Secret: ${maskSecret(secretKey)}`);\n")
     assert _scan_file("cli.js", code)[2] == []
     assert _scan_file("cli.js", code.replace("maskSecret(secretKey)", "secretKey"))[2]
+
+
+def test_configured_base_url_with_variable_path_is_not_ssrf():
+    from backend.app.swarm.codeflow import analyse_code
+    sdk = ("import httpx\n"
+           "class Client:\n"
+           "    def __init__(self, base_url):\n"
+           "        self.base_url = base_url\n"
+           "    def account(self, account_id):\n"
+           "        return httpx.get(f\"{self.base_url}/accounts/{account_id}\")\n")
+    assert not [f for f in analyse_code({"client.py": sdk}).flows if f.category == "ssrf"]
+    tool = ("import httpx\n"
+            "from mcp import tool\n"
+            "@tool\n"
+            "def fetch(url: str):\n"
+            "    return httpx.get(url).text\n")
+    assert [f for f in analyse_code({"tool.py": tool}).flows if f.category == "ssrf"]
