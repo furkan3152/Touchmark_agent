@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioResult, Severity
+from ..models import FindingKind, AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioResult, Severity
 from .base import BaseAuditor
 
 
@@ -173,41 +173,47 @@ class StellarNativeAuditor(BaseAuditor):
         def locations(items):
             return '; '.join(f"{fn['file']}:{fn['line']} {fn['name']}" for fn in items)
         if auth_gaps:
-            findings.append(
-                self.finding(
-                    "soroban-auth-missing",
-                    Severity.HIGH if auth_hard else Severity.MEDIUM,
-                    "Soroban authorization paths require review",
-                    "Potentially mutating public functions lack a direct require_auth call in their own body. Authorization may exist in a helper or caller; this lexical review does not establish an exploitable authorization bypass.",
-                    evidence=locations(auth_gaps),
-                    remediation="Trace each entrypoint's actual authorization path, including helpers and invocation context, and run unauthorized-caller tests bound to the exact action arguments.",
-                    grade=EvidenceGrade.INFERRED,
-                    confidence=0.75,
-                )
+            finding = self.finding(
+                "soroban-auth-missing",
+                Severity.HIGH if auth_hard else Severity.MEDIUM,
+                "Soroban authorization paths require review",
+                "Potentially mutating public functions lack a direct require_auth call in their own body. Authorization may exist in a helper or caller; this lexical review does not establish an exploitable authorization bypass.",
+                evidence=locations(auth_hard + [fn for fn in auth_gaps if fn not in auth_hard]),
+                remediation="Trace each entrypoint's actual authorization path, including helpers and invocation context, and run unauthorized-caller tests bound to the exact action arguments.",
+                grade=EvidenceGrade.INFERRED,
+                confidence=0.75,
             )
+            # Every gap reaches a helper that calls require_auth: nothing is shown to be
+            # missing, only unverified. That is an evidence gap, not a risk.
+            findings.append(finding if auth_hard else finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
 
         if ttl_gaps:
-            findings.append(
-                self.finding(
-                    "persistent-ttl",
-                    Severity.HIGH if ttl_hard else Severity.MEDIUM,
-                    "Persistent state lifetime paths require review",
-                    "These public functions reference persistent storage without a recognized persistent-entry extend_ttl call in the same body. A helper or external maintenance policy may handle lifetime; its effectiveness was not verified.",
-                    evidence=locations(ttl_gaps),
-                    remediation="Trace the lifetime policy for each affected key, distinguish instance TTL from persistent-entry TTL, and test archival, restoration and missing-state behavior.",
-                    grade=EvidenceGrade.INFERRED,
-                    confidence=0.75,
-                )
+            finding = self.finding(
+                "persistent-ttl",
+                Severity.HIGH if ttl_hard else Severity.MEDIUM,
+                "Persistent state lifetime paths require review",
+                "These public functions reference persistent storage without a recognized persistent-entry extend_ttl call in the same body. A helper or external maintenance policy may handle lifetime; its effectiveness was not verified.",
+                evidence=locations(ttl_hard + [fn for fn in ttl_gaps if fn not in ttl_hard]),
+                remediation="Trace the lifetime policy for each affected key, distinguish instance TTL from persistent-entry TTL, and test archival, restoration and missing-state behavior.",
+                grade=EvidenceGrade.INFERRED,
+                confidence=0.75,
             )
+            findings.append(finding if ttl_hard else finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
 
-        if re.search(r'\.\s*storage\s*\(\s*\)\s*\.\s*temporary\s*\(', rust) and re.search(r"agent|valid|escrow|balance", lower):
+        # Temporary storage is right for counters, allowances, nonces and caches. Report
+        # only keys whose names say they hold state that must not silently expire.
+        temporary_keys = re.findall(r'\.\s*temporary\s*\(\s*\)\s*\.\s*set\s*\(\s*&?\s*(?:DataKey::)?([A-Za-z_]\w*)', rust)
+        critical_keys = [k for k in temporary_keys
+                         if re.search(r"balance|escrow|owner|admin|limit|deposit|vault|task|grant|valid|signer|policy", k, re.I)
+                         and not re.search(r"allowance|spent|nonce|cache|session|lock|count|seen", k, re.I)]
+        if critical_keys:
             findings.append(
                 self.finding(
                     "temporary-critical-state",
                     Severity.MEDIUM,
                     "Kritik kayıt temporary storage kullanıyor olabilir",
-                    "Agent, validation veya escrow state'i süresi dolduğunda silinebilir. "
-                    "Lexical signal: which keys live in temporary storage was not resolved.",
+                    "Agent, validation veya escrow state'i süresi dolduğunda silinebilir.",
+                    evidence="temporary keys: " + ", ".join(sorted(set(critical_keys))),
                     remediation="Kritik kayıtları persistent storage'a taşıyın; temporary yalnız cache/idempotency penceresi olsun.",
                     grade=EvidenceGrade.INFERRED,
                     confidence=0.7,

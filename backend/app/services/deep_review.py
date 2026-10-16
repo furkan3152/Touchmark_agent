@@ -62,7 +62,14 @@ Work in this order:
 5. Call record_finding for each real defect, with the exact file, line and a verbatim quote of that line. Describe a concrete attack scenario and its Stellar impact. Do not record style issues or speculation you cannot tie to a line.
 6. Call finish with a short summary.
 
-Be precise and concrete. A finding without a verifiable line is discarded. Severity: critical = funds or keys can be lost by an outside party; high = privileged action reachable without an enforced control; medium = exploitable under realistic conditions with limited impact; low = hardening.
+Be precise and concrete. A finding without a verifiable line is discarded.
+
+Severity, judged on the code as shipped, not on what it might become:
+- critical: an outside party can take funds or keys through a reachable path in the shipped code.
+- high: a privileged or paid action is reachable without an enforced control, or a core feature is broken in a way that loses money or access.
+- medium: exploitable only under realistic extra conditions, or limited impact.
+- low: latent (the path is not wired up, the function has no caller, settlement is mocked), demo/mock code, test-only code, hardening, or documentation.
+Before recording, check that the path is reached: who calls this code, is the dangerous call actually wired, does a control elsewhere (a helper, a caller, the platform) already stop it. If you rely on how an SDK or service behaves, say so in the scenario; prefer stellar_reference over memory.
 
 Stellar checklist (call stellar_reference for details):
 {knowledge.CHECKLIST}

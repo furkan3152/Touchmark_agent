@@ -702,7 +702,11 @@ class _Interp:
             self._cap("network_fetch", node)
             url = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "url"), None)
             url_tags = self.tags(url, state) if url is not None else set()
-            if url_tags & UNTRUSTED and not self._fixed_host(url, state):
+            # SSRF is about who picks the host. A library's own caller configuring a base
+            # URL (`f"{self.api_url}{path}"`) is the developer, not an attacker, and a
+            # tainted path on a fixed host is not a server-side request forgery.
+            host_tags = self.tags(self._url_head(url), state) if url is not None else set()
+            if host_tags & (UNTRUSTED - {"caller"}) and not self._fixed_host(url, state):
                 self._flow("ssrf", node, url_tags, "request URL is not fixed to an allowed host")
             if "secret" in every:
                 self._flow("secret_exfiltration", node, every, "secret material is sent over the network")
@@ -787,6 +791,16 @@ class _Interp:
             # A method on a secret-holding object may return public data (a receipt).
             out = (out - {"secret"}) | {"secret_possible"}
         return out
+
+    @staticmethod
+    def _url_head(url: ast.AST) -> ast.AST:
+        """The part of a URL expression that decides scheme and host."""
+        if isinstance(url, ast.JoinedStr) and url.values:
+            first = url.values[0]
+            return first.value if isinstance(first, ast.FormattedValue) else first
+        if isinstance(url, ast.BinOp) and isinstance(url.op, ast.Add):
+            return _Interp._url_head(url.left)
+        return url
 
     def _fixed_host(self, url: ast.AST | None, state) -> bool:
         if isinstance(url, ast.JoinedStr) and url.values and isinstance(url.values[0], ast.Constant):
