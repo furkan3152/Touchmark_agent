@@ -38,7 +38,7 @@ USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache
 
 def env_status() -> dict:
     return {name: "set" if os.environ.get(name) else "missing"
-            for name in ("ANTHROPIC_API_KEY", "ENABLE_DEEP_REVIEW", "ENABLE_ONCHAIN_VERIFICATION")}
+            for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AI_KEY", "ENABLE_DEEP_REVIEW", "ENABLE_ONCHAIN_VERIFICATION")}
 
 
 def cost(usage: dict) -> float:
@@ -48,7 +48,7 @@ def cost(usage: dict) -> float:
 
 async def connection_test() -> dict:
     from anthropic import AsyncAnthropic
-    client = AsyncAnthropic(timeout=60.0, max_retries=1)
+    client = AsyncAnthropic(api_key=Settings().anthropic_api_key or None, timeout=60.0, max_retries=1)
     response = await client.messages.create(model=MODEL, max_tokens=16,
                                             messages=[{"role": "user", "content": "Reply with the word ok."}])
     text = "".join(getattr(b, "text", "") for b in response.content).strip()
