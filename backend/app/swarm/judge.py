@@ -29,10 +29,8 @@ BADGE_THRESHOLDS: tuple[tuple[float, Badge], ...] = (
     (65.0, Badge.CAUTION),
     (40.0, Badge.HIGH_RISK),
 )
-#: Score bands. A confirmed critical risk places the report in 0-39, any other
-#: actionable risk in 40-64, and a report without actionable risk keeps its raw score.
-#: Within a band the position is proportional to the raw score, so the size of the
-#: problems still shows: one high risk and five high risks no longer score the same.
+#: Score ceilings. A confirmed critical risk keeps the report at 39 or below, any other
+#: actionable risk at 64 or below (under the pass mark); see band_score.
 BLOCKLIST_BAND = (0.0, 39.0)
 FIX_BAND = (40.0, PASS_SCORE - 1.0)
 
@@ -40,12 +38,16 @@ FIX_BAND = (40.0, PASS_SCORE - 1.0)
 #: restatement adds 30%, so one missing spend control is not punished five times.
 ROOT_CAUSES: dict[str, frozenset[str]] = {
     "spend_control": frozenset({
+        # The model choosing a payment's recipient and amount, and the absence of a spend
+        # policy, are one missing control: fixing caps and allowlists fixes both.
+        "security-path-untrusted-to-financial-sink",
         "economic-no-spend-policy", "security-unbounded-spend", "security-path-controls-not-enforced",
         "security-declared-limit-not-enforced", "compliance-no-human-oversight", "intent-full-autonomy-over-funds",
     }),
 }
 RESTATEMENT_SHARE = 0.3
 RISK_SCALE = 100.0
+SQUEEZE = 10.0
 _LOCATION = re.compile(r"[\w./-]+\.[A-Za-z]{1,5}:\d+")
 
 
@@ -97,15 +99,23 @@ def score_breakdown(findings: list[Finding]) -> dict:
 
 
 def band_score(raw: float, actionable: list[Finding]) -> tuple[float, str]:
-    """Place the raw score in the band its worst actionable risk allows."""
+    """Hold a report with an actionable risk under its band's ceiling without charging twice.
+
+    The raw score already reflects every risk, so below the ceiling it is kept as is.
+    Only the range above (ceiling - SQUEEZE) is compressed into the last SQUEEZE points
+    under the ceiling: a risky agent never looks passable, and two risky agents with
+    different raw scores still score differently.
+    """
     critical = any(f.severity is Severity.CRITICAL and f.evidence_grade.blocks_badge for f in actionable)
-    if critical:
-        low, high = BLOCKLIST_BAND
-        return round(low + (high - low) * raw / 100.0, 1), "confirmed critical risk: band 0-39"
-    if actionable:
-        low, high = FIX_BAND
-        return round(low + (high - low) * raw / 100.0, 1), f"actionable risk: band 40-{int(high)}"
-    return raw, "no actionable risk: raw score"
+    if not actionable:
+        return raw, "no actionable risk: raw score"
+    ceiling = BLOCKLIST_BAND[1] if critical else FIX_BAND[1]
+    label = (f"confirmed critical risk: at most {int(ceiling)}" if critical
+             else f"actionable risk: at most {int(ceiling)}")
+    knee = ceiling - SQUEEZE
+    if raw <= knee:
+        return raw, label
+    return round(knee + SQUEEZE * (raw - knee) / (100.0 - knee), 1), label
 
 
 class SynthesisJudge:
