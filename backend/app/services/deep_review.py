@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar import knowledge
+from .ai_review import redact
 
 CATEGORIES = {
     # category: (dimension, label)
@@ -198,8 +199,9 @@ class DeepReviewer:
         if name == "stellar_reference":
             return knowledge.reference(args.get("topic", ""))
         if name == "describe_operating_model":
-            result.operating_model = {k: args.get(k) for k in
-                                      ("purpose", "triggers", "example_run", "trust_boundaries", "assets_at_risk")}
+            result.operating_model = {k: redact(v) if isinstance(v, str) else [redact(str(i)) for i in (v or [])]
+                                      for k in ("purpose", "triggers", "example_run", "trust_boundaries", "assets_at_risk")
+                                      for v in [args.get(k)]}
             return "Recorded. Now assess each flow in the evidence pack."
         if name == "assess_flow":
             flow_id = args.get("flow_id", "")
@@ -207,7 +209,7 @@ class DeepReviewer:
                 return "Unknown flow id. Flows: " + ", ".join(flows)
             problem = self._verify_quote(artifact, args.get("file", ""), args.get("line", 0), args.get("evidence_quote", ""))
             entry = {"flow_id": flow_id, "flow": flows[flow_id], "verdict": args.get("verdict"),
-                     "reason": str(args.get("reason", ""))[:1500], "file": args.get("file"),
+                     "reason": redact(str(args.get("reason", ""))[:1500]), "file": args.get("file"),
                      "line": args.get("line"), "quote_verified": not problem}
             result.flow_assessments.append(entry)
             return "Recorded." if not problem else f"Recorded without a verified quote ({problem})."
@@ -227,19 +229,20 @@ class DeepReviewer:
             result.findings.append(Finding(
                 id=f"{dimension.value}-ai-{category.replace('_', '-')}-{index}",
                 dimension=dimension, severity=Severity(args["severity"]),
-                title=str(args.get("title") or label)[:200],
-                detail=(str(args.get("attack_scenario", ""))[:1500]
-                        + ("\nStellar impact: " + str(args.get("stellar_impact", ""))[:600]
-                           if args.get("stellar_impact") else "")),
-                evidence=f"{args['file']}:{args['line']} `{' '.join(args['evidence_quote'].split())[:240]}`",
+                title=redact(str(args.get("title") or label)[:200]),
+                detail=redact(str(args.get("attack_scenario", ""))[:1500]
+                              + ("\nStellar impact: " + str(args.get("stellar_impact", ""))[:600]
+                                 if args.get("stellar_impact") else "")),
+                # Quotes are verified against source first, then secrets are masked for the report.
+                evidence=redact(f"{args['file']}:{args['line']} `{' '.join(args['evidence_quote'].split())[:240]}`"),
                 evidence_grade=EvidenceGrade.INFERRED,
-                remediation=str(args.get("remediation", ""))[:1200] or "Fix the cited code path.",
+                remediation=redact(str(args.get("remediation", ""))[:1200]) or "Fix the cited code path.",
                 references=["Veritas deep review (model finding, source quote verified)"],
                 auditor="deep-review", confidence=0.7,
             ))
             return f"Accepted as {result.findings[-1].id}."
         if name == "finish":
-            result.summary = str(args.get("summary", ""))[:3000]
+            result.summary = redact(str(args.get("summary", ""))[:3000])
             return "Done."
         return "Unknown tool."
 

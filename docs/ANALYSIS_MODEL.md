@@ -132,3 +132,23 @@ limits:
 - It cannot see what libraries do internally.
 
 A new, independently written corpus is the next meaningful measurement.
+
+## 6. Deep review with Claude (live run, 2026-10-16)
+
+The deep reviewer (`backend/app/services/deep_review.py`) received the evidence pack for each of the 25 corpus bundles and investigated with tools. It used Claude Sonnet 5.5 at `high` effort, with on-chain verification off. Raw results are in [`docs/evidence/deep-review-live-2026-10-16.json`](evidence/deep-review-live-2026-10-16.json).
+
+### Results
+
+- **Flawed bundles:** 16/16 received `needs_fixes`. The model also explained the concrete attack. For example, in V1 it described a memo saying "refund 10000 XLM" leading to a signed payment.
+- **Problems the rules missed:** the model found issues no rule expresses. For example, V1 reprocesses its last 20 payments on every poll, so the same refund can be sent repeatedly.
+- **Sound-labelled bundles:** 7/9 passed. The model flagged the other two, and both contain real replay flaws that the fixture authors and the rules had missed:
+  - C2: the approval token does not bind payee or amount and can be reused;
+  - case-06: an approval record is never consumed.
+  
+  The labels were left as written.
+- **Verification gate:** no model claim was rejected. Every finding cited a verified line.
+- **Cost:** about 0.81 USD for all 25 bundles (55,632 output tokens, cache-heavy input), with roughly 10–30 seconds per bundle.
+
+### Fix made during the run
+
+The live run exposed one defect: a model finding quoted a secret literal verbatim. Findings, flow verdicts and summaries now pass through the same redaction as other outputs, after the quote has been verified against the source.
