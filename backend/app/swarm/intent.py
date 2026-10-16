@@ -77,7 +77,7 @@ class IntentAuditor(BaseAuditor):
                         "Agent için sistem prompt'u, kod veya endpoint sağlanmadı; hedef "
                         "hizalanması ve yetenek/iddia uyumu değerlendirilemedi. Bu skor bir "
                         "hizalanma onayı değil, kapsam eksikliğidir.",
-                        evidence="prompt/kod/endpoint yok (yalnızca zincir kimliği)",
+                        evidence="no prompt, code or endpoint (on-chain identity only)",
                         remediation="Soroban registry metadata URI altında erişilebilir bir agent card "
                         "yayınlayın (ad, açıklama, yetenekler, sistem prompt'u özeti).",
                         grade=EvidenceGrade.CONFIRMED,
@@ -137,7 +137,7 @@ class IntentAuditor(BaseAuditor):
                     "İddia edilen yetenek için araç yok",
                     "Agent kartında beyan edilen yetenekleri karşılayacak araç bulunamadı: "
                     + ", ".join(missing),
-                    evidence=f"mevcut araçlar: {[t.name for t in artifact.tools]}",
+                    evidence=f"tools: {[t.name for t in artifact.tools]}",
                     remediation="Beyanı gerçek araç envanteriyle hizalayın veya eksik araçları ekleyin.",
                     references=["Soroban registry metadata ↔ capability consistency"],
                     grade=EvidenceGrade.CONFIRMED,
@@ -160,7 +160,7 @@ class IntentAuditor(BaseAuditor):
                     "Beyan edilmeyen finansal yetenek",
                     "Agent, kartında belirtmediği halde imza/harcama yetkisi olan araçlara "
                     "sahip: " + ", ".join(undeclared),
-                    evidence=f"beyan: {artifact.declared_capabilities or 'yok'}",
+                    evidence=f"declared: {artifact.declared_capabilities or 'none'}",
                     remediation="Agent kartına finansal yetenekleri ekleyin; kullanıcı riski "
                     "görebilmeli.",
                     grade=EvidenceGrade.CONFIRMED,
