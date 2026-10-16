@@ -120,7 +120,7 @@ class ReliabilityAuditor(BaseAuditor):
                     "Kimlik doğrulaması olmayan endpoint",
                     "Endpoint kimlik doğrulaması istemeden istekleri kabul ediyor. Herkes agent'ı "
                     "kullanabilir; maliyet istismarı ve yetkisiz işlem riski var.",
-                    evidence="probe: kimlik bilgisi olmadan 2xx yanıt alındı",
+                    evidence="probe: 2xx response without credentials",
                     remediation="API anahtarı veya agent cüzdan imzası ile kimlik doğrulaması "
                     "zorunlu kılın.",
                     grade=EvidenceGrade.CONFIRMED,

@@ -93,7 +93,7 @@ class SecurityAuditor(BaseAuditor):
                     "Ajanın sistem prompt'u, kaynak kodu veya canlı endpoint'i sağlanmadı. "
                     "Prompt injection, aşırı yetki ve sır sızıntısı kontrolleri "
                     "çalıştırılamadı; bu skor bir güvenlik onayı değildir.",
-                    evidence="prompt/kod/endpoint yok (yalnızca zincir kimliği verildi)",
+                    evidence="no prompt, code or endpoint (on-chain identity only)",
                     remediation="Repo, agent card veya endpoint sağlayın; registry metadata URI "
                     "üzerinden erişilebilir bir agent card yayınlamak yeterlidir.",
                     grade=EvidenceGrade.CONFIRMED,
@@ -310,7 +310,7 @@ class SecurityAuditor(BaseAuditor):
                         severity,
                         title,
                         detail,
-                        evidence="konum: " + ", ".join(hits),
+                        evidence="locations: " + ", ".join(hits),
                         remediation=self._remediation_for(title),
                         references=["text-pattern candidate; validate executable context"],
                         grade=EvidenceGrade.INFERRED,
@@ -419,7 +419,7 @@ class SecurityAuditor(BaseAuditor):
                     "Harcama limiti tanımsız araçlar",
                     "İmza/harcama yetkisi olan şu araçlarda tutar tavanı yok: "
                     + ", ".join(unlimited),
-                    evidence=f"tool tanımlarında spend_limit_usdc alanı boş: {', '.join(unlimited)}",
+                    evidence=f"no spend_limit_usdc on: {', '.join(unlimited)}",
                     remediation="Her finansal araç için `spend_limit_usdc` tanımlayın ve zincir "
                     "tarafında policy kontratıyla zorunlu kılın.",
                     references=["AAI-03 Excessive Agency"],
