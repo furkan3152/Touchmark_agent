@@ -106,8 +106,8 @@ def unverifiable_control_files(artifact: AgentArtifact) -> list[str]:
     return sorted(f for f in files if not f.lower().endswith(".py"))
 
 
-def oversight_enforced(artifact: AgentArtifact, prompt_lower: str) -> bool:
-    """Human oversight is an attested flag or an approval gate in code.
+def human_approval_enforced(artifact: AgentArtifact, prompt_lower: str) -> bool:
+    """A person (or a second key) must approve: attested flag, ledger co-signer or code gate.
 
     Prompt wording counts only when no source was supplied at all; with source,
     a sentence asking the model to confirm is not an enforced control.
@@ -122,16 +122,24 @@ def oversight_enforced(artifact: AgentArtifact, prompt_lower: str) -> bool:
             or (not agent and account.get("multisig_required_for_payments"))):
         return True
     if has_source(artifact):
-        profile = artifact.code_profile
-        controls = profile.get("controls", {})
-        if controls.get("approval"):
-            return True
-        # Bounded autonomy: recipients and amounts are constrained in code and no
-        # untrusted value reaches a signing boundary.
-        unsafe = {"financial", "account_control", "foreign_signing"}
-        bounded = (controls.get("allowlist") or controls.get("value_binding")) and controls.get("amount_cap")
-        return bool(bounded) and not any(f["category"] in unsafe for f in profile.get("flows", []))
+        return bool(artifact.code_profile.get("controls", {}).get("approval"))
     return any(word in prompt_lower for word in OVERSIGHT_WORDS)
+
+
+def bounded_autonomy(artifact: AgentArtifact) -> bool:
+    """Recipients and amounts are constrained in code and no untrusted value reaches signing."""
+    if not has_source(artifact):
+        return False
+    profile = artifact.code_profile
+    controls = profile.get("controls", {})
+    unsafe = {"financial", "account_control", "foreign_signing"}
+    bounded = (controls.get("allowlist") or controls.get("value_binding")) and controls.get("amount_cap")
+    return bool(bounded) and not any(f["category"] in unsafe for f in profile.get("flows", []))
+
+
+def oversight_enforced(artifact: AgentArtifact, prompt_lower: str) -> bool:
+    """Human approval, or autonomy that the code keeps within fixed bounds."""
+    return human_approval_enforced(artifact, prompt_lower) or bounded_autonomy(artifact)
 
 
 def unenforced_limit_tools(artifact: AgentArtifact) -> list[ToolSpec]:

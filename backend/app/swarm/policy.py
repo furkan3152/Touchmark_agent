@@ -9,7 +9,7 @@ import re
 from ..models import AgentArtifact, AssuranceLevel, EvidenceGrade, Finding, FindingKind, Severity
 
 AUDIT_SCHEMA_VERSION = "agentveritas.audit.v2"
-AUDIT_POLICY_VERSION = "agentveritas.stellar.policy.2026-10-16.1"
+AUDIT_POLICY_VERSION = "agentveritas.stellar.policy.2026-10-16.2"
 
 
 def audit_surface_coverage(artifact: AgentArtifact) -> dict[str, object]:
@@ -115,6 +115,10 @@ EVIDENCE_GAP_RULES = frozenset({
     "stellar_native-onchain-account-missing", "stellar_native-onchain-agent-key-undeclared",
     "stellar_native-onchain-identity-unbound",
 })
+#: Autonomy without a human approval step. Operators may run agents unattended on
+#: purpose, so these are warnings: a small score penalty, never a failing decision.
+#: The authority limits themselves (spend caps, allowlists, bounds) remain risks.
+WARNING_RULES = frozenset({"compliance-no-human-oversight", "intent-full-autonomy-over-funds"})
 #: Gaps that make a pass impossible: the reviewed scope itself is incomplete.
 BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface",
                            "security-controls-unverifiable"})
@@ -139,7 +143,12 @@ def classify_finding(finding: Finding) -> Finding:
     if finding.kind is FindingKind.EVIDENCE_GAP:
         return finding  # a rule that already established it is a gap stays one
     gap = finding.id in EVIDENCE_GAP_RULES or bool(_STATIC_ATTACK.match(finding.id))
-    kind = FindingKind.EVIDENCE_GAP if gap else FindingKind.RISK
+    if gap:
+        kind = FindingKind.EVIDENCE_GAP
+    elif finding.id in WARNING_RULES:
+        kind = FindingKind.WARNING
+    else:
+        kind = FindingKind.RISK
     return finding if finding.kind is kind else finding.model_copy(update={"kind": kind})
 
 
@@ -150,6 +159,10 @@ def actionable_risks(findings: list[Finding]) -> list[Finding]:
         if f.is_risk and f.severity.rank >= Severity.HIGH.rank
         and f.evidence_grade is not EvidenceGrade.SIMULATED
     ]
+
+
+def warnings(findings: list[Finding]) -> list[Finding]:
+    return [f for f in findings if f.kind is FindingKind.WARNING]
 
 
 def review_decision(findings: list[Finding], coverage: dict, score: float) -> str:

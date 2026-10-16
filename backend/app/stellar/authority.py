@@ -30,6 +30,28 @@ from .networks import NETWORKS
 
 MAX_LIMIT = "922337203685.4775807"
 _G_ADDRESS = re.compile(r"\bG[A-Z2-7]{55}\b")
+#: Files whose addresses are not payment destinations: tests, smoke scripts, fixtures, mocks
+#: and deny/block lists (addresses the agent must *refuse* to pay).
+_NON_DESTINATION_FILE = re.compile(
+    r"(?:^|/)(?:tests?|__tests__|spec|fixtures?|mocks?|examples?|e2e)(?:/|$)|"
+    r"(?:test|spec|smoke|fixture|mock|example)[^/]*\.\w+$|(?:black|deny|block)[-_]?list", re.I)
+_DENY_CONTEXT = re.compile(r"black[-_ ]?list|deny[-_ ]?list|block[-_ ]?list|sanction|scam|blocked", re.I)
+_PUBLIC_MARKERS = re.compile(r"Public Global Stellar Network|PUBLIC_NETWORK_PASSPHRASE|Networks\.PUBLIC|"
+                             r"\bpubnet\b|\bmainnet\b|horizon\.stellar\.org", re.I)
+_TESTNET_MARKERS = re.compile(r"Test SDF Network|TESTNET_NETWORK_PASSPHRASE|Networks\.TESTNET|\btestnet\b", re.I)
+
+
+def code_networks(code_files: dict[str, str]) -> set[str]:
+    """Networks the code refers to (mainnet / testnet), from passphrases, constants and hosts."""
+    found: set[str] = set()
+    for text in code_files.values():
+        if _PUBLIC_MARKERS.search(text):
+            found.add("mainnet")
+        if _TESTNET_MARKERS.search(text):
+            found.add("testnet")
+    return found
+
+
 _MEMO_CALL = re.compile(r"\.(?:add_text_memo|add_id_memo|add_hash_memo|add_return_hash_memo|add_memo)\s*\(|Memo\w*\(")
 
 
@@ -120,14 +142,25 @@ class AuthorityReader:
                     listed = toml.get("toml", {}).get("ACCOUNTS", []) if toml.get("status") == "found" else []
                     facts["sep1"] = {"domain": domain, "status": toml["status"],
                                      "account_listed": address in listed if isinstance(listed, list) else False}
-            facts["destinations"] = await self._destinations(client, code_files or {}, exclude=address)
+            networks = code_networks(code_files or {})
+            facts["code_networks"] = sorted(networks)
+            if networks and self.network not in networks:
+                # Checking pubnet destinations on testnet (or the reverse) reports false absences.
+                facts["destinations_skipped"] = (f"code targets {', '.join(sorted(networks))}; "
+                                                 f"destinations are not checked on {self.network}")
+            else:
+                facts["destinations"] = await self._destinations(client, code_files or {}, exclude=address)
         return facts
 
     async def _destinations(self, client, code_files: dict[str, str], *, exclude: str) -> list[dict]:
         """Hard-coded payment destinations: do they exist, and do they require a memo (SEP-29)?"""
         found: dict[str, str] = {}
         for path, text in sorted(code_files.items()):
+            if _NON_DESTINATION_FILE.search(path):
+                continue
             for number, line in enumerate(text.splitlines(), 1):
+                if _DENY_CONTEXT.search(line):
+                    continue
                 for match in _G_ADDRESS.findall(line):
                     if match != exclude and StrKey.is_valid_ed25519_public_key(match):
                         found.setdefault(match, f"{path}:{number}")

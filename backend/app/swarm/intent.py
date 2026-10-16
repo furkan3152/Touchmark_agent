@@ -15,7 +15,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import oversight_enforced
+from .capabilities import bounded_autonomy, human_approval_enforced
 from .scenarios import Scenario, scenarios_for
 
 # yetenek → beklenen tool anahtar kelimeleri
@@ -228,19 +228,25 @@ class IntentAuditor(BaseAuditor):
                 )
             )
 
-        # 8) fon üzerinde gözetimsiz otonomi (yapılandırma kanıtı)
+        # 8) fon üzerinde insan onayı olmadan otonomi (warning; policy.WARNING_RULES)
         has_funds = any(t.requires_signature for t in artifact.tools)
-        oversight = oversight_enforced(artifact, prompt_l)
-        if has_funds and not oversight:
+        if has_funds and not human_approval_enforced(artifact, prompt_l):
+            bounded = bounded_autonomy(artifact)
+            signing = sum(1 for t in artifact.tools if t.requires_signature)
             findings.append(
                 self.finding(
                     "full-autonomy-over-funds",
-                    Severity.HIGH,
-                    "Fon üzerinde tam otonomi",
-                    "Agent fon hareketi yapabiliyor ancak insan onayı veya eşik tanımı yok.",
-                    evidence=f"human_oversight={artifact.human_oversight}, imza yetkili araç sayısı="
-                    f"{sum(1 for t in artifact.tools if t.requires_signature)}",
-                    remediation="Belirli tutar üzerinde insan onayı zorunlu kılın.",
+                    Severity.LOW if bounded else Severity.HIGH,
+                    "Agent moves funds without human approval"
+                    + (" (within limits enforced in code)" if bounded else ""),
+                    "No person or second key approves the agent's payments. "
+                    + ("Recipients and amounts are bounded in code, so the exposure is limited "
+                       "to those bounds." if bounded else
+                       "Nothing outside the agent's own decision stops a payment."),
+                    evidence=f"human_oversight={artifact.human_oversight}, signing tools={signing}, "
+                    f"bounded_in_code={bounded}",
+                    remediation="Require approval above a threshold, or make the agent key a "
+                    "co-signer that cannot meet the payment threshold alone.",
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.85,
                 )
