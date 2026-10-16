@@ -23,7 +23,7 @@ jobs:
       - run: pip check
       - run: python -m pytest -q
       - run: node --check frontend/studio.js
-      - run: node --check frontend/checkout.js && node --check frontend/orders.js
+      - run: node --check frontend/checkout.js && node --check frontend/orders.js && node --check frontend/demo.js
       - run: python scripts/verify_local.py
   contracts:
     runs-on: ubuntu-latest

@@ -1,405 +1,175 @@
 <p align="center">
-  <img src="frontend/studio-mark.svg" width="64" alt="AgentVeritas Stellar">
+  <img src="frontend/studio-mark.svg" width="64" alt="AgentVeritas">
 </p>
 
-<h1 align="center">AgentVeritas Stellar</h1>
+<h1 align="center">AgentVeritas</h1>
 
 <p align="center">
-  <strong>Evidence-first verification engine for AI agents on the Stellar network.</strong><br>
-  Review an agent's code, permissions and behavior claims before granting it authority.
+  <strong>Paste an AI agent's code or Stellar address. Find out whether it is safe to give it the keys, and get the answer recorded on Stellar.</strong>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Stellar-Network-7C3AED?style=for-the-badge&logo=stellar&logoColor=white" alt="Stellar">
-  <img src="https://img.shields.io/badge/Soroban-Smart_Contracts-E6007A?style=for-the-badge&logo=rust&logoColor=white" alt="Soroban">
-  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <a href="https://agentveritas-stellar.vercel.app"><img src="https://img.shields.io/badge/Live_demo-agentveritas--stellar.vercel.app-255a43?style=for-the-badge" alt="Live demo"></a>
+  <img src="https://img.shields.io/badge/Stellar-Testnet-7C3AED?style=for-the-badge&logo=stellar&logoColor=white" alt="Stellar testnet">
+  <img src="https://img.shields.io/badge/Soroban-4_contracts-E6007A?style=for-the-badge" alt="Soroban">
+  <a href="https://github.com/furkan3152/agentveritas-stellar/actions/workflows/verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/agentveritas-stellar/verify.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
+  <img src="https://img.shields.io/badge/tests-896_Python_·_57_Rust-2d6a4f?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/License-Apache_2.0-D22B2B?style=for-the-badge" alt="License">
 </p>
 
 ---
 
-## October 16 analysis update
+## The demo
 
-The source analyser now derives what an agent can do from its code instead of trusting the declared tool list, and it traces untrusted input across files to signing, payment, account-authority, execution, network, file, log and model boundaries. Missing documentation is reported as an *evidence gap* that never lowers the risk score. One decision rule (`pass` / `needs_fixes` / `needs_evidence`) drives the Studio, official audits and credentials, and a credential is issued only for a passing audit (also enforced on-chain at score 65). See [the analysis model, measured results and limits](docs/ANALYSIS_MODEL.md).
+**[agentveritas-stellar.vercel.app](https://agentveritas-stellar.vercel.app)**: one box, one button.
 
-## October 2026 workspace release
+1. **Paste** a GitHub repository (or one folder of it), an AgentRegistry agent id, a `C…` contract or a `G…` account.
+2. **Read the verdict.** AgentVeritas pins the exact commit, traces what the model can make the code do, and commits a report with a SHA-256 hash.
+3. **Issue the credential.** If the audit passes, the report hash and score are written to the AgentVeritas registry on Stellar testnet. The Soroban credential contract then issues a non-transferable token bound to that report, and the page reads it back from the ledger.
 
-**Veritas Official** is the first operator. Customers choose eight specialist areas and Preview, Assurance or Deep scope. All baseline source rules remain enabled; selected behavior families receive a bounded 0/12/24-case runtime budget. Proposed prices are $3 / $19 / $49; these are not live USD charges. Independent operators come later.
-
-The portable **`.veritas` capsule** binds source contents, intent, forbidden goals, capability rules, environment requirements, fixtures and multi-turn scenarios. It detects changed inputs and contradictory declarations before execution. See [capsule format](docs/VERITAS_CAPSULE.md) and [a stateful example](examples/stateful-reader.veritas).
-
-Current public proofs:
-
-- [Official order fulfillment](deployments/official-order-pilot-2026-10-15.json): eight real Testnet transactions, wallet-bound private order, source-only audit, private report readback, matching credential and restart checks. Publication used a disclosed operator checkpoint. See [the fulfillment guide](docs/OFFICIAL_FULFILLMENT.md) for recovery, refunds and deployment limits.
-- [Live AI and Sandbox integration](deployments/deployed-integrations-exact-input-2026-10-15.json): real Vercel OIDC model review and 12 observed Python case responses in a Preview build, with three matching declared output assertions. The repeat verifies an exact-input fix; the earlier harness-caused mismatch remains recorded. These are execution observations, not security certifications.
-- [Paid Testnet delivery](deployments/testnet-audit-delivery-2026-10-15.json): 20 successful transactions, registry-bound escrow, exact payout, a report credential and a separate stale-version refund test.
-- [Bounded agent authority](deployments/agent-account-testnet-2026-10-15.json): actual authorized SAC transfer, rejected recipient/budget/revoked-key attempts and owner recovery.
-- [24-case isolated execution](deployments/capsule-runtime-pilot-2026-10-15.json): real microVM execution of a controlled, stateful Python fixture, including three-turn observations. It is not a live-model or production-tool test.
-- [Designed report](deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.html), [credential card](deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.svg) and [live readback record](deployments/delivery-render-verification-2026-10-15.json).
-
-The English public Studio now includes a 24-area evidence inventory, explicit architecture declarations (MCP, delegation, memory and egress), opt-in AI hypotheses with source-location validation, local report fingerprint verification, and an interactive authority-policy lab. See [release status](docs/RELEASE_2026-10-15.md) for verification and boundaries.
-
-**Veritas Blueprint v1** adds an explicit `veritas.json` project map: component paths, a checked entrypoint, declared permission boundaries, import evidence and a source-bound audit plan. Missing files and stale plans block isolated execution. Start with [the protocol and local commands](docs/VERITAS_BLUEPRINT.md) and [the multi-file example](examples/blueprint-reader/veritas.json).
-
-**Independent challenge review:** [the current evidence and gaps](docs/INDEPENDENT_REVIEW_2026-10-15.md) records reproduced defects and a disclosed challenge set, including retained misses. Agent identity stays explicitly unverified. New [authorization-entry inspection examples](examples/stellar-authority/README.md) check nested transfer policy; the [experimental session account](contracts/agent-account/README.md) enforces a narrow on-chain spending boundary. Neither is a comprehensive audit or a production safety certificate.
-
-The **AuditCredential** Soroban contract issues unique, non-transferable, revocable, expiring report credentials from completed registry validations. This is a custom audit NFT interface, not a claim of SEP-50 marketplace compatibility. Registry binds requests to source version and metadata/endpoint hashes; source changes invalidate old credentials. The current escrow also enforces the assigned validator, request, source version, report hash and score before settlement. Use the current proof files above; the older deployment manifest is historical.
-
-- [Instawards 30-day sprint and budget](docs/INSTAWARDS_SPRINT.md)
-- [Revenue model and settlement boundaries](docs/REVENUE_MODEL.md)
-- [Deployment and operations](docs/DEPLOYMENT.md)
-- [Threat model and trust boundaries](docs/THREAT_MODEL.md)
-
-The official fulfillment worker requires durable hosting and is implemented for a private Testnet pilot, including wallet proof, persisted orders, retries, refunds and credential delivery. Vercel exposes the stateless Studio and blocks automatic funding without that service. Hosted production checkout and public minting are not enabled. AI Gateway integration supports deployment OIDC or a local key, behind private access and source-sharing consent; [configuration and live-check instructions](docs/AI_CONFIGURATION.md) distinguish configuration from a successful model call.
-
-## Table of Contents
-
-- [Why AgentVeritas?](#why-agentveritas)
-- [Audit Studio](#audit-studio)
-- [How It Works](#how-it-works)
-- [System Architecture](#system-architecture)
-- [Soroban Smart Contracts](#soroban-smart-contracts)
-- [Stellar Testnet Deployment](#stellar-testnet-deployment)
-- [SEP Standards Integration](#sep-standards-integration)
-- [Quick Start](#quick-start)
-- [Evidence Levels](#evidence-levels)
-- [Project Structure](#project-structure)
-- [Documentation](#documentation)
-- [Contributing](#contributing) · [Security](#security) · [License](#license)
-
----
-
-## Why AgentVeritas?
-
-AI agents can now hold wallets, sign transactions and invoke smart contracts autonomously. But **a convincing demo says nothing about what happens when tool output is hostile, approval is missing, or a dependency changes**. An address and a reassuring prompt are not enough.
-
-AgentVeritas examines the actual source code, tool permissions, prompts, dependencies, ownership proofs and on-chain data — then produces a verifiable, hash-committed report anchored to the Stellar ledger.
-
----
-
-## Audit Studio
-
-The public Studio at `/` offers three intake methods — no wallet connection or API key required:
-
-| Intake | What it does |
+| An unsafe agent: refused | The same agent, fixed: credentialed on Stellar |
 |---|---|
-| **Stellar Address** | Read-only Testnet/Mainnet lookup via Horizon + RPC (no signing) |
-| **GitHub Import** | Pins a public repository commit, verifies source blobs and follows root `veritas.json` when present (bounded, no clone) |
-| **File Upload** | Source bundles or project folders, with explicit Blueprint maps or provisional discovery |
+| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: needs fixes, score 14" width="420"> | <img src="docs/media/demo-credential.png" alt="Safe treasury agent: pass, score 84, credential issued on testnet" width="420"> |
 
-The Studio runs seven **rule-based static analysis modules** across all submitted source. Static review never executes submitted files. A separately authenticated, opt-in runtime pilot invokes supported Python callables in disposable microVMs. Static review does not send source to a model provider; optional AI second opinions require operator enablement and explicit per-review consent. Reports include file:line evidence, coverage metrics, input-commitment SHA-256 and an exact-byte downloadable report. See [runtime limits and setup](docs/RUNTIME_PILOT.md).
+Both agents are in [`examples/demo`](examples/demo). They are the same MCP treasury agent:
+- **Unsafe:** the model chooses the payment recipient, the amount and the URL to fetch.
+- **Safe:** recipients come from a fixed table, amounts are capped in the schema, and invoices come from one host.
 
-> The operator workflow at `/operator` provides the full persistent pipeline with authentication, stored jobs, badges and Soroban integration.
+## Three proofs
 
-See: [Audit Studio API](docs/AUDIT_STUDIO.md) · [Product & Pilot](docs/PRODUCT_AND_PILOT.md) · [Verification Record](docs/VERIFICATION_2026-09-11.md)
+| | Proof | Where to check |
+|---|---|---|
+| **1** | **Checked against real code.** 12 open-source Stellar agents were audited. Every one of the 199 findings was checked by hand against the source: 161 true, 32 partly true, 5 false, 1 unverifiable. The false positives found this way were fixed and turned into regression tests. | [Analysis model and measurements](docs/ANALYSIS_MODEL.md) |
+| **2** | **Every credential is on chain.** The demo registry and credential contracts run on testnet. A credential shows the report hash and score the validator wrote, and anyone can read it back. | Registry [`CBIZOE…JZ6W`](https://stellar.expert/explorer/testnet/contract/CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W) · Credential [`CBBTOB…O4R5`](https://stellar.expert/explorer/testnet/contract/CBBTOBL6XTLWYPT5GSVUA3JWNQMVMT4DGGHEGZ4NHC3V4SLXKP5AO4R5) · [manifest](deployments/demo-testnet.json) |
+| **3** | **The contracts enforce the rules, not the UI.** The credential contract refuses a score below 65, a validator the registry did not approve, and a source version that changed after the audit. A separate agent-account contract enforces session spending limits: a forbidden recipient, an over-budget transfer and a revoked key were all rejected on testnet. | [Credential contract](contracts/audit-credential/src/lib.rs) · [agent-account evidence](deployments/agent-account-testnet-2026-10-15.json) |
 
 ---
 
-## How It Works
-
-Every agent is examined across **seven independent dimensions**, each with a calibrated weight:
+## How it works
 
 ```mermaid
-pie title Audit Dimension Weights
-    "Security" : 24
-    "Intent" : 18
-    "Provenance" : 14
-    "Economic" : 14
-    "Compliance" : 11
-    "Stellar Native" : 10
-    "Reliability" : 9
+flowchart LR
+    R["Reference<br/>GitHub · agent id · C… · G…"] --> RES["Resolver<br/>pin commit · read ledger"]
+    RES --> SRC["Source at one commit"]
+    RES --> CHAIN["Ledger facts<br/>WASM hash · spec · signers"]
+    SRC --> DF["Data-flow analysis<br/>Python · JS · TS · Rust rules"]
+    DF --> AUD["7 auditors<br/>security · economic · Stellar · provenance · …"]
+    CHAIN --> AUD
+    AUD --> J{"Decision<br/>pass · needs_fixes · needs_evidence"}
+    J -->|"report + SHA-256"| REP["Committed report"]
+    J -->|"pass, score ≥ 65"| CRED["Soroban credential<br/>on Stellar"]
 ```
 
-| Dimension | Focus | Weight |
-|---|---|---:|
-| **Security** | Code vulnerabilities, injection paths, secret leakage | 24% |
-| **Intent** | Behavioral alignment, prompt honesty, harmful patterns | 18% |
-| **Provenance** | Source origin, dependency supply-chain, commit history | 14% |
-| **Economic** | Spend limits, financial controls, fund-loss paths | 14% |
-| **Compliance** | OFAC screening, regulatory alignment, disclosure | 11% |
-| **Stellar Native** | Trustlines, signing authority, SEP usage, on-chain behavior | 10% |
-| **Reliability** | Error handling, retry logic, idempotency, fault tolerance | 9% |
+**The code decides what the agent can do, not the claims.** Each Python, JavaScript and TypeScript file is parsed into a syntax tree (nothing is executed). Untrusted input is then followed across files:
+- **Untrusted sources:** model tool arguments, HTTP requests, chain data and the caller.
+- **Sinks:** signing, payments, account authority, contract calls, shell, network, files and logs.
 
-### Evidence Grading
+A path is cleared only by a control that **fails closed**: an allowlist, an upper bound, a confined path, a pinned network destination or an approval. A spend limit that the code does not enforce is reported, not credited.
 
-Not all findings carry equal certainty. Each finding is graded:
+**One decision rule** drives the demo, the full Studio and the credential:
+- `needs_fixes`: an actionable risk exists.
+- `needs_evidence`: no risk was found, but part of the agent could not be reviewed.
+- `pass`: no actionable risk, and the code, tools and instructions were all reviewed.
 
-| Grade | Meaning | Score Multiplier |
-|---|---|---:|
-| `CONFIRMED` | Direct code evidence with file:line reference | 1.0× |
-| `INFERRED` | Absence of a defense (static inference) | 0.6× |
-| `SIMULATED` | Derived from simulated/mocked chain data | 0.35× |
+A paid **deep review with Claude** can be run on top of the rules. Its findings must quote real lines, and it can never remove a rule finding.
 
-**Quorum rules:** Exactly 7 unique auditor identities must report. Timeout, identity mismatch or duplicate finding IDs fail-close the audit. If no external data provider exists, results are not fabricated — `SAFE` is never granted without verified ownership + real RPC binding.
-
----
-
-## System Architecture
+### The credential, step by step
 
 ```mermaid
-flowchart TB
-    subgraph INPUT["📥 Agent Input"]
-        A1[Source Code / ZIP]
-        A2[GitHub Bundle]
-        A3[Stellar Address]
-        A4[Endpoint URL]
-    end
-
-    subgraph GUARD["🛡️ Ingestion Guards"]
-        G1[Path Traversal Block]
-        G2[SSRF Prevention]
-        G3[Secret File Filter]
-        G4[IPFS CID Validation]
-    end
-
-    subgraph SWARM["🔍 Parallel Audit Swarm"]
-        S1[Intent Auditor]
-        S2[Security Auditor]
-        S3[Economic Auditor]
-        S4[Compliance Auditor]
-        S5[Reliability Auditor]
-        S6[Stellar Native Auditor]
-        S7[Provenance Auditor]
-    end
-
-    subgraph JUDGE["⚖️ Synthesis Judge"]
-        J1[Cross-dimension toxic combos]
-        J2[Score calculation + badge]
-        J3[SHA-256 commitments]
-    end
-
-    subgraph OUTPUT["📤 Outputs"]
-        O1[JSON + Markdown Report]
-        O2[Offchain Badge]
-        O3[IPFS / Local CAS Pin]
-        O4[Unsigned Soroban TX]
-    end
-
-    subgraph CHAIN["⛓️ Stellar On-Chain"]
-        C1[External Signer]
-        C2[AgentRegistry.respond]
-        C3[RPC Event + State Readback]
-        C4["confirmed = true"]
-    end
-
-    INPUT --> GUARD
-    GUARD --> SWARM
-    SWARM --> JUDGE
-    JUDGE --> OUTPUT
-    O4 --> C1 --> C2 --> C3 --> C4
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant V as AgentVeritas
+    participant R as AgentRegistry (Soroban)
+    participant C as AuditCredential (Soroban)
+    U->>V: reference
+    V->>V: pin commit, analyse, commit report (SHA-256)
+    V-->>U: verdict + signed issuance ticket (pass only)
+    U->>V: issue credential (ticket)
+    V->>R: reg_agent / upd_agent (source version hash)
+    V->>R: req_valid (request id = report + version)
+    V->>R: respond (score, report hash)  · validator auth
+    V->>C: issue(request id)
+    C->>R: get_valid · get_agent · is_valid(validator)
+    C-->>C: refuse if score < 65, version changed or validator not approved
+    V->>C: get + is_current (read back)
+    V-->>U: token id, report hash match, transaction links
 ```
 
-### DEEP Tier Analysis
-
-For high-risk agents, the engine traces executable data paths:
-
-| Trace | Source → Sink |
-|---|---|
-| **Code Injection** | API/webhook input → `eval`, `exec`, shell, subprocess |
-| **Unauthorized TX** | External input → Stellar `invoke_contract`, token transfer, signing |
-| **Secret Leakage** | Private key / seed → log output, outbound HTTP request |
-| **Unenforced Controls** | Prompt claims spending limits → code has no `require_auth` or allowlist |
-
-Cross-dimension toxic combinations (e.g., network access + code execution + Stellar signing) are flagged by the Synthesis Judge and enforce a score ceiling that dimension averages cannot mask.
-
-> See [DEEP Agent Audit Methodology](docs/DEEP_AGENT_AUDIT.md)
-
 ---
 
-## Soroban Smart Contracts
+## Stellar-native, end to end
 
-### AgentRegistry (Core)
-
-The trust anchor on Stellar. Stores agent identity, audit results and review scores immutably.
-
-| Feature | Detail |
-|---|---|
-| Registration | Owner-bound, versioned, active/inactive toggle |
-| Validation | Pinned validator per request; single response with score + 32-byte report hash + URI |
-| Reviews | Unique reviewer enforcement; checked arithmetic for score aggregation |
-| Auth | `Address.require_auth()` for both G and C accounts |
-| Standards | SEP-46 metadata + SEP-48 contract spec embedded |
-| Storage | TTL renewal on read/write; URI capped at 512 bytes; typed contract events |
-
-### AuditEscrow (Optional)
-
-Independent from the verification core. Provides decentralized audit payment settlement using SAC tokens.
-
-| Feature | Detail |
-|---|---|
-| Roles | Requester / Provider / Evaluator — strictly separated |
-| Lifecycle | Create → Fund → Submit → Complete (or Refund / Dispute) |
-| Fees | Platform fee in basis points (max 30%); atomic payout |
-| Asset | SEP-41 Stellar Asset Contract client |
-
-> **Security boundary:** The backend never stores seeds, never signs transactions, never submits them. `confirmed=true` is only set when a successful ledger result **and** expected registry state/event are verified together.
-
----
-
-## Stellar Testnet Deployment
-
-Deployed August 30, 2026. Re-verified September 11, 2026 — all **31 checks** passed.
-
-| Contract | Testnet ID | Verification |
+| Layer | What AgentVeritas uses | Why it matters |
 |---|---|---|
-| **AgentRegistry** | `CBBBUE...576KT` | WASM hash match ✓ Deploy tx SUCCESS ✓ Role/lifecycle readback ✓ |
-| **AuditEscrow** | `CD6Q7D...7KH7W` | WASM hash match ✓ Deploy tx SUCCESS ✓ Funded lifecycle readback ✓ |
-| **Test Asset** | `CDLZFC...GCYSC` | Native XLM SAC (not USDC) |
+| **Soroban contracts** | `AgentRegistry`, `AuditCredential`, `AuditEscrow`, `AgentAccount` (Rust, `soroban-sdk`) | Identity, validation, credentials, settlement and bounded agent authority are enforced by contracts, not by a server. |
+| **Authorization** | `require_auth` on owners, requesters and validators; `__check_auth` custom account with session keys | Only the approved validator can complete a validation; an agent session key cannot exceed its recipient or budget limits. |
+| **Credentials** | Non-transferable, revocable, expiring; bound to agent version, metadata hash, endpoint hash and report hash; `is_current` | A changed agent invalidates its old credential; a report cannot be swapped after issuance. |
+| **Settlement** | Stellar Asset Contract (SEP-41) in `AuditEscrow`, registry-bound | The audit fee is paid out only for the assigned validator's matching report and score. |
+| **State lifetime** | Persistent storage with `extend_ttl` on every write and read | Records do not silently expire; the analyser also checks this in audited contracts. |
+| **Ledger reads** | RPC `getLedgerEntries`: contract instance, WASM code (hash recomputed), `contractspecv0` (SEP-48) and `contractmetav0` (SEP-46), SAC detection | A `C…` agent is identified from the code that actually runs, not from a label. |
+| **Account authority** | Horizon: signers, thresholds, flags, home domain | Shows who else can move an agent's funds. |
+| **Ownership** | SEP-53 signed-message proof for `G…` accounts | Separates "this agent" from "someone who claims it". |
+| **Stellar-specific analysis** | `Operation.payment` and other operations, `authorizeEntry`, `signTransaction`, `submitTransaction`, x402 on Stellar, SEP-10/45 boundaries, Horizon/RPC success checks, secret-seed detection, Freighter/Wallets Kit as human approval | The rules know what is dangerous on Stellar specifically. |
+| **Discovery** | `/.well-known/stellar.toml` (SEP-1) | Service metadata for wallets and directories. |
 
-Lifecycle proven: `register → request → respond → review` (Registry) and `create → fund → submit → complete` with real 1 XLM flow (Escrow).
+## What a reference can be
 
-Full manifest: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json)
-
----
-
-## SEP Standards Integration
-
-| Standard | Status | Usage in AgentVeritas |
+| Reference | What is read | Can it pass? |
 |---|---|---|
-| **SEP-53** | ✅ Final | G-account off-chain ownership proof (Ed25519 + SHA-256) |
-| **SEP-46** | ✅ Active | Contract metadata embedding |
-| **SEP-48** | ✅ Active | Generated contract interface / spec |
-| **SEP-10** | 🔧 Planned | G/M account web session auth |
-| **SEP-45** | 📝 Draft | C-account web auth (complementary to contract auth) |
-| **SEP-41** | 📝 Draft | SAC token interface for optional escrow |
-| **SEP-1** | 🔧 Planned | Service discovery (no published `stellar.toml` yet) |
-| **SEP-55/58** | 👁️ Tracked | Future build verification / reproducibility |
+| GitHub repository or folder | Source pinned to a commit | Yes, on its code |
+| AgentRegistry agent id (64 hex) | Registry record; card checked against its on-chain hash | Yes, when the card names the source |
+| Contract `C…` | WASM, spec and metadata from the ledger; GitHub build attestation if present | Only with source |
+| Account `G…` | Signers, thresholds, flags | No: authority facts only |
+| Endpoint only | Nothing about its code | No |
 
-> Detailed rationale: [Stellar Architecture Decision](docs/STELLAR_ARCHITECTURE_DECISION.md)
+An agent whose code cannot be read cannot be shown to be safe, so it cannot pass.
 
 ---
 
-## Quick Start
+## Run it yourself
 
 ```bash
-# 1. Setup
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements-dev.txt
-test -f .env || cp .env.example .env
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
-# 2. Run tests (offline, no external services)
-STELLAR_NETWORK=offline ALLOW_MAINNET=false \
-ENABLE_AUDIT_ESCROW=false LLM_PROVIDER= LLM_API_KEY= PINATA_JWT= \
+# Audit anything from the command line
+.venv/bin/python scripts/audit_agent.py https://github.com/owner/repo --no-deep
+
+# Local server: demo at /, full Studio at /studio
+.venv/bin/uvicorn app:app --port 8000
+
+# Tests
 .venv/bin/python -m pytest -q
-
-# 3. Soroban contracts
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo build --workspace --target wasm32v1-none --release
-
-# 4. Dev server
-./scripts/dev.sh
-# Studio:   http://127.0.0.1:8000/
-# Operator: http://127.0.0.1:8000/operator
-# API:      http://127.0.0.1:8000/api/v1
 ```
 
-### Testnet Verification
-```bash
-.venv/bin/python -m backend.deploy verify-testnet
-.venv/bin/python -m backend.cli events-sync --start-ledger 4419257
-.venv/bin/python -m backend.cli chain
-```
+To issue credentials from your own deployment, first run `scripts/deploy_demo_testnet.py`. It deploys a fresh registry and credential contract on testnet, and the operator key stays in the gitignored `data/` folder. Then set `DEMO_OPERATOR_SECRET` in the server environment.
 
----
+## Limits, stated plainly
 
-## Evidence Levels
+- The analysis is **static**: it reads code and does not run it. Logic flaws that are not a flow from input to a sink are left to the deep review.
+- Chain rules are **Stellar-specific**. EVM and Solana value-movement checks are left to the deep review.
+- The demo runs **on testnet**. One operator is both the demo registry's admin and its validator, and agent ownership is not verified in the demo.
+- A pass means no actionable risk was found in what was reviewed. **It is not a guarantee of safety.**
 
-| Level | Proves | Does NOT Prove |
-|---|---|---|
-| Static / local tests | Code paths and invariants | Deployment or funded tx |
-| WASM build + hash | Compilable artifact | Same as explorer contract |
-| Testnet contract ID | An ID is configured | Code/hash match or state |
-| Successful tx + readback | Specific call + expected effect | Mainnet / production safety |
-| Funded end-to-end | Real asset lifecycle | Safety under all adversarial conditions |
-
----
-
-## Project Structure
+## Repository
 
 ```text
-agentveritas-stellar/
-│
-├── backend/                    # Python audit engine (FastAPI)
-│   ├── app/
-│   │   ├── api.py              # REST API (Studio + Operator endpoints)
-│   │   ├── models.py           # Domain models, enums, evidence grades
-│   │   ├── config.py           # Settings & environment binding
-│   │   ├── studio_guard.py     # Studio admission limits
-│   │   ├── swarm/              # 7 auditors + synthesis judge + orchestrator
-│   │   │   ├── intent.py       #   Intent & behavioral analysis
-│   │   │   ├── security.py     #   Code vulnerability scanning
-│   │   │   ├── economic.py     #   Financial control verification
-│   │   │   ├── compliance.py   #   OFAC & regulatory screening
-│   │   │   ├── reliability.py  #   Fault tolerance & error handling
-│   │   │   ├── stellar_native.py # Stellar-specific checks
-│   │   │   ├── provenance.py   #   Supply-chain & origin analysis
-│   │   │   ├── judge.py        #   Cross-dimension synthesis
-│   │   │   ├── orchestrator.py #   Parallel execution & quorum
-│   │   │   ├── agentic_paths.py#   DEEP tier data-path tracing
-│   │   │   └── scenarios.py    #   Attack scenario simulation
-│   │   ├── stellar/            # Stellar identity, ownership, RPC, events
-│   │   ├── ingestion/          # Secure input (SSRF/path guards)
-│   │   ├── services/           # Pipeline, escrow, badges, self-test
-│   │   ├── reporting/          # JSON/Markdown/IPFS report generation
-│   │   └── compliance/         # OFAC sanctions screening
-│   └── tests/                  # 27 test modules
-│
-├── contracts/                  # Soroban smart contracts (Rust)
-│   ├── agent-registry/         #   Core registry (13 tests)
-│   └── audit-escrow/           #   Optional escrow (7 tests)
-│
-├── frontend/                   # Web UI
-│   ├── studio.html / .js / .css  # Public Audit Studio
-│   └── index.html / app.js      # Operator console
-│
-├── examples/                   # Test agent corpus
-│   ├── safe_agent/             #   Clean reference agent
-│   ├── vulnerable_agent/       #   Deliberately unsafe agent
-│   └── corpus/                 #   6 diverse benchmark agents
-│
-├── scripts/                    # Dev, test, deploy, benchmark utilities
-├── docs/                       # Architecture decisions & audit reports
-├── deployments/                # Testnet deployment manifest
-└── .env.example                # Environment variable template
+backend/app/swarm/      analysers: codeflow.py (Python), jsflow.py (JS/TS), 7 auditors, policy
+backend/app/services/   resolver, repository audit, deep review, demo flow, orders
+backend/app/stellar/    ledger reads, authority, ownership (SEP-53), auth inspection
+contracts/              Soroban: agent-registry, audit-credential, audit-escrow, agent-account
+frontend/               demo (/), Studio (/studio)
+examples/demo/          unsafe and safe treasury agents used by the demo
+deployments/            testnet manifests and transaction evidence
+docs/                   analysis model, threat model, architecture decisions
 ```
 
----
+**Further reading:**
+- [Analysis model and measured results](docs/ANALYSIS_MODEL.md)
+- [Threat model](docs/THREAT_MODEL.md)
+- [Stellar architecture decision](docs/STELLAR_ARCHITECTURE_DECISION.md)
+- [Instawards sprint](docs/INSTAWARDS_SPRINT.md)
+- [Project details and earlier pilots](docs/PROJECT_DETAILS.md)
 
-## Documentation
-
-| Document | Description |
-|---|---|
-| [Product & Pilot](docs/PRODUCT_AND_PILOT.md) | Users, upload flow, revenue hypotheses, 30-day scope |
-| [Audit Studio API](docs/AUDIT_STUDIO.md) | Bundle format, limits, exact-byte report verification |
-| [Verification 2026-09-11](docs/VERIFICATION_2026-09-11.md) | Latest changes, evidence, remaining release gates |
-| [Stellar Architecture](docs/STELLAR_ARCHITECTURE_DECISION.md) | SEP choices and system design rationale |
-| [DEEP Agent Audit](docs/DEEP_AGENT_AUDIT.md) | DEEP tier analysis methodology |
-| [Agent Benchmarks](docs/AGENT_BENCHMARK_2026-09-11.md) | Corpus scoring results and discrimination tests |
-| [Audit Report](docs/AUDIT_2026-08-30.md) | Historical findings and evidence matrix |
-| [Deployment Manifest](deployments/stellar-testnet.json) | Full transaction / ledger / event evidence |
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for responsible disclosure policy.
-
-## License
-
-Apache 2.0 — see [LICENSE](LICENSE).
-
----
-
-<p align="center">
-  <sub>Built for the Stellar ecosystem · No cross-chain dependencies · Independence verified via <code>scripts/verify_independence.sh</code></sub>
-</p>
-
-## Runtime pilot and localhost
-
-See [the runtime pilot guide](docs/RUNTIME_PILOT.md) for automatic source discovery, folder/GitHub intake, isolated Python probes, localhost commands and exact current limitations. [Fresh testnet evidence](deployments/testnet-pilot-2026-10-15.json) includes a completed synthetic credential issue/revocation lifecycle.
+[Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Apache 2.0](LICENSE)
