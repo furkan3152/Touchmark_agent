@@ -99,9 +99,9 @@ def _function_params(line: str) -> set[str]:
     return params
 
 
-def _scan_file(filename: str, content: str) -> tuple[list[_Hit], list[_Hit], list[_Hit]]:
+def _scan_file(filename: str, content: str, external_entrypoints: set[str] | None = None) -> tuple[list[_Hit], list[_Hit], list[_Hit]]:
     if filename.lower().endswith(".py"):
-        return _scan_python(filename, content)
+        return _scan_python(filename, content, external_entrypoints)
     tainted: set[str] = set()
     secrets: set[str] = set()
     commands: list[_Hit] = []
@@ -134,7 +134,7 @@ def _scan_file(filename: str, content: str) -> tuple[list[_Hit], list[_Hit], lis
     return commands[:5], financial[:5], exfil[:5]
 
 
-def _scan_python(filename: str, content: str) -> tuple[list[_Hit], list[_Hit], list[_Hit]]:
+def _scan_python(filename: str, content: str, external_entrypoints: set[str] | None = None) -> tuple[list[_Hit], list[_Hit], list[_Hit]]:
     """Bounded intraprocedural analysis; parses source, never imports or executes it.
 
     Branches are conservatively joined. A path is a static observation, not an
@@ -149,6 +149,8 @@ def _scan_python(filename: str, content: str) -> tuple[list[_Hit], list[_Hit], l
     financial: list[_Hit] = []
     exfil: list[_Hit] = []
     lines = content.splitlines()
+    declared_inputs = {node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                       and node.name in (external_entrypoints or set())}
 
     def qualified(node: ast.AST) -> str:
         if isinstance(node, ast.Name):
@@ -182,6 +184,13 @@ def _scan_python(filename: str, content: str) -> tuple[list[_Hit], list[_Hit], l
             for child, value in child_tags:
                 if child is not node.func:
                     arguments |= value
+            # Receiver state is not a method's return value. A wallet can contain
+            # a key while returning only a public receipt. Keep this uncertainty
+            # distinct from directly passing a secret to print()/HTTP.
+            receiver_tags = tags(node.func.value, state) if isinstance(node.func, ast.Attribute) else set()
+            if 'secret' in receiver_tags and 'secret' not in arguments:
+                found.discard('secret')
+                found.add('secret_possible')
             callee = qualified(node.func) + "("
             hit = _Hit(filename, node.lineno, ",".join(sorted(arguments)), lines[node.lineno - 1], EvidenceGrade.CONFIRMED)
             if "external" in arguments:
@@ -191,6 +200,9 @@ def _scan_python(filename: str, content: str) -> tuple[list[_Hit], list[_Hit], l
                     financial.append(hit)
             if "secret" in arguments and _EXFIL_SINK_RE.search(callee):
                 exfil.append(hit)
+            elif 'secret_possible' in arguments and _EXFIL_SINK_RE.search(callee):
+                exfil.append(_Hit(filename, node.lineno, 'unresolved_method_return',
+                    lines[node.lineno - 1], EvidenceGrade.INFERRED))
         return found
 
     def bind(target: ast.AST, value: set[str], state: dict[str, set[str]]) -> None:
@@ -206,7 +218,7 @@ def _scan_python(filename: str, content: str) -> tuple[list[_Hit], list[_Hit], l
                 local = {key: value.copy() for key, value in state.items()}
                 args = [*stmt.args.posonlyargs, *stmt.args.args, *stmt.args.kwonlyargs]
                 for arg in args:
-                    local[arg.arg] = {"external"} if arg.arg.lower() in _SOURCE_NAMES else set()
+                    local[arg.arg] = {"external"} if stmt in declared_inputs or arg.arg.lower() in _SOURCE_NAMES else set()
                 block(stmt.body, local)
             elif isinstance(stmt, ast.ClassDef):
                 block(stmt.body, state.copy())
@@ -256,10 +268,19 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     command_hits: list[_Hit] = []
     financial_hits: list[_Hit] = []
     exfil_hits: list[_Hit] = []
+    entrypoints: dict[str, set[str]] = {}
+    if 'veritas.json' in artifact.code_files:
+        from ..services.blueprint import parse_blueprint
+        try:
+            blueprint = parse_blueprint(artifact.code_files['veritas.json'])
+            component = next(c for c in blueprint.components if c.id == blueprint.entrypoint.component)
+            entrypoints[component.path] = {blueprint.entrypoint.symbol}
+        except ValueError:
+            pass  # Invalid declaration is reported by discovery; never import source.
     for filename, content in artifact.code_files.items():
         if not filename.lower().endswith(_IMPLEMENTATION_SUFFIXES):
             continue
-        commands, financial, exfil = _scan_file(filename, content)
+        commands, financial, exfil = _scan_file(filename, content, entrypoints.get(filename))
         command_hits.extend(commands)
         financial_hits.extend(financial)
         exfil_hits.extend(exfil)
@@ -295,16 +316,18 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             auditor=auditor, confidence=0.96,
         ))
     if exfil_hits:
+        direct_secret = exfil_hits[0].grade is EvidenceGrade.CONFIRMED
         findings.append(Finding(
             id="security-path-secret-to-exfiltration", dimension=Dimension.SECURITY,
-            severity=Severity.CRITICAL,
-            title="A signing secret reaches a logging or network boundary",
-            detail="A variable derived from a secret environment value appears in a logging or network call. Confirm the sink semantics and remove secret material from the output path.",
+            severity=Severity.CRITICAL if direct_secret else Severity.LOW,
+            title="A signing secret reaches a logging or network boundary" if direct_secret else "Review an unresolved return value from a secret-bearing object",
+            detail=("A variable derived from a secret environment value appears in a logging or network call. Confirm the sink semantics and remove secret material from the output path." if direct_secret else
+                "A method on an object initialized with a secret returns a value that is logged or sent. The return may be a public receipt. Cross-file return semantics are unresolved; no secret disclosure is established."),
             evidence="; ".join(hit.evidence() for hit in exfil_hits),
             evidence_grade=exfil_hits[0].grade,
             remediation="Keep Stellar keys in an external signer. Remove secret logging, redact diagnostics, and rotate credentials if they were exposed.",
             references=["OWASP LLM02 Sensitive Information Disclosure", "CWE-532"],
-            auditor=auditor, confidence=0.98,
+            auditor=auditor, confidence=0.98 if direct_secret else 0.35,
         ))
     executable = {
         name: content

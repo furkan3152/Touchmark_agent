@@ -15,13 +15,12 @@ fn b32(env: &Env, value: u8) -> BytesN<32> {
 fn registration_requests_exact_owner_authorization() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(AgentRegistry, ());
-    let client = AgentRegistryClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
+    let contract_id = env.register(AgentRegistry, (&admin,));
+    let client = AgentRegistryClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let agent_id = b32(&env, 40);
 
-    client.init(&admin);
     client.reg_agent(
         &owner,
         &agent_id,
@@ -49,9 +48,9 @@ fn registration_requests_exact_owner_authorization() {
 fn full_validation_and_unique_review_flow() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(AgentRegistry, ());
-    let client = AgentRegistryClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
+    let contract_id = env.register(AgentRegistry, (&admin,));
+    let client = AgentRegistryClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let requester = Address::generate(&env);
     let validator = Address::generate(&env);
@@ -59,7 +58,6 @@ fn full_validation_and_unique_review_flow() {
     let agent_id = b32(&env, 1);
     let req_id = b32(&env, 2);
 
-    client.init(&admin);
     client.set_valid(&admin, &validator, &true);
     client.set_reviewer(&admin, &reviewer, &true);
     client.reg_agent(
@@ -90,9 +88,9 @@ fn full_validation_and_unique_review_flow() {
 fn assigned_validator_cannot_be_replaced() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(AgentRegistry, ());
-    let client = AgentRegistryClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
+    let contract_id = env.register(AgentRegistry, (&admin,));
+    let client = AgentRegistryClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let requester = Address::generate(&env);
     let validator = Address::generate(&env);
@@ -100,7 +98,6 @@ fn assigned_validator_cannot_be_replaced() {
     let agent_id = b32(&env, 10);
     let req_id = b32(&env, 11);
 
-    client.init(&admin);
     client.set_valid(&admin, &validator, &true);
     client.set_valid(&admin, &attacker, &true);
     client.reg_agent(
@@ -126,9 +123,9 @@ fn assigned_validator_cannot_be_replaced() {
 fn reviewer_cannot_double_count() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(AgentRegistry, ());
-    let client = AgentRegistryClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
+    let contract_id = env.register(AgentRegistry, (&admin,));
+    let client = AgentRegistryClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let requester = Address::generate(&env);
     let validator = Address::generate(&env);
@@ -136,7 +133,6 @@ fn reviewer_cannot_double_count() {
     let agent_id = b32(&env, 20);
     let req_id = b32(&env, 21);
 
-    client.init(&admin);
     client.set_valid(&admin, &validator, &true);
     client.set_reviewer(&admin, &reviewer, &true);
     client.reg_agent(
@@ -164,9 +160,9 @@ fn reviewer_cannot_double_count() {
 fn unapproved_reviewer_cannot_change_reputation() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(AgentRegistry, ());
-    let client = AgentRegistryClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
+    let contract_id = env.register(AgentRegistry, (&admin,));
+    let client = AgentRegistryClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let requester = Address::generate(&env);
     let validator = Address::generate(&env);
@@ -174,7 +170,6 @@ fn unapproved_reviewer_cannot_change_reputation() {
     let agent_id = b32(&env, 30);
     let req_id = b32(&env, 31);
 
-    client.init(&admin);
     client.set_valid(&admin, &validator, &true);
     client.reg_agent(
         &owner,
@@ -200,16 +195,15 @@ fn unapproved_reviewer_cannot_change_reputation() {
 fn zero_report_hash_is_rejected() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(AgentRegistry, ());
-    let client = AgentRegistryClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
+    let contract_id = env.register(AgentRegistry, (&admin,));
+    let client = AgentRegistryClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
     let requester = Address::generate(&env);
     let validator = Address::generate(&env);
     let agent_id = b32(&env, 50);
     let req_id = b32(&env, 51);
 
-    client.init(&admin);
     client.set_valid(&admin, &validator, &true);
     client.reg_agent(
         &owner,
@@ -227,4 +221,55 @@ fn zero_report_hash_is_rejected() {
         &String::from_str(&env, "ipfs://report"),
         &BytesN::from_array(&env, &[0; 32]),
     );
+}
+
+#[test]
+fn response_cannot_attest_to_changed_agent_version() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let id = env.register(AgentRegistry, (&admin,));
+    let c = AgentRegistryClient::new(&env, &id);
+    let owner = Address::generate(&env);
+    let validator = Address::generate(&env);
+    c.set_valid(&admin, &validator, &true);
+    c.reg_agent(
+        &owner,
+        &b32(&env, 1),
+        &String::from_str(&env, "ipfs://old"),
+        &b32(&env, 2),
+        &b32(&env, 3),
+        &1,
+    );
+    let request = c.req_valid(&owner, &b32(&env, 4), &b32(&env, 1), &validator);
+    assert_eq!(request.version, 1);
+    c.upd_agent(
+        &owner,
+        &b32(&env, 1),
+        &String::from_str(&env, "ipfs://new"),
+        &b32(&env, 5),
+        &b32(&env, 6),
+        &2,
+    );
+    assert!(c
+        .try_respond(
+            &validator,
+            &b32(&env, 4),
+            &90,
+            &String::from_str(&env, "ipfs://report"),
+            &b32(&env, 7)
+        )
+        .is_err());
+}
+
+#[test]
+fn constructor_prevents_initialization_takeover() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(AgentRegistry, (&admin,));
+    let c = AgentRegistryClient::new(&env, &contract_id);
+    let attacker = Address::generate(&env);
+    assert!(c.try_init(&attacker).is_err());
+    assert!(c.try_set_valid(&attacker, &attacker, &true).is_err());
 }

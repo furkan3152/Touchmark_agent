@@ -17,16 +17,43 @@ from .stellar.networks import TESTNET, NetworkGuardError, StellarNetwork, resolv
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    stateless_studio: bool = False
     app_name: str = "AgentVeritas Stellar"
     version: str = "0.3.0-stellar"
     admin_api_key: str = ""
     admin_rate_limit_per_minute: int = 60
 
     # LLM; privacy-mode için ayrıca opt-in gerekir.
+    enable_sandbox_runtime: bool = False
+    enable_brokered_runtime: bool = False
+    audit_testnet_funding_secret: str = Field(default="", repr=False, exclude=True)
+    runtime_api_key: str = ""
+    checkout_quote_signing_key: str = ""
+    # Official Testnet fulfillment is a separate opt-in persistent service.
+    # Never enable the SQLite order worker on ephemeral serverless storage.
+    enable_official_orders: bool = False
+    official_orders_database: str = "./data/official-orders.db"
+    official_orders_storage_durable: bool = False
+    official_orders_local_pilot: bool = False
+    enable_testnet_order_settlement: bool = False
+    official_provider_secret: str = Field(default="", repr=False, exclude=True)
+    official_evaluator_secret: str = Field(default="", repr=False, exclude=True)
+    official_report_base_url: str = ""
+    blob_read_write_token: str = Field(default="", repr=False, exclude=True)
+    blob_store_id: str = ""
+    sandbox_image: str = "vercel/sandbox/universal@sha256:c77f7436b9bc0a8b01ef7b09dbcea2de6a18a9fe2aafa89996d2da193da72cf0"
+    enable_public_ai_review: bool = False
     llm_provider: str = ""
-    llm_api_key: str = ""
+    llm_api_key: str = Field(default="", repr=False, exclude=True)
+    ai_gateway_api_key: str = Field(default="", repr=False, exclude=True)
+    vercel_oidc_token: str = Field(default="", repr=False, exclude=True)
+    ai_review_api_key: str = Field(default="", repr=False, exclude=True)
     llm_model: str = "claude-sonnet-4-20250514"
     llm_base_url: str = ""
+    llm_max_input_bytes: int = Field(default=28_000, ge=1_000, le=64_000)
+    llm_max_output_tokens: int = Field(default=1800, ge=64, le=4096)
+    llm_max_response_bytes: int = Field(default=128_000, ge=4096, le=256_000)
+    llm_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
     allow_external_llm_for_private_audits: bool = False
     # Gerçek endpoint'e adversarial payload yalnız izole hedefte açık opt-in ile gönderilir.
     enable_active_agent_probes: bool = False
@@ -154,7 +181,33 @@ class Settings(BaseSettings):
 
     @property
     def llm_enabled(self) -> bool:
-        return bool(self.llm_provider and self.llm_provider != "none" and self.llm_api_key)
+        # Configuration is not proof of provider connectivity or available credit.
+        return bool(self.llm_api_base and self.llm_model.strip() and self.llm_credential)
+
+    @property
+    def llm_credential(self) -> str:
+        if self.llm_provider.lower() == "vercel":
+            explicit = self.ai_gateway_api_key or self.llm_api_key
+            if explicit:
+                return explicit
+            if os.getenv("VERCEL") == "1":
+                # Functions receive a rotating request-context token; builds use
+                # the environment. Resolve at call time, never cache or export it.
+                try:
+                    from vercel.oidc import get_vercel_oidc_token
+                    return get_vercel_oidc_token()
+                except Exception:
+                    return ""
+            return os.getenv("VERCEL_OIDC_TOKEN", "") or self.vercel_oidc_token
+        return self.llm_api_key
+
+    @property
+    def llm_auth_mode(self) -> str:
+        if not self.llm_credential:
+            return "unconfigured"
+        if self.llm_provider.lower() == "vercel" and not (self.ai_gateway_api_key or self.llm_api_key):
+            return "vercel_oidc"
+        return "api_key"
 
     @property
     def ipfs_enabled(self) -> bool:
@@ -172,6 +225,8 @@ class Settings(BaseSettings):
         return self.enable_ofac_screening
 
     LLM_BASES: ClassVar[dict[str, str]] = {
+        "anthropic": "https://api.anthropic.com/v1",
+        "vercel": "https://ai-gateway.vercel.sh/v1",
         "openai": "https://api.openai.com/v1",
         "openrouter": "https://openrouter.ai/api/v1",
         "deepseek": "https://api.deepseek.com/v1",
@@ -181,9 +236,22 @@ class Settings(BaseSettings):
 
     @property
     def llm_api_base(self) -> str:
-        if self.llm_base_url:
-            return self.llm_base_url.rstrip("/")
-        return self.LLM_BASES.get(self.llm_provider.lower(), self.LLM_BASES["openai"])
+        expected = self.LLM_BASES.get(self.llm_provider.lower(), "")
+        # No arbitrary URLs, redirects, localhost or silently substituted provider.
+        if self.llm_base_url and self.llm_base_url.rstrip("/") != expected:
+            return ""
+        return expected
+
+    def llm_status(self) -> dict:
+        return {
+            "configured": self.llm_enabled, "connection_verified": False,
+            "provider": self.llm_provider, "model": self.llm_model,
+            "auth_mode": self.llm_auth_mode,
+            "max_input_bytes": self.llm_max_input_bytes,
+            "max_output_tokens": self.llm_max_output_tokens,
+            "max_requests_per_review": 1, "automatic_retries": 0,
+            "billing_note": "Token limits bound each request, not account-wide spend. Set a provider-side budget.",
+        }
 
     def integrations(self) -> list[dict]:
         return [

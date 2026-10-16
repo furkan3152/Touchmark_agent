@@ -196,3 +196,23 @@ def test_active_adversarial_endpoint_probes_are_opt_in(settings, run, monkeypatc
     assert verdict.status == "completed"
     assert called is False
     assert "opt-in" in verdict.notes
+
+
+def test_secret_bearing_object_receipt_is_not_confirmed_secret_disclosure(settings, run):
+    code = '''import os
+agent = PaymentAgent(os.environ['STELLAR_SECRET'])
+print(agent.process({'invoice': '123'}))
+'''
+    verdict = run(SecurityAuditor(settings).run(_artifact(code), deep=True))
+    hits = [f for f in verdict.findings if f.id == 'security-path-secret-to-exfiltration']
+    assert all(f.evidence_grade.value == 'inferred' and f.severity.value != 'critical' for f in hits)
+
+
+def test_secret_explicit_argument_still_detected_through_method(settings, run):
+    code = '''import os
+seed = os.environ['STELLAR_SECRET']
+print(wallet.transform(seed))
+'''
+    verdict = run(SecurityAuditor(settings).run(_artifact(code), deep=True))
+    hits = [f for f in verdict.findings if f.id == 'security-path-secret-to-exfiltration']
+    assert hits and hits[0].evidence_grade.value == 'confirmed'

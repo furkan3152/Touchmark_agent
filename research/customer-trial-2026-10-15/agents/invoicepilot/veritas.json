@@ -1,0 +1,51 @@
+{
+  "protocol": "veritas.blueprint/v1",
+  "name": "invoicepilot",
+  "purpose": "Pay each approved supplier invoice once on Stellar Testnet, including across service restarts.",
+  "components": [
+    {
+      "id": "entry",
+      "role": "entrypoint",
+      "path": "service.py"
+    },
+    {
+      "id": "business",
+      "role": "implementation",
+      "path": "main.py"
+    },
+    {
+      "id": "clients",
+      "role": "tool",
+      "path": "clients.py"
+    },
+    {
+      "id": "deps",
+      "role": "dependency",
+      "path": "requirements.txt"
+    },
+    {
+      "id": "docs",
+      "role": "instructions",
+      "path": "README.md"
+    }
+  ],
+  "entrypoint": {
+    "component": "entry",
+    "symbol": "respond",
+    "adapter": "python_text"
+  },
+  "boundaries": [
+    {
+      "source": "entry",
+      "target": "business",
+      "permission": "invoke",
+      "approval_required": false
+    },
+    {
+      "source": "business",
+      "target": "clients",
+      "permission": "invoke",
+      "approval_required": false
+    }
+  ]
+}
