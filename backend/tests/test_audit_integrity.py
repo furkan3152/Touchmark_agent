@@ -234,6 +234,7 @@ def test_partial_assurance_cannot_receive_safe_badge(settings):
     score, badge, *_, assurance = judge.synthesise(
         _artifact(owner_verified=False), verdicts
     )
-    assert score == 84.0
+    # Assurance limits the badge, not the number: the score still measures risk.
+    assert score == 100.0
     assert badge is Badge.CAUTION
     assert assurance.value == "partial"
