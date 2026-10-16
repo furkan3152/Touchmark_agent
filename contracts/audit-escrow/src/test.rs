@@ -173,13 +173,113 @@ fn requester_cannot_refund_before_deadline() {
 }
 
 #[test]
-fn submitted_job_can_be_refunded_after_deadline() {
-    let f = Fixture::submitted();
+fn funded_job_without_submission_can_be_refunded_after_deadline() {
+    let f = Fixture::funded();
     f.env.ledger().set_sequence_number(100);
     let job = f.client().refund(&f.requester, &f.request);
     assert_eq!(job.state, JobState::Refunded);
     assert_eq!(f.balance(&f.requester), 1_000_000);
     assert_eq!(f.balance(&f.escrow), 0);
+}
+
+#[test]
+fn requester_cannot_refund_a_delivered_report() {
+    let f = Fixture::submitted();
+    f.env.ledger().set_sequence_number(100);
+    assert_eq!(
+        f.client().try_refund(&f.requester, &f.request),
+        Err(Ok(Error::BadState.into()))
+    );
+    f.env.ledger().set_sequence_number(REVIEW_LEDGERS + 100);
+    assert_eq!(
+        f.client().try_refund(&f.requester, &f.request),
+        Err(Ok(Error::BadState.into()))
+    );
+    assert_eq!(f.balance(&f.escrow), 500_000);
+}
+
+#[test]
+fn undisputed_delivery_is_claimable_after_review_window() {
+    let f = Fixture::submitted();
+    let job = f.client().get_job(&f.request);
+    assert_eq!(job.review_end, REVIEW_LEDGERS);
+    assert_eq!(job.score, 90);
+    assert_eq!(
+        f.client().try_claim(&f.provider, &f.request),
+        Err(Ok(Error::ReviewOpen.into()))
+    );
+    // A submission close to the job deadline still gets a full review window.
+    f.env.ledger().set_sequence_number(REVIEW_LEDGERS - 1);
+    f.client().complete(&f.evaluator, &f.request, &90);
+    assert_eq!(f.balance(&f.provider), 425_000);
+    assert_eq!(f.balance(&f.fee_to), 75_000);
+
+    let f = Fixture::submitted();
+    f.env.ledger().set_sequence_number(REVIEW_LEDGERS);
+    assert_eq!(
+        f.client().try_complete(&f.evaluator, &f.request, &90),
+        Err(Ok(Error::TooLate.into()))
+    );
+    assert_eq!(
+        f.client().try_dispute(&f.evaluator, &f.request),
+        Err(Ok(Error::TooLate.into()))
+    );
+    assert_eq!(
+        f.client().try_claim(&f.requester, &f.request),
+        Err(Ok(Error::BadRole.into()))
+    );
+    let job = f.client().claim(&f.provider, &f.request);
+    assert_eq!(job.state, JobState::Complete);
+    assert_eq!(f.balance(&f.provider), 425_000);
+    assert_eq!(f.balance(&f.fee_to), 75_000);
+    assert_eq!(f.balance(&f.escrow), 0);
+    assert_eq!(
+        f.client().try_claim(&f.provider, &f.request),
+        Err(Ok(Error::BadState.into()))
+    );
+}
+
+#[test]
+fn requester_identity_change_after_submission_cannot_cancel_payment() {
+    let f = Fixture::submitted();
+    f.update();
+    f.registry().set_active(&f.requester, &f.agent, &false);
+    f.env.ledger().set_sequence_number(REVIEW_LEDGERS);
+    f.client().claim(&f.provider, &f.request);
+    assert_eq!(f.balance(&f.provider), 425_000);
+    assert_eq!(f.balance(&f.requester), 500_000);
+}
+
+#[test]
+fn dispute_locks_funds_until_admin_resolution() {
+    let f = Fixture::submitted();
+    f.client().dispute(&f.evaluator, &f.request);
+    assert_eq!(
+        f.client().try_refund(&f.requester, &f.request),
+        Err(Ok(Error::BadState.into()))
+    );
+    f.env.ledger().set_sequence_number(REVIEW_LEDGERS);
+    assert_eq!(
+        f.client().try_claim(&f.provider, &f.request),
+        Err(Ok(Error::BadState.into()))
+    );
+    assert_eq!(
+        f.client().try_resolve(&f.requester, &f.request, &true),
+        Err(Ok(Error::Unauthorized.into()))
+    );
+    let job = f.client().resolve(&f.admin, &f.request, &false);
+    assert_eq!(job.state, JobState::Complete);
+    assert_eq!(f.balance(&f.provider), 425_000);
+
+    let f = Fixture::submitted();
+    f.client().dispute(&f.evaluator, &f.request);
+    let job = f.client().resolve(&f.admin, &f.request, &true);
+    assert_eq!(job.state, JobState::Refunded);
+    assert_eq!(f.balance(&f.requester), 1_000_000);
+    assert_eq!(
+        f.client().try_resolve(&f.admin, &f.request, &false),
+        Err(Ok(Error::BadState.into()))
+    );
 }
 
 #[test]
@@ -363,7 +463,7 @@ fn version_only_change_invalidates_unchanged_source_hashes() {
 }
 
 #[test]
-fn deactivated_agent_blocks_settlement_but_dispute_refund_remains_available() {
+fn deactivated_agent_blocks_settlement_but_dispute_resolution_remains_available() {
     let f = Fixture::submitted();
     f.registry().set_active(&f.requester, &f.agent, &false);
     assert_eq!(
@@ -371,7 +471,7 @@ fn deactivated_agent_blocks_settlement_but_dispute_refund_remains_available() {
         Err(Ok(Error::StaleIdentity.into()))
     );
     f.client().dispute(&f.evaluator, &f.request);
-    f.client().refund(&f.requester, &f.request);
+    f.client().resolve(&f.admin, &f.request, &true);
     assert_eq!(f.balance(&f.requester), 1_000_000);
 }
 
@@ -395,22 +495,22 @@ fn disabled_validator_blocks_submit_and_complete_without_locking_refund() {
         Err(Ok(Error::InvalidValidation.into()))
     );
     f.client().dispute(&f.evaluator, &f.request);
-    f.client().refund(&f.requester, &f.request);
+    f.client().resolve(&f.admin, &f.request, &true);
     assert_eq!(f.balance(&f.requester), 1_000_000);
 }
 
 #[test]
-fn changed_agent_version_does_not_lock_dispute_refund() {
+fn changed_agent_version_does_not_lock_dispute_resolution() {
     let f = Fixture::submitted();
     f.update();
     f.client().dispute(&f.evaluator, &f.request);
-    f.client().refund(&f.requester, &f.request);
+    f.client().resolve(&f.admin, &f.request, &true);
     assert_eq!(f.balance(&f.requester), 1_000_000);
     assert_eq!(f.balance(&f.provider), 0);
 }
 
 #[test]
-fn fund_and_complete_reject_expired_jobs() {
+fn fund_and_complete_reject_expired_jobs_and_review_windows() {
     let f = Fixture::new();
     f.create();
     f.env.ledger().set_sequence_number(100);
@@ -420,7 +520,7 @@ fn fund_and_complete_reject_expired_jobs() {
     );
     assert_eq!(f.balance(&f.requester), 1_000_000);
     let f = Fixture::submitted();
-    f.env.ledger().set_sequence_number(100);
+    f.env.ledger().set_sequence_number(REVIEW_LEDGERS);
     assert_eq!(
         f.client().try_complete(&f.evaluator, &f.request, &90),
         Err(Ok(Error::TooLate.into()))
