@@ -116,7 +116,17 @@ EVIDENCE_GAP_RULES = frozenset({
     "stellar_native-onchain-identity-unbound",
 })
 #: Gaps that make a pass impossible: the reviewed scope itself is incomplete.
-BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface"})
+BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface",
+                           "security-controls-unverifiable"})
+
+#: Rules that assert a control is absent. They are only evidence when the analyser can
+#: see controls in the language that holds the capability (Python data flow today).
+ABSENCE_OF_CONTROL_RULES = frozenset({
+    "economic-no-spend-policy", "compliance-no-human-oversight", "intent-full-autonomy-over-funds",
+    "security-unbounded-spend", "security-path-controls-not-enforced",
+})
+#: Rules that compare the code with a declaration; without any declaration they are gaps.
+DECLARATION_RULES = frozenset({"security-undeclared-capability", "intent-undeclared-financial-capability"})
 _STATIC_ATTACK = re.compile(r"^security-a-\d+$")
 
 #: Lowest score a passing review can have. The judge caps every report with an
@@ -126,6 +136,8 @@ PASS_SCORE = 65.0
 
 def classify_finding(finding: Finding) -> Finding:
     """Attach the policy kind. Static attack hypotheses were never executed."""
+    if finding.kind is FindingKind.EVIDENCE_GAP:
+        return finding  # a rule that already established it is a gap stays one
     gap = finding.id in EVIDENCE_GAP_RULES or bool(_STATIC_ATTACK.match(finding.id))
     kind = FindingKind.EVIDENCE_GAP if gap else FindingKind.RISK
     return finding if finding.kind is kind else finding.model_copy(update={"kind": kind})

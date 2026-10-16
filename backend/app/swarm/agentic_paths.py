@@ -272,7 +272,9 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             severity=Severity.HIGH,
             title="No enforced Stellar spending control in source",
             detail="The agent can sign or move funds, but no fail-closed recipient allowlist, amount cap, approval gate or transaction inspection was found in the source. Prompt statements are not enforceable controls.",
-            evidence="reviewed sources=" + ", ".join(sorted(executable)),
+            evidence="files with signing or payment authority=" + (", ".join(sorted({
+                loc.file for cap in ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation", "payment")
+                for loc in profile.capabilities.get(cap, [])})) or ", ".join(sorted(executable)[:10])),
             evidence_grade=EvidenceGrade.INFERRED,
             remediation="Enforce recipient allowlists, amount caps and approval in code that raises before signing; add negative tests.",
             references=["Soroban authorization", "OWASP LLM06 Excessive Agency"],

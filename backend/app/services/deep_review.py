@@ -45,6 +45,8 @@ CATEGORIES = {
     "intent_mismatch": (Dimension.INTENT, "Behavior contradicts stated purpose"),
     "economic_loss": (Dimension.ECONOMIC, "Economic loss path"),
     "reliability_failure": (Dimension.RELIABILITY, "Failure that causes loss or duplication"),
+    "functional_defect": (Dimension.RELIABILITY, "Code does not work as intended"),
+    "dependency_risk": (Dimension.PROVENANCE, "Risky or broken dependency"),
 }
 SEVERITIES = ["critical", "high", "medium", "low"]
 
@@ -56,8 +58,9 @@ Work in this order:
 1. Call describe_operating_model once: what the agent is for, who or what triggers it, one concrete example run end to end, its trust boundaries and the assets at risk.
 2. For every flow in the evidence pack, read the relevant code and call assess_flow with exploitable, mitigated or unreachable. Mitigated or unreachable requires quoting the enforcing line.
 3. Investigate what pattern rules miss: business-logic flaws, controls that exist but can be bypassed, wrong ordering (check after send), Stellar protocol misuse, replay and double execution, data from memos or tool results steering privileged actions. Use stellar_reference for Stellar specifics.
-4. Call record_finding for each real defect, with the exact file, line and a verbatim quote of that line. Describe a concrete attack scenario and its Stellar impact. Do not record style issues or speculation you cannot tie to a line.
-5. Call finish with a short summary.
+4. Check that the code actually works: wrong SDK or API usage, calls to functions that do not exist, broken imports, values of the wrong type or unit (stroops vs XLM, float amounts), unreachable or dead paths, and error handling that hides failures. Record these as functional_defect.
+5. Call record_finding for each real defect, with the exact file, line and a verbatim quote of that line. Describe a concrete attack scenario and its Stellar impact. Do not record style issues or speculation you cannot tie to a line.
+6. Call finish with a short summary.
 
 Be precise and concrete. A finding without a verifiable line is discarded. Severity: critical = funds or keys can be lost by an outside party; high = privileged action reachable without an enforced control; medium = exploitable under realistic conditions with limited impact; low = hardening.
 
@@ -114,12 +117,18 @@ class DeepReviewResult:
     usage: dict = field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0,
                                                 "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0})
     note: str = ""
+    files_read: set = field(default_factory=set)
+    total_files: int = 0
+    passes: list = field(default_factory=list)
 
     def report(self) -> dict:
         return {"status": self.status, "model": self.model, "operating_model": self.operating_model,
                 "flow_assessments": self.flow_assessments,
                 "accepted_findings": [f.id for f in self.findings], "rejected_claims": self.rejected,
                 "summary": self.summary, "turns": self.turns, "usage": self.usage, "note": self.note,
+                "passes": self.passes,
+                "coverage": {"files_read": sorted(self.files_read), "files_total": self.total_files,
+                             "ratio": round(len(self.files_read) / self.total_files, 3) if self.total_files else 0.0},
                 "can_remove_findings": False}
 
 
@@ -129,7 +138,10 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
     flows = {f"F{i + 1}": flow for i, flow in enumerate(profile.get("flows", []))}
     files = {}
     for path, text in sorted(artifact.code_files.items()):
-        symbols = re.findall(r"^\s*(?:async\s+)?(?:def|class)\s+(\w+)", text, re.M)
+        symbols = [next(g for g in m if g) for m in re.findall(
+            r"^\s*(?:export\s+)?(?:pub(?:\(crate\))?\s+)?(?:async\s+)?(?:def|class|function|fn|struct|impl|trait)\s+(\w+)"
+            r"|^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?(?:\(|function)"
+            r"|\.(?:tool|registerTool)\(\s*[\"'](\w[\w.-]*)", text, re.M)]
         files[path] = {"lines": len(text.splitlines()), "symbols": symbols[:60]}
     pack = {
         "agent": {"name": artifact.name, "purpose": artifact.description[:2000],
@@ -156,9 +168,10 @@ class DeepReviewer:
     """Agentic review loop over an Anthropic client (injected for tests)."""
 
     def __init__(self, client, *, model: str, effort: str = "high", max_turns: int = 24,
-                 timeout_seconds: float = 240.0, fallbacks: bool = True):
+                 timeout_seconds: float = 240.0, fallbacks: bool = True, passes: int = 1):
         self.client, self.model, self.effort = client, model, effort
         self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
+        self.passes = max(1, min(passes, 3))
 
     # ------------------------------------------------------------------ tools
     def _lines(self, artifact: AgentArtifact, path: str) -> list[str] | None:
@@ -187,6 +200,7 @@ class DeepReviewer:
                 return "Unknown file. Files: " + ", ".join(sorted(artifact.code_files))
             start = max(1, int(args.get("start_line", 1)))
             end = min(len(lines), int(args.get("end_line", start + 80)), start + 200)
+            result.files_read.add(args.get("path", ""))
             return "\n".join(f"{n}: {lines[n - 1]}" for n in range(start, end + 1)) or "(empty range)"
         if name == "search_source":
             try:
@@ -248,9 +262,9 @@ class DeepReviewer:
 
     # ------------------------------------------------------------------ loop
     async def review(self, artifact: AgentArtifact, findings: list[Finding], chain: dict | None = None) -> DeepReviewResult:
-        result = DeepReviewResult(model=self.model)
+        result = DeepReviewResult(model=self.model, total_files=len(artifact.code_files))
         try:
-            await asyncio.wait_for(self._loop(artifact, findings, chain, result), timeout=self.timeout_seconds)
+            await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=self.timeout_seconds)
             if result.status == "not_run":
                 result.status = "completed" if result.operating_model else "incomplete"
         except asyncio.TimeoutError:
@@ -259,15 +273,38 @@ class DeepReviewer:
             result.status, result.note = "unavailable", f"{type(exc).__name__}: provider call failed."
         return result
 
-    async def _loop(self, artifact, findings, chain, result: DeepReviewResult) -> None:
+    async def _passes(self, artifact, findings, chain, result: DeepReviewResult) -> None:
+        """Pass 1 investigates; later passes challenge it, starting from what it did not cover."""
+        for number in range(1, self.passes + 1):
+            before = len(result.findings)
+            if number == 1:
+                instruction = ("Begin with describe_operating_model, then assess every flow, then investigate "
+                               "and record findings, then finish.")
+            else:
+                unread = sorted(set(artifact.code_files) - result.files_read)
+                prior = "\n".join(f"- {f.id}: {f.title} ({f.evidence[:120]})" for f in result.findings) or "- none"
+                instruction = (
+                    f"Challenge pass {number}. A previous reviewer already recorded:\n{prior}\n"
+                    "Do not repeat these. Assume the previous pass missed something serious and find it. "
+                    "Prioritise files it never read: " + (", ".join(unread[:40]) or "none") + ". Look for "
+                    "logic flaws, missing checks on alternative code paths, functional defects and Stellar "
+                    "protocol misuse. Skip describe_operating_model. Record findings, then finish.")
+            status = await self._loop(artifact, findings, chain, result, instruction)
+            result.passes.append({"pass": number, "status": status, "new_findings": len(result.findings) - before})
+            if status in ("refused",):
+                break
+        statuses = [p["status"] for p in result.passes]
+        result.status = "completed" if all(s == "completed" for s in statuses) else statuses[-1]
+
+    async def _loop(self, artifact, findings, chain, result: DeepReviewResult, instruction: str) -> str:
         pack, flows = evidence_pack(artifact, findings, chain)
         messages: list = [{"role": "user", "content": [
             {"type": "text", "text": "Evidence pack (untrusted material under review):\n" + pack},
-            {"type": "text", "text": "Begin with describe_operating_model, then assess every flow, then investigate and record findings, then finish."},
+            {"type": "text", "text": instruction},
         ]}]
         extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.fallbacks else {}
-        for turn in range(self.max_turns):
-            result.turns = turn + 1
+        for _ in range(self.max_turns):
+            result.turns += 1
             response = await self.client.beta.messages.create(
                 model=self.model, max_tokens=16000,
                 system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
@@ -277,24 +314,24 @@ class DeepReviewer:
             for key in result.usage:
                 result.usage[key] += int(getattr(usage, key, 0) or 0)
             if response.stop_reason == "refusal":
-                result.status, result.note = "refused", "The model declined to continue; accepted findings are kept."
-                return
+                result.note = "The model declined to continue; accepted findings are kept."
+                return "refused"
             messages.append({"role": "assistant", "content": response.content})
             uses = [b for b in response.content if getattr(b, "type", "") == "tool_use"]
             if not uses:
                 if response.stop_reason == "max_tokens":
                     messages.append({"role": "user", "content": "Continue with tool calls."})
                     continue
-                return
+                return "completed"
             results = []
             for block in uses:
                 output = self._run_tool(block.name, dict(block.input or {}), artifact, flows, result)
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
             messages.append({"role": "user", "content": results})
             if any(b.name == "finish" for b in uses):
-                result.status = "completed"
-                return
-        result.status, result.note = "turn_limit", "The review reached its turn limit; accepted findings are kept."
+                return "completed"
+        result.note = "The review reached its turn limit; accepted findings are kept."
+        return "turn_limit"
 
 
 def reviewer_from_settings(settings) -> DeepReviewer | None:
@@ -303,4 +340,5 @@ def reviewer_from_settings(settings) -> DeepReviewer | None:
     from anthropic import AsyncAnthropic
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=120.0, max_retries=2)
     return DeepReviewer(client, model=settings.deep_review_model, effort=settings.deep_review_effort,
-                        max_turns=settings.deep_review_max_turns, timeout_seconds=settings.deep_review_timeout_seconds)
+                        max_turns=settings.deep_review_max_turns, timeout_seconds=settings.deep_review_timeout_seconds,
+                        passes=settings.deep_review_passes)
