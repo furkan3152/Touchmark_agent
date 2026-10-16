@@ -1,4 +1,4 @@
-# Analysis model (policy 2026-10-16.1)
+# Analysis model (policy 2026-10-16.2)
 
 This document describes how a source review reaches its decision, score and credential
 eligibility. It replaces the earlier model, where declared tool permissions drove most
@@ -43,7 +43,7 @@ auditor runs:
 The input commitment always covers the submitted bundle. Declaring every tool read-only
 no longer removes the financial rules.
 
-## 2. Risks and evidence gaps are separate
+## 2. Risks, warnings and evidence gaps are separate
 
 Every finding has a `kind`:
 
@@ -56,6 +56,13 @@ Every finding has a `kind`:
   
   Gaps are listed separately. They limit assurance (no `SAFE` without verified ownership)
   but are not vulnerabilities.
+
+- **`warning`**: the agent moves funds without a person or a second key approving. Running
+  unattended can be a deliberate design, so a warning costs a quarter of the penalty of a
+  risk of the same severity and never fails a review on its own. If the code still bounds
+  recipients and amounts, the warning is `low`; otherwise it is `high`. The limits
+  themselves (spend caps, allowlists, amount bounds) are separate rules and remain risks.
+  The warning rules are listed in `WARNING_RULES`.
 
 The gap rules are listed in `EVIDENCE_GAP_RULES` in `backend/app/swarm/policy.py`. Static
 scenario checks no longer lower the score; only executed scenarios (live probes, sandbox)
@@ -71,10 +78,14 @@ do.
 | `needs_evidence` | No actionable risk, but the prompt, tools and implementation were not all reviewed. |
 | `pass` | No open high or critical risk, with the full core surface reviewed. |
 
-The judge enforces two score caps:
+The judge caps the score whenever an actionable risk exists, and the cap is graded
+(`judge.graded_ceiling`):
 
-- Any actionable risk caps the score at 64.
-- A confirmed critical risk caps it at 39.
+- With high risks only, the cap starts at 64. With a confirmed critical, it starts at 39.
+- Each further risk lowers it, weighted by severity, evidence grade and confidence, with
+  diminishing returns. The cap never falls below 5.
+- One inferred high risk therefore scores higher than five confirmed ones, instead of
+  both landing on 64.
 
 A `pass` therefore always scores 65 or more, and a report with an actionable risk never
 does. `pass` is scoped to the reviewed material. It is not a safety certificate.
