@@ -365,7 +365,9 @@ class EconomicAuditor(BaseAuditor):
             return True, f"domain={domain}"
 
         for tool in artifact.tools:
-            text = f"{tool.name} {tool.description}".lower()
+            # An observed tool's description lists source locations (paths such as
+            # `routes/…`); only its capability name says what it does.
+            text = (tool.name if tool.origin == "observed" else f"{tool.name} {tool.description}").lower()
             hits = find_signals(text, SWAP_SIGNALS)
             if hits:
                 return True, f"araç '{tool.name}' → {', '.join(hits)}"

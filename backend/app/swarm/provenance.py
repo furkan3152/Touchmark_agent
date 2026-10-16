@@ -25,6 +25,10 @@ def _is_manifest(name: str) -> bool:
             or (("/.github/workflows/" in "/" + name.lower()) and base.endswith((".yml", ".yaml"))))
 
 
+def _is_workflow(name: str) -> bool:
+    return "/.github/workflows/" in "/" + name.lower() or name.lower().endswith("gitlab-ci.yml")
+
+
 def _is_build_file(name: str) -> bool:
     base = name.lower().rsplit("/", 1)[-1]
     return "dockerfile" in base or "/.github/workflows/" in "/" + name.lower()
@@ -63,7 +67,8 @@ class ProvenanceAuditor(BaseAuditor):
         # With a lockfile, manifest ranges are pinned; only build inputs (base images,
         # tools fetched at build time) can still float.
         joined = "\n".join(_manifest_text(name, text) for name, text in artifact.code_files.items()
-                           if _is_manifest(name) and not (locked and not _is_build_file(name)))
+                           if _is_manifest(name) and not _is_workflow(name)
+                           and not (locked and not _is_build_file(name)))
         if artifact.source_kind.value in {"repo", "upload"} and not locked:
             findings.append(self.finding(
                 "missing-lockfile",
@@ -101,6 +106,13 @@ class ProvenanceAuditor(BaseAuditor):
         floating = re.findall(
             r"(?im)^\s*(?:FROM\s+\S+:latest|[^#\n]+(?:>=|\*|latest)[^\n]*)$", joined
         )
+        # CI workflows float through actions referenced by tag or branch and through
+        # `:latest` images; runner labels (ubuntu-latest) and trigger filters do not.
+        for name, text in artifact.code_files.items():
+            if _is_workflow(name):
+                floating += [m.group(0).strip() for m in re.finditer(
+                    r"(?m)^\s*-?\s*uses:\s*(?!\./)[\w.-]+/[\w./-]+@(?![0-9a-f]{40}\b)\S+.*$|"
+                    r"^\s*(?:image|container):\s*\S+:latest\b.*$", text)]
         if floating:
             findings.append(self.finding(
                 "floating-dependencies",
