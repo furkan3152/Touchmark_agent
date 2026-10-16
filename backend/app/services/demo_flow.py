@@ -100,7 +100,8 @@ async def run_demo_audit(reference: str, settings: Settings) -> dict:
     gaps.sort(key=lambda f: rank.get(f["severity"], 5))
     resolution = report.get("resolution", {})
     source = resolution.get("source", {})
-    score = int(report["result"]["overall_score"])
+    score = round(float(report["result"]["overall_score"]), 1)
+    chain_score = int(score)  # the registry stores whole points (u32); never rounded up
     out = {
         "reference": reference, "decision": result["decision"], "score": score,
         "report_sha256": result["report_sha256"], "report_json": result["report_json"],
@@ -108,6 +109,10 @@ async def run_demo_audit(reference: str, settings: Settings) -> dict:
         "steps": [{"check": s["check"], "result": s["result"], "evidence": (s.get("evidence") or "")[:300]}
                   for s in resolution.get("steps", [])],
         "risks": [_summary(f) for f in risks[:12]], "gaps": [_summary(f) for f in gaps[:12]],
+        "breakdown": {k: v for k, v in (report["result"].get("score_breakdown") or {}).items() if k != "deductions"}
+                     | {"deductions": [{key: d.get(key) for key in ("id", "title", "severity", "evidence_grade",
+                                                                     "confidence", "places", "deduction", "restates")}
+                                       for d in (report["result"].get("score_breakdown") or {}).get("deductions", [])[:15]]},
         "counts": {"risks": len(risks), "gaps": len(gaps),
                    **{sev: sum(1 for f in risks if f["severity"] == sev) for sev in rank}},
         "files": (report.get("repository") or {}).get("source_files_selected", 0),
@@ -118,7 +123,7 @@ async def run_demo_audit(reference: str, settings: Settings) -> dict:
         repository = f"{repository}/tree/{source.get('revision', '')}/{source['path']}"
     if out["issuance"]["enabled"] and out["issuance"]["eligible"] and repository:
         out["issuance"]["ticket"] = _sign({
-            "report_sha256": result["report_sha256"], "score": score, "repository": repository,
+            "report_sha256": result["report_sha256"], "score": chain_score, "repository": repository,
             "revision": source.get("revision", ""), "expires_at": int(time.time()) + TICKET_TTL})
     elif out["issuance"]["eligible"] and not repository:
         out["issuance"]["reason"] = "Only audits of a bound source repository can be credentialed."

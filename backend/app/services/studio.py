@@ -150,9 +150,9 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         owner_verification_note="Not checked during source review.",
     )
     report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=deep_reviewer)
-    from ..reporting.english import english_finding
+    from ..reporting.english import english_report
     from ..swarm.policy import actionable_risks, finding_set_commitment
-    report.findings = [english_finding(f) for f in report.findings]
+    english_report(report)
     report.finding_set_hash = finding_set_commitment(report.findings)
     payload = report_to_dict(report, artifact)
     payload["judge_notes"] = [

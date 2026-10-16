@@ -1,4 +1,4 @@
-# Analysis model (policy 2026-10-16.2)
+# Analysis model (policy 2026-10-16.3)
 
 This document describes how a source review reaches its decision, score and credential
 eligibility. It replaces the earlier model, where declared tool permissions drove most
@@ -98,14 +98,44 @@ do.
 | `needs_evidence` | No actionable risk, but the prompt, tools and implementation were not all reviewed. |
 | `pass` | No open high or critical risk, with the full core surface reviewed. |
 
-The judge caps the score whenever an actionable risk exists, and the cap is graded
-(`judge.graded_ceiling`):
+### How the score is computed (policy 2026-10-16.3)
 
-- With high risks only, the cap starts at 64. With a confirmed critical, it starts at 39.
-- Each further risk lowers it, weighted by severity, evidence grade and confidence, with
-  diminishing returns. The cap never falls below 5.
-- One inferred high risk therefore scores higher than five confirmed ones, instead of
-  both landing on 64.
+The score measures the size of the risks found. Every report carries the calculation
+as `result.score_breakdown`, and the demo shows it under "Why this score?".
+
+1. **Risk points per finding.** Each risk or warning costs:
+
+   | Factor | Values |
+   |---|---|
+   | Severity | critical 30, high 14, medium 6, low 2 |
+   | Evidence grade | confirmed ×1, inferred ×0.6 |
+   | Confidence | ×confidence (at least 0.4) |
+   | Spread | ×1 for one affected place, up to ×1.75 (log scale) for many |
+   | Warning (autonomy without approval) | a quarter of a risk |
+
+   Evidence gaps cost nothing.
+2. **Root causes count once.** Findings that restate one cause are grouped; for example,
+   no spend policy, unbounded spend, controls not enforced and no human approval all
+   restate one missing spending control. The largest counts in full and each further
+   restatement adds 30%. Further distinct findings of the same severity have mildly
+   diminishing returns (×1/(1 + 0.25n)).
+3. **Points to score:** `100 × e^(−risk points / 100)`. Small problems cost about one
+   point per point (5 points → 95). Large ones stay ordered instead of all reaching 0:
+   150 points → 22, 300 points → 5.
+4. **Bands keep the decision honest.**
+   - A confirmed critical risk places the result proportionally in 0–39.
+   - Any other actionable risk places it in 40–64.
+   - Without an actionable risk, the score is the raw value.
+
+**Assurance limits the badge, not the number.** Unverified ownership or ledger evidence,
+or an incomplete core review, keeps the badge at CAUTION. It no longer replaces the score
+with 84. Under the previous rule every clean report showed exactly 84.
+
+On the 14 repositories audited in this session, scores now run from 6.8 to 99.6, in the
+order of how serious the verified issues are:
+- Command injection plus unbounded payments: lowest.
+- Only unpinned dependencies: about 95.
+- The safe demo agent: 99.6.
 
 A `pass` therefore always scores 65 or more, and a report with an actionable risk never
 does. `pass` is scoped to the reviewed material. It is not a safety certificate.

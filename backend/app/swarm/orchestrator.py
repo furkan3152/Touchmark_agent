@@ -172,7 +172,7 @@ class AuditSwarm:
         if deep_reviewer is not None:
             verdicts, deep_record = await self._deep_review(deep_reviewer, artifact, verdicts, chain_facts)
 
-        score, badge, dim_scores, findings, notes, disagreement, assurance = (
+        score, badge, dim_scores, findings, notes, disagreement, breakdown, assurance = (
             self.judge.synthesise(artifact, verdicts, tier=tier)
         )
         verdict_text, judge_llm_consulted = await self.judge.llm_arbitrate(
@@ -228,6 +228,7 @@ class AuditSwarm:
             badge=badge,
             decision=decision,
             dimension_scores=dim_scores,
+            score_breakdown=breakdown,
             verdicts=verdicts,
             findings=findings,
             judge_notes=notes,

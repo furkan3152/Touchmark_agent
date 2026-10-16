@@ -285,13 +285,13 @@ async def _chain_facts(settings: Settings, network: str, stellar_address: str, a
 async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer, name: str, purpose: str,
                            goals: list[str], payload_extra: dict, notes: list[str]) -> dict:
     from ..swarm.orchestrator import AuditSwarm
-    from ..reporting.english import english_finding
+    from ..reporting.english import english_report
     from ..swarm.policy import actionable_risks, finding_set_commitment
     isolated = settings.model_copy(update={
         "stellar_network": "offline", "llm_provider": "", "llm_api_key": "", "pinata_jwt": "",
         "enable_active_agent_probes": False, "enable_audit_escrow": False, "enable_ofac_screening": False})
     report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=reviewer)
-    report.findings = [english_finding(f) for f in report.findings]
+    english_report(report)
     report.finding_set_hash = finding_set_commitment(report.findings)
     payload = report_to_dict(report, artifact)
     payload.update(payload_extra)

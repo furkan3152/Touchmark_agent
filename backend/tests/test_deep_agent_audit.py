@@ -177,7 +177,7 @@ def test_deep_missing_implementation_cannot_receive_safe(settings):
     score, badge, *_ = SynthesisJudge(settings).synthesise(
         _artifact(), _verdicts(), tier=AuditTier.DEEP
     )
-    assert score == 84
+    assert score >= 85
     assert badge is Badge.CAUTION
 
 
