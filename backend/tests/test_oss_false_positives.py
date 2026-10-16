@@ -130,3 +130,19 @@ def test_asset_issuers_and_examples_are_not_destinations():
     facts, seen = collect({"run.ts": f'throw new Error(`use CODE:ISSUER (e.g. EURC:{DEST})`);\n'
                                      f'const asset = new Asset("USDC", "{DEST}");\n'})
     assert facts["destinations"] == [] and seen == []
+
+
+def test_lockfile_pins_ranges_but_not_build_inputs():
+    base = AgentArtifact(source_kind=SourceKind.REPO, name="x", lockfiles={"uv.lock": "ab"}, code_files={
+        "pyproject.toml": '[project]\ndependencies = ["httpx>=0.28.1"]\n', "a.py": "x = 1\n"})
+    assert "provenance-floating-dependencies" not in run(ProvenanceAuditor, base)
+    docker = base.model_copy(update={"code_files": {**base.code_files, "Dockerfile": "RUN corepack prepare pnpm@latest\n"}})
+    assert "provenance-floating-dependencies" in run(ProvenanceAuditor, docker)
+
+
+def test_masked_secret_in_a_log_is_not_exfiltration():
+    from backend.app.swarm.agentic_paths import _scan_file
+    code = ("const secretKey = process.env.STELLAR_SECRET;\n"
+            "console.log(`Secret: ${maskSecret(secretKey)}`);\n")
+    assert _scan_file("cli.js", code)[2] == []
+    assert _scan_file("cli.js", code.replace("maskSecret(secretKey)", "secretKey"))[2]

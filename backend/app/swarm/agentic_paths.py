@@ -31,6 +31,8 @@ _SOURCE_NAMES = {
     "input", "user_input", "prompt", "payload", "query", "message", "messages",
     "command", "cmd", "code", "request", "webhook",
 }
+#: A secret passed through a masking, hashing or public-key step on the same line is not leaked.
+_SANITISED_RE = re.compile(r"mask|redact|hash|digest|fingerprint|public_?key|publicKey|\.length\b|\blen\(", re.I)
 _COMMAND_SINK_RE = re.compile(
     # `exec(` as a function, not a method: RegExp.exec / db.exec are not code execution.
     r"(?<![.\w])eval\s*\(|(?<![.\w])exec\s*\(|os\.system\s*\(|subprocess\.(?:run|call|popen)\s*\(|"
@@ -127,7 +129,7 @@ def _scan_file(filename: str, content: str, external_entrypoints: set[str] | Non
             financial.append(_Hit(filename, number, referenced_taint[0], line))
 
         referenced_secrets = sorted(_names(line) & secrets)
-        if referenced_secrets and _EXFIL_SINK_RE.search(line):
+        if referenced_secrets and _EXFIL_SINK_RE.search(line) and not _SANITISED_RE.search(line):
             if not assignment or assignment.group("var") not in referenced_secrets:
                 exfil.append(_Hit(filename, number, referenced_secrets[0], line))
     return commands[:5], financial[:5], exfil[:5]

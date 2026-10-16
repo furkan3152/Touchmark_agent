@@ -55,7 +55,7 @@ _MUTATING_NAME = re.compile(r'^(?:set|reg|upd|fund|submit|complete|refund|initia
 _AUTH = re.compile(r'\.\s*require_auth(?:_for_args)?\s*\(')
 
 
-def _rust_functions(source: str) -> list[dict]:
+def _rust_functions(source: str, include_private: bool = False) -> list[dict]:
     """Bound public function bodies conservatively, without resolving Rust types/macros."""
     code = _rust_code(source)
     functions = []
@@ -74,7 +74,7 @@ def _rust_functions(source: str) -> list[dict]:
                           'line': code.count('\n', 0, match.start()) + 1})
     results = []
     for fn in functions:
-        if not fn['public']: continue
+        if not fn['public'] and not include_private: continue
         # Merely defining a protected nested function does not guard its parent.
         body = list(code[fn['body_start']:fn['end'] - 1])
         for nested in functions:
@@ -91,6 +91,24 @@ def _has_persistent_ttl(body: str) -> bool:
     # persistent-entry TTL. Key matching/path reachability still need review.
     aliases = re.findall(r'\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[A-Za-z_][A-Za-z0-9_]*' + _PERSISTENT + r'\s*;', body)
     return any(re.search(r'\b' + re.escape(alias) + r'\s*\.\s*extend_ttl\s*\(', body) for alias in aliases)
+
+
+def _providers(functions: list[dict], direct) -> set[str]:
+    """Names of functions that perform a check directly or through a helper they call."""
+    names = {fn['name'] for fn in functions}
+    providing = {fn['name'] for fn in functions if direct(fn['body'])}
+    for _ in range(4):  # helpers of helpers; bounded, no full call graph
+        grew = {fn['name'] for fn in functions if fn['name'] not in providing and any(
+            re.search(r'(?:\bSelf::|\bself\.|(?<![\w.:]))' + re.escape(h) + r'\s*\(', fn['body'])
+            for h in providing if h in names)}
+        if not grew:
+            break
+        providing |= grew
+    return providing
+
+
+def _calls_any(body: str, names: set[str]) -> bool:
+    return any(re.search(r'(?:\bSelf::|\bself\.|(?<![\w.:]))' + re.escape(n) + r'\s*\(', body) for n in names)
 
 
 class StellarNativeAuditor(BaseAuditor):
@@ -137,16 +155,28 @@ class StellarNativeAuditor(BaseAuditor):
         # are separate boundaries; requiring require_auth inside them is unsound.
         mutating = [fn for fn in functions if fn['name'] not in {'__constructor', '__check_auth'}
                     and (_MUTATING_NAME.search(fn['name']) or _MUTATION.search(fn['body']))]
+        # Authorization and TTL renewal are often done in a helper (`Self::create_task`,
+        # `extend_persistent_ttl`); a call to a helper that performs them counts.
+        everything = [{**fn, 'file': name} for name, content in rust_files.items()
+                      for fn in _rust_functions(content, include_private=True)]
+        auth_helpers = _providers(everything, lambda body: bool(_AUTH.search(body)))
+        ttl_helpers = _providers(everything, lambda body: bool(re.search(r'\.\s*extend_ttl\s*\(', body)))
+        # Conservative: a gap stays a gap unless the check is in the function's own body.
+        # Severity separates "no check anywhere" (high) from "only through a helper, or a
+        # read that cannot create state" (medium, needs review).
         auth_gaps = [fn for fn in mutating if not _AUTH.search(fn['body'])]
+        auth_hard = [fn for fn in auth_gaps if not _calls_any(fn['body'], auth_helpers)]
         persistent = [fn for fn in functions if re.search(_PERSISTENT, fn['body'])]
         ttl_gaps = [fn for fn in persistent if not _has_persistent_ttl(fn['body'])]
+        ttl_hard = [fn for fn in ttl_gaps
+                    if _MUTATION.search(fn['body']) and not _calls_any(fn['body'], ttl_helpers)]
         def locations(items):
             return '; '.join(f"{fn['file']}:{fn['line']} {fn['name']}" for fn in items)
         if auth_gaps:
             findings.append(
                 self.finding(
                     "soroban-auth-missing",
-                    Severity.HIGH,
+                    Severity.HIGH if auth_hard else Severity.MEDIUM,
                     "Soroban authorization paths require review",
                     "Potentially mutating public functions lack a direct require_auth call in their own body. Authorization may exist in a helper or caller; this lexical review does not establish an exploitable authorization bypass.",
                     evidence=locations(auth_gaps),
@@ -160,7 +190,7 @@ class StellarNativeAuditor(BaseAuditor):
             findings.append(
                 self.finding(
                     "persistent-ttl",
-                    Severity.HIGH,
+                    Severity.HIGH if ttl_hard else Severity.MEDIUM,
                     "Persistent state lifetime paths require review",
                     "These public functions reference persistent storage without a recognized persistent-entry extend_ttl call in the same body. A helper or external maintenance policy may handle lifetime; its effectiveness was not verified.",
                     evidence=locations(ttl_gaps),
@@ -174,11 +204,13 @@ class StellarNativeAuditor(BaseAuditor):
             findings.append(
                 self.finding(
                     "temporary-critical-state",
-                    Severity.HIGH,
+                    Severity.MEDIUM,
                     "Kritik kayıt temporary storage kullanıyor olabilir",
-                    "Agent, validation veya escrow state'i süresi dolduğunda silinebilir.",
+                    "Agent, validation veya escrow state'i süresi dolduğunda silinebilir. "
+                    "Lexical signal: which keys live in temporary storage was not resolved.",
                     remediation="Kritik kayıtları persistent storage'a taşıyın; temporary yalnız cache/idempotency penceresi olsun.",
-                    confidence=0.82,
+                    grade=EvidenceGrade.INFERRED,
+                    confidence=0.7,
                 )
             )
 
@@ -226,11 +258,15 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
 
-        if re.search(r"tx[_ -]?hash.*(?:success|complete|confirmed)", lower):
+        # Only when nothing in the code checks the outcome (getTransaction status,
+        # `successful`, a SUCCESS comparison); a comment alone is weak evidence.
+        confirms = re.search(r"gettransaction\s*\(|get_transaction\s*\(|\.successful\b|"
+                             r"[\"']success[\"']|status\s*===?\s*[\"']success", lower)
+        if re.search(r"tx[_ -]?hash.*(?:success|complete|confirmed)", lower) and not confirms:
             findings.append(
                 self.finding(
                     "hash-is-not-confirmation",
-                    Severity.HIGH,
+                    Severity.MEDIUM,
                     "Transaction hash başarı kanıtı sayılıyor olabilir",
                     "Hash üretimi/yayın, ledger inclusion ve beklenen contract state/event anlamına gelmez.",
                     remediation="getTransaction sonucu, success status ve contract state/event readback birlikte doğrulansın.",
