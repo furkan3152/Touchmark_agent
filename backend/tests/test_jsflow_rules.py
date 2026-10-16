@@ -171,3 +171,16 @@ def test_masked_secrets_in_logs_are_not_secret_output():
     code = ('function maskSecret(s: string) { return s ? `${s.slice(0, 4)}...` : "(not set)"; }\n'
             'console.log(`secret: ${maskSecret(process.env.STELLAR_SECRET_KEY)}`);\n')
     assert not categories({"cli.ts": code}) & {"secret_possible", "secret_to_log", "secret_exfiltration"}
+
+
+def test_signers_supplied_by_the_caller_are_delegated_not_agent_authority():
+    sdk = ('export async function executeStep(signers: any, payload: any) {\n'
+           '  for (const transaction of payload.transactions) {\n'
+           '    const evm = signers.evm as EvmSigner;\n    await evm.sendTransaction(transaction);\n'
+           '    await signers.solana.signAndSendTransaction(transaction);\n  }\n}\n')
+    assert not categories({"execute.ts": sdk}) & {"financial", "foreign_signing"}
+    # A key this code holds is the agent's own authority.
+    agent = ('const kp = Keypair.fromSecret(process.env.AGENT_SECRET);\n'
+             'app.post("/sign", async (req, res) => { const tx = TransactionBuilder.fromXDR(req.body.xdr, NET);\n'
+             '  tx.sign(kp); res.json(await server.submitTransaction(tx)); });\n')
+    assert "foreign_signing" in categories({"agent.ts": agent})

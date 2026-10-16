@@ -240,7 +240,8 @@ class StellarNativeAuditor(BaseAuditor):
                              r"build_challenge|read_challenge|/auth\b", lower)
         # "Smart wallet" and "/auth" are generic (ERC-4337 wallets, any login route); the
         # boundary only exists when the code itself is Stellar code.
-        stellar_code = re.search(r"stellar[-_]sdk|@stellar/|soroban|\bsep-?10\b|challenge_transaction|\bhorizon\b|freighter|stellar-wallets-kit",
+        stellar_code = re.search(r"stellar[-_]sdk|@stellar/|soroban|\bsep-?10\b|challenge_transaction|horizon\.server|"
+                                 r"new\s+horizon\b|horizon[-.\w]*\.stellar\.org|freighter|stellar-wallets-kit",
                                  "\n".join(artifact.code_files.values()).lower())
         if contract_accounts and web_auth and stellar_code:
             if "sep-45" not in lower and "sep45" not in lower:
@@ -278,7 +279,8 @@ class StellarNativeAuditor(BaseAuditor):
                                  r"/transactions/\$\{|/transactions/\{|get_transaction\(|getTransaction\(", content)
             pays = re.search(r"\bamount\b", content) and re.search(r"destination|payTo|pay_to|\.to\b|recipient", content)
             verifies = re.search(r"verif|validat", name + content[:4000], re.I)
-            checks = re.search(r"\.successful\b|\[[\"']successful[\"']\]|[\"']SUCCESS[\"']|transaction_successful", content)
+            checks = re.search(r"\.successful\b|\[[\"']successful[\"']\]|[\"']SUCCESS[\"']|transaction_successful|"
+                               r"status\s*[!=]==?\s*[\"']success[\"']|[\"']success[\"']\s*[!=]==?\s*[\w.]*status", content)
             if looks_up and pays and verifies and not checks:
                 line = content[:looks_up.start()].count("\n") + 1
                 unchecked.append(f"{name}:{line}")

@@ -1459,6 +1459,13 @@ class _JsInterp:
                 self._cap("foreign_tx_signing", node)
                 self._flow("foreign_signing", node, entry, "an authorization entry derived from external input is signed")
             return entry
+        # A signer object the caller hands in (an EIP-1193 provider, a Wallet Standard
+        # account, an integrator's signer) and that carries no key from this code: whoever
+        # supplied it decides what it signs. The project itself holds no signing authority.
+        delegated = receiver_node is not None and receiver == {"caller"}
+        if delegated and (_SIGN_FOREIGN.search(label) or _SUBMIT.search("." + label)):
+            self._cap("delegated_signing", node)
+            return (args[0] if args else set()) | {"human_approved"}
         if _SIGN_FOREIGN.search(label):
             xdr = args[0] if args else set()
             if _WALLET_PROMPT.search(label) or (receiver_node is not None and _WALLET_PROMPT.search(_dotted(receiver_node))):

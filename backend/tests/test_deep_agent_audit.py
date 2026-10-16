@@ -110,9 +110,11 @@ def test_static_review_does_not_claim_attacks_were_executed(settings, run):
 
 def test_pattern_only_matches_in_comments_are_not_confirmed_execution(settings, run):
     verdict = run(SecurityAuditor(settings).run(_artifact("# Never use eval(user_input)\n"), deep=True))
-    candidates = [f for f in verdict.findings if f.id.startswith("security-code-")]
-    assert candidates
-    assert all(f.evidence_grade.value == "inferred" for f in candidates)
+    assert not [f for f in verdict.findings if f.id.startswith("security-code-")]
+    js = _artifact("x = 1\n")
+    js.code_files = {"a.ts": "/** The intent eval (engine v2): offline. */\n// eval(x) is banned\nconst NATIVE_TOKEN = \"0x0000000000000000000000000000000000000000\";\n"}
+    verdict = run(SecurityAuditor(settings).run(js, deep=True))
+    assert not [f for f in verdict.findings if f.id.startswith("security-code-")]
 
 
 def test_deep_traces_stellar_secret_seed_to_log(settings, run):

@@ -189,3 +189,16 @@ def test_source_outside_the_budget_keeps_analysis_incomplete():
     artifact = AgentArtifact(source_kind=SourceKind.REPO, name="big", code_files={"a.ts": "export const x = 1;\n"},
                              raw_metadata={"source_not_selected": ["src/auth.ts"]})
     assert "security-source-analysis-incomplete" in run(SecurityAuditor, artifact)
+
+
+def test_ci_floats_only_through_unpinned_actions_and_latest_images():
+    pinned = ("jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n"
+              "      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302\n"
+              "        with:\n          flavor: latest=auto\n          tags: [\"v*\"]\n")
+    def found(text):
+        artifact = AgentArtifact(source_kind=SourceKind.REPO, name="ci", lockfiles={"package-lock.json": "x"},
+                                 code_files={"a.ts": "export const a = 1;\n", ".github/workflows/ci.yml": text})
+        return "provenance-floating-dependencies" in run(ProvenanceAuditor, artifact)
+    assert not found(pinned)
+    assert found(pinned.replace("checkout@11d5960a326750d5838078e36cf38b85af677262", "checkout@v4"))
