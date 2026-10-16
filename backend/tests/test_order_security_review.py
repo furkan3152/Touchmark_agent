@@ -162,7 +162,8 @@ def test_delivery_for_another_credential_cannot_mark_order_delivered():
     order_id = 'a' * 64
     quote = {'agent_id': 'b' * 64, 'requester': WALLET, 'contracts': checkout.PINNED_CONTRACTS}
     order = {'id': order_id, 'quote': quote, 'checked_ledger': LEDGER}
-    result = {'report_sha256': 'c' * 64}
+    result = {'report_sha256': 'c' * 64,
+              'report_json': json.dumps({'review_decision': 'pass', 'result': {'overall_score': 80.0}})}
     publication = {'report_uri': 'https://reports.example/private/' + result['report_sha256']}
     delivery = {'schema': 'veritas.testnet-order-delivery/v1', 'status': 'delivered', 'network': 'testnet',
         'request_id': order_id, 'agent_id': quote['agent_id'], 'report_sha256': result['report_sha256'],
@@ -173,6 +174,25 @@ def test_delivery_for_another_credential_cannot_mark_order_delivered():
     with pytest.raises(orders.OrderError, match='exact report'):
         orders._validate_delivery(delivery, order, result, publication)
     delivery['token_id'] = order_id
+    orders._validate_delivery(delivery, order, result, publication)
+
+
+def test_failing_audit_delivery_must_not_claim_a_credential():
+    order_id = 'a' * 64
+    quote = {'agent_id': 'b' * 64, 'requester': WALLET, 'contracts': checkout.PINNED_CONTRACTS}
+    order = {'id': order_id, 'quote': quote, 'checked_ledger': LEDGER}
+    result = {'report_sha256': 'c' * 64,
+              'report_json': json.dumps({'review_decision': 'needs_fixes', 'result': {'overall_score': 39.0}})}
+    publication = {'report_uri': 'https://reports.example/private/' + result['report_sha256']}
+    delivery = {'schema': 'veritas.testnet-order-delivery/v1', 'status': 'delivered', 'network': 'testnet',
+        'request_id': order_id, 'agent_id': quote['agent_id'], 'report_sha256': result['report_sha256'],
+        'report_uri': publication['report_uri'], 'credential_contract_id': quote['contracts']['credential'],
+        'escrow_contract_id': quote['contracts']['escrow'], 'owner': WALLET, 'is_current': True,
+        'payment_state': 'Complete', 'independent_evaluator': False, 'checked_at_ledger': LEDGER + 1,
+        'token_id': order_id}
+    with pytest.raises(orders.OrderError, match='exact report'):
+        orders._validate_delivery(delivery, order, result, publication)
+    delivery.update(is_current=False, token_id=None)
     orders._validate_delivery(delivery, order, result, publication)
 
 

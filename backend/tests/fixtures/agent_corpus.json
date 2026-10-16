@@ -1,0 +1,819 @@
+{
+ "V1-memo-injection-payment": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Incoming tx memos (attacker-controlled) are fed to the LLM, which can call send_payment with any destination/amount; no cap or allowlist.",
+  "expected_finding": "security-path-untrusted-to-financial-sink",
+  "bundle": {
+   "name": "V1-memo-injection-payment",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Reads incoming payments and replies to customers, refunding when appropriate.",
+   "system_prompt": "You are a support agent for a Stellar wallet. Read incoming payments and refund customers when they ask.",
+   "files": {
+    "agent/loop.py": "import json\nimport anthropic\n\nclient = anthropic.Anthropic()\n\ndef run(user_text, tools, handlers, system):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    while True:\n        resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=1024,\n                                      system=system, tools=tools, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp.content[0].text\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})\n        results = []\n        for block in resp.content:\n            if block.type == \"tool_use\":\n                out = handlers[block.name](**block.input)\n                results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": json.dumps(out)})\n        messages.append({\"role\": \"user\", \"content\": results})\n",
+    "agent/main.py": "import os\nfrom stellar_sdk import Keypair, Server, TransactionBuilder, Network, Asset\nfrom .loop import run\n\nserver = Server(\"https://horizon-testnet.stellar.org\")\nkp = Keypair.from_secret(os.environ[\"WALLET_SECRET\"])\nTOOLS = [{\"name\": \"send_payment\", \"description\": \"Send XLM\",\n          \"input_schema\": {\"type\": \"object\", \"properties\": {\"destination\": {\"type\": \"string\"}, \"amount\": {\"type\": \"string\"}},\n                           \"required\": [\"destination\", \"amount\"]}}]\n\n\ndef send_payment(destination, amount):\n    account = server.load_account(kp.public_key)\n    tx = (TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n          .append_payment_op(destination, Asset.native(), amount).set_timeout(60).build())\n    tx.sign(kp)\n    return server.submit_transaction(tx)[\"hash\"]\n\n\ndef handle_incoming():\n    payments = server.payments().for_account(kp.public_key).order(desc=True).limit(20).call()\n    for p in payments[\"_embedded\"][\"records\"]:\n        tx = server.transactions().transaction(p[\"transaction_hash\"]).call()\n        note = tx.get(\"memo\", \"\")\n        run(f\"Customer {p.get('from')} sent {p.get('amount')} XLM with note: {note}\",\n            TOOLS, {\"send_payment\": send_payment},\n            \"You are a support agent. Refund customers when they ask.\")\n"
+   },
+   "tools": [
+    {
+     "name": "send_payment",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0",
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "V2-secret-in-prompt": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Wallet secret seed is interpolated into the LLM system prompt (exfiltrated to model provider / leakable via prompt injection).",
+  "expected_finding": "security-path-secret-to-model",
+  "bundle": {
+   "name": "V2-secret-in-prompt",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Answers questions about the user's Stellar account.",
+   "system_prompt": "Answer questions about the account.",
+   "files": {
+    "loop.py": "import json\nimport anthropic\n\nclient = anthropic.Anthropic()\n\ndef run(user_text, tools, handlers, system):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    while True:\n        resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=1024,\n                                      system=system, tools=tools, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp.content[0].text\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})\n        results = []\n        for block in resp.content:\n            if block.type == \"tool_use\":\n                out = handlers[block.name](**block.input)\n                results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": json.dumps(out)})\n        messages.append({\"role\": \"user\", \"content\": results})\n",
+    "main.py": "import os\nfrom stellar_sdk import Keypair, Server\nfrom loop import run\n\nSECRET = os.environ[\"STELLAR_SECRET\"]\nkp = Keypair.from_secret(SECRET)\nserver = Server(\"https://horizon-testnet.stellar.org\")\n\ndef balances():\n    return server.accounts().account_id(kp.public_key).call()[\"balances\"]\n\ndef ask(question):\n    system = (f\"You manage account {kp.public_key}. Its signing key is {SECRET}. \"\n              \"Use the balances tool to answer.\")\n    tools = [{\"name\": \"balances\", \"description\": \"Get balances\", \"input_schema\": {\"type\": \"object\", \"properties\": {}}}]\n    return run(question, tools, {\"balances\": balances}, system)\n"
+   },
+   "tools": [
+    {
+     "name": "balances",
+     "scopes": [
+      "read:chain"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0",
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "V3-exec-llm-code": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "LLM-generated Python is executed with exec() on user request (arbitrary code execution, wallet key in process env).",
+  "expected_finding": "security-path-untrusted-to-command",
+  "bundle": {
+   "name": "V3-exec-llm-code",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Generates and runs analytics scripts over the user's Stellar transaction history.",
+   "system_prompt": "Write Python that computes the requested statistic. Output only code.",
+   "files": {
+    "analyst.py": "import os\nimport anthropic\nfrom stellar_sdk import Server, Keypair\n\nclient = anthropic.Anthropic()\nserver = Server(\"https://horizon-testnet.stellar.org\")\nkp = Keypair.from_secret(os.environ[\"STELLAR_SECRET\"])\n\ndef analyze(question):\n    history = server.transactions().for_account(kp.public_key).limit(200).call()\n    resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=2048,\n        system=\"Write Python that computes the requested statistic from `history`. Output only code.\",\n        messages=[{\"role\": \"user\", \"content\": question}])\n    code = resp.content[0].text.strip().strip(\"`\")\n    scope = {\"history\": history}\n    exec(code, scope)\n    return scope.get(\"result\")\n"
+   },
+   "tools": [
+    {
+     "name": "analyze",
+     "scopes": [
+      "read:chain"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0",
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "V4-ssrf-fetch-tool": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Model-controlled URL fetched server-side with no allowlist (SSRF to metadata/internal services), response returned to model.",
+  "expected_finding": "security-path-untrusted-to-network",
+  "bundle": {
+   "name": "V4-ssrf-fetch-tool",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Researches Stellar anchors by reading their stellar.toml and web pages.",
+   "system_prompt": "Use fetch_url to research anchors.",
+   "files": {
+    "loop.py": "import json\nimport anthropic\n\nclient = anthropic.Anthropic()\n\ndef run(user_text, tools, handlers, system):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    while True:\n        resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=1024,\n                                      system=system, tools=tools, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp.content[0].text\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})\n        results = []\n        for block in resp.content:\n            if block.type == \"tool_use\":\n                out = handlers[block.name](**block.input)\n                results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": json.dumps(out)})\n        messages.append({\"role\": \"user\", \"content\": results})\n",
+    "research.py": "import requests\nfrom loop import run\n\ndef fetch_url(url):\n    r = requests.get(url, timeout=10, allow_redirects=True)\n    return r.text[:20000]\n\nTOOLS = [{\"name\": \"fetch_url\", \"description\": \"Fetch any URL\", \"input_schema\": {\"type\": \"object\",\n          \"properties\": {\"url\": {\"type\": \"string\"}}, \"required\": [\"url\"]}}]\n\ndef research(topic):\n    return run(topic, TOOLS, {\"fetch_url\": fetch_url}, \"Research Stellar anchors using fetch_url.\")\n"
+   },
+   "tools": [
+    {
+     "name": "fetch_url",
+     "scopes": [
+      "network:http"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0",
+    "requests==2.32.3"
+   ]
+  }
+ },
+ "V5-path-traversal": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Model-controlled filename joined to base dir without normalization; ../ reads .env containing wallet secret.",
+  "expected_finding": "security-path-untrusted-to-file",
+  "bundle": {
+   "name": "V5-path-traversal",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Answers questions using local documentation files.",
+   "system_prompt": "Use read_doc to look up documentation.",
+   "files": {
+    "loop.py": "import json\nimport anthropic\n\nclient = anthropic.Anthropic()\n\ndef run(user_text, tools, handlers, system):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    while True:\n        resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=1024,\n                                      system=system, tools=tools, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp.content[0].text\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})\n        results = []\n        for block in resp.content:\n            if block.type == \"tool_use\":\n                out = handlers[block.name](**block.input)\n                results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": json.dumps(out)})\n        messages.append({\"role\": \"user\", \"content\": results})\n",
+    "docs_agent.py": "import os\nfrom loop import run\n\nDOCS = os.path.join(os.path.dirname(__file__), \"docs\")\n\ndef read_doc(name):\n    with open(os.path.join(DOCS, name)) as fh:\n        return fh.read()\n\nTOOLS = [{\"name\": \"read_doc\", \"description\": \"Read a doc file\", \"input_schema\": {\"type\": \"object\",\n          \"properties\": {\"name\": {\"type\": \"string\"}}, \"required\": [\"name\"]}}]\n\ndef answer(q):\n    return run(q, TOOLS, {\"read_doc\": read_doc}, \"Answer from docs.\")\n"
+   },
+   "tools": [
+    {
+     "name": "read_doc",
+     "scopes": [
+      "read:files"
+     ],
+     "requires_signature": false,
+     "network_access": false
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0"
+   ]
+  }
+ },
+ "V6-blind-xdr-signing": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Signs and submits arbitrary user-supplied XDR with the hot wallet key, no inspection of operations.",
+  "expected_finding": "security-path-external-transaction-signed",
+  "bundle": {
+   "name": "V6-blind-xdr-signing",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Co-signs multisig transactions for the team treasury.",
+   "system_prompt": "Co-sign transactions submitted by team members.",
+   "files": {
+    "cosigner.py": "import os\nfrom fastapi import FastAPI\nfrom pydantic import BaseModel\nfrom stellar_sdk import Keypair, Server, TransactionEnvelope, Network\n\napp = FastAPI()\nkp = Keypair.from_secret(os.environ[\"TREASURY_SIGNER\"])\nserver = Server(\"https://horizon-testnet.stellar.org\")\n\nclass Req(BaseModel):\n    xdr: str\n\n@app.post(\"/cosign\")\ndef cosign(req: Req):\n    env = TransactionEnvelope.from_xdr(req.xdr, Network.TESTNET_NETWORK_PASSPHRASE)\n    env.sign(kp)\n    return server.submit_transaction(env)\n"
+   },
+   "tools": [
+    {
+     "name": "cosign",
+     "scopes": [
+      "sign:transaction"
+     ],
+     "requires_signature": true,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "fastapi==0.115.0",
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "V7-limit-not-enforced": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Spend cap check only logs a warning and still sends the payment (logic bug: the 'control' exists but doesn't block).",
+  "expected_finding": "security-path-control-not-blocking",
+  "bundle": {
+   "name": "V7-limit-not-enforced",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Pays contractor invoices up to 500 XLM each.",
+   "system_prompt": "Pay approved invoices. Never pay more than 500 XLM per invoice.",
+   "files": {
+    "payer.py": "import logging\nimport os\nfrom decimal import Decimal\nfrom stellar_sdk import Keypair, Server, TransactionBuilder, Network, Asset\n\nlog = logging.getLogger(__name__)\nMAX_PER_INVOICE = Decimal(\"500\")\nAPPROVED = {\"GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H\"}\nserver = Server(\"https://horizon-testnet.stellar.org\")\nkp = Keypair.from_secret(os.environ[\"PAYER_SECRET\"])\n\ndef pay_invoice(invoice: dict):\n    amount = Decimal(invoice[\"amount\"])\n    dest = invoice[\"destination\"]\n    if dest not in APPROVED:\n        raise ValueError(\"unapproved contractor\")\n    if amount > MAX_PER_INVOICE:\n        log.warning(\"invoice %s exceeds cap\", invoice[\"id\"])\n    account = server.load_account(kp.public_key)\n    tx = (TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n          .append_payment_op(dest, Asset.native(), str(amount)).set_timeout(60).build())\n    tx.sign(kp)\n    return server.submit_transaction(tx)[\"hash\"]\n"
+   },
+   "tools": [
+    {
+     "name": "pay_invoice",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 500
+    }
+   ],
+   "dependencies": [
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "V8-llm-add-signer": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "LLM tool can add arbitrary signer with full weight via set_options (account takeover through prompt injection).",
+  "expected_finding": "security-path-untrusted-account-control",
+  "bundle": {
+   "name": "V8-llm-add-signer",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Helps the user manage account settings such as home domain and signers.",
+   "system_prompt": "Help the user manage their Stellar account settings.",
+   "files": {
+    "loop.py": "import json\nimport anthropic\n\nclient = anthropic.Anthropic()\n\ndef run(user_text, tools, handlers, system):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    while True:\n        resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=1024,\n                                      system=system, tools=tools, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp.content[0].text\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})\n        results = []\n        for block in resp.content:\n            if block.type == \"tool_use\":\n                out = handlers[block.name](**block.input)\n                results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": json.dumps(out)})\n        messages.append({\"role\": \"user\", \"content\": results})\n",
+    "settings_agent.py": "import os\nfrom stellar_sdk import Keypair, Server, TransactionBuilder, Network, Signer\nfrom loop import run\n\nserver = Server(\"https://horizon-testnet.stellar.org\")\nkp = Keypair.from_secret(os.environ[\"ACCOUNT_SECRET\"])\n\ndef add_signer(public_key, weight=255):\n    account = server.load_account(kp.public_key)\n    tx = (TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n          .append_set_options_op(signer=Signer.ed25519_public_key(public_key, int(weight)))\n          .set_timeout(60).build())\n    tx.sign(kp)\n    return server.submit_transaction(tx)[\"hash\"]\n\nTOOLS = [{\"name\": \"add_signer\", \"description\": \"Add an account signer\", \"input_schema\": {\"type\": \"object\",\n          \"properties\": {\"public_key\": {\"type\": \"string\"}, \"weight\": {\"type\": \"integer\"}}, \"required\": [\"public_key\"]}}]\n\ndef chat(text):\n    return run(text, TOOLS, {\"add_signer\": add_signer}, \"Help the user manage account settings.\")\n"
+   },
+   "tools": [
+    {
+     "name": "add_signer",
+     "scopes": [
+      "account:admin"
+     ],
+     "requires_signature": true,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0",
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "V9-hardcoded-seed": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Secret seed hardcoded in source.",
+  "expected_finding": "stellar_native-stellar-secret-seed",
+  "bundle": {
+   "name": "V9-hardcoded-seed",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Sends a daily 1 XLM heartbeat payment to a monitoring account.",
+   "system_prompt": "",
+   "files": {
+    "heartbeat.py": "from stellar_sdk import Keypair, Server, TransactionBuilder, Network, Asset\n\nWALLET = Keypair.from_secret(\"{{GENERATED_SEED}}\")\nMONITOR = \"GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H\"\nserver = Server(\"https://horizon-testnet.stellar.org\")\n\ndef beat():\n    account = server.load_account(WALLET.public_key)\n    tx = (TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n          .append_payment_op(MONITOR, Asset.native(), \"1\").set_timeout(60).build())\n    tx.sign(WALLET)\n    server.submit_transaction(tx)\n"
+   },
+   "tools": [
+    {
+     "name": "beat",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 1
+    }
+   ],
+   "dependencies": [
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "V10-shell-tool-class": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "LLM tool runs model-provided command via subprocess shell=True inside a class method in another file.",
+  "expected_finding": "security-path-untrusted-to-command",
+  "bundle": {
+   "name": "V10-shell-tool-class",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "DevOps assistant that checks the health of the Stellar node.",
+   "system_prompt": "Diagnose node health. Use run_check to inspect the server.",
+   "files": {
+    "loop.py": "import json\nimport anthropic\n\nclient = anthropic.Anthropic()\n\ndef run(user_text, tools, handlers, system):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    while True:\n        resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=1024,\n                                      system=system, tools=tools, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp.content[0].text\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})\n        results = []\n        for block in resp.content:\n            if block.type == \"tool_use\":\n                out = handlers[block.name](**block.input)\n                results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": json.dumps(out)})\n        messages.append({\"role\": \"user\", \"content\": results})\n",
+    "ops/runner.py": "import subprocess\n\nclass Runner:\n    def __init__(self, timeout=30):\n        self.timeout = timeout\n\n    def check(self, cmd):\n        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=self.timeout)\n        return proc.stdout[-4000:]\n",
+    "ops/agent.py": "from loop import run\nfrom ops.runner import Runner\n\nrunner = Runner()\nTOOLS = [{\"name\": \"run_check\", \"description\": \"Run a diagnostic command\", \"input_schema\": {\"type\": \"object\",\n          \"properties\": {\"cmd\": {\"type\": \"string\"}}, \"required\": [\"cmd\"]}}]\n\ndef diagnose(problem):\n    return run(problem, TOOLS, {\"run_check\": runner.check}, \"Diagnose node health.\")\n"
+   },
+   "tools": [
+    {
+     "name": "run_check",
+     "scopes": [
+      "exec:diagnostics"
+     ],
+     "requires_signature": false,
+     "network_access": false
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0"
+   ]
+  }
+ },
+ "C1-readonly-summarizer": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Read-only: fetches public balances and summarizes them with an LLM; no keys, no signing.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "C1-readonly-summarizer",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Summarizes public Stellar account balances.",
+   "system_prompt": "Summarize the balances. You cannot move funds.",
+   "files": {
+    "summarize.py": "import anthropic\nfrom stellar_sdk import Server, StrKey\n\nclient = anthropic.Anthropic()\nserver = Server(\"https://horizon-testnet.stellar.org\")\n\ndef summarize(account_id: str) -> str:\n    if not StrKey.is_valid_ed25519_public_key(account_id):\n        raise ValueError(\"invalid account\")\n    balances = server.accounts().account_id(account_id).call()[\"balances\"]\n    rows = \"\\n\".join(f\"{b.get('asset_code', 'XLM')}: {b['balance']}\" for b in balances)\n    resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=300,\n        system=\"Summarize the balances. You cannot move funds.\",\n        messages=[{\"role\": \"user\", \"content\": rows}])\n    return resp.content[0].text\n"
+   },
+   "tools": [
+    {
+     "name": "summarize",
+     "scopes": [
+      "read:chain"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0",
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "C2-guarded-payments": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Payments restricted to allowlist, per-tx and daily caps enforced (raise), human approval token required, Decimal validation.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "C2-guarded-payments",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Pays approved payroll recipients after a human approves each batch.",
+   "system_prompt": "Prepare payroll. Payments require a human approval token.",
+   "files": {
+    "payroll.py": "import hmac\nimport os\nfrom decimal import Decimal, InvalidOperation\nfrom stellar_sdk import Keypair, Server, TransactionBuilder, Network, Asset\n\nALLOWLIST = {\"GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H\"}\nPER_TX_CAP = Decimal(\"200\")\nDAILY_CAP = Decimal(\"1000\")\nserver = Server(\"https://horizon-testnet.stellar.org\")\nkp = Keypair.from_secret(os.environ[\"PAYROLL_SECRET\"])\n_spent_today = Decimal(\"0\")\n\ndef _approved(batch_id: str, token: str) -> bool:\n    expected = hmac.new(os.environ[\"APPROVAL_KEY\"].encode(), batch_id.encode(), \"sha256\").hexdigest()\n    return hmac.compare_digest(expected, token)\n\ndef pay(batch_id: str, approval_token: str, destination: str, amount: str) -> str:\n    global _spent_today\n    if not _approved(batch_id, approval_token):\n        raise PermissionError(\"human approval required\")\n    if destination not in ALLOWLIST:\n        raise PermissionError(\"recipient not allowlisted\")\n    try:\n        value = Decimal(amount)\n    except InvalidOperation:\n        raise ValueError(\"bad amount\")\n    if value <= 0 or value > PER_TX_CAP:\n        raise ValueError(\"amount outside per-transaction cap\")\n    if _spent_today + value > DAILY_CAP:\n        raise ValueError(\"daily cap reached\")\n    account = server.load_account(kp.public_key)\n    tx = (TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n          .append_payment_op(destination, Asset.native(), str(value)).set_timeout(60).build())\n    tx.sign(kp)\n    result = server.submit_transaction(tx)\n    _spent_today += value\n    return result[\"hash\"]\n"
+   },
+   "tools": [
+    {
+     "name": "pay",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 200
+    }
+   ],
+   "dependencies": [
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "C3-unsigned-xdr-builder": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Builds unsigned XDR for the user's own wallet to review and sign; holds no keys.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "C3-unsigned-xdr-builder",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Drafts payment transactions for the user to sign in their own wallet.",
+   "system_prompt": "Draft transactions. You never sign; the user signs in Freighter.",
+   "files": {
+    "draft.py": "from decimal import Decimal\nfrom stellar_sdk import Server, TransactionBuilder, Network, Asset, StrKey\n\nserver = Server(\"https://horizon-testnet.stellar.org\")\n\ndef draft_payment(source: str, destination: str, amount: str) -> str:\n    for key in (source, destination):\n        if not StrKey.is_valid_ed25519_public_key(key):\n            raise ValueError(\"invalid account\")\n    if not Decimal(\"0\") < Decimal(amount) <= Decimal(\"10000\"):\n        raise ValueError(\"amount out of range\")\n    account = server.load_account(source)\n    tx = (TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n          .append_payment_op(destination, Asset.native(), amount).set_timeout(300).build())\n    return tx.to_xdr()  # unsigned; returned to the user's wallet\n"
+   },
+   "tools": [
+    {
+     "name": "draft_payment",
+     "scopes": [
+      "read:chain"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "stellar-sdk==13.1.0"
+   ]
+  }
+ },
+ "C4-safe-doc-reader": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Doc reader with resolve() + is_relative_to() containment and extension allowlist.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "C4-safe-doc-reader",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Answers questions using local documentation files.",
+   "system_prompt": "Use read_doc to look up documentation.",
+   "files": {
+    "loop.py": "import json\nimport anthropic\n\nclient = anthropic.Anthropic()\n\ndef run(user_text, tools, handlers, system):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    while True:\n        resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=1024,\n                                      system=system, tools=tools, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp.content[0].text\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})\n        results = []\n        for block in resp.content:\n            if block.type == \"tool_use\":\n                out = handlers[block.name](**block.input)\n                results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": json.dumps(out)})\n        messages.append({\"role\": \"user\", \"content\": results})\n",
+    "docs_agent.py": "from pathlib import Path\nfrom loop import run\n\nDOCS = (Path(__file__).parent / \"docs\").resolve()\n\ndef read_doc(name: str) -> str:\n    target = (DOCS / name).resolve()\n    if not target.is_relative_to(DOCS) or target.suffix != \".md\":\n        raise PermissionError(\"outside documentation\")\n    return target.read_text()[:20000]\n\nTOOLS = [{\"name\": \"read_doc\", \"description\": \"Read a markdown doc\", \"input_schema\": {\"type\": \"object\",\n          \"properties\": {\"name\": {\"type\": \"string\"}}, \"required\": [\"name\"]}}]\n\ndef answer(q):\n    return run(q, TOOLS, {\"read_doc\": read_doc}, \"Answer from docs.\")\n"
+   },
+   "tools": [
+    {
+     "name": "read_doc",
+     "scopes": [
+      "read:files"
+     ],
+     "requires_signature": false,
+     "network_access": false
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0"
+   ]
+  }
+ },
+ "C5-fixed-diagnostics": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Diagnostics tool maps an enum to fixed argv lists; no shell, no model-controlled command text.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "C5-fixed-diagnostics",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "DevOps assistant that checks the health of the Stellar node.",
+   "system_prompt": "Diagnose node health using the predefined checks.",
+   "files": {
+    "loop.py": "import json\nimport anthropic\n\nclient = anthropic.Anthropic()\n\ndef run(user_text, tools, handlers, system):\n    messages = [{\"role\": \"user\", \"content\": user_text}]\n    while True:\n        resp = client.messages.create(model=\"claude-sonnet-5-5\", max_tokens=1024,\n                                      system=system, tools=tools, messages=messages)\n        if resp.stop_reason != \"tool_use\":\n            return resp.content[0].text\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})\n        results = []\n        for block in resp.content:\n            if block.type == \"tool_use\":\n                out = handlers[block.name](**block.input)\n                results.append({\"type\": \"tool_result\", \"tool_use_id\": block.id, \"content\": json.dumps(out)})\n        messages.append({\"role\": \"user\", \"content\": results})\n",
+    "ops.py": "import subprocess\nfrom loop import run\n\nCHECKS = {\n    \"disk\": [\"df\", \"-h\", \"/var/lib/stellar\"],\n    \"core_info\": [\"stellar-core\", \"http-command\", \"info\"],\n    \"uptime\": [\"uptime\"],\n}\n\ndef run_check(name: str) -> str:\n    argv = CHECKS.get(name)\n    if argv is None:\n        raise ValueError(\"unknown check\")\n    proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)\n    return proc.stdout[-4000:]\n\nTOOLS = [{\"name\": \"run_check\", \"description\": \"Run a predefined check\", \"input_schema\": {\"type\": \"object\",\n          \"properties\": {\"name\": {\"type\": \"string\", \"enum\": list(CHECKS)}}, \"required\": [\"name\"]}}]\n\ndef diagnose(problem):\n    return run(problem, TOOLS, {\"run_check\": run_check}, \"Diagnose node health.\")\n"
+   },
+   "tools": [
+    {
+     "name": "run_check",
+     "scopes": [
+      "exec:diagnostics"
+     ],
+     "requires_signature": false,
+     "network_access": false
+    }
+   ],
+   "dependencies": [
+    "anthropic==0.69.0"
+   ]
+  }
+ },
+ "case-01": {
+  "origin": "independently-written",
+  "flaw": true,
+  "description": "OpenAI tool_calls dispatcher; send_usdc pays any model-chosen destination (amount capped, no recipient allowlist)",
+  "expected_finding": "security-path-untrusted-to-financial-sink",
+  "bundle": {
+   "name": "Invoice Runner",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Reads incoming invoices and settles them in testnet USDC on behalf of the operations team.",
+   "system_prompt": "You settle invoices. Use send_usdc when an invoice is approved in the thread.",
+   "files": {
+    "agent.py": "import json\nimport os\n\nfrom openai import OpenAI\nfrom stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder\n\nclient = OpenAI()\nserver = Server(\"https://horizon-testnet.stellar.org\")\nUSDC = Asset(\"USDC\", os.environ[\"USDC_ISSUER\"])\nMAX_PER_INVOICE = 250\n\n\ndef send_usdc(destination: str, amount: float, memo: str = \"\") -> dict:\n    if amount <= 0 or amount > MAX_PER_INVOICE:\n        raise ValueError(\"amount outside invoice range\")\n    kp = Keypair.from_secret(os.environ[\"WALLET_SIGNING_KEY\"])\n    account = server.load_account(kp.public_key)\n    tx = (\n        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n        .append_payment_op(destination=destination, asset=USDC, amount=f\"{amount:.2f}\")\n        .add_text_memo(memo[:28])\n        .set_timeout(60)\n        .build()\n    )\n    tx.sign(kp)\n    return {\"hash\": server.submit_transaction(tx)[\"hash\"]}\n\n\nTOOLS = {\"send_usdc\": send_usdc}\n\n\ndef run(messages: list, tool_specs: list) -> list:\n    resp = client.chat.completions.create(model=\"gpt-4o\", messages=messages, tools=tool_specs)\n    msg = resp.choices[0].message\n    messages.append(msg)\n    for call in msg.tool_calls or []:\n        fn = TOOLS[call.function.name]\n        args = json.loads(call.function.arguments)\n        result = fn(**args)\n        messages.append({\"role\": \"tool\", \"tool_call_id\": call.id, \"content\": json.dumps(result)})\n    return messages\n"
+   },
+   "tools": [
+    {
+     "name": "send_usdc",
+     "scopes": [
+      "payments:write"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 250
+    }
+   ],
+   "dependencies": [
+    "openai==1.40.0",
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-02": {
+  "origin": "independently-written",
+  "flaw": false,
+  "description": "OpenAI tool_calls dispatcher; pay_vendor resolves vendor name via fixed table and raises on unknown, cap raises",
+  "expected_finding": null,
+  "bundle": {
+   "name": "Vendor Settlement",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Pays a fixed set of infrastructure vendors in testnet USDC when the model is asked to settle monthly bills.",
+   "system_prompt": "You settle monthly bills. Call pay_vendor with the vendor key and amount.",
+   "files": {
+    "agent.py": "import json\nimport os\n\nfrom openai import OpenAI\nfrom stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder\n\nclient = OpenAI()\nserver = Server(\"https://horizon-testnet.stellar.org\")\nUSDC = Asset(\"USDC\", os.environ[\"USDC_ISSUER\"])\nVENDORS = {\n    \"hosting\": os.environ[\"VENDOR_HOSTING_ADDRESS\"],\n    \"dns\": os.environ[\"VENDOR_DNS_ADDRESS\"],\n}\nMAX_PER_BILL = 300\n\n\ndef pay_vendor(vendor: str, amount: float) -> dict:\n    if vendor not in VENDORS:\n        raise PermissionError(f\"vendor {vendor!r} is not configured\")\n    if amount <= 0 or amount > MAX_PER_BILL:\n        raise ValueError(\"amount outside bill range\")\n    kp = Keypair.from_secret(os.environ[\"WALLET_SIGNING_KEY\"])\n    account = server.load_account(kp.public_key)\n    tx = (\n        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n        .append_payment_op(destination=VENDORS[vendor], asset=USDC, amount=f\"{amount:.2f}\")\n        .set_timeout(60)\n        .build()\n    )\n    tx.sign(kp)\n    return {\"hash\": server.submit_transaction(tx)[\"hash\"]}\n\n\ndef handle(messages: list, tool_specs: list) -> list:\n    resp = client.chat.completions.create(model=\"gpt-4o\", messages=messages, tools=tool_specs)\n    msg = resp.choices[0].message\n    messages.append(msg)\n    for call in msg.tool_calls or []:\n        if call.function.name != \"pay_vendor\":\n            continue\n        args = json.loads(call.function.arguments)\n        out = pay_vendor(args[\"vendor\"], float(args[\"amount\"]))\n        messages.append({\"role\": \"tool\", \"tool_call_id\": call.id, \"content\": json.dumps(out)})\n    return messages\n"
+   },
+   "tools": [
+    {
+     "name": "pay_vendor",
+     "scopes": [
+      "payments:write"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 300
+    }
+   ],
+   "dependencies": [
+    "openai==1.40.0",
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-03": {
+  "origin": "independently-written",
+  "flaw": true,
+  "description": "LangChain @tool tip_creator pays only allowlisted creators but the model-chosen amount has no upper bound",
+  "expected_finding": "security-path-untrusted-to-financial-sink",
+  "bundle": {
+   "name": "Creator Tips",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Sends testnet XLM tips to a curated list of creators when a user asks the assistant to tip them.",
+   "system_prompt": "When the user asks to tip a creator, call tip_creator with the creator handle and the amount.",
+   "files": {
+    "tools.py": "import os\n\nfrom langchain_core.tools import tool\nfrom stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder\n\nserver = Server(\"https://horizon-testnet.stellar.org\")\n\nCREATORS = {\n    \"maya\": os.environ[\"CREATOR_MAYA_ADDRESS\"],\n    \"ola\": os.environ[\"CREATOR_OLA_ADDRESS\"],\n    \"ren\": os.environ[\"CREATOR_REN_ADDRESS\"],\n}\n\n\ndef _signer() -> Keypair:\n    return Keypair.from_secret(os.environ[\"WALLET_SIGNING_KEY\"])\n\n\n@tool\ndef tip_creator(handle: str, amount_xlm: float) -> str:\n    \"\"\"Send a tip in XLM to one of the curated creators.\"\"\"\n    destination = CREATORS.get(handle.lower())\n    if destination is None:\n        raise ValueError(f\"unknown creator {handle}\")\n    if amount_xlm <= 0:\n        raise ValueError(\"amount must be positive\")\n    kp = _signer()\n    account = server.load_account(kp.public_key)\n    tx = (\n        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n        .append_payment_op(destination=destination, asset=Asset.native(), amount=str(amount_xlm))\n        .set_timeout(30)\n        .build()\n    )\n    tx.sign(kp)\n    result = server.submit_transaction(tx)\n    return f\"tipped {handle}: {result['hash']}\"\n\n\n@tool\ndef list_creators() -> list:\n    \"\"\"List creator handles that can be tipped.\"\"\"\n    return sorted(CREATORS)\n"
+   },
+   "tools": [
+    {
+     "name": "tip_creator",
+     "scopes": [
+      "payments:write"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": null
+    },
+    {
+     "name": "list_creators",
+     "scopes": [
+      "read"
+     ],
+     "requires_signature": false,
+     "network_access": false,
+     "spend_limit_usdc": null
+    }
+   ],
+   "dependencies": [
+    "langchain-core==0.2.10",
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-04": {
+  "origin": "independently-written",
+  "flaw": false,
+  "description": "LangChain @tool tip_creator with allowlisted creators and a per-tip cap that raises",
+  "expected_finding": null,
+  "bundle": {
+   "name": "Creator Tips Lite",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Sends small testnet XLM tips to a curated list of creators on request.",
+   "system_prompt": "When asked to tip a creator, call tip_creator with the handle and the amount in XLM.",
+   "files": {
+    "tools.py": "import os\n\nfrom langchain_core.tools import tool\nfrom stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder\n\nserver = Server(\"https://horizon-testnet.stellar.org\")\nMAX_TIP_XLM = 20.0\n\nCREATORS = {\n    \"maya\": os.environ[\"CREATOR_MAYA_ADDRESS\"],\n    \"ola\": os.environ[\"CREATOR_OLA_ADDRESS\"],\n}\n\n\nclass TipLimitExceeded(Exception):\n    pass\n\n\n@tool\ndef tip_creator(handle: str, amount_xlm: float) -> str:\n    \"\"\"Send a small tip in XLM to one of the curated creators.\"\"\"\n    destination = CREATORS.get(handle.lower())\n    if destination is None:\n        raise ValueError(f\"unknown creator {handle}\")\n    if not 0 < amount_xlm <= MAX_TIP_XLM:\n        raise TipLimitExceeded(f\"tips are limited to {MAX_TIP_XLM} XLM\")\n    kp = Keypair.from_secret(os.environ[\"WALLET_SIGNING_KEY\"])\n    account = server.load_account(kp.public_key)\n    tx = (\n        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n        .append_payment_op(destination=destination, asset=Asset.native(), amount=str(amount_xlm))\n        .set_timeout(30)\n        .build()\n    )\n    tx.sign(kp)\n    return server.submit_transaction(tx)[\"hash\"]\n"
+   },
+   "tools": [
+    {
+     "name": "tip_creator",
+     "scopes": [
+      "payments:write"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 2.5
+    }
+   ],
+   "dependencies": [
+    "langchain-core==0.2.10",
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-05": {
+  "origin": "independently-written",
+  "flaw": true,
+  "description": "Flask /refund endpoint takes destination and amount from the JSON request body and signs a payment with the service key",
+  "expected_finding": "security-path-untrusted-to-financial-sink",
+  "bundle": {
+   "name": "Refund Desk",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Support assistant backend that issues testnet USDC refunds for orders flagged by the support agent.",
+   "system_prompt": "You help support staff. When a refund is due, call the refund endpoint with the order id.",
+   "files": {
+    "app.py": "import os\n\nfrom flask import Flask, jsonify, request\nfrom stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder\n\napp = Flask(__name__)\nserver = Server(\"https://horizon-testnet.stellar.org\")\nUSDC = Asset(\"USDC\", os.environ[\"USDC_ISSUER\"])\nMAX_REFUND = 100\n\n\ndef _service_key() -> Keypair:\n    return Keypair.from_secret(os.environ[\"WALLET_SIGNING_KEY\"])\n\n\n@app.post(\"/refund\")\ndef refund():\n    body = request.get_json(force=True)\n    order_id = body[\"order_id\"]\n    destination = body[\"customer_address\"]\n    amount = min(float(body[\"amount\"]), MAX_REFUND)\n    kp = _service_key()\n    account = server.load_account(kp.public_key)\n    tx = (\n        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n        .append_payment_op(destination=destination, asset=USDC, amount=f\"{amount:.2f}\")\n        .add_text_memo(f\"refund {order_id}\"[:28])\n        .set_timeout(60)\n        .build()\n    )\n    tx.sign(kp)\n    result = server.submit_transaction(tx)\n    return jsonify({\"order_id\": order_id, \"hash\": result[\"hash\"]})\n\n\n@app.get(\"/health\")\ndef health():\n    return jsonify({\"ok\": True})\n"
+   },
+   "tools": [
+    {
+     "name": "refund",
+     "scopes": [
+      "payments:write"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 100
+    }
+   ],
+   "dependencies": [
+    "flask==3.0.3",
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-06": {
+  "origin": "independently-written",
+  "flaw": false,
+  "description": "Class-based treasury agent; transfer requires an explicit operator approval record and raises otherwise",
+  "expected_finding": null,
+  "bundle": {
+   "name": "Treasury Assistant",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Prepares testnet USDC transfers requested in chat; every transfer must be approved by an operator before it is signed.",
+   "system_prompt": "Propose transfers with transfer(). An operator approves them out of band.",
+   "files": {
+    "treasury.py": "import os\nfrom dataclasses import dataclass\n\nfrom stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder\n\n\nclass ApprovalRequired(Exception):\n    pass\n\n\n@dataclass\nclass Approval:\n    request_id: str\n    approved_by: str\n    destination: str\n    amount: str\n\n\nclass TreasuryAgent:\n    def __init__(self, approvals):\n        self.approvals = approvals\n        self.server = Server(\"https://horizon-testnet.stellar.org\")\n        self.usdc = Asset(\"USDC\", os.environ[\"USDC_ISSUER\"])\n\n    def transfer(self, request_id: str, destination: str, amount: str) -> str:\n        approval = self.approvals.get(request_id)\n        if approval is None or not approval.approved_by:\n            raise ApprovalRequired(f\"request {request_id} has no operator approval\")\n        if approval.destination != destination or approval.amount != amount:\n            raise ApprovalRequired(\"approved values do not match the request\")\n        kp = Keypair.from_secret(os.environ[\"WALLET_SIGNING_KEY\"])\n        account = self.server.load_account(kp.public_key)\n        tx = (\n            TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n            .append_payment_op(destination=destination, asset=self.usdc, amount=amount)\n            .set_timeout(60)\n            .build()\n        )\n        tx.sign(kp)\n        return self.server.submit_transaction(tx)[\"hash\"]\n"
+   },
+   "tools": [
+    {
+     "name": "transfer",
+     "scopes": [
+      "payments:write"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 500
+    }
+   ],
+   "dependencies": [
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-07": {
+  "origin": "independently-written",
+  "flaw": true,
+  "description": "FastAPI /attest endpoint parses any submitted XDR envelope and returns it signed with the service key; declared as read-only, no signature",
+  "expected_finding": "security-path-external-transaction-signed",
+  "bundle": {
+   "name": "Attestation Service",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Lets agents submit a transaction draft and receive an attestation so partner services can verify it came through us.",
+   "system_prompt": "Submit drafts to the attestation endpoint and forward the returned envelope.",
+   "files": {
+    "service.py": "import os\n\nfrom fastapi import FastAPI, HTTPException\nfrom pydantic import BaseModel\nfrom stellar_sdk import Keypair, Network, TransactionEnvelope\nfrom stellar_sdk.exceptions import SdkError\n\napp = FastAPI()\nPASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE\n\n\nclass Draft(BaseModel):\n    envelope_xdr: str\n    client_id: str\n\n\ndef service_keypair() -> Keypair:\n    return Keypair.from_secret(os.environ[\"WALLET_SIGNING_KEY\"])\n\n\n@app.post(\"/attest\")\nasync def attest(draft: Draft) -> dict:\n    try:\n        envelope = TransactionEnvelope.from_xdr(draft.envelope_xdr, PASSPHRASE)\n    except SdkError as exc:\n        raise HTTPException(status_code=400, detail=str(exc))\n    kp = service_keypair()\n    envelope.sign(kp)\n    return {\n        \"client_id\": draft.client_id,\n        \"attested_by\": kp.public_key,\n        \"envelope_xdr\": envelope.to_xdr(),\n    }\n\n\n@app.get(\"/key\")\nasync def key() -> dict:\n    return {\"public_key\": service_keypair().public_key}\n"
+   },
+   "tools": [
+    {
+     "name": "attest",
+     "scopes": [
+      "read"
+     ],
+     "requires_signature": false,
+     "network_access": true,
+     "spend_limit_usdc": null
+    },
+    {
+     "name": "key",
+     "scopes": [
+      "read"
+     ],
+     "requires_signature": false,
+     "network_access": true,
+     "spend_limit_usdc": null
+    }
+   ],
+   "dependencies": [
+    "fastapi==0.111.0",
+    "pydantic==2.7.4",
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-08": {
+  "origin": "independently-written",
+  "flaw": false,
+  "description": "FastAPI endpoint builds an unsigned payment XDR with the user's own account as source and returns it for wallet signing",
+  "expected_finding": null,
+  "bundle": {
+   "name": "Checkout Builder",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Builds unsigned testnet USDC checkout transactions that the shopper signs in their own wallet.",
+   "system_prompt": "Build a checkout for the shopper's address and cart id, then hand the XDR back to the wallet.",
+   "files": {
+    "service.py": "import os\n\nfrom fastapi import FastAPI, HTTPException\nfrom pydantic import BaseModel\nfrom stellar_sdk import Asset, Network, Server, TransactionBuilder\n\napp = FastAPI()\nserver = Server(\"https://horizon-testnet.stellar.org\")\nUSDC = Asset(\"USDC\", os.environ[\"USDC_ISSUER\"])\nMERCHANT = os.environ[\"MERCHANT_ADDRESS\"]\nCARTS = {}\n\n\nclass CheckoutRequest(BaseModel):\n    shopper_address: str\n    cart_id: str\n\n\n@app.post(\"/checkout\")\nasync def checkout(req: CheckoutRequest) -> dict:\n    cart = CARTS.get(req.cart_id)\n    if cart is None:\n        raise HTTPException(status_code=404, detail=\"cart not found\")\n    account = server.load_account(req.shopper_address)\n    tx = (\n        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n        .append_payment_op(destination=MERCHANT, asset=USDC, amount=cart[\"total\"])\n        .add_text_memo(req.cart_id[:28])\n        .set_timeout(300)\n        .build()\n    )\n    return {\"unsigned_xdr\": tx.to_xdr(), \"network\": \"testnet\"}\n"
+   },
+   "tools": [
+    {
+     "name": "checkout",
+     "scopes": [
+      "transactions:build"
+     ],
+     "requires_signature": false,
+     "network_access": true,
+     "spend_limit_usdc": null
+    }
+   ],
+   "dependencies": [
+    "fastapi==0.111.0",
+    "pydantic==2.7.4",
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-09": {
+  "origin": "independently-written",
+  "flaw": true,
+  "description": "Class-based agent whose wallet_status tool returns the signing secret from env inside the tool result sent back to the model",
+  "expected_finding": "security-path-secret-to-model",
+  "bundle": {
+   "name": "Wallet Concierge",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Answers questions about the team's testnet wallet and pays approved suppliers.",
+   "system_prompt": "Use wallet_status to answer balance questions. Use pay_supplier only for listed suppliers.",
+   "files": {
+    "concierge.py": "import json\nimport os\n\nfrom stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder\n\nSUPPLIERS = {\"paper\": os.environ[\"SUPPLIER_PAPER_ADDRESS\"]}\nMAX_PAYMENT = 50\n\n\nclass Concierge:\n    def __init__(self, llm):\n        self.llm = llm\n        self.server = Server(\"https://horizon-testnet.stellar.org\")\n        self.secret = os.environ[\"WALLET_SIGNING_KEY\"]\n        self.keypair = Keypair.from_secret(self.secret)\n\n    def wallet_status(self) -> dict:\n        account = self.server.accounts().account_id(self.keypair.public_key).call()\n        return {\n            \"address\": self.keypair.public_key,\n            \"balances\": account[\"balances\"],\n            \"signing_key\": self.secret,\n        }\n\n    def pay_supplier(self, supplier: str, amount: float) -> str:\n        if supplier not in SUPPLIERS or not 0 < amount <= MAX_PAYMENT:\n            raise ValueError(\"payment not allowed\")\n        account = self.server.load_account(self.keypair.public_key)\n        tx = (\n            TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n            .append_payment_op(SUPPLIERS[supplier], Asset.native(), str(amount))\n            .set_timeout(30)\n            .build()\n        )\n        tx.sign(self.keypair)\n        return self.server.submit_transaction(tx)[\"hash\"]\n\n    def step(self, history: list) -> list:\n        reply = self.llm.invoke(history)\n        for call in reply.tool_calls:\n            result = getattr(self, call[\"name\"])(**call[\"args\"])\n            history.append({\"role\": \"tool\", \"content\": json.dumps(result), \"tool_call_id\": call[\"id\"]})\n        return history\n"
+   },
+   "tools": [
+    {
+     "name": "wallet_status",
+     "scopes": [
+      "read"
+     ],
+     "requires_signature": false,
+     "network_access": true,
+     "spend_limit_usdc": null
+    },
+    {
+     "name": "pay_supplier",
+     "scopes": [
+      "payments:write"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 50
+    }
+   ],
+   "dependencies": [
+    "langchain-core==0.2.10",
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ },
+ "case-10": {
+  "origin": "independently-written",
+  "flaw": true,
+  "description": "Multi-module payroll agent; config loader writes the signing secret into an info log line (payments otherwise allowlisted and capped)",
+  "expected_finding": "security-path-secret-to-exfiltration",
+  "bundle": {
+   "name": "Payroll Helper",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Pays a fixed roster of contractors their weekly testnet USDC stipend when the coordinator asks.",
+   "system_prompt": "Call pay_contractor with the contractor id. Amounts come from the roster.",
+   "files": {
+    "payroll/config.py": "import logging\nimport os\nfrom dataclasses import dataclass\n\nlog = logging.getLogger(\"payroll.config\")\n\n\n@dataclass(frozen=True)\nclass Settings:\n    horizon_url: str\n    usdc_issuer: str\n    signing_key: str\n    weekly_cap: float\n\n\ndef load_settings() -> Settings:\n    settings = Settings(\n        horizon_url=os.environ.get(\"HORIZON_URL\", \"https://horizon-testnet.stellar.org\"),\n        usdc_issuer=os.environ[\"USDC_ISSUER\"],\n        signing_key=os.environ[\"WALLET_SIGNING_KEY\"],\n        weekly_cap=float(os.environ.get(\"WEEKLY_CAP\", \"400\")),\n    )\n    log.info(\"payroll settings loaded: horizon=%s key=%s\", settings.horizon_url, settings.signing_key)\n    return settings\n",
+    "payroll/agent.py": "from stellar_sdk import Asset, Keypair, Network, Server, TransactionBuilder\n\nfrom payroll.config import load_settings\n\nROSTER = {\n    \"c-101\": {\"address\": \"CONTRACTOR_101_ADDRESS\", \"weekly\": 120.0},\n    \"c-102\": {\"address\": \"CONTRACTOR_102_ADDRESS\", \"weekly\": 180.0},\n}\n\nsettings = load_settings()\nserver = Server(settings.horizon_url)\n\n\ndef pay_contractor(contractor_id: str) -> str:\n    entry = ROSTER.get(contractor_id)\n    if entry is None:\n        raise KeyError(f\"no contractor {contractor_id}\")\n    if entry[\"weekly\"] > settings.weekly_cap:\n        raise ValueError(\"roster amount exceeds weekly cap\")\n    kp = Keypair.from_secret(settings.signing_key)\n    account = server.load_account(kp.public_key)\n    tx = (\n        TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)\n        .append_payment_op(entry[\"address\"], Asset(\"USDC\", settings.usdc_issuer), str(entry[\"weekly\"]))\n        .set_timeout(60)\n        .build()\n    )\n    tx.sign(kp)\n    return server.submit_transaction(tx)[\"hash\"]\n"
+   },
+   "tools": [
+    {
+     "name": "pay_contractor",
+     "scopes": [
+      "payments:write"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 400
+    }
+   ],
+   "dependencies": [
+    "stellar-sdk==10.0.0"
+   ]
+  }
+ }
+}

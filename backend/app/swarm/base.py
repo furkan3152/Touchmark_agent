@@ -17,7 +17,7 @@ from ..models import (
 )
 
 from .llm import LlmClient
-from .policy import AUDIT_POLICY_VERSION
+from .policy import AUDIT_POLICY_VERSION, classify_finding
 
 
 class BaseAuditor(ABC):
@@ -174,7 +174,7 @@ class BaseAuditor(ABC):
             if finding.evidence_grade is EvidenceGrade.CONFIRMED and not finding.evidence.strip():
                 finding = finding.model_copy(update={"evidence_grade": EvidenceGrade.INFERRED})
                 downgraded += 1
-            calibrated.append(finding)
+            calibrated.append(classify_finding(finding))
 
         scenario_ids: set[str] = set()
         for scenario in scenarios:
@@ -220,22 +220,23 @@ class BaseAuditor(ABC):
     def score_from(findings: list[Finding], scenarios: list[ScenarioResult]) -> float:
         """100'den ceza düşer.
 
-        Ceza kanıt derecesine göre ölçeklenir (Finding.penalty). Aynı bulgu ailesi
-        tekrar ettiğinde azalan getiri uygulanır, aksi halde tek bir zayıf sinyal
-        sınıfı skoru tek başına sıfıra çeker.
+        Risks are penalised in full and warnings at a quarter (evidence gaps have zero
+        penalty), scaled by evidence grade. Repeated findings of one severity have diminishing returns.
+        Only scenarios that were actually executed against the agent count.
         """
         score = 100.0
         seen_per_severity: dict[str, int] = {}
-        for f in sorted(findings, key=lambda x: -x.penalty):
+        for f in sorted((f for f in findings if f.penalty > 0), key=lambda x: -x.penalty):
             n = seen_per_severity.get(f.severity.value, 0)
             decay = 1.0 / (1.0 + 0.45 * n)  # 1.00, 0.69, 0.53, 0.43 …
             score -= f.penalty * decay
             seen_per_severity[f.severity.value] = n + 1
-        if scenarios:
+        executed = [scenario for scenario in scenarios if scenario.executed]
+        if executed:
             failed_weight = sum(
                 scenario.evidence_grade.penalty_multiplier
-                for scenario in scenarios
+                for scenario in executed
                 if not scenario.passed
             )
-            score -= (failed_weight / len(scenarios)) * 20.0
+            score -= (failed_weight / len(executed)) * 20.0
         return round(max(0.0, min(100.0, score)), 1)
