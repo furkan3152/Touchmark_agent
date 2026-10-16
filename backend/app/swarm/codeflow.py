@@ -109,6 +109,9 @@ class CodeProfile:
     entrypoints: dict[str, str] = field(default_factory=dict)
     unparsed: list[str] = field(default_factory=list)
     unbounded_amounts: list[Location] = field(default_factory=list)
+    #: Files covered by data-flow analysis (Python or JS/TS). Authority found in any
+    #: other file can only be judged by reading it.
+    analysed_files: list[str] = field(default_factory=list)
     error: str = ""
 
     def has(self, capability: str) -> bool:
@@ -124,6 +127,7 @@ class CodeProfile:
             "nonblocking_controls": [loc.render() for loc in self.nonblocking_controls[:5]],
             "unbounded_amounts": [loc.render() for loc in self.unbounded_amounts[:5]],
             "unparsed_files": sorted(self.unparsed),
+            "analysed_files": sorted(self.analysed_files),
             "error": self.error,
         }
 
@@ -693,7 +697,8 @@ class _Interp:
             return every | {"external"}
         if _LLM_CALL.search("." + label):
             self._cap("llm_call", node)
-            leaked = every | receiver
+            # The client object holds the provider API key; only the request content reaches the model.
+            leaked = every
             if "secret" in leaked:
                 self._flow("secret_to_model", node, leaked, "secret material is placed in a model request")
             return {"model"}
@@ -1060,7 +1065,12 @@ def analyse_code(files: dict[str, str], entrypoints: dict[str, set[str]] | None 
         try:
             project = _Project(files, entrypoints)
             profile = project.run()
-            _js_profile(files, profile)
+            profile.analysed_files = sorted(project.module_of.values())
+            from .jsflow import analyse_js
+            js_done = analyse_js(files, profile, entrypoints)
+            profile.analysed_files = sorted(set(profile.analysed_files) | set(js_done))
+            # Lexical inventory only for JS/TS files the data-flow analysis could not parse.
+            _js_profile({p: c for p, c in files.items() if p not in js_done}, profile)
             _custody_to_signing(profile)
         except (RecursionError, ValueError, TypeError, AttributeError, KeyError, IndexError) as exc:
             # Never fail open: an unanalysable submission is reported and cannot pass.

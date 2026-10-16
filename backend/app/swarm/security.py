@@ -31,6 +31,7 @@ from .attacks import (
 from .base import BaseAuditor
 from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
+from .capabilities import code_enforced_spend_limit
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
 DANGEROUS_TOOL_NAMES = ("shell", "exec", "bash", "eval", "python", "run_code", "subprocess")
@@ -336,7 +337,7 @@ class SecurityAuditor(BaseAuditor):
                 "Data-flow analysis did not cover all submitted source, so capabilities and paths in "
                 "that code are unknown. The review cannot pass until the source is analysable.",
                 evidence=(", ".join(profile.get("unparsed_files", [])) or profile.get("error", ""))[:2000],
-                remediation="Submit syntactically valid Python 3 source within the size limits.",
+                remediation="Submit syntactically valid Python, JavaScript or TypeScript source within the size limits, or run the deep review, which closes this gap only after reading every unparsed file.",
                 grade=EvidenceGrade.CONFIRMED,
                 confidence=0.9,
             ))
@@ -367,6 +368,8 @@ class SecurityAuditor(BaseAuditor):
             if t.requires_signature or any(s in SIGNING_SCOPES for s in t.scopes)
         ]
         unlimited = [t.name for t in signing_tools if t.spend_limit_usdc is None]
+        if unlimited and code_enforced_spend_limit(artifact):
+            unlimited = []  # the source caps every untrusted payment; see capabilities.py
         if unlimited:
             out.append(
                 self.finding(
