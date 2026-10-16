@@ -328,15 +328,20 @@ class SecurityAuditor(BaseAuditor):
                 confidence=0.95,
             ))
         profile = artifact.code_profile
-        incomplete = profile.get("unparsed_files") or profile.get("error")
+        not_selected = list(artifact.raw_metadata.get("source_not_selected") or [])
+        incomplete = profile.get("unparsed_files") or profile.get("error") or not_selected
         if incomplete:
+            evidence = ", ".join(profile.get("unparsed_files", [])) or profile.get("error", "")
+            if not_selected:
+                evidence = (evidence + "; " if evidence else "") + (
+                    f"{len(not_selected)} source file(s) outside the review budget: " + ", ".join(not_selected[:40]))
             out.append(self.finding(
                 "source-analysis-incomplete",
                 Severity.MEDIUM,
                 "Part of the source could not be analysed",
-                "Data-flow analysis did not cover all submitted source, so capabilities and paths in "
+                "Data-flow analysis did not cover all source, so capabilities and paths in "
                 "that code are unknown. The review cannot pass until the source is analysable.",
-                evidence=(", ".join(profile.get("unparsed_files", [])) or profile.get("error", ""))[:2000],
+                evidence=evidence[:2000],
                 remediation="Submit syntactically valid Python, JavaScript or TypeScript source within the size limits, or run the deep review, which closes this gap only after reading every unparsed file.",
                 grade=EvidenceGrade.CONFIRMED,
                 confidence=0.9,

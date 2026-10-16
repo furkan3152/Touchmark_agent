@@ -238,7 +238,11 @@ class StellarNativeAuditor(BaseAuditor):
         contract_accounts = "contract account" in lower or "smart account" in lower or "smart wallet" in lower
         web_auth = re.search(r"sep-?10\b|\bweb[ _-]?auth\b|challenge transaction|challenge_transaction|"
                              r"build_challenge|read_challenge|/auth\b", lower)
-        if contract_accounts and web_auth:
+        # "Smart wallet" and "/auth" are generic (ERC-4337 wallets, any login route); the
+        # boundary only exists when the code itself is Stellar code.
+        stellar_code = re.search(r"stellar[-_]sdk|@stellar/|soroban|\bsep-?10\b|challenge_transaction|\bhorizon\b|freighter|stellar-wallets-kit",
+                                 "\n".join(artifact.code_files.values()).lower())
+        if contract_accounts and web_auth and stellar_code:
             if "sep-45" not in lower and "sep45" not in lower:
                 findings.append(
                     self.finding(

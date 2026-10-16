@@ -54,6 +54,18 @@ _LLM_CALL = re.compile(r"\.messages\.(?:create|stream)$|\.chat\.completions\.cre
 _HTTP_CALL = re.compile(r"^(?:fetch|axios|got|ky|undici\.request|undici\.fetch|node-fetch|request)$|"
                         r"^(?:axios|got|ky|superagent|needle)\.(?:get|post|put|patch|delete|head|request)$|"
                         r"^(?:http|https)\.(?:request|get)$")
+# An address classifier: an IP block list or a private/loopback/link-local range check.
+_ADDRESS_FILTER = re.compile(r"\bnew\s+BlockList\b|\.addSubnet\(|\bis(?:Private|Public|Loopback|LinkLocal|Reserved)"
+                             r"(?:Address|Ip|IP|Destination)?\s*\(|ipaddr\.(?:parse|process)\b|\.range\(\)|"
+                             r"\bprivate-ip\b|\bis-ip-private\b")
+_PINNED_AGENT = re.compile(r"lookup|RequestFilteringAgent|ssrf", re.I)
+#: Built-in globals. `JSON.parse` is never a project method that happens to be named `parse`.
+_JS_GLOBALS = frozenset({
+    "JSON", "Object", "Math", "Array", "Promise", "Number", "String", "Boolean", "Date", "RegExp", "Error",
+    "Buffer", "console", "process", "Reflect", "Proxy", "crypto", "URL", "URLSearchParams", "Intl", "BigInt",
+    "Symbol", "Map", "Set", "WeakMap", "WeakSet", "window", "document", "globalThis", "self", "navigator",
+    "localStorage", "sessionStorage", "Atomics", "TextEncoder", "TextDecoder", "Headers", "Response", "Request",
+    "performance", "structuredClone", "AbortSignal", "ArrayBuffer", "Uint8Array", "DataView", "Iterator"})
 _CHAIN_READ = re.compile(r"\.(?:transactions|payments|operations|effects|trades|claimableBalances)\b.*\.call$|"
                          r"\.(?:getEvents|getTransaction|getTransactions|getLedgerEntries|getContractData)$")
 _COMMAND_SINK = re.compile(r"^(?:eval|Function)$|^child_process\.(?:exec|execSync|spawn|spawnSync|execFile|execFileSync|fork)$|"
@@ -75,12 +87,16 @@ _SUBMIT = re.compile(r"\.(?:submitTransaction|sendTransaction|submitAsyncTransac
 _SOROBAN_SINK = re.compile(r"(?:^|\.)(?:invoke|invoke_contract|invokeContract|invokeContractFunction|callContract)$|^token\.transfer$")
 _WALLET_PROMPT = re.compile(r"freighter|wallets?[-_]?kit|WalletsKit|walletKit|@creit|albedo|xbull|lobstr|rabet|hana|"
                             r"walletConnect|^browserwallet\.", re.I)
+#: Functions whose output hides a secret (masking, redaction, one-way hashing).
+_MASKING = re.compile(r"^(?:mask|redact|obfuscate|truncate|fingerprint|sha256|hash)\w*$", re.I)
+#: Values that are the user's browser wallet: Wallet Standard features and injected providers.
+_BROWSER_WALLET = re.compile(r"^\w+\.features\[[^\]]+\]|^(?:window\.)?(?:ethereum|solana|phantom\.solana|freighterApi)\b")
 #: React hooks that hand out the connected browser wallet's functions.
 _WALLET_HOOK = re.compile(r"^use(?:\w*Wallet\w*|Freighter|Stellar\w*|Albedo|Kit)$")
 _SIGN_FOREIGN = re.compile(r"(?:^|\.)(?:signTransaction|signAuthEntry|signXdr|signAndSubmit|signAndSend\w*|signAndSendTransaction)$")
 _AUTHORIZE = re.compile(r"(?:^|\.)(?:authorizeEntry|authorizeInvocation)$")
 _APPROVAL_CALL = re.compile(r"approv|authori[sz]|verify|confirm|permi(?:t|ssion)|allowed|isAllowed|checkAuth|requireAuth", re.I)
-_SECRET_ARG = re.compile(r"secret|seed|mnemonic|private_?key|privateKey|signing_?key|signingKey|^sk$", re.I)
+_SECRET_ARG = re.compile(r"secret|^seed$|seed_?phrase|mnemonic|private_?key|privateKey|signing_?key|signingKey|^sk$", re.I)
 #: x402 / MPP client wrappers that pay whatever a 402 response asks unless given a ceiling.
 _X402_PAYER = re.compile(r"(?:^|\.)(?:wrapFetchWithPayment\w*|withPaymentInterceptor|wrapAxiosWithPayment\w*|"
                          r"createPayingFetch|createPaymentFetch)$")
@@ -267,6 +283,7 @@ class JsProject:
         self.schemas: dict[str, dict[str, dict[str, str]]] = {}  # module -> schema const -> constraints
         self.class_attrs: dict[str, dict[str, set[str]]] = {}
         self.wallet_names: dict[str, set[str]] = {}
+        self._owners: dict[str, list[str]] | None = None
         self.declared_entry = entrypoints or {}
         self._propagated = False
         parsers = _parsers()
@@ -359,7 +376,13 @@ class JsProject:
             return self.by_node[nk]
         key = f"{module.path}:{(cls + '.') if cls else ''}{name}"
         if key in self.functions:
-            key = f"{key}@{node.start_point[0] + 1}"
+            # Several anonymous functions on one line (`a.filter((x) => x.some((y) => …))`)
+            # need distinct keys; a reused key would make a function its own parent.
+            base, n = f"{key}@{node.start_point[0] + 1}", 1
+            key = base
+            while key in self.functions:
+                n += 1
+                key = f"{base}#{n}"
         params_node = node.child_by_field_name("parameters") or node.child_by_field_name("parameter")
         params: list = []
         if params_node is not None:
@@ -540,6 +563,7 @@ class JsProject:
                     self._add_function(module, value, mname, name, None)
                     methods.add(mname)
         module.classes[name] = methods
+        self._owners = None
 
     def _index_object(self, module: _Module, name: str, obj) -> None:
         table: dict[str, str] = {}
@@ -555,6 +579,10 @@ class JsProject:
                 key = self.by_node.get((module.path, child.start_byte, child.end_byte))
                 if key is None:
                     name = child.child_by_field_name("name")
+                    holder = node if node.type == "variable_declarator" else None
+                    if name is None and holder is not None and (holder.child_by_field_name("name") or node).type == "identifier":
+                        # `const safePath = (p) => …` inside a function is callable by that name.
+                        name = holder.child_by_field_name("name")
                     label = _txt(name) if name is not None else f"<anonymous@{child.start_point[0] + 1}>"
                     key = self._add_function(module, child, label, None, parent)
                 elif parent is not None and self.functions[key].parent is None and self.functions[key].cls is None:
@@ -771,8 +799,9 @@ class JsProject:
             return self.by_node.get((module.path, callee.start_byte, callee.end_byte))
         if callee.type == "identifier":
             name = _txt(callee)
-            scope = fn
-            while scope is not None:
+            scope, seen = fn, set()
+            while scope is not None and scope.key not in seen:
+                seen.add(scope.key)
                 key = self.local_functions.get(scope.key, {}).get(name)
                 if key:
                     return key
@@ -808,13 +837,23 @@ class JsProject:
                     local = other.exports.get(sym, sym) if other else sym
                     if other and local in other.objects and prop in other.objects[local]:
                         return other.objects[local][prop]
-                if target.startswith("lib:"):
+                if target.startswith("lib:") or (not target and name in _JS_GLOBALS):
                     return None
-            owners = [f"{m.path}:{c}" for m in self.modules.values() for c, methods in m.classes.items() if prop in methods]
+            owners = self._method_owners().get(prop, [])
             if len(owners) == 1 and prop not in {"constructor", "call", "apply", "bind", "then", "catch", "finally",
                                                  "get", "set", "has", "push", "map", "filter", "forEach", "toString"}:
                 return f"{owners[0]}.{prop}"
         return None
+
+    def _method_owners(self) -> dict[str, list[str]]:
+        """Method name -> classes defining it (classes are fixed once modules are indexed)."""
+        if self._owners is None:
+            self._owners = {}
+            for m in self.modules.values():
+                for c, methods in m.classes.items():
+                    for method in methods:
+                        self._owners.setdefault(method, []).append(f"{m.path}:{c}")
+        return self._owners
 
     def _imported(self, module: _Module, name: str) -> str | None:
         target = module.imports.get(name, "")
@@ -1034,13 +1073,18 @@ class _JsInterp:
         callee = _unwrap(callee)
         if callee is not None and callee.type == "identifier" and head in self.aliases:
             return self.aliases[head]
-        if callee is not None and callee.type == "identifier" and head in self.p.wallet_names.get(self.module.path, set()):
-            return "browserwallet." + head
+        if callee is not None and head in self.p.wallet_names.get(self.module.path, set()):
+            return "browserwallet." + label
         target = self.module.imports.get(head, "")
         if target.startswith("lib:"):
             expanded = target[4:].strip(".")
             return expanded + ("." + rest if rest else "")
         return label
+
+    def _model_entry(self) -> bool:
+        """Inside a tool handler the model calls. Elsewhere a model-tainted object (a stored
+        record looked up by a model-chosen id) does not mean the model supplied its fields."""
+        return self.fn is not None and self.fn.key in self.p.model_entries
 
     def _cap(self, name: str, node) -> None:
         if self.record:
@@ -1123,7 +1167,16 @@ class _JsInterp:
             self.assign(node.child_by_field_name("left"), value, state, None)
             return value
         if t == "ternary_expression":
-            return self.tags(node.child_by_field_name("consequence"), state) | self.tags(node.child_by_field_name("alternative"), state)
+            # `inside(base, p) ? p : null` checks like an if statement: each branch runs only
+            # when its side of the condition holds.
+            cond = node.child_by_field_name("condition")
+            self.tags(cond, state)
+            when_true = {k: set(v) for k, v in state.items()}
+            self.assume(cond, True, when_true, node=node)
+            when_false = {k: set(v) for k, v in state.items()}
+            self.assume(cond, False, when_false, node=node)
+            return (self.tags(node.child_by_field_name("consequence"), when_true)
+                    | self.tags(node.child_by_field_name("alternative"), when_false))
         if t in {"binary_expression"}:
             op = _txt(node.child_by_field_name("operator"))
             left = self.tags(node.child_by_field_name("left"), state)
@@ -1176,7 +1229,7 @@ class _JsInterp:
             # Whoever starts the process chooses argv: the operator, or an agent driving a CLI skill.
             return {"caller"}
         base = self.tags(obj, state)
-        if "model" in base and _SECRET_ARG.search(prop) and "signer" not in base:
+        if "model" in base and _SECRET_ARG.search(prop) and "signer" not in base and self._model_entry():
             # A secret read out of model-supplied arguments: the key passed through the model.
             self._flow("secret_via_model", node, {"model", "secret"}, f"tool argument `{prop}` carries a secret key")
             return base | {"secret"}
@@ -1217,6 +1270,9 @@ class _JsInterp:
                 self.p.propagate(fk, [every | receiver] * max(1, len(self.p.entry[fk])))
                 self.p.called.add(fk)
 
+        if _MASKING.match(short):
+            # maskSecret(s) -> "SABC…WXYZ": what it prints is not the secret.
+            return every - {"secret", "secret_possible"}
         key = self.p.resolve(self.module, callee, self.fn, self.local_types)
         if key and _SIGN_FOREIGN.search(label) and not _WALLET_PROMPT.search(label):
             # A thin project wrapper named signTransaction / signAndSubmit still signs the
@@ -1264,6 +1320,9 @@ class _JsInterp:
         # ---- sources
         if label.endswith("Keypair.fromSecret") or short in {"fromSecret", "fromRawEd25519Seed"} and "Keypair" in label:
             self._cap("key_custody", node)
+            if args and "model" in args[0]:
+                # Wherever it happens: a key the model supplied becomes the signing key.
+                self._flow("secret_via_model", node, {"model", "secret"}, "a model-supplied value is used as a signing key")
             return {"signer"}
         if label.endswith("Keypair.random"):
             return {"signer", "fresh"}
@@ -1307,7 +1366,7 @@ class _JsInterp:
             url_tags = self.tags(url, state) if url is not None else set()
             host_tags = self.tags(self._url_head(url), state) if url is not None else set()
             untrusted_host = bool(host_tags & (UNTRUSTED - {"caller"})) and not self._fixed_host(url) \
-                and "host_fixed" not in url_tags
+                and "host_fixed" not in url_tags and not self._pinned_destination(arg_nodes[1:])
             if untrusted_host:
                 self._flow("ssrf", node, url_tags, "request URL is not fixed to an allowed host")
             # An API key in an Authorization header to a fixed host is normal use; a secret in
@@ -1479,6 +1538,25 @@ class _JsInterp:
             return args[0] if args else None
         return url
 
+    def _pinned_destination(self, option_nodes) -> bool:
+        """The connection is pinned to an address the code checked: a `lookup` (or an agent or
+        dispatcher built with one) in a module, or a module it imports, that classifies
+        addresses as private or public. Resolving once, checking, then connecting to that
+        address is the standard SSRF control and also defeats DNS rebinding."""
+        pinned = False
+        for a in option_nodes:
+            for prop, value in _props(_unwrap(a)).items():
+                if prop == "lookup" or (prop in {"agent", "dispatcher", "httpAgent", "httpsAgent"}
+                                        and _PINNED_AGENT.search(_txt(value))):
+                    pinned = True
+        if not pinned:
+            return False
+        sources = [self.module.path] + [target.split(":", 1)[0] for target in self.module.imports.values()
+                                        if not target.startswith(("lib:", "module:"))] + \
+                  [target[7:] for target in self.module.imports.values() if target.startswith("module:")]
+        return any(_ADDRESS_FILTER.search("\n".join(self.p.modules[path].lines))
+                   for path in dict.fromkeys(sources) if path in self.p.modules)
+
     @staticmethod
     def _fixed_host(url) -> bool:
         url = _unwrap(url)
@@ -1552,6 +1630,16 @@ class _JsInterp:
                 self.assume(left, truth, state, node=node)
                 self.assume(right, truth, state, node=node)
                 return
+            if op in {"&&", "||"}:
+                # One of the two holds: a value is clean only if both branches clean it.
+                branches = []
+                for side in (left, right):
+                    copy = {k: set(v) for k, v in state.items()}
+                    self.assume(side, truth, copy, node=node)
+                    branches.append(copy)
+                for name in set(branches[0]) | set(branches[1]):
+                    state[name] = branches[0].get(name, set()) | branches[1].get(name, set())
+                return
             if op in {"<", "<=", ">", ">="}:
                 upper_left = (op in {"<", "<="}) == truth  # left <= right holds
                 value, bound = (left, right) if upper_left else (right, left)
@@ -1569,7 +1657,8 @@ class _JsInterp:
                         continue
                     side_u = _unwrap(side)
                     if side_u is not None and side_u.type in {"identifier", "member_expression"}:
-                        if self.approved or not self.tags(other, state) & UNTRUSTED:
+                        # Equal to a trusted value, or to one the function's own caller chose.
+                        if self.approved or not self.tags(other, state) & (UNTRUSTED - {"caller"}):
                             self._checked(side, state)
                             self._control("value_binding", node)
                 return
@@ -1726,7 +1815,7 @@ class _JsInterp:
                 if prop.type == "shorthand_property_identifier_pattern":
                     name = _txt(prop)
                     tags = set(state.get(f"{source_key}.{name}", value)) if source_key else set(value)
-                    if "model" in tags and _SECRET_ARG.search(name) and "signer" not in tags:
+                    if "model" in tags and _SECRET_ARG.search(name) and "signer" not in tags and self._model_entry():
                         self._flow("secret_via_model", prop, {"model", "secret"}, f"tool argument `{name}` carries a secret key")
                         tags |= {"secret"}
                     kind = constraints.get(name)
@@ -1811,6 +1900,10 @@ class _JsInterp:
                                 # Callbacks defined in the component use the same function.
                                 self.p.wallet_names.setdefault(self.module.path, set()).add(_txt(prop))
                 else:
+                    if name is not None and name.type == "identifier" and v is not None and _BROWSER_WALLET.search(_txt(v)):
+                        # A Wallet Standard feature or an injected provider: the user's wallet
+                        # shows the transaction and asks for approval.
+                        self.p.wallet_names.setdefault(self.module.path, set()).add(_txt(name))
                     self.assign(name, value, state, value_node)
             return
         if t == "expression_statement":
