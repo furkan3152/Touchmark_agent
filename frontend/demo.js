@@ -45,7 +45,7 @@
   function render(data) {
     current = data;
     $("result").hidden = false;
-    $("score").textContent = data.score;
+    $("score").textContent = Number(data.score).toFixed(1);
     $("ring").style.strokeDashoffset = String(327 - 327 * Math.max(0, Math.min(100, data.score)) / 100);
     $("ring").style.stroke = data.decision === "pass" ? "var(--green)" : data.decision === "needs_fixes" ? "var(--red)" : "var(--amber)";
     const decision = $("decision");
@@ -71,6 +71,18 @@
     const gaps = $("gaps"); gaps.textContent = "";
     data.gaps.forEach((f) => gaps.append(finding(f)));
     $("gap-count").textContent = `(${(data.counts || {}).gaps || 0})`;
+
+    const b = data.breakdown || {};
+    const rows = $("why").querySelector("tbody"); rows.textContent = "";
+    (b.deductions || []).forEach((d) => rows.append(el("tr", {},
+      el("td", {}, el("span", { text: d.title || d.id }), d.restates ? el("div", { class: "restated", text: "same root cause as above: counted at 30%" }) : null),
+      el("td", { class: "sev-" + d.severity, text: d.severity }),
+      el("td", { text: String(d.places || 1) }),
+      el("td", { text: "−" + Number(d.deduction).toFixed(1) }))));
+    if (!(b.deductions || []).length) rows.append(el("tr", {}, el("td", { text: "No risk found" }), el("td"), el("td"), el("td", { text: "0" })));
+    $("why-sum").textContent = `(${Number(b.total_deduction || 0).toFixed(1)} risk points → ${b.raw_score ?? data.score}${b.score !== b.raw_score ? " → " + b.score : ""})`;
+    $("why-formula").textContent = "Each finding costs severity (critical 30, high 14, medium 6, low 2) × evidence (confirmed 1, inferred 0.6) × confidence × spread (more affected places, up to ×1.75). Score = 100 × e^(−risk points / 100)" + (b.band ? "; " + b.band + "." : ".");
+    $("why-box").open = data.decision !== "pass";
 
     $("report-hash").textContent = data.report_sha256;
     $("cred-done").hidden = true;
