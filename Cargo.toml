@@ -3,6 +3,8 @@ resolver = "2"
 members = [
   "contracts/agent-registry",
   "contracts/audit-escrow",
+  "contracts/audit-credential",
+  "contracts/agent-account",
 ]
 
 [workspace.dependencies]

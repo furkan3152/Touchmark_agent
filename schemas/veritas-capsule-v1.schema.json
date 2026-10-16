@@ -1,0 +1,535 @@
+{
+  "$defs": {
+    "AuditSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "default": "quick",
+          "enum": [
+            "quick",
+            "standard",
+            "deep"
+          ],
+          "title": "Tier",
+          "type": "string"
+        },
+        "modules": {
+          "items": {
+            "enum": [
+              "intent",
+              "injection",
+              "tools",
+              "privacy",
+              "financial",
+              "resilience",
+              "stellar",
+              "provenance"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Modules",
+          "type": "array"
+        }
+      },
+      "title": "AuditSelection",
+      "type": "object"
+    },
+    "Capability": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,47}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "component": {
+          "maxLength": 48,
+          "minLength": 1,
+          "title": "Component",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "read",
+            "write",
+            "transfer",
+            "sign",
+            "delegate",
+            "request"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "resource": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Resource",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "action",
+        "resource"
+      ],
+      "title": "Capability",
+      "type": "object"
+    },
+    "CapsuleScenario": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,39}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "module": {
+          "enum": [
+            "intent",
+            "injection",
+            "tools",
+            "privacy",
+            "financial",
+            "resilience",
+            "stellar",
+            "provenance"
+          ],
+          "title": "Module",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        },
+        "fixtures": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Fixtures",
+          "type": "array"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "expectations": {
+          "items": {
+            "$ref": "#/$defs/Outcome"
+          },
+          "maxItems": 8,
+          "title": "Expectations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "module",
+        "steps"
+      ],
+      "title": "CapsuleScenario",
+      "type": "object"
+    },
+    "Commitments": {
+      "additionalProperties": false,
+      "properties": {
+        "source_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Source Sha256",
+          "type": "string"
+        },
+        "policy_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Policy Sha256",
+          "type": "string"
+        },
+        "capsule_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Capsule Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_sha256",
+        "policy_sha256",
+        "capsule_sha256"
+      ],
+      "title": "Commitments",
+      "type": "object"
+    },
+    "Dependency": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[0-9][A-Za-z0-9_.+!-]{0,79}$",
+          "title": "Version",
+          "type": "string"
+        },
+        "distribution_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Distribution Sha256"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Dependency",
+      "type": "object"
+    },
+    "Environment": {
+      "additionalProperties": false,
+      "properties": {
+        "python_version": {
+          "default": "3",
+          "pattern": "^3(?:\\.(?:11|12|13|14))?$",
+          "title": "Python Version",
+          "type": "string"
+        },
+        "network": {
+          "const": "deny_all",
+          "default": "deny_all",
+          "title": "Network",
+          "type": "string"
+        },
+        "credential_mode": {
+          "const": "none",
+          "default": "none",
+          "title": "Credential Mode",
+          "type": "string"
+        },
+        "dependencies": {
+          "items": {
+            "$ref": "#/$defs/Dependency"
+          },
+          "maxItems": 40,
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "required_environment_names": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Required Environment Names",
+          "type": "array"
+        }
+      },
+      "title": "Environment",
+      "type": "object"
+    },
+    "Fixture": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,39}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "capability": {
+          "maxLength": 48,
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "tool_result",
+            "memory_record",
+            "dependency_error"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "capability",
+        "kind",
+        "content"
+      ],
+      "title": "Fixture",
+      "type": "object"
+    },
+    "Outcome": {
+      "additionalProperties": false,
+      "properties": {
+        "step": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Step",
+          "type": "integer"
+        },
+        "operator": {
+          "enum": [
+            "contains",
+            "excludes",
+            "equals",
+            "json_equals"
+          ],
+          "title": "Operator",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Value"
+        },
+        "json_path": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Json Path",
+          "type": "array"
+        }
+      },
+      "required": [
+        "operator",
+        "value"
+      ],
+      "title": "Outcome",
+      "type": "object"
+    },
+    "Policy": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "const": "deny",
+          "type": "string",
+          "default": "deny",
+          "title": "Default"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/Rule"
+          },
+          "maxItems": 20,
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "title": "Policy",
+      "type": "object"
+    },
+    "Rule": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "maxLength": 48,
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "allow": {
+          "default": false,
+          "title": "Allow",
+          "type": "boolean"
+        },
+        "approval_required": {
+          "default": true,
+          "title": "Approval Required",
+          "type": "boolean"
+        },
+        "max_calls": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Calls",
+          "type": "integer"
+        },
+        "max_amount": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Amount"
+        },
+        "asset": {
+          "default": "",
+          "maxLength": 160,
+          "title": "Asset",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability"
+      ],
+      "title": "Rule",
+      "type": "object"
+    },
+    "SourcePack": {
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 12,
+          "minProperties": 1,
+          "title": "Files",
+          "type": "object"
+        },
+        "file_sha256": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 12,
+          "minProperties": 1,
+          "title": "File Sha256",
+          "type": "object"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "files",
+        "file_sha256",
+        "sha256"
+      ],
+      "title": "SourcePack",
+      "type": "object"
+    },
+    "Subject": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "purpose": {
+          "maxLength": 2000,
+          "minLength": 12,
+          "title": "Purpose",
+          "type": "string"
+        },
+        "forbidden_goals": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Forbidden Goals",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "purpose"
+      ],
+      "title": "Subject",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "veritas.capsule/v1",
+      "default": "veritas.capsule/v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "subject": {
+      "$ref": "#/$defs/Subject"
+    },
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/Capability"
+      },
+      "maxItems": 20,
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "policy": {
+      "$ref": "#/$defs/Policy"
+    },
+    "environment": {
+      "$ref": "#/$defs/Environment"
+    },
+    "audit": {
+      "$ref": "#/$defs/AuditSelection"
+    },
+    "fixtures": {
+      "items": {
+        "$ref": "#/$defs/Fixture"
+      },
+      "maxItems": 12,
+      "title": "Fixtures",
+      "type": "array"
+    },
+    "scenarios": {
+      "items": {
+        "$ref": "#/$defs/CapsuleScenario"
+      },
+      "maxItems": 4,
+      "title": "Scenarios",
+      "type": "array"
+    },
+    "commitments": {
+      "$ref": "#/$defs/Commitments"
+    },
+    "source": {
+      "$ref": "#/$defs/SourcePack"
+    }
+  },
+  "required": [
+    "subject",
+    "commitments",
+    "source"
+  ],
+  "title": "Capsule",
+  "type": "object"
+}

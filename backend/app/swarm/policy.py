@@ -8,7 +8,7 @@ import json
 from ..models import AgentArtifact, AssuranceLevel, EvidenceGrade, Finding
 
 AUDIT_SCHEMA_VERSION = "agentveritas.audit.v2"
-AUDIT_POLICY_VERSION = "agentveritas.stellar.policy.2026-09-11.1"
+AUDIT_POLICY_VERSION = "agentveritas.stellar.policy.2026-10-15.1"
 
 
 def audit_surface_coverage(artifact: AgentArtifact) -> dict[str, object]:

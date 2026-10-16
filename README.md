@@ -18,6 +18,36 @@
 
 ---
 
+## October 2026 workspace release
+
+**Veritas Official** is the first operator. Customers choose eight specialist areas and Preview, Assurance or Deep scope. All baseline source rules remain enabled; selected behavior families receive a bounded 0/12/24-case runtime budget. Proposed prices are $3 / $19 / $49; these are not live USD charges. Independent operators come later.
+
+The portable **`.veritas` capsule** binds source contents, intent, forbidden goals, capability rules, environment requirements, fixtures and multi-turn scenarios. It detects changed inputs and contradictory declarations before execution. See [capsule format](docs/VERITAS_CAPSULE.md) and [a stateful example](examples/stateful-reader.veritas).
+
+Current public proofs:
+
+- [Official order fulfillment](deployments/official-order-pilot-2026-10-15.json): eight real Testnet transactions, wallet-bound private order, source-only audit, private report readback, matching credential and restart checks. Publication used a disclosed operator checkpoint. See [the fulfillment guide](docs/OFFICIAL_FULFILLMENT.md) for recovery, refunds and deployment limits.
+- [Live AI and Sandbox integration](deployments/deployed-integrations-exact-input-2026-10-15.json): real Vercel OIDC model review and 12 observed Python case responses in a Preview build, with three matching declared output assertions. The repeat verifies an exact-input fix; the earlier harness-caused mismatch remains recorded. These are execution observations, not security certifications.
+- [Paid Testnet delivery](deployments/testnet-audit-delivery-2026-10-15.json): 20 successful transactions, registry-bound escrow, exact payout, a report credential and a separate stale-version refund test.
+- [Bounded agent authority](deployments/agent-account-testnet-2026-10-15.json): actual authorized SAC transfer, rejected recipient/budget/revoked-key attempts and owner recovery.
+- [24-case isolated execution](deployments/capsule-runtime-pilot-2026-10-15.json): real microVM execution of a controlled, stateful Python fixture, including three-turn observations. It is not a live-model or production-tool test.
+- [Designed report](deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.html), [credential card](deployments/reports/626639c658a15ca265c620c76dd64a7344a55de84471f7ae148af9bedf427c35.svg) and [live readback record](deployments/delivery-render-verification-2026-10-15.json).
+
+The English public Studio now includes a 24-area evidence inventory, explicit architecture declarations (MCP, delegation, memory and egress), opt-in AI hypotheses with source-location validation, local report fingerprint verification, and an interactive authority-policy lab. See [release status](docs/RELEASE_2026-10-15.md) for verification and boundaries.
+
+**Veritas Blueprint v1** adds an explicit `veritas.json` project map: component paths, a checked entrypoint, declared permission boundaries, import evidence and a source-bound audit plan. Missing files and stale plans block isolated execution. Start with [the protocol and local commands](docs/VERITAS_BLUEPRINT.md) and [the multi-file example](examples/blueprint-reader/veritas.json).
+
+**Independent challenge review:** [the current evidence and gaps](docs/INDEPENDENT_REVIEW_2026-10-15.md) records reproduced defects and a disclosed challenge set, including retained misses. Agent identity stays explicitly unverified. New [authorization-entry inspection examples](examples/stellar-authority/README.md) check nested transfer policy; the [experimental session account](contracts/agent-account/README.md) enforces a narrow on-chain spending boundary. Neither is a comprehensive audit or a production safety certificate.
+
+The **AuditCredential** Soroban contract issues unique, non-transferable, revocable, expiring report credentials from completed registry validations. This is a custom audit NFT interface, not a claim of SEP-50 marketplace compatibility. Registry binds requests to source version and metadata/endpoint hashes; source changes invalidate old credentials. The current escrow also enforces the assigned validator, request, source version, report hash and score before settlement. Use the current proof files above; the older deployment manifest is historical.
+
+- [Instawards 30-day sprint and budget](docs/INSTAWARDS_SPRINT.md)
+- [Revenue model and settlement boundaries](docs/REVENUE_MODEL.md)
+- [Deployment and operations](docs/DEPLOYMENT.md)
+- [Threat model and trust boundaries](docs/THREAT_MODEL.md)
+
+The official fulfillment worker requires durable hosting and is implemented for a private Testnet pilot, including wallet proof, persisted orders, retries, refunds and credential delivery. Vercel exposes the stateless Studio and blocks automatic funding without that service. Hosted production checkout and public minting are not enabled. AI Gateway integration supports deployment OIDC or a local key, behind private access and source-sharing consent; [configuration and live-check instructions](docs/AI_CONFIGURATION.md) distinguish configuration from a successful model call.
+
 ## Table of Contents
 
 - [Why AgentVeritas?](#why-agentveritas)
@@ -50,10 +80,10 @@ The public Studio at `/` offers three intake methods — no wallet connection or
 | Intake | What it does |
 |---|---|
 | **Stellar Address** | Read-only Testnet/Mainnet lookup via Horizon + RPC (no signing) |
-| **GitHub Import** | Fetches root `agent-audit.json` from a public repo (bounded, no clone) |
-| **File Upload** | Direct source bundle upload for offline analysis |
+| **GitHub Import** | Pins a public repository commit, verifies source blobs and follows root `veritas.json` when present (bounded, no clone) |
+| **File Upload** | Source bundles or project folders, with explicit Blueprint maps or provisional discovery |
 
-The Studio runs seven **rule-based static analysis modules** across all submitted source. Files are never executed, persisted or sent to external AI services. Reports include file:line evidence, coverage metrics, input-commitment SHA-256 and an exact-byte downloadable report.
+The Studio runs seven **rule-based static analysis modules** across all submitted source. Static review never executes submitted files. A separately authenticated, opt-in runtime pilot invokes supported Python callables in disposable microVMs. Static review does not send source to a model provider; optional AI second opinions require operator enablement and explicit per-review consent. Reports include file:line evidence, coverage metrics, input-commitment SHA-256 and an exact-byte downloadable report. See [runtime limits and setup](docs/RUNTIME_PILOT.md).
 
 > The operator workflow at `/operator` provides the full persistent pipeline with authentication, stored jobs, badges and Soroban integration.
 
@@ -365,3 +395,7 @@ Apache 2.0 — see [LICENSE](LICENSE).
 <p align="center">
   <sub>Built for the Stellar ecosystem · No cross-chain dependencies · Independence verified via <code>scripts/verify_independence.sh</code></sub>
 </p>
+
+## Runtime pilot and localhost
+
+See [the runtime pilot guide](docs/RUNTIME_PILOT.md) for automatic source discovery, folder/GitHub intake, isolated Python probes, localhost commands and exact current limitations. [Fresh testnet evidence](deployments/testnet-pilot-2026-10-15.json) includes a completed synthetic credential issue/revocation lifecycle.

@@ -1,0 +1,234 @@
+{
+  "schema": "veritas.official-order-pilot/v1",
+  "network": "testnet",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "status": "verified",
+  "created_at": "2026-10-15T15:08:46.749420+00:00",
+  "fixture": "examples/blueprint-reader",
+  "tier_id": "quick",
+  "amount_atomic": "1000000",
+  "asset": "testnet_faucet_XLM",
+  "contracts": {
+    "registry": {
+      "id": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "wasm_sha256": "a77262a8430e5c172569845973d927b73701f0a8306311d5c0ffea20d88cd677",
+      "constructor_atomic": true
+    },
+    "credential": {
+      "id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+      "wasm_sha256": "f796e4a6d1b877ce3d261eea6c172e922e47540627017f74482a5715d1fa77cf",
+      "constructor_atomic": true
+    },
+    "escrow": {
+      "id": "CD4OOPXGVL64YSUVZWDBAM2AATNITI5DKY4HXRALYUURH27MQZNF2O4V",
+      "wasm_sha256": "ca95c3f572aa465d9d9a59f651bc0a49050eff0d53cf21e6f0e0b163f2b8488a",
+      "wasm_path": "target/wasm32v1-none/release/agent_veritas_escrow.wasm",
+      "constructor_atomic": true,
+      "registry_bound": true,
+      "registry": "CANHPHK5BGUDSQ6AUJQC7AWTAWBHBQVBRP2HB5ZU4HNBCGHSFOBO5DXH",
+      "constructor_argument_order": [
+        "admin",
+        "token",
+        "fee_to",
+        "fee_bps",
+        "registry"
+      ]
+    }
+  },
+  "roles": {
+    "requester": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+    "provider": "GDE6VWFICHOE7PEGVT7TUMR24WB3ETW7K62RHLJYPEBX5MDIVUFZAI4A",
+    "evaluator": "GCAO46UTNNLBRZSHZOUBJXGROQXZ2BHLV55EALQYUDRPC45AJRKO4EMC",
+    "admin": "GDCGJTWMFCIK3EJ4KWRASUQXD7ZZUPOC2E5JXWZLJGOTGDAYGAY3L6YK",
+    "treasury": "GB6M2BNKWTFIHWBGM7LYGZ3ZIICQZJGQ6DXAFQUKU36RILZ3IYSA55UE"
+  },
+  "checkout_transactions": [
+    {
+      "step": "register",
+      "hash": "9510a7312073d5138950b42645cc5bac88cb63510892415e88d8e27c41b4bb0b",
+      "status": "SUCCESS",
+      "ledger": 5210674,
+      "signer_role": "requester",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/9510a7312073d5138950b42645cc5bac88cb63510892415e88d8e27c41b4bb0b"
+    },
+    {
+      "step": "request",
+      "hash": "3e6a542bb29714c2d9f15fffb1dad774d0a50f43cb4c21cde5e91246cba1cc61",
+      "status": "SUCCESS",
+      "ledger": 5210678,
+      "signer_role": "requester",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/3e6a542bb29714c2d9f15fffb1dad774d0a50f43cb4c21cde5e91246cba1cc61"
+    },
+    {
+      "step": "create",
+      "hash": "332079d2c39f3f309f7bc31cd231190b33201afb59694519f701bbc3deff445a",
+      "status": "SUCCESS",
+      "ledger": 5210681,
+      "signer_role": "requester",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/332079d2c39f3f309f7bc31cd231190b33201afb59694519f701bbc3deff445a"
+    },
+    {
+      "step": "fund",
+      "hash": "7a80f2449350acb697a9b010fe1130966a0bafeae06f3be3c5e6804a9c57f62a",
+      "status": "SUCCESS",
+      "ledger": 5210684,
+      "signer_role": "requester",
+      "explorer_url": "https://stellar.expert/explorer/testnet/tx/7a80f2449350acb697a9b010fe1130966a0bafeae06f3be3c5e6804a9c57f62a"
+    }
+  ],
+  "checks": [
+    {
+      "id": "sep53_requester_order_scope",
+      "passed": true
+    },
+    {
+      "id": "restart_before_activation",
+      "passed": true,
+      "payment_confirmed": true
+    },
+    {
+      "id": "funded_escrow_reloaded_from_testnet",
+      "passed": true,
+      "ledger": 5210693
+    },
+    {
+      "id": "canonical_report_commitment",
+      "passed": true
+    },
+    {
+      "id": "authenticated_private_blob_readback",
+      "passed": true
+    },
+    {
+      "id": "unauthenticated_report_access_denied",
+      "passed": true
+    },
+    {
+      "id": "registry_report_source_plan_score_binding",
+      "passed": true
+    },
+    {
+      "id": "escrow_payment_complete",
+      "passed": true
+    },
+    {
+      "id": "current_owner_bound_credential",
+      "passed": true
+    },
+    {
+      "id": "restart_does_not_rerun_paid_work",
+      "passed": true
+    },
+    {
+      "id": "transaction_intents_unchanged_on_retry",
+      "passed": true
+    },
+    {
+      "id": "wrong_capability_cannot_read_report",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "First-party requester, provider and evaluator share one operator; they are not independent validators.",
+    "This owned fixture received the quick tier static audit. No AI model or runtime execution is claimed.",
+    "The report is stored privately; its SHA-256 and token-free private URI are public on Testnet.",
+    "Local SQLite worker proof is not evidence of a durable serverless production queue.",
+    "A current audit credential records scoped provenance, not a guarantee of security.",
+    "The fixed owned-fixture report was published separately after a privacy review and exact-byte checks, then checkpointed. The resumed worker forbade new execution or upload. This pilot includes operator intervention."
+  ],
+  "order_id": "9385aafe64a8831f68922b2f58a92a2ef7e8ed03eaa10475b414573cb9b106bc",
+  "checked_at": "2026-10-15T15:21:58.499115+00:00",
+  "delivery": {
+    "agent_id": "0c90aa7cd8090891b7ef8c763fa1077df3adaaa2549a6c8b1c19641bcebc5164",
+    "checked_at_ledger": 5210824,
+    "credential_contract_id": "CAPYQST5PLKLYYNSAM5QXNPVPJID776BALTW5LUVCCESJZKRBEZ2BKSZ",
+    "credential_expires_at": 1792682460,
+    "escrow_contract_id": "CD4OOPXGVL64YSUVZWDBAM2AATNITI5DKY4HXRALYUURH27MQZNF2O4V",
+    "independent_evaluator": false,
+    "is_current": true,
+    "network": "testnet",
+    "owner": "GD2M2PJ67RBTFEBPSRX4PAWTBAOGUR5OLZ5OVD6HECXFI5ERCRMB7ZBI",
+    "payment_state": "Complete",
+    "report_score": 64.0,
+    "report_sha256": "c13a46c8356e0de0497b11bbf6ed6b77e4561d0b73aa462a5f9c2d725d211ead",
+    "report_uri": "https://evlqandd2t85necg.private.blob.vercel-storage.com/reports/c13a46c8356e0de0497b11bbf6ed6b77e4561d0b73aa462a5f9c2d725d211ead.json",
+    "report_visibility": "private",
+    "request_id": "9385aafe64a8831f68922b2f58a92a2ef7e8ed03eaa10475b414573cb9b106bc",
+    "schema": "veritas.testnet-order-delivery/v1",
+    "score": 64,
+    "score_conversion": "nearest_integer_ties_to_even",
+    "status": "delivered",
+    "token_id": "9385aafe64a8831f68922b2f58a92a2ef7e8ed03eaa10475b414573cb9b106bc",
+    "transactions": [
+      {
+        "hash": "5ff936438b34559b298896670e925baa83cba068d0aca64e010a6894e572bc33",
+        "ledger": 5210797,
+        "status": "confirmed",
+        "step": "respond"
+      },
+      {
+        "hash": "fec1ae70e03809f6cb5112803ab0f098d026bfc97c323c7a2b15dd1aad99677f",
+        "ledger": 5210803,
+        "status": "confirmed",
+        "step": "submit"
+      },
+      {
+        "hash": "2c213f0127f1523dc53093d185fcb1a7ff3b57507fcfbe05b8dc3828f529b5bb",
+        "ledger": 5210811,
+        "status": "confirmed",
+        "step": "complete"
+      },
+      {
+        "hash": "5c46f1635bb1c8886054b435c0b3956f7391aa8e26d0f07e7833675b75e57880",
+        "ledger": 5210819,
+        "status": "confirmed",
+        "step": "issue"
+      }
+    ]
+  },
+  "report": {
+    "sha256": "c13a46c8356e0de0497b11bbf6ed6b77e4561d0b73aa462a5f9c2d725d211ead",
+    "uri": "https://evlqandd2t85necg.private.blob.vercel-storage.com/reports/c13a46c8356e0de0497b11bbf6ed6b77e4561d0b73aa462a5f9c2d725d211ead.json",
+    "visibility": "private",
+    "bytes": 42408,
+    "source_sha256": "d4803191cd88b2401f8abf5be3b87ddfaab6710f3fdda24dea9bb9eea864342a",
+    "plan_sha256": "ef6bfe192147ad1a79175536df64de8bcc19aa52824fe6f67d419d67c5736531",
+    "runtime_executed": false,
+    "ai_model_invoked": false,
+    "review_decision": "needs_evidence"
+  },
+  "settlement_transactions": [
+    {
+      "hash": "5ff936438b34559b298896670e925baa83cba068d0aca64e010a6894e572bc33",
+      "ledger": 5210797,
+      "status": "confirmed",
+      "step": "respond"
+    },
+    {
+      "hash": "fec1ae70e03809f6cb5112803ab0f098d026bfc97c323c7a2b15dd1aad99677f",
+      "ledger": 5210803,
+      "status": "confirmed",
+      "step": "submit"
+    },
+    {
+      "hash": "2c213f0127f1523dc53093d185fcb1a7ff3b57507fcfbe05b8dc3828f529b5bb",
+      "ledger": 5210811,
+      "status": "confirmed",
+      "step": "complete"
+    },
+    {
+      "hash": "5c46f1635bb1c8886054b435c0b3956f7391aa8e26d0f07e7833675b75e57880",
+      "ledger": 5210819,
+      "status": "confirmed",
+      "step": "issue"
+    }
+  ],
+  "publication_review": {
+    "fixture_public_commit": "830091f9e3ea261951af7be1fe947d3c738f404e",
+    "fixture_files_verified": 5,
+    "exact_public_source_match": true,
+    "raw_source_bundle_absent": true,
+    "known_private_credentials_absent": true,
+    "report_sha256": "c13a46c8356e0de0497b11bbf6ed6b77e4561d0b73aa462a5f9c2d725d211ead"
+  }
+}

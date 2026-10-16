@@ -1,0 +1,35 @@
+"""Vercel public Studio entrypoint. Persistent operator service uses backend.app.api.
+
+Serverless deployments expose only the stateless Studio. Operator records and
+monitoring must run on a durable single-worker service, never ephemeral /tmp.
+"""
+import os
+
+os.environ["STATELESS_STUDIO"] = "true"
+os.environ.setdefault("DATA_DIR", "/tmp/agentveritas-studio")
+os.environ.setdefault("EVENT_DATABASE", "/tmp/agentveritas-studio/events.db")
+os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/agentveritas-studio/unused.db")
+
+from backend.app.api import app  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+
+
+@app.middleware("http")
+async def public_surface_only(request, call_next):
+    path = request.url.path
+    allowed = (path == "/" or path == "/api/v1/health" or path.startswith("/ui/")
+               or path == '/api/v1/studio/orders' or path.startswith('/api/v1/studio/orders/')
+               or path in {"/api/v1/studio/review", "/api/v1/studio/identify", "/api/v1/studio/import",
+                           "/api/v1/studio/discover", "/api/v1/studio/runtime", "/api/v1/studio/capabilities", "/api/v1/studio/policy",
+                           "/api/v1/studio/stellar/inspect-auth", '/api/v1/studio/catalog',
+                           '/api/v1/studio/plan', '/api/v1/studio/audit', '/api/v1/studio/delivery',
+                           '/api/v1/studio/delivery/pilot', '/api/v1/studio/capsule/import', '/api/v1/studio/capsule/export',
+                           '/.well-known/stellar.toml', '/api/v1/studio/ai/check',
+                           '/api/v1/studio/checkout', '/api/v1/studio/checkout/prepare'})
+    if not allowed:
+        return JSONResponse({"detail": "This deployment exposes the public audit Studio only."}, status_code=404)
+    if os.environ.get('VERCEL') == '1':
+        from vercel.headers import HeadersContext
+        with HeadersContext(dict(request.headers)).use():
+            return await call_next(request)
+    return await call_next(request)

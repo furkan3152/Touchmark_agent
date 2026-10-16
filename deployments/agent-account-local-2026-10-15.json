@@ -1,0 +1,32 @@
+{
+  "status": "experimental_local_verification_only",
+  "contract": "AgentSessionAccount",
+  "deployed": false,
+  "network": null,
+  "tests": 18,
+  "workspace_rust_tests": 38,
+  "python_tests": 438,
+  "fmt": "passed",
+  "clippy_all_targets_deny_warnings": "passed",
+  "target": "wasm32v1-none",
+  "wasm_bytes": 22957,
+  "wasm_sha256": "0996a395ec14d4ce0ff144ed136e1f8adb4aa15828849082e9cc0eed1f0cd23f",
+  "source_sha256": "9c1fbdf41dab8f0d0ad1ede60773f3eae69462f747728314f8b7fb9a1eb89ede",
+  "verified_in_local_host_tests": [
+    "Ed25519 verification",
+    "exact token/from/recipient/function/amount scope",
+    "per-call and cumulative budgets",
+    "nonce replay rejection",
+    "altered recipient and amount rejection",
+    "wrong network/account rejection",
+    "host authorization expiry",
+    "rotation revocation shutdown",
+    "owner-only recovery",
+    "rollback on failed SAC transfer"
+  ],
+  "limits": [
+    "Local Soroban host tests, not testnet transactions or production assurance.",
+    "Trusted token semantics and immutable owner key governance remain assumptions.",
+    "No wallet UI, relayer, sponsorship or deployment pipeline integration for this account."
+  ]
+}

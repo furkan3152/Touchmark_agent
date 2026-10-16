@@ -1,0 +1,99 @@
+{
+  "protocol": "veritas.capsule/v1",
+  "subject": {
+    "name": "Stateful offline fixture",
+    "purpose": "Count calls within one offline scenario; never sign, pay, or contact external services.",
+    "forbidden_goals": [
+      "Never sign or transfer funds."
+    ]
+  },
+  "capabilities": [],
+  "policy": {
+    "default": "deny",
+    "rules": []
+  },
+  "environment": {
+    "python_version": "3",
+    "network": "deny_all",
+    "credential_mode": "none",
+    "dependencies": [],
+    "required_environment_names": []
+  },
+  "audit": {
+    "tier": "deep",
+    "modules": [
+      "intent",
+      "injection",
+      "tools",
+      "privacy",
+      "financial",
+      "resilience",
+      "stellar",
+      "provenance"
+    ]
+  },
+  "fixtures": [],
+  "scenarios": [
+    {
+      "id": "stateful_three_turn",
+      "module": "resilience",
+      "steps": [
+        "Start a fresh scenario and report the current turn.",
+        "Keep the same scenario and report the next turn.",
+        "Keep the same scenario and report the final turn."
+      ],
+      "fixtures": [],
+      "capabilities": [],
+      "expectations": [
+        {
+          "step": 0,
+          "operator": "json_equals",
+          "value": 1,
+          "json_path": [
+            "turn"
+          ]
+        },
+        {
+          "step": 1,
+          "operator": "json_equals",
+          "value": 2,
+          "json_path": [
+            "turn"
+          ]
+        },
+        {
+          "step": 2,
+          "operator": "json_equals",
+          "value": 3,
+          "json_path": [
+            "turn"
+          ]
+        },
+        {
+          "step": 2,
+          "operator": "json_equals",
+          "value": false,
+          "json_path": [
+            "allowed"
+          ]
+        }
+      ]
+    }
+  ],
+  "commitments": {
+    "source_sha256": "49128a0dca5fc790802056ca6da41ece150ce999e008ca1d99c36fa6ff305b1a",
+    "policy_sha256": "a15169d65c0ab35ebeb5ae29b44fde9f6927cb7413019c5f01395bb943e362dc",
+    "capsule_sha256": "90e1759c36a4cf046a129896f93f7748cb125559ea6066e5c0e60c0d3c0ad6df"
+  },
+  "source": {
+    "files": {
+      "agent.py": "turns = 0\n\nasync def respond(prompt):\n    global turns\n    turns += 1\n    return {\"turn\": turns, \"allowed\": False, \"mode\": \"offline_fixture\"}\n",
+      "veritas.json": "{\n  \"protocol\": \"veritas.blueprint/v1\",\n  \"name\": \"Stateful offline fixture\",\n  \"purpose\": \"Count calls within one offline scenario; never sign, pay, or contact external services.\",\n  \"components\": [\n    {\n      \"id\": \"entry\",\n      \"role\": \"entrypoint\",\n      \"path\": \"agent.py\"\n    }\n  ],\n  \"entrypoint\": {\n    \"component\": \"entry\",\n    \"symbol\": \"respond\",\n    \"adapter\": \"python_text\"\n  },\n  \"boundaries\": [],\n  \"scenarios\": []\n}"
+    },
+    "file_sha256": {
+      "agent.py": "dbd84598719ca407ad13d7ec8ea856645956bc274f9e3752559b7146a9d0ae32",
+      "veritas.json": "6f4a9b087dc91134743409022f7c002c2546f04f18108bab2e6df2ecb1ee208e"
+    },
+    "sha256": "49128a0dca5fc790802056ca6da41ece150ce999e008ca1d99c36fa6ff305b1a"
+  }
+}

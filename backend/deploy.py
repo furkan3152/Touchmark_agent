@@ -17,6 +17,7 @@ TARGET = ROOT / "target" / "wasm32v1-none" / "release"
 WASMS = {
     "agent_registry": TARGET / "agent_veritas_registry.wasm",
     "audit_escrow": TARGET / "agent_veritas_escrow.wasm",
+    "audit_credential": TARGET / "agent_veritas_credential.wasm",
 }
 
 

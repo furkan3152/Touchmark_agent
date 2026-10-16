@@ -6,7 +6,7 @@ use soroban_sdk::{
 };
 
 contractmeta!(key = "name", val = "AgentVeritas Registry");
-contractmeta!(key = "version", val = "0.1.0");
+contractmeta!(key = "version", val = "0.2.0");
 contractmeta!(
     key = "sep",
     val = "SEP-46 metadata; SEP-48 generated interface"
@@ -42,6 +42,9 @@ pub enum ValState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidRec {
     pub agent_id: BytesN<32>,
+    pub version: u32,
+    pub meta_hash: BytesN<32>,
+    pub end_hash: BytesN<32>,
     pub requester: Address,
     pub validator: Address,
     pub score: u32,
@@ -132,6 +135,10 @@ pub struct AgentRegistry;
 
 #[contractimpl]
 impl AgentRegistry {
+    pub fn __constructor(env: Env, admin: Address) {
+        Self::init(env, admin);
+    }
+
     pub fn init(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic_with_error!(&env, Error::AlreadyInit);
@@ -270,6 +277,9 @@ impl AgentRegistry {
         let empty = BytesN::from_array(&env, &[0; 32]);
         let record = ValidRec {
             agent_id: agent_id.clone(),
+            version: agent.version,
+            meta_hash: agent.meta_hash,
+            end_hash: agent.end_hash,
             requester: requester.clone(),
             validator: validator.clone(),
             score: 0,
@@ -315,6 +325,14 @@ impl AgentRegistry {
         }
         if record.state != ValState::Pending {
             panic_with_error!(&env, Error::BadState);
+        }
+        let agent = Self::get_agent(env.clone(), record.agent_id.clone());
+        if !agent.active
+            || agent.version != record.version
+            || agent.meta_hash != record.meta_hash
+            || agent.end_hash != record.end_hash
+        {
+            panic_with_error!(&env, Error::BadVersion);
         }
         record.score = score;
         record.rep_uri = rep_uri;

@@ -1,0 +1,1 @@
+{"commit":"19c8119d9abdbf1bee71c5ce5f4a2a53fee22132","run_id":"durable-deep-20261015-02","schema":"veritas.durable-worker-canary/v1","sessions":[{"diagnostics":[{"restart_only":false,"status":"completed"}],"exit_code":0,"restart":false}],"status":"incomplete"}

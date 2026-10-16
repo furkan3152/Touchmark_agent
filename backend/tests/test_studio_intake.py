@@ -28,18 +28,30 @@ def test_public_address_lookup_is_read_only_and_not_an_agent_endorsement(monkeyp
     assert data["kind"] == "account"
 
 
-def test_github_bundle_import_uses_only_the_fixed_public_github_endpoint(monkeypatch):
-    bundle = {"name": "Reader", "purpose": "Summarize Stellar balances", "files": {"agent.py": "def read():\n    return 1\n"}}
+def test_github_import_pins_commit_and_checks_blob_integrity(monkeypatch):
+    import base64
+    from hashlib import sha1
+    raw = b'def answer(prompt):\n    return "Read only"\n'
+    blob_sha = sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
+    revision = "a" * 40
     async def respond(self, request, **kwargs):
-        assert str(request.url) == "https://api.github.com/repos/example/reader/contents/agent-audit.json"
+        assert request.url.host == 'api.github.com'
         assert "authorization" not in request.headers
-        return httpx.Response(200, content=json.dumps(bundle).encode(), request=request)
+        url = str(request.url)
+        if url.endswith('/commits/HEAD'): data = {'sha': revision}
+        elif url.endswith(f'/git/trees/{revision}?recursive=1'):
+            data = {'tree': [{'type': 'blob', 'mode': '100644', 'path': 'src/reader.py', 'sha': blob_sha, 'size': len(raw)}]}
+        elif url.endswith('/git/blobs/' + blob_sha):
+            data = {'encoding': 'base64', 'content': base64.b64encode(raw).decode()}
+        else: raise AssertionError(url)
+        return httpx.Response(200, json=data, request=request)
     monkeypatch.setattr(httpx.AsyncClient, "send", respond)
     with TestClient(api.app) as client:
         response = client.post("/api/v1/studio/import", json={"repository": "https://github.com/example/reader"})
-    assert response.status_code == 200
-    assert response.json()["bundle"]["files"] == bundle["files"]
-    assert response.json()["source"] == "https://github.com/example/reader"
+    assert response.status_code == 200, response.text
+    assert response.json()["bundle"]["files"] == {'src/reader.py': raw.decode()}
+    assert response.json()["revision"] == revision
+    assert response.json()['discovery']['entrypoints'][0]['id'] == 'src/reader.py:answer'
 
 
 def test_address_only_review_preserves_network_without_inventing_source_evidence():
@@ -96,3 +108,26 @@ def test_upstream_failure_remains_unknown_not_found(monkeypatch):
         response = client.post("/api/v1/studio/identify", json={"address": ADDRESS})
     assert response.status_code == 200
     assert response.json()["ledger_presence"] == "unavailable"
+
+
+def test_import_skips_complex_source_instead_of_rejecting_whole_project(monkeypatch):
+    import base64
+    from hashlib import sha1
+    source = {'main.py': b'x = 1\n' * 1800, 'reader.py': b'def answer(prompt):\n return "read only"\n'}
+    blobs = {sha1(f'blob {len(raw)}\0'.encode() + raw).hexdigest(): (name, raw) for name, raw in source.items()}
+    async def respond(self, request, **kwargs):
+        url = str(request.url)
+        if url.endswith('/commits/HEAD'): data = {'sha': 'b' * 40}
+        elif '/git/trees/' in url:
+            data = {'tree': [{'type': 'blob', 'mode': '100644', 'path': name, 'sha': sha, 'size': len(raw)} for sha,(name,raw) in blobs.items()]}
+        else:
+            raw = blobs[url.rsplit('/',1)[1]][1]
+            data = {'encoding':'base64', 'content':base64.b64encode(raw).decode()}
+        return httpx.Response(200, json=data, request=request)
+    monkeypatch.setattr(httpx.AsyncClient, 'send', respond)
+    with TestClient(api.app) as client:
+        response = client.post('/api/v1/studio/import', json={'repository':'https://github.com/example/reader'})
+    assert response.status_code == 200
+    assert list(response.json()['bundle']['files']) == ['reader.py']
+    assert response.json()['import_scope']['omitted_paths'] == ['main.py']
+    assert response.json()['import_scope']['omitted_reasons']

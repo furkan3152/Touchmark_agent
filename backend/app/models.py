@@ -115,6 +115,7 @@ class Badge(str, Enum):
 class JobState(str, Enum):
     CREATED = "created"
     AWAITING_SIGNATURE = "awaiting_signature"
+    PREPARATION_BLOCKED = "preparation_blocked"
     FUNDED = "funded"
     RUNNING = "running"
     DELIVERED = "delivered"
@@ -211,6 +212,7 @@ class AgentArtifact(BaseModel):
 
     onchain: OnchainActivity = Field(default_factory=OnchainActivity)
     raw_metadata: dict[str, Any] = Field(default_factory=dict)
+    architecture: dict[str, Any] = Field(default_factory=dict)
 
     def text_surface(self) -> str:
         """Denetçilerin tarayacağı birleşik metin yüzeyi."""
