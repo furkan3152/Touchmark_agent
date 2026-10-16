@@ -123,3 +123,21 @@ def test_same_function_persistent_ttl_is_static_presence_only(settings, run, bod
 def test_missing_rust_surface_is_not_counted_as_authorization_or_ttl_pass(settings, run):
     verdict = check(settings, run, '// No contract functions supplied.')
     assert not any(s.scenario_id in {'ST-001', 'ST-002'} for s in verdict.scenarios)
+
+
+def test_helper_checks_and_reads_are_review_items_not_high_risks(settings, run):
+    helper = check(settings, run, '''
+fn check_admin(admin: &Address) { admin.require_auth(); }
+fn bump(env: &Env, key: &u32) { env.storage().persistent().extend_ttl(key, 10, 20); }
+pub fn set(env: Env, admin: Address, key: u32) {
+    check_admin(&admin); env.storage().persistent().set(&key, &1); Self::bump(&env, &key);
+}
+pub fn read(env: Env, key: u32) { env.storage().persistent().get::<_,u32>(&key); }
+''')
+    by_id = {f.id: f for f in helper.findings}
+    assert by_id['stellar_native-soroban-auth-missing'].severity.value == 'medium'
+    assert by_id['stellar_native-persistent-ttl'].severity.value == 'medium'
+    bare = check(settings, run, 'pub fn set(env: Env, key: u32) { env.storage().persistent().set(&key, &1); }')
+    by_id = {f.id: f for f in bare.findings}
+    assert by_id['stellar_native-soroban-auth-missing'].severity.value == 'high'
+    assert by_id['stellar_native-persistent-ttl'].severity.value == 'high'

@@ -25,6 +25,11 @@ def _is_manifest(name: str) -> bool:
             or (("/.github/workflows/" in "/" + name.lower()) and base.endswith((".yml", ".yaml"))))
 
 
+def _is_build_file(name: str) -> bool:
+    base = name.lower().rsplit("/", 1)[-1]
+    return "dockerfile" in base or "/.github/workflows/" in "/" + name.lower()
+
+
 def _manifest_text(name: str, text: str) -> str:
     """Version-bearing lines only. In package.json that is the dependency sections:
     `engines` and `scripts` (globs such as `src/**/*.ts`) are not dependencies."""
@@ -48,18 +53,18 @@ class ProvenanceAuditor(BaseAuditor):
     ) -> tuple[list[Finding], list[ScenarioResult], str]:
         findings: list[Finding] = []
         names = {name.lower() for name in artifact.code_files} | {n.lower() for n in artifact.lockfiles}
-        # Version ranges live in manifests and build files, not in application source:
-        # `/**` comments and `a >= b` comparisons in code are not floating dependencies.
-        joined = "\n".join(_manifest_text(name, text) for name, text in artifact.code_files.items()
-                           if _is_manifest(name))
-
         lock_markers = (
             "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "cargo.lock",
-            "poetry.lock", "uv.lock", "pipfile.lock", "go.sum",
+            "poetry.lock", "uv.lock", "pipfile.lock", "go.sum", "bun.lock", "bun.lockb",
         )
-        if artifact.source_kind.value in {"repo", "upload"} and not any(
-            any(name.endswith(marker) for name in names) for marker in lock_markers
-        ):
+        # Version ranges live in manifests and build files, not in application source:
+        # `/**` comments and `a >= b` comparisons in code are not floating dependencies.
+        locked = any(any(name.endswith(marker) for name in names) for marker in lock_markers)
+        # With a lockfile, manifest ranges are pinned; only build inputs (base images,
+        # tools fetched at build time) can still float.
+        joined = "\n".join(_manifest_text(name, text) for name, text in artifact.code_files.items()
+                           if _is_manifest(name) and not (locked and not _is_build_file(name)))
+        if artifact.source_kind.value in {"repo", "upload"} and not locked:
             findings.append(self.finding(
                 "missing-lockfile",
                 Severity.MEDIUM,
