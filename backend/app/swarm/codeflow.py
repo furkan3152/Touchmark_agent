@@ -686,7 +686,8 @@ class _Interp:
                 return {"secret"}
             return set()
         if label.endswith("Keypair.from_secret") or label == "from_secret":
-            self._cap("stellar_signing", node)
+            # Holding a key is custody, not signing; see _custody_to_signing.
+            self._cap("key_custody", node)
             return {"signer"}
         if _REQUEST_SOURCE.search(label):
             return every | {"external"}
@@ -988,7 +989,8 @@ class _Interp:
 def _js_profile(files: dict[str, str], profile: CodeProfile) -> None:
     """Capability inventory for non-Python sources (lexical; no data flow)."""
     patterns = {
-        "stellar_signing": r"Keypair\.fromSecret|\.sign\(\s*\w*[Kk]eypair|signTransaction\(",
+        "key_custody": r"Keypair\.fromSecret",
+        "stellar_signing": r"\.sign\(\s*\w*[Kk]eypair|signTransaction\(|authorizeEntry\(",
         "tx_submission": r"submitTransaction\(|sendTransaction\(",
         "payment": r"Operation\.(?:payment|pathPayment\w*|createAccount)\(",
         "account_control": r"Operation\.(?:setOptions|accountMerge|changeTrust|allowTrust)\(",
@@ -1010,6 +1012,23 @@ def _js_profile(files: dict[str, str], profile: CodeProfile) -> None:
                     break
 
 
+#: Capabilities that put a held key to use: building, submitting or invoking transactions.
+_KEY_USE = ("tx_submission", "payment", "contract_invocation", "account_control", "foreign_tx_signing")
+
+
+def _custody_to_signing(profile: CodeProfile) -> None:
+    """A loaded key is signing authority only when the project also transacts.
+
+    Many signing paths hand the keypair to a library (contract clients, helpers) where
+    `.sign(` never appears, so custody plus any transaction capability counts as
+    signing. A wallet that only loads a key to read balances does not.
+    """
+    custody = profile.capabilities.get("key_custody", [])
+    if custody and not profile.capabilities.get("stellar_signing") and any(
+            profile.capabilities.get(cap) for cap in _KEY_USE):
+        profile.capabilities["stellar_signing"] = list(custody)
+
+
 def _key(files: dict[str, str], entrypoints: dict[str, set[str]]) -> str:
     payload = json.dumps([sorted(files.items()), sorted((k, sorted(v)) for k, v in entrypoints.items())])
     return hashlib.sha256(payload.encode()).hexdigest()
@@ -1028,6 +1047,7 @@ def analyse_code(files: dict[str, str], entrypoints: dict[str, set[str]] | None 
             project = _Project(files, entrypoints)
             profile = project.run()
             _js_profile(files, profile)
+            _custody_to_signing(profile)
         except (RecursionError, ValueError, TypeError, AttributeError, KeyError, IndexError) as exc:
             # Never fail open: an unanalysable submission is reported and cannot pass.
             profile = CodeProfile(error=f"{type(exc).__name__}: source analysis did not complete")

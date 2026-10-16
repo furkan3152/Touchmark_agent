@@ -35,7 +35,11 @@ _G_ADDRESS = re.compile(r"\bG[A-Z2-7]{55}\b")
 _NON_DESTINATION_FILE = re.compile(
     r"(?:^|/)(?:tests?|__tests__|spec|fixtures?|mocks?|examples?|e2e)(?:/|$)|"
     r"(?:test|spec|smoke|fixture|mock|example)[^/]*\.\w+$|(?:black|deny|block)[-_]?list", re.I)
-_DENY_CONTEXT = re.compile(r"black[-_ ]?list|deny[-_ ]?list|block[-_ ]?list|sanction|scam|blocked", re.I)
+_DENY_CONTEXT = re.compile(r"black[-_ ]?list|deny[-_ ]?list|block[-_ ]?list|sanction|scam|blocked|"
+                           r"e\.g\.|example|usage|new Error\(|raise \w*Error\(", re.I)
+#: CODE:ISSUER asset notation names an issuer, not a payment destination.
+_ASSET_ISSUER = re.compile(r"\b[A-Za-z0-9]{1,12}:(G[A-Z2-7]{55})\b|"
+                           r"Asset\(\s*[\"'][A-Za-z0-9]{1,12}[\"']\s*,\s*[\"'](G[A-Z2-7]{55})[\"']")
 _PUBLIC_MARKERS = re.compile(r"Public Global Stellar Network|PUBLIC_NETWORK_PASSPHRASE|Networks\.PUBLIC|"
                              r"\bpubnet\b|\bmainnet\b|horizon\.stellar\.org", re.I)
 _TESTNET_MARKERS = re.compile(r"Test SDF Network|TESTNET_NETWORK_PASSPHRASE|Networks\.TESTNET|\btestnet\b", re.I)
@@ -161,7 +165,10 @@ class AuthorityReader:
             for number, line in enumerate(text.splitlines(), 1):
                 if _DENY_CONTEXT.search(line):
                     continue
+                issuers = {a or b for a, b in _ASSET_ISSUER.findall(line)}
                 for match in _G_ADDRESS.findall(line):
+                    if match in issuers:
+                        continue
                     if match != exclude and StrKey.is_valid_ed25519_public_key(match):
                         found.setdefault(match, f"{path}:{number}")
         uses_memo = any(_MEMO_CALL.search(text) for text in code_files.values())

@@ -22,7 +22,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..config import Settings
-from ..models import AgentArtifact, AuditTier, SourceKind
+from ..models import AgentArtifact, AuditTier, SourceKind, ToolSpec
 from ..reporting.generator import canonical_json, report_to_dict
 from ..swarm.provenance import _is_manifest
 
@@ -33,6 +33,15 @@ TEMPLATE_SUFFIXES = (".hbs", ".handlebars", ".j2", ".jinja", ".jinja2", ".tmpl",
 LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "poetry.lock", "uv.lock",
              "Pipfile.lock", "go.sum", "bun.lock", "bun.lockb")
 INSTRUCTION_NAMES = {"skill.md", "agents.md", "claude.md", "system_prompt.md", "prompt.md", "instructions.md"}
+#: The root README states what the agent promises its users; deep review checks the code against it.
+README_NAMES = {"readme.md", "readme"}
+#: Tool registrations in MCP servers and agent frameworks.
+_TOOL_PATTERNS = (
+    re.compile(r"""\.(?:tool|registerTool|addTool)\(\s*["'`]([\w.:-]{2,64})["'`]"""),
+    re.compile(r"""\bname\s*:\s*["'`]([\w.:-]{2,64})["'`]\s*,\s*(?:title\s*:[^\n]*\n\s*)?description\s*:"""),
+    re.compile(r"""@\w+\.tool\([^)]*\)\s*\n\s*(?:async\s+)?def\s+(\w+)"""),
+    re.compile(r"""\bTool\(\s*name\s*=\s*["']([\w.:-]{2,64})["']"""),
+)
 SKIP_DIRS = {"node_modules", "dist", "build", "out", ".git", "target", "vendor", "__pycache__", "coverage",
              ".next", ".turbo", ".venv", "venv", "test", "tests", "__tests__", "spec", "fixtures", "e2e",
              "examples", "example", "docs", "benchmarks", ".github"}
@@ -76,6 +85,9 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(root)
+        if rel.name.lower() in README_NAMES and len(rel.parts) == 1:
+            instructions[rel.as_posix()] = path.read_text(errors="replace")[:6_000]
+            continue
         if rel.name.lower() in INSTRUCTION_NAMES and not _skipped(rel):
             instructions[rel.as_posix()] = path.read_text(errors="replace")[:20_000]
             continue
@@ -117,6 +129,25 @@ def select_repository(root: Path, *, max_files: int = 120, max_bytes: int = 900_
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
     return files, {"manifest": manifest, "instructions": instructions}
+
+
+def registered_tools(files: dict[str, str]) -> list[ToolSpec]:
+    """Tools the source registers with an MCP server or agent framework.
+
+    They are recorded with origin "registered": named by the code, not declared by a
+    submitter, and granting nothing, so capability reconciliation still adds what the
+    code can do as "observed" tools.
+    """
+    found: dict[str, str] = {}
+    for path, text in sorted(files.items()):
+        if _is_manifest(path):
+            continue
+        for pattern in _TOOL_PATTERNS:
+            for match in pattern.finditer(text):
+                line = text.count("\n", 0, match.start()) + 1
+                found.setdefault(match.group(1), f"{path}:{line}")
+    return [ToolSpec(name=name, origin="registered", description=f"Registered in source at {where}")
+            for name, where in list(found.items())[:60]]
 
 
 def _dependencies(root: Path) -> list[str]:
@@ -175,7 +206,7 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         source_kind=SourceKind.REPO,
         source_ref=f"repo:{source_reference or root.name}@{revision}",
         name=name, description=description, system_prompt=instructions[:12_000],
-        code_files=files, dependencies=_dependencies(root), chain_authority=chain, lockfiles=_lockfiles(root),
+        code_files=files, tools=registered_tools(files), dependencies=_dependencies(root), chain_authority=chain, lockfiles=_lockfiles(root),
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
         owner_verification_note="Not checked during repository review.",
     )

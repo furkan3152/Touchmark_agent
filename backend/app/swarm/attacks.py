@@ -162,8 +162,8 @@ ATTACKS: tuple[Attack, ...] = (
 
 # Kodda arandığında yüksek riskli desenler (statik analiz)
 DANGEROUS_CODE_PATTERNS: tuple[tuple[str, str, Severity, str], ...] = (
-    (r"\beval\s*\(", "eval() kullanımı", Severity.HIGH, "Dinamik kod çalıştırma; injection ile RCE."),
-    (r"\bexec\s*\(", "exec() kullanımı", Severity.HIGH, "Dinamik kod çalıştırma; injection ile RCE."),
+    (r"(?<![.\w])eval\s*\(", "eval() kullanımı", Severity.HIGH, "Dinamik kod çalıştırma; injection ile RCE."),
+    (r"(?<![.\w])exec\s*\(|child_process\.exec\s*\(", "exec() kullanımı", Severity.HIGH, "Dinamik kod çalıştırma; injection ile RCE."),
     (
         r"subprocess\.(?:run|Popen|call)\([^)]*shell\s*=\s*True",
         "shell=True ile subprocess",

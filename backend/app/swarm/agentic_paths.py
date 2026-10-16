@@ -32,8 +32,9 @@ _SOURCE_NAMES = {
     "command", "cmd", "code", "request", "webhook",
 }
 _COMMAND_SINK_RE = re.compile(
-    r"\beval\s*\(|\bexec\s*\(|os\.system\s*\(|subprocess\.(?:run|call|popen)\s*\(|"
-    r"child_process\.(?:exec|spawn)\s*\(|\bCommand::new\s*\(",
+    # `exec(` as a function, not a method: RegExp.exec / db.exec are not code execution.
+    r"(?<![.\w])eval\s*\(|(?<![.\w])exec\s*\(|os\.system\s*\(|subprocess\.(?:run|call|popen)\s*\(|"
+    r"child_process\.(?:exec|execSync|spawn)\s*\(|\b(?:execSync|spawnSync|execFile)\s*\(|\bCommand::new\s*\(",
     re.I,
 )
 # Stellar Classic transaction submission and Soroban invocation/authorization

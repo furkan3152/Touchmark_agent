@@ -125,7 +125,14 @@ class DeepReviewResult:
     note: str = ""
     files_read: set = field(default_factory=set)
     total_files: int = 0
+    reviewable: set = field(default_factory=set)
     passes: list = field(default_factory=list)
+
+    def coverage(self) -> dict:
+        """Share of reviewable source files the model read (manifests are not counted)."""
+        read = self.files_read & self.reviewable if self.reviewable else self.files_read
+        return {"files_read": sorted(read), "files_total": self.total_files,
+                "ratio": round(min(1.0, len(read) / self.total_files), 3) if self.total_files else 0.0}
 
     def report(self) -> dict:
         return {"status": self.status, "model": self.model, "operating_model": self.operating_model,
@@ -133,8 +140,7 @@ class DeepReviewResult:
                 "accepted_findings": [f.id for f in self.findings], "rejected_claims": self.rejected,
                 "summary": self.summary, "turns": self.turns, "usage": self.usage, "note": self.note,
                 "passes": self.passes,
-                "coverage": {"files_read": sorted(self.files_read), "files_total": self.total_files,
-                             "ratio": round(len(self.files_read) / self.total_files, 3) if self.total_files else 0.0},
+                "coverage": self.coverage(),
                 "can_remove_findings": False}
 
 
@@ -154,6 +160,8 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
                   "system_prompt": artifact.system_prompt[:6000],
                   "declared_tools": [t.model_dump() for t in artifact.tools if t.origin == "declared"],
                   "tools_observed_only_in_code": [t.name for t in artifact.tools if t.origin == "observed"],
+                  "tools_registered_in_code": [f"{t.name} ({t.description})" for t in artifact.tools
+                                               if t.origin == "registered"][:60],
                   "architecture": artifact.architecture},
         "files": files,
         "observed_capabilities": profile.get("capabilities", {}),
@@ -268,7 +276,8 @@ class DeepReviewer:
 
     # ------------------------------------------------------------------ loop
     async def review(self, artifact: AgentArtifact, findings: list[Finding], chain: dict | None = None) -> DeepReviewResult:
-        result = DeepReviewResult(model=self.model, total_files=len(_reviewable(artifact)))
+        reviewable = _reviewable(artifact)
+        result = DeepReviewResult(model=self.model, total_files=len(reviewable), reviewable=reviewable)
         try:
             await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=self.timeout_seconds)
             if result.status == "not_run":
