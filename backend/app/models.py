@@ -164,7 +164,7 @@ class ToolSpec(BaseModel):
     network_access: bool = False
     #: "declared" by the submitter, or "observed" when the analyser found the
     #: capability in source and the declaration did not grant it.
-    origin: str = "declared"
+    origin: str = "declared"  # declared by the submitter | observed (capability in code) | registered (named in code)
 
 
 class OnchainActivity(BaseModel):
