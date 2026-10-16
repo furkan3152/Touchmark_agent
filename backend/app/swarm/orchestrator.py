@@ -25,12 +25,14 @@ from .llm import LlmClient
 from .reliability import ReliabilityAuditor
 from .security import SecurityAuditor
 from .provenance import ProvenanceAuditor
+from .capabilities import effective_artifact
 from .policy import (
     AUDIT_POLICY_VERSION,
     artifact_commitment,
     audit_surface_coverage,
     evidence_summary,
     finding_set_commitment,
+    review_decision,
 )
 
 
@@ -118,6 +120,9 @@ class AuditSwarm:
         t0 = time.perf_counter()
         deep = tier == AuditTier.DEEP
         self._validate_roster()
+        # Commit to what was submitted, then judge what the source can actually do.
+        input_hash = artifact_commitment(artifact)
+        artifact = effective_artifact(artifact)
 
         results = await asyncio.gather(
             *(
@@ -192,6 +197,7 @@ class AuditSwarm:
         if processors:
             limitations.append("External LLM used; report is not deterministic.")
         surface_coverage = audit_surface_coverage(artifact)
+        decision = review_decision(findings, surface_coverage, score)
         if tier is AuditTier.DEEP and not surface_coverage["deep_core_complete"]:
             limitations.append(
                 "Deep audit core surface incomplete: "
@@ -211,6 +217,7 @@ class AuditSwarm:
             duration_ms=int((time.perf_counter() - t0) * 1000),
             overall_score=score,
             badge=badge,
+            decision=decision,
             dimension_scores=dim_scores,
             verdicts=verdicts,
             findings=findings,
@@ -219,7 +226,7 @@ class AuditSwarm:
             completed_dimensions=[v.dimension.value for v in verdicts],
             limitations=limitations,
             policy_version=AUDIT_POLICY_VERSION,
-            input_hash=artifact_commitment(artifact),
+            input_hash=input_hash,
             finding_set_hash=finding_set_commitment(findings),
             assurance_level=assurance,
             evidence_summary=evidence_summary(findings),
@@ -233,6 +240,9 @@ class AuditSwarm:
                     1 for v in verdicts for scenario in v.scenarios if scenario.passed
                 ),
                 "surface_coverage": surface_coverage,
+                "observed_capabilities": artifact.code_profile.get("capabilities", {}),
+                "enforced_controls": artifact.code_profile.get("controls", {}),
+                "observed_tools": [t.name for t in artifact.tools if t.origin == "observed"],
                 "attack_paths": sum(
                     1
                     for finding in findings

@@ -16,6 +16,7 @@ from backend.app.config import Settings
 from backend.app.services import audit_orders as orders
 from backend.app.services import order_settlement as settlement
 from backend.app.services import testnet_checkout as checkout
+from backend.app.services.order_settlement import credential_eligible
 from backend.app.services.audit_product import EngagementRequest, audit_engagement, build_plan
 from backend.app.services.studio import ReviewRequest
 
@@ -91,9 +92,10 @@ async def chain(order, result, publication):
     return {'schema': 'veritas.testnet-order-delivery/v1', 'status': 'delivered', 'network': 'testnet',
             'request_id': order['id'], 'agent_id': order['quote']['agent_id'],
             'report_sha256': result['report_sha256'], 'report_uri': publication['report_uri'],
-            'token_id': order['id'], 'credential_contract_id': checkout.PINNED_CONTRACTS['credential'],
+            'token_id': order['id'] if credential_eligible(result) else None,
+            'credential_contract_id': checkout.PINNED_CONTRACTS['credential'],
             'escrow_contract_id': checkout.PINNED_CONTRACTS['escrow'], 'owner': WALLET,
-            'is_current': True, 'checked_at_ledger': 5_200_100, 'payment_state': 'Complete',
+            'is_current': credential_eligible(result), 'checked_at_ledger': 5_200_100, 'payment_state': 'Complete',
             'independent_evaluator': False, 'transactions': []}
 
 
@@ -295,7 +297,9 @@ async def test_worker_delivers_once_and_preserves_canonical_result(tmp_path, con
     await activate(store, live, created, config)
     delivered = await run(store, live, config)
     assert delivered['status'] == 'delivered' and delivered['report_available']
-    assert delivered['delivery']['token_id'] == created['order_id']
+    report = orders.AuditOrderStore(store.path).result(created['order_id'], created['order_token'])
+    eligible = credential_eligible({'report_json': report['report_json']}) if 'report_json' in report else None
+    assert delivered['delivery']['token_id'] == (created['order_id'] if eligible else None)
     assert await run(store, live, config) is None
     report = orders.AuditOrderStore(store.path).result(created['order_id'], created['order_token'])
     assert report['report_sha256'] == delivered['report_sha256']

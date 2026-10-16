@@ -96,6 +96,7 @@ class SecurityAuditor(BaseAuditor):
         findings += architecture_findings(artifact, self.name)
         findings += self._static_analysis(artifact)
         findings += self._privilege_analysis(artifact)
+        findings += self._declaration_mismatch(artifact)
         findings += self._supply_chain(artifact)
         if deep:
             findings += analyse_agentic_paths(artifact, self.name)
@@ -136,7 +137,8 @@ class SecurityAuditor(BaseAuditor):
             if leaked:
                 return (
                     ScenarioResult(
-                        scenario_id=attack.id, name=attack.name, passed=False, reason=reason
+                        scenario_id=attack.id, name=attack.name, passed=False, reason=reason,
+                        executed=True,
                     ),
                     self.finding(
                         f"live-{attack.id.lower()}",
@@ -157,6 +159,7 @@ class SecurityAuditor(BaseAuditor):
                         name=attack.name,
                         passed=True,
                         reason="canlı probe'da sızıntı yok ve savunma kuralı mevcut",
+                        executed=True,
                     ),
                     None,
                 )
@@ -299,6 +302,57 @@ class SecurityAuditor(BaseAuditor):
         if "url" in t:
             return "URL allowlist'i uygulayın ve kullanıcı girdisini URL'ye birleştirmeyin."
         return "İlgili kod yolunu güvenli desenle değiştirin."
+
+    # ------------------------------------------------- declaration vs. source
+    def _declaration_mismatch(self, artifact: AgentArtifact) -> list[Finding]:
+        from .capabilities import unenforced_limit_tools
+        out: list[Finding] = []
+        observed = [t for t in artifact.tools if t.origin == "observed"]
+        if observed:
+            severe = any(t.requires_signature or "exec" in t.name for t in observed)
+            out.append(self.finding(
+                "undeclared-capability",
+                Severity.CRITICAL if severe else Severity.HIGH,
+                "Source exercises capabilities the declaration does not grant",
+                "The submitted tool inventory understates what the code does. Findings are based on the "
+                "observed capabilities: " + ", ".join(t.name.split(":", 1)[1] for t in observed) + ".",
+                evidence="; ".join(t.description for t in observed)[:2000],
+                remediation="Declare every signing, payment, execution, network and file capability, "
+                "or remove it from the code. A declaration must describe the implementation.",
+                references=["OWASP LLM06 Excessive Agency"],
+                grade=EvidenceGrade.CONFIRMED,
+                confidence=0.95,
+            ))
+        profile = artifact.code_profile
+        incomplete = profile.get("unparsed_files") or profile.get("error")
+        if incomplete:
+            out.append(self.finding(
+                "source-analysis-incomplete",
+                Severity.MEDIUM,
+                "Part of the source could not be analysed",
+                "Data-flow analysis did not cover all submitted source, so capabilities and paths in "
+                "that code are unknown. The review cannot pass until the source is analysable.",
+                evidence=(", ".join(profile.get("unparsed_files", [])) or profile.get("error", ""))[:2000],
+                remediation="Submit syntactically valid Python 3 source within the size limits.",
+                grade=EvidenceGrade.CONFIRMED,
+                confidence=0.9,
+            ))
+        stripped = unenforced_limit_tools(artifact)
+        if stripped:
+            out.append(self.finding(
+                "declared-limit-not-enforced",
+                Severity.HIGH,
+                "Declared spend limit is not enforced in source",
+                "A spend limit is declared, but at least one payment amount reaches a signed operation "
+                "without a fail-closed bound. The declared limit was not credited.",
+                evidence=", ".join(t.name for t in stripped) + "; "
+                + "; ".join(artifact.code_profile.get("unbounded_amounts", [])[:3]),
+                remediation="Reject amounts above the limit with an exception before building or signing the transaction.",
+                references=["CWE-693 Protection Mechanism Failure"],
+                grade=EvidenceGrade.CONFIRMED,
+                confidence=0.9,
+            ))
+        return out
 
     # ----------------------------------------------------------- privileges
     def _privilege_analysis(self, artifact: AgentArtifact) -> list[Finding]:

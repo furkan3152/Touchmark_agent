@@ -70,7 +70,7 @@ The process-wide limiter is intentionally conservative for the prototype. It is 
 
 ## Output and interpretation
 
-The response contains `mode`, `decision`, `priority_finding_ids`, `scope`, `report`, `report_json` and `report_sha256`. `needs_fixes` means a directly evidenced high/critical finding from the source/configuration rules warrants investigation; `needs_evidence` is not a pass. Unverified ownership is an expected gap for this unauthenticated route, not a source defect.
+The response contains `mode`, `decision`, `priority_finding_ids`, `scope`, `report`, `report_json` and `report_sha256`. `decision` is one of `pass`, `needs_fixes` or `needs_evidence` ([decision rule](ANALYSIS_MODEL.md#3-one-decision-rule)). `needs_fixes` means a high or critical risk was found in source or configuration; `needs_evidence` means the prompt, tools and implementation were not all reviewed. `pass` is scoped to the submitted material and is not a safety certificate. Each finding carries `kind` (`risk` or `evidence_gap`); unverified ownership is an expected evidence gap for this unauthenticated route, not a source defect.
 
 `report_json` is the exact canonical UTF-8 file to download. The browser checks its SHA-256 before displaying the dossier and renders the committed report bytes. Editing inputs invalidates the displayed review. HTTP 413 means the body is too large; 422 identifies an invalid bundle; 429 requests a retry after a minute. Inputs remain available after a failed review.
 

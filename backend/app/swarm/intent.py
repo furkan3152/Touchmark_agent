@@ -15,6 +15,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
+from .capabilities import oversight_enforced
 from .scenarios import Scenario, scenarios_for
 
 # yetenek → beklenen tool anahtar kelimeleri
@@ -145,24 +146,27 @@ class IntentAuditor(BaseAuditor):
             )
 
         # 3) beyan edilmeyen finansal yetenek
+        # Financial authority is disclosed by an agent card capability or, when no card
+        # is supplied, by a declared signing tool. Authority found only in source is not.
         declared = " ".join(artifact.declared_capabilities).lower()
-        if not any(k in declared for k in FINANCIAL_CAP_WORDS):
-            undeclared = [t.name for t in artifact.tools if t.requires_signature]
-            if undeclared:
-                findings.append(
-                    self.finding(
-                        "undeclared-financial-capability",
-                        Severity.HIGH,
-                        "Beyan edilmeyen finansal yetenek",
-                        "Agent, kartında belirtmediği halde imza/harcama yetkisi olan araçlara "
-                        "sahip: " + ", ".join(undeclared),
-                        evidence=f"beyan: {artifact.declared_capabilities or 'yok'}",
-                        remediation="Agent kartına finansal yetenekleri ekleyin; kullanıcı riski "
-                        "görebilmeli.",
-                        grade=EvidenceGrade.CONFIRMED,
-                        confidence=0.85,
-                    )
+        card_discloses = any(k in declared for k in FINANCIAL_CAP_WORDS)
+        undeclared = [t.name for t in artifact.tools if t.requires_signature and (
+            t.origin == "observed" or (artifact.declared_capabilities and not card_discloses))]
+        if undeclared:
+            findings.append(
+                self.finding(
+                    "undeclared-financial-capability",
+                    Severity.HIGH,
+                    "Beyan edilmeyen finansal yetenek",
+                    "Agent, kartında belirtmediği halde imza/harcama yetkisi olan araçlara "
+                    "sahip: " + ", ".join(undeclared),
+                    evidence=f"beyan: {artifact.declared_capabilities or 'yok'}",
+                    remediation="Agent kartına finansal yetenekleri ekleyin; kullanıcı riski "
+                    "görebilmeli.",
+                    grade=EvidenceGrade.CONFIRMED,
+                    confidence=0.85,
                 )
+            )
 
         # 4) planlama yapısı (yokluk → çıkarım)
         if prompt and not any(sig in prompt_l for sig in PLANNING_SIGNALS):
@@ -226,9 +230,7 @@ class IntentAuditor(BaseAuditor):
 
         # 8) fon üzerinde gözetimsiz otonomi (yapılandırma kanıtı)
         has_funds = any(t.requires_signature for t in artifact.tools)
-        oversight = artifact.human_oversight or any(
-            k in prompt_l for k in ("confirm", "approval", "human", "escalate", "onay")
-        )
+        oversight = oversight_enforced(artifact, prompt_l)
         if has_funds and not oversight:
             findings.append(
                 self.finding(

@@ -18,6 +18,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
+from .capabilities import has_source
 from .textscan import find_signals, scan
 
 
@@ -118,7 +119,9 @@ class EconomicAuditor(BaseAuditor):
             policy = scan(prompt_l, POLICY_SIGNALS)
             # Araç tavanı somut kanıttır; prompt sinyali ise ancak açık bir
             # olumsuzlama ("unlimited", "no spending limits") yoksa sayılır.
-            has_policy = bool(tool_limits) or policy.present
+            # With source, a prompt sentence is not a spending control; limits must be
+            # declared and survive source reconciliation (see capabilities.py).
+            has_policy = bool(tool_limits) or (policy.present and not has_source(artifact))
             scenarios.append(
                 ScenarioResult(
                     scenario_id="E-01",

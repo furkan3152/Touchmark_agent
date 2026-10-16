@@ -134,7 +134,7 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
     )
     report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP)
     from ..reporting.english import english_finding
-    from ..swarm.policy import finding_set_commitment
+    from ..swarm.policy import actionable_risks, finding_set_commitment
     report.findings = [english_finding(f) for f in report.findings]
     report.finding_set_hash = finding_set_commitment(report.findings)
     payload = report_to_dict(report, artifact)
@@ -189,18 +189,13 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         payload["result"]["external_processors"] = scope["external_processors"]
         payload["result"]["deterministic"] = False
     payload["review_scope"] = scope
-    # Missing ownership is an explicit scope boundary in this route, not a code
-    # defect. Heuristic signals remain in the report for investigation.
-    actionable = [
-        f for f in report.findings
-        if f.severity.rank >= Severity.HIGH.rank
-        and f.evidence_grade is EvidenceGrade.CONFIRMED
-        and f.id != "compliance-owner-unverified"
-    ]
+    # One shared rule (swarm.policy.review_decision) decides for every route.
+    decision = report.decision
+    actionable = actionable_risks(report.findings)
     if not request.files and not request.system_prompt:
-        actionable = []
-    decision = "needs_fixes" if actionable else "needs_evidence"
+        actionable, decision = [], "needs_evidence"
     payload["review_decision"] = decision
+    payload["result"]["decision"] = decision
     payload["priority_finding_ids"] = [f.id for f in actionable]
     encoded = canonical_json(payload)
     return {

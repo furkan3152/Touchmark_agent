@@ -18,6 +18,10 @@
 
 ---
 
+## October 16 analysis update
+
+The source analyser now derives what an agent can do from its code instead of trusting the declared tool list, and it traces untrusted input across files to signing, payment, account-authority, execution, network, file, log and model boundaries. Missing documentation is reported as an *evidence gap* that never lowers the risk score. One decision rule (`pass` / `needs_fixes` / `needs_evidence`) drives the Studio, official audits and credentials, and a credential is issued only for a passing audit (also enforced on-chain at score 65). See [the analysis model, measured results and limits](docs/ANALYSIS_MODEL.md).
+
 ## October 2026 workspace release
 
 **Veritas Official** is the first operator. Customers choose eight specialist areas and Preview, Assurance or Deep scope. All baseline source rules remain enabled; selected behavior families receive a bounded 0/12/24-case runtime budget. Proposed prices are $3 / $19 / $49; these are not live USD charges. Independent operators come later.

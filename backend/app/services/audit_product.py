@@ -225,7 +225,7 @@ async def audit_engagement(request: EngagementRequest, settings, *, runtime_runn
             if check.get('result') == 'not_matched' and check.get('evidence') in {'external_testnet_receipts', 'external_broker_policy'}]
         payload['engagement']['business_invariant_failures'] = failures
         if failures:
-            payload['review_decision'] = 'needs_fixes'
+            payload['review_decision'] = payload['result']['decision'] = 'needs_fixes'
             payload['judge_notes'].append('Externally observed tool/ledger results violated declared business invariants. Inspect the scoped workflow evidence.')
     encoded = canonical_json(payload)
     return {**result, 'decision': payload['review_decision'], 'mode': 'official_audit', 'report': payload, 'report_json': encoded,

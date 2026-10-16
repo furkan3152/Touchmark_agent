@@ -20,15 +20,16 @@ from ..models import (
     SwarmMemberStats,
 )
 from .llm import LlmClient
-from .policy import assurance_level, audit_surface_coverage
+from .policy import PASS_SCORE, actionable_risks, assurance_level, audit_surface_coverage
 
 BADGE_THRESHOLDS: tuple[tuple[float, Badge], ...] = (
     (85.0, Badge.SAFE),
     (65.0, Badge.CAUTION),
     (40.0, Badge.HIGH_RISK),
 )
-HIGH_RISK_CEILING = 64.0  # critical bulgu varsa skor bunun üstüne çıkamaz
-CAUTION_CEILING = 84.0  # high bulgu varsa SAFE verilmez
+HIGH_RISK_CEILING = PASS_SCORE - 1  # any actionable risk keeps the report below a pass
+CAUTION_CEILING = 84.0  # incomplete assurance never reaches SAFE
+BLOCKLIST_CEILING = 39.0  # a confirmed critical risk
 
 
 class SynthesisJudge:
@@ -84,50 +85,30 @@ class SynthesisJudge:
         findings.sort(key=lambda f: (-f.severity.rank, -f.confidence, f.id))
         assurance = assurance_level(artifact, findings)
 
-        # Badge tavanı YALNIZCA doğrulanmış kanıta dayanan bulgularla zorlanır.
-        # Simüle edilmiş zincir verisi veya "savunma cümlesi yok" çıkarımı badge'i düşürmez.
-        confirmed = [f for f in findings if f.evidence_grade.blocks_badge]
-        crit_confirmed = sum(1 for f in confirmed if f.severity is Severity.CRITICAL)
-        high_confirmed = sum(1 for f in confirmed if f.severity is Severity.HIGH)
-        soft = len(findings) - len(confirmed)
+        # Ceilings come only from risk findings. Evidence gaps never lower the score;
+        # they limit assurance and the decision instead (policy.review_decision).
+        risks = [f for f in findings if f.is_risk]
+        gaps = len(findings) - len(risks)
+        actionable = actionable_risks(findings)
+        crit_confirmed = sum(1 for f in risks if f.severity is Severity.CRITICAL and f.evidence_grade.blocks_badge)
 
         score = base
         if crit_confirmed:
+            score = min(score, BLOCKLIST_CEILING)
+            notes.append(
+                f"{crit_confirmed} confirmed critical risk(s): authority should not be granted; "
+                f"score capped at {BLOCKLIST_CEILING}."
+            )
+        elif actionable:
             score = min(score, HIGH_RISK_CEILING)
             notes.append(
-                f"{crit_confirmed} doğrulanmış kritik bulgu nedeniyle skor "
-                f"{HIGH_RISK_CEILING} ile sınırlandırıldı."
+                f"{len(actionable)} high or critical risk(s) require fixes; score capped at {HIGH_RISK_CEILING}."
             )
-        elif high_confirmed:
-            score = min(score, CAUTION_CEILING)
+        if gaps:
             notes.append(
-                f"{high_confirmed} doğrulanmış yüksek bulgu nedeniyle SAFE badge'i verilmedi."
-            )
-
-        if crit_confirmed >= 3:
-            score = min(score, 35.0)
-            notes.append(
-                "Üç veya daha fazla doğrulanmış kritik bulgu: agent blocklist eşiğine çekildi."
-            )
-
-        if soft:
-            notes.append(
-                f"{soft} bulgu çıkarım/simülasyon kanıtına dayanıyor; skoru azaltılmış ağırlıkla "
-                "etkiledi, badge tavanını zorlamadı."
+                f"{gaps} evidence gap(s) are listed separately; they limit assurance, not the risk score."
             )
         disagreement = self._disagreement(verdicts)
-        if disagreement > 25:
-            score = min(score, HIGH_RISK_CEILING)
-            notes.append(
-                f"Denetçiler arası anlaşmazlık çok yüksek (σ={disagreement:.1f}); "
-                "manuel adjudication olmadan CAUTION verilemez."
-            )
-        elif disagreement > 15:
-            score = min(score, CAUTION_CEILING)
-            notes.append(
-                f"Denetçiler arası anlaşmazlık yüksek (σ={disagreement:.1f}). "
-                "Manuel inceleme olmadan SAFE verilemez."
-            )
 
         min_dimension = min((item.score for item in dimension_scores), default=0.0)
         if min_dimension < 40:
