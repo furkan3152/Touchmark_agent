@@ -7,6 +7,7 @@ olmadığını ölçer.
 
 from __future__ import annotations
 
+import json
 import re
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioResult, Severity
@@ -24,6 +25,20 @@ def _is_manifest(name: str) -> bool:
             or (("/.github/workflows/" in "/" + name.lower()) and base.endswith((".yml", ".yaml"))))
 
 
+def _manifest_text(name: str, text: str) -> str:
+    """Version-bearing lines only. In package.json that is the dependency sections:
+    `engines` and `scripts` (globs such as `src/**/*.ts`) are not dependencies."""
+    if not name.lower().endswith("package.json"):
+        return text
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    sections = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+    return "\n".join(f'"{dep}": "{version}"' for section in sections
+                     for dep, version in sorted((data.get(section) or {}).items()) if isinstance(version, str))
+
+
 class ProvenanceAuditor(BaseAuditor):
     name = "provenance-auditor"
     dimension = Dimension.PROVENANCE
@@ -35,7 +50,8 @@ class ProvenanceAuditor(BaseAuditor):
         names = {name.lower() for name in artifact.code_files} | {n.lower() for n in artifact.lockfiles}
         # Version ranges live in manifests and build files, not in application source:
         # `/**` comments and `a >= b` comparisons in code are not floating dependencies.
-        joined = "\n".join(text for name, text in artifact.code_files.items() if _is_manifest(name))
+        joined = "\n".join(_manifest_text(name, text) for name, text in artifact.code_files.items()
+                           if _is_manifest(name))
 
         lock_markers = (
             "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "cargo.lock",

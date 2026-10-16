@@ -198,7 +198,7 @@ class StellarNativeAuditor(BaseAuditor):
         # SEP-45 is web authentication for contract accounts. A contract id alone (a token
         # SAC, a policy contract) is not a contract-account login, so require both.
         contract_accounts = "contract account" in lower or "smart account" in lower or "smart wallet" in lower
-        web_auth = re.search(r"sep-?10\b|web[ _-]?auth|challenge transaction|challenge_transaction|"
+        web_auth = re.search(r"sep-?10\b|\bweb[ _-]?auth\b|challenge transaction|challenge_transaction|"
                              r"build_challenge|read_challenge|/auth\b", lower)
         if contract_accounts and web_auth:
             if "sep-45" not in lower and "sep45" not in lower:
@@ -349,7 +349,8 @@ class StellarNativeAuditor(BaseAuditor):
                     evidence=f"{dest['location']}: {dest['address']} memo_required=true",
                     remediation="Attach the destination's required memo, and refuse to pay memo-required accounts without one."))
             elif dest.get("status") == "not_found":
-                out.append(self.finding(f"onchain-destination-missing-{len(out)}", Severity.MEDIUM,
+                # A payment to a missing account fails; it does not lose funds.
+                out.append(self.finding(f"onchain-destination-missing-{len(out)}", Severity.LOW,
                     "A hard-coded payment destination does not exist on this network",
                     "Payments to it fail; create_account would be needed, which sends a different amount semantics.",
                     evidence=f"{dest['location']}: {dest['address']} not found on {facts.get('network')}",

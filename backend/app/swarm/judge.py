@@ -133,12 +133,14 @@ class SynthesisJudge:
         disagreement = self._disagreement(verdicts)
 
         min_dimension = min((item.score for item in dimension_scores), default=0.0)
+        # Accumulated lower-severity risks: graded caps, so a dimension at 59 and one at
+        # 20 do not land on the same score.
         if min_dimension < 40:
-            score = min(score, 39.0)
-            notes.append("En az bir boyut 40 altında: sonuç BLOCKLIST tavanına alındı.")
+            score = min(score, round(BLOCKLIST_CEILING - (40 - min_dimension) * 0.5, 1))
+            notes.append("At least one dimension is below 40: the score is held in the blocklist band.")
         elif min_dimension < 60:
-            score = min(score, HIGH_RISK_CEILING)
-            notes.append("En az bir boyut 60 altında: sonuç HIGH_RISK tavanına alındı.")
+            score = min(score, round(HIGH_RISK_CEILING - (60 - min_dimension) * 0.5, 1))
+            notes.append("At least one dimension is below 60: accumulated risks keep the score below a pass.")
         elif min_dimension < 75:
             score = min(score, CAUTION_CEILING)
             notes.append("En az bir boyut 75 altında: SAFE badge'i verilmedi.")
@@ -152,14 +154,9 @@ class SynthesisJudge:
 
         if tier is AuditTier.DEEP:
             coverage = audit_surface_coverage(artifact)
-            core_present = int(coverage["deep_core_present"])
-            if core_present < 2:
-                score = min(score, HIGH_RISK_CEILING)
-                notes.append(
-                    "Deep audit kapsamı kritik ölçüde eksik: davranış sözleşmesi, tool "
-                    "yetkileri ve uygulama kodundan en az ikisi sağlanmadı."
-                )
-            elif not coverage["deep_core_complete"]:
+            # Missing material limits the decision (needs_evidence), never the risk
+            # score: capping below a pass here would turn a coverage gap into needs_fixes.
+            if not coverage["deep_core_complete"]:
                 score = min(score, CAUTION_CEILING)
                 notes.append(
                     "Deep audit çekirdek kapsamı eksik: prompt, tool envanteri ve uygulama "
