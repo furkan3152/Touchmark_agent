@@ -111,7 +111,7 @@ EVIDENCE_GAP_RULES = frozenset({
     "provenance-sbom-missing",
     "reliability-no-endpoint", "reliability-no-error-handling", "reliability-no-cost-controls",
     "security-no-auditable-surface", "security-no-isolation", "security-all-tools-networked",
-    "security-source-analysis-incomplete",
+    "security-source-analysis-incomplete", "compliance-pii-without-safeguards",
     "stellar_native-onchain-account-missing", "stellar_native-onchain-agent-key-undeclared",
     "stellar_native-onchain-identity-unbound",
 })

@@ -204,7 +204,7 @@ class SynthesisJudge:
         dangerous_tools = [
             tool
             for tool in artifact.tools
-            if any(
+            if tool.origin == "declared" and any(
                 marker in tool.name.lower()
                 for marker in ("shell", "exec", "bash", "eval", "python", "run_code", "subprocess")
             )
