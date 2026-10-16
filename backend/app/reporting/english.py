@@ -108,3 +108,11 @@ def english_finding(finding: Finding) -> Finding:
         title, detail, remediation = message
         return finding.model_copy(update={"title": title, "detail": detail, "remediation": remediation})
     return finding
+
+
+def english_report(report) -> None:
+    """Translate findings in place and keep the score breakdown's titles in step."""
+    report.findings = [english_finding(f) for f in report.findings]
+    titles = {f.id: f.title for f in report.findings}
+    for item in (report.score_breakdown or {}).get("deductions", []):
+        item["title"] = titles.get(item["id"], item.get("title", ""))
