@@ -6,8 +6,11 @@ rules and missing documentation lowered the same score as observed defects.
 
 ## 1. What the code can do is derived from the code
 
-`backend/app/swarm/codeflow.py` parses every submitted Python file (it never imports or
-executes them) and runs a project-wide, context-insensitive data-flow analysis:
+`backend/app/swarm/codeflow.py` parses every submitted Python file, and
+`backend/app/swarm/jsflow.py` parses every JavaScript and TypeScript file (`.js`, `.jsx`,
+`.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`) with tree-sitter. Neither imports nor executes
+the code. Both run the same project-wide, context-insensitive data-flow analysis with the
+same labels, sinks and fail-closed controls:
 
 - **Calls are resolved across files**: imports and import aliases, module functions,
   class methods, `self.x` state, local aliases such as `dispatch = horizon.submit_transaction`.
@@ -42,6 +45,23 @@ auditor runs:
 
 The input commitment always covers the submitted bundle. Declaring every tool read-only
 no longer removes the financial rules.
+
+### JavaScript and TypeScript specifics
+
+- Entry points are found from how code is wired, not from names: MCP/agent tool
+  registration (`server.tool`, `registerTool`, `tool({...execute})`, `DynamicStructuredTool`,
+  `CallTool` handlers), HTTP routes (Express/Hono/Fastify style, Next.js route files), bot
+  handlers and exported functions nothing calls. Only a tool's first parameter is model
+  input; zod `enum`/`literal`/`max` constraints in its schema count as allowlists and caps.
+- Workspace packages are resolved by their `package.json` name, so a monorepo is one project.
+- Stellar-specific sinks include `Operation.payment` and other operations, `contract.call`,
+  `authorizeEntry`, `signTransaction`/`signAuthEntry`/`signAndSubmit*`, submission, and x402
+  paying fetch wrappers (`wrapFetchWithPayment*` and similar). A paying wrapper without a
+  spend-limit option is reported as `security-path-x402-payment-unbounded`.
+- Browser wallet prompts (Freighter, Stellar Wallets Kit) are human approval, not agent
+  signing. Relaying a transaction someone else signed is not signing authority.
+- A secret-named field or argument the model supplies (`secretKey` in a tool schema) is
+  reported as `security-path-secret-handled-by-model`.
 
 ## 2. Risks, warnings and evidence gaps are separate
 
@@ -138,8 +158,13 @@ limits:
 
 - It is static and context-insensitive.
 - It does not resolve reflection beyond the patterns above.
-- Data flow is Python-only; JavaScript and TypeScript sources get a capability inventory,
-  and Rust contracts are checked by separate rules.
+- Data flow covers Python, JavaScript and TypeScript. Rust contracts are checked by
+  separate rules. A JS/TS file the parser cannot read cleanly (more than 2% syntax errors)
+  is listed as unparsed, gets only the lexical inventory, and keeps the
+  `security-source-analysis-incomplete` gap open until the deep review reads it.
+- Logic flaws that are not a flow from an untrusted input to a sink (for example, a
+  verifier that never checks a payment, or secrets stored in plaintext) are left to the
+  deep review.
 - It cannot see what libraries do internally.
 
 A new, independently written corpus is the next meaningful measurement.
@@ -254,3 +279,37 @@ How they were checked:
   The review prompt now has a severity rubric for these cases.
 - **Decisions:** every `needs_fixes` decision rests on at least one verified critical or
   high finding. The repository that passed had no verified high or critical issue.
+
+## 8. What can be audited from an agent reference
+
+`backend/app/services/agent_resolver.py` accepts any of these references
+(`POST /api/v1/studio/resolve`, `scripts/audit_agent.py`) and decides what the audited
+source is bound to. It reads the ledger only (`getLedgerEntries`, Horizon); it never
+signs or submits.
+
+| Reference | What is read | Binding of source to the agent | Can it pass? |
+|---|---|---|---|
+| GitHub URL (`owner/repo`, optional ref) | Repository, pinned to a commit | `user_supplied`: the source is what was named | Yes, on its own merits |
+| AgentRegistry agent ID (64 hex) | `AgentRec` (owner, card URI and hash, endpoint hash, active, version) | `registry_card` when the fetched card's sha256 equals `meta_hash`; the endpoint is bound when its sha256 equals `end_hash` | Yes if the card names a repository; the record's facts are added |
+| Contract address (`C...`) | Instance, WASM (hash recomputed), function spec, SEP-46 metadata | `attested_build` when a GitHub build attestation matches the WASM hash; `wasm_metadata` when metadata only names a repository | Only with source; a declared but unattested repository is weaker evidence |
+| Account (`G...`) | Signers, thresholds, flags, home domain | None from the ledger alone | No: authority facts only |
+| Agent card URL / JSON | Card fields (repository, endpoint) | `unbound_card` unless it matches a registry record | Yes if it names a repository, at the lower binding |
+| Endpoint only | Nothing about its code | None | No |
+
+Without source, the audit reports what the chain shows (upgradeability, authority,
+custom account) and the blocking gap `stellar_native-onchain-source-unbound`. An agent
+whose code cannot be read cannot be shown to be safe, so it cannot pass.
+
+## 9. JavaScript and TypeScript measurement (2026-10-16)
+
+- **Labelled TS corpus** (`backend/tests/test_ts_agent_corpus.py`): 21 cases, 12 flawed and
+  9 sound; all 21 are classified correctly.
+- **Real repositories:** 8 open-source TypeScript/JavaScript agents had 19 verified issues
+  that can be expressed as a data flow or a Stellar rule. The rules alone, without the deep
+  review, find 17 of the 19. The two misses are design flaws (secrets stored in plaintext,
+  and an x402 verifier that never checks the payment), which are left to the deep review.
+- **Parsing:** every JS/TS file in the 12 repositories parsed without errors, at about one
+  second per repository.
+
+These repositories were also used to fix false positives, so the numbers are a
+regression check, not an independent estimate of precision or recall.
