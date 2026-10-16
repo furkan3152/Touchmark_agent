@@ -313,3 +313,33 @@ whose code cannot be read cannot be shown to be safe, so it cannot pass.
 
 These repositories were also used to fix false positives, so the numbers are a
 regression check, not an independent estimate of precision or recall.
+
+## 10. Large-repository run: an EVM/Solana TypeScript monorepo (2026-10-16)
+
+A 1,060-file TypeScript monorepo (EVM and Solana, non-custodial) exposed defects that the
+smaller agents had not:
+
+- **Selection:** the old 120-file budget left out the authentication and routing files,
+  and the deep review then raised a high finding it could not verify (the route guard it
+  needed was in an unselected file). The budget is now 1,500 files / 12 MB, files that
+  decide authority (auth, router, middleware, policy, webhooks, keys) are kept first,
+  and any source left out keeps `security-source-analysis-incomplete` open.
+- **Termination:** several anonymous functions on one line reused a function key, which
+  made a function its own parent and hung the analysis. Keys are now unique, and scope
+  walks stop on cycles.
+- **Precision:**
+  - `JSON.parse` no longer resolves to a project method named `parse`. That leak had
+    spread model taint across the repository.
+  - The analyser recognises more control shapes: SSRF pinned to a checked address,
+    branch-sensitive `cond ? p : null` and `a || b` checks, and nested `const` arrow
+    functions.
+  - Signers supplied by the caller (EIP-1193, Wallet Standard) are treated as
+    delegated, not as agent signing.
+  - Comments are ignored by the lexical rules.
+  - CI workflows float only through unpinned actions.
+- **Result:** rules-only, the score went from needs_fixes 57 (mostly false findings) to
+  pass 84. The deep review then found the same calldata-binding issue as an independent
+  manual review. Logic flaws such as an approval page that discloses a capability id, or
+  provider transactions checked only by simulation, were found by the manual review and
+  not by the system. Chain rules remain Stellar-specific; EVM and Solana value-movement
+  checks are left to the deep review.
