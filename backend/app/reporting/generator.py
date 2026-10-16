@@ -112,6 +112,7 @@ def report_to_dict(report: AuditReport, artifact: AgentArtifact) -> dict:
         ],
         "judge_notes": report.judge_notes,
         "deep_review": report.deep_review,
+        "onchain_authority": artifact.chain_authority,
         "attestation": report.attestation.model_dump(mode="json") if report.attestation else None,
     }
 

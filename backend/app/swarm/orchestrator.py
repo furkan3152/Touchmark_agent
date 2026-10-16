@@ -270,7 +270,7 @@ class AuditSwarm:
         from .base import BaseAuditor
         from .policy import classify_finding
         existing = [f for v in verdicts for f in v.findings]
-        result = await reviewer.review(artifact, existing, chain_facts)
+        result = await reviewer.review(artifact, existing, chain_facts or artifact.chain_authority or None)
         by_dimension: dict = {}
         for finding in result.findings:
             by_dimension.setdefault(finding.dimension, []).append(classify_finding(finding))
