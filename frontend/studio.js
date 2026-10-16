@@ -674,7 +674,12 @@
     byId("empty-report").hidden = true;
     byId("review-result").hidden = false;
     byId("dossier-state").textContent = "Source review complete";
-    byId("result-decision").textContent = value.decision === "needs_fixes" ? "Investigate before deployment" : "More evidence required";
+    const decisions = {
+      pass: "Passed: no open high or critical risk in the reviewed scope",
+      needs_fixes: "Fixes required before granting authority",
+      needs_evidence: "More evidence required",
+    };
+    byId("result-decision").textContent = decisions[value.decision] || decisions.needs_evidence;
     byId("result-name").textContent = value.report.agent.name;
     byId("result-summary").textContent = "Source inspected. Runtime behavior, owner identity and onchain publication have not been verified.";
     renderDiscovery(value.report.discovery);
@@ -697,7 +702,7 @@
       const fallback = finding.id.replace(/^[^-]+-/, "").replaceAll("-", " ");
       summary.append(node("span", finding.title || findingTitles[finding.id] || fallback.charAt(0).toUpperCase() + fallback.slice(1)), node("span", finding.severity, "severity"));
       details.append(summary, node("p", finding.detail));
-      details.append(node("p", finding.evidence_grade === "confirmed" ? "Direct source or configuration evidence — not a runtime exploit." : "Heuristic signal — requires validation.", "evidence-kind"));
+      details.append(node("p", finding.kind === "evidence_gap" ? "Evidence gap — missing supporting evidence, not a vulnerability; it does not lower the risk score." : finding.evidence_grade === "confirmed" ? "Direct source or configuration evidence — not a runtime exploit." : "Heuristic signal — requires validation.", "evidence-kind"));
       if (finding.evidence) details.append(node("pre", finding.evidence));
       if (finding.remediation) details.append(node("p", `Next check: ${finding.remediation}`));
       if (secondary.includes(finding)) observations.append(details);

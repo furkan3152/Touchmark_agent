@@ -139,3 +139,37 @@ fn invalid_expiration_and_missing_signature_rejected() {
     f.env.mock_auths(&[]);
     assert!(c.try_issue(&f.request, &2000).is_err());
 }
+
+#[test]
+fn failing_audit_cannot_carry_a_credential() {
+    let f = Fixture::new();
+    let registry = AgentRegistryClient::new(&f.env, &f.registry);
+    let failing = hash(&f.env, 8);
+    registry.req_valid(&f.owner, &failing, &f.agent, &f.issuer);
+    registry.respond(
+        &f.issuer,
+        &failing,
+        &(PASS_SCORE - 1),
+        &String::from_str(&f.env, "ipfs://failing-report"),
+        &hash(&f.env, 10),
+    );
+    let c = AuditCredentialClient::new(&f.env, &f.credential);
+    assert_eq!(
+        c.try_issue(&failing, &2000),
+        Err(Ok(Error::BelowPassScore.into()))
+    );
+    assert!(c.try_get(&failing).is_err());
+}
+
+#[test]
+fn first_revocation_reason_cannot_be_overwritten() {
+    let f = Fixture::new();
+    f.issue();
+    let c = AuditCredentialClient::new(&f.env, &f.credential);
+    c.revoke(&f.issuer, &f.request, &hash(&f.env, 9));
+    assert_eq!(
+        c.try_revoke(&f.owner, &f.request, &hash(&f.env, 11)),
+        Err(Ok(Error::AlreadyRevoked.into()))
+    );
+    assert_eq!(c.get(&f.request).reason_hash, hash(&f.env, 9));
+}

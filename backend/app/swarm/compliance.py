@@ -15,6 +15,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
+from .capabilities import oversight_enforced
 from .llm import LlmClient
 
 
@@ -62,9 +63,7 @@ class ComplianceAuditor(BaseAuditor):
                 )
             )
             # yüksek risk ise insan gözetimi zorunlu
-            oversight = artifact.human_oversight or any(
-                k in prompt_l for k in ("human", "confirm", "approval", "escalate", "operator")
-            )
+            oversight = oversight_enforced(artifact, prompt_l)
             scenarios.append(
                 ScenarioResult(
                     scenario_id="C-02",

@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 from hashlib import sha256
 import time
 
@@ -122,8 +123,8 @@ def flow(monkeypatch):
         plan_sha256=plan_hash, agent_id=agent, request_id=request, amount_atomic='1000000',
         contracts=checkout.PINNED_CONTRACTS, provider=provider.public_key, evaluator=evaluator.public_key,
         treasury=manifest['roles']['treasury'], deadline_ledger=10000, issued_at=100, expires_at=700)
-    report = {'agent': {'name': 'Our fixture'}, 'findings': [], 'result': {'overall_score': 63.7},
-        'engagement': {'plan': plan, 'plan_sha256': plan_hash}, 'review_decision': 'needs_evidence'}
+    report = {'agent': {'name': 'Our fixture'}, 'findings': [], 'result': {'overall_score': 72.5},
+        'engagement': {'plan': plan, 'plan_sha256': plan_hash}, 'review_decision': 'pass'}
     result = {'report': report, 'report_json': canonical_json(report)}
     result['report_sha256'] = sha256(result['report_json'].encode()).hexdigest()
     order = {'id': request, 'order_id': request, 'quote': quote.model_dump(), 'lease_token': 'private-lease',
@@ -152,7 +153,8 @@ async def test_exact_flow_expired_checkout_quote_allowed_and_idempotent(flow):
     adapter, order, result, publication, chain, journal = flow
     receipt = await adapter(order, result, publication)
     assert receipt['status'] == 'delivered' and receipt['payment_state'] == 'Complete'
-    assert receipt['score'] == 64 and receipt['report_score'] == 63.7
+    assert receipt['score'] == 72 and receipt['report_score'] == 72.5
+    assert receipt['credential_status'] == 'issued' and receipt['is_current'] is True
     assert receipt['token_id'] == order['id']
     assert receipt['report_sha256'] != sha256(publication['report_uri'].encode()).hexdigest()
     assert [s for s, _ in chain.sent] == ['respond', 'submit', 'complete', 'issue']
@@ -349,3 +351,23 @@ def test_envelope_is_not_expired_before_its_time_bound(flow, monkeypatch):
     assert settlement.TestnetChain._expired(intent, now=late) is False
     monkeypatch.setattr(settlement, 'SorobanServer', Server(intent['sequence'] - 1, 'FAILED'))
     assert settlement.TestnetChain._expired(intent, now=late) is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('decision,score', [('needs_fixes', 39.0), ('needs_evidence', 84.0), ('pass', 63.7)])
+async def test_failing_audit_settles_payment_without_issuing_a_credential(flow, decision, score):
+    adapter, order, result, publication, chain, journal = flow
+    report = json.loads(result['report_json'])
+    report['review_decision'], report['result']['overall_score'] = decision, score
+    result['report'] = report
+    result['report_json'] = canonical_json(report)
+    result['report_sha256'] = order['report_sha256'] = sha256(result['report_json'].encode()).hexdigest()
+    publication['report_sha256'] = result['report_sha256']
+    publication['report_uri'] = 'https://reports.example/immutable/' + result['report_sha256'] + '.json'
+    adapter.transport = httpx.MockTransport(lambda req: httpx.Response(200, content=result['report_json'].encode()))
+    receipt = await adapter(order, result, publication)
+    assert receipt['payment_state'] == 'Complete'
+    assert receipt['credential_status'] == 'not_eligible'
+    assert receipt['is_current'] is False and receipt['token_id'] is None
+    assert [s for s, _ in chain.sent] == ['respond', 'submit', 'complete']
+    assert not chain.state.get('credential')
