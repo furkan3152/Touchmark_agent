@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .stellar.networks import TESTNET, NetworkGuardError, StellarNetwork, resolve_network
@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     # Read public ledger state (signers, thresholds, SEP-1, SEP-29) for supplied addresses.
     enable_onchain_verification: bool = False
     enable_deep_review: bool = False
-    anthropic_api_key: str = Field(default="", repr=False, exclude=True)
+    anthropic_api_key: str = Field(default="", repr=False, exclude=True,
+                                   validation_alias=AliasChoices("anthropic_api_key", "anthropic_ai_key"))
     deep_review_model: str = "claude-sonnet-5-5"
     deep_review_effort: str = Field(default="high", pattern="^(low|medium|high|xhigh|max)$")
     deep_review_max_turns: int = Field(default=24, ge=4, le=60)
