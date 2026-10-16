@@ -160,3 +160,19 @@ def test_tool_loop_tools_read_and_search_source():
     assert "2:     send(x)" in reviewer._run_tool("read_source", {"path": "a.py", "start_line": 1, "end_line": 5}, artifact, {}, result)
     assert "a.py:2" in reviewer._run_tool("search_source", {"pattern": r"send\("}, artifact, {}, result)
     assert "Destination must come" in reviewer._run_tool("stellar_reference", {"topic": "payments"}, artifact, {}, result)
+
+
+def test_model_quotes_of_secret_literals_are_masked_in_the_report():
+    from stellar_sdk import Keypair
+    seed = Keypair.random().secret
+    artifact = AgentArtifact(source_kind=SourceKind.UPLOAD, name="x",
+                             code_files={"a.py": f'KP = Keypair.from_secret("{seed}")\n'})
+    reviewer = DeepReviewer(ScriptedClient([]), model="m")
+    result = deep_review.DeepReviewResult()
+    reviewer._run_tool("record_finding", {"category": "secret_exposure", "severity": "critical", "title": "Seed",
+        "file": "a.py", "line": 1, "evidence_quote": f'Keypair.from_secret("{seed}")',
+        "attack_scenario": f"Anyone reading {seed} controls the account", "stellar_impact": "x",
+        "remediation": "rotate"}, artifact, {}, result)
+    finding = result.findings[0]
+    assert seed not in finding.evidence and seed not in finding.detail
+    assert "[REDACTED]" in finding.evidence
