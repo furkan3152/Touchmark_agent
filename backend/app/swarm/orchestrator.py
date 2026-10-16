@@ -331,7 +331,8 @@ class AuditSwarm:
         # an analyser crash (profile error) is never closed this way.
         unparsed = set(artifact.code_profile.get("unparsed_files", []))
         parsed_gap_closed = (result.status == "completed" and bool(unparsed)
-                             and not artifact.code_profile.get("error") and unparsed <= set(result.files_read))
+                             and not artifact.code_profile.get("error") and unparsed <= set(result.files_read)
+                             and not artifact.raw_metadata.get("source_not_selected"))
         updated = []
         for verdict in verdicts:
             findings = [f for f in verdict.findings

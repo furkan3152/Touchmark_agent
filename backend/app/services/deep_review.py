@@ -162,6 +162,12 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
             r"|^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?(?:\(|function)"
             r"|\.(?:tool|registerTool)\(\s*[\"'](\w[\w.-]*)", text, re.M)]
         files[path] = {"lines": len(text.splitlines()), "symbols": symbols[:60]}
+    # Large repositories: keep the file list complete but list symbols only while they fit.
+    budget = 6_000
+    for path, entry in files.items():
+        take = entry["symbols"][:max(0, budget)]
+        budget -= len(take)
+        entry["symbols"] = take
     pack = {
         "agent": {"name": artifact.name, "purpose": artifact.description[:2000],
                   "system_prompt": artifact.system_prompt[:6000],
