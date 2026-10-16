@@ -31,10 +31,41 @@ from .attacks import (
 from .base import BaseAuditor
 from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
+from .capabilities import code_enforced_spend_limit
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
 DANGEROUS_TOOL_NAMES = ("shell", "exec", "bash", "eval", "python", "run_code", "subprocess")
 ISOLATION_SIGNALS = ("sandbox", "docker", "firecracker", "isolat", "tee", "enclave")
+
+
+LOCKFILE_NAMES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "cargo.lock", "poetry.lock",
+                  "uv.lock", "pipfile.lock", "go.sum", "bun.lockb", "bun.lock")
+
+
+_CREDENTIAL_TITLE = re.compile(r"anahtar|key|secret|credential", re.I)
+_PLACEHOLDER = re.compile(r"test|dev(?:elopment)?|example|sample|local|dummy|placeholder|changeme|change-me|"
+                          r"do-?not-?use|fake|mock|xxxx|your[-_]", re.I)
+
+
+def _placeholder(match: str) -> bool:
+    """A literal that is plainly not a live credential: a development placeholder, an EVM
+    address (0x + 40 hex) or a run of one character."""
+    value = re.search(r"[\"']([^\"']*)[\"']", match)
+    text = value.group(1) if value else match
+    return (bool(_PLACEHOLDER.search(text)) or bool(re.fullmatch(r"0x[0-9a-fA-F]{40}", text))
+            or len(set(text.replace("0x", ""))) <= 2)
+
+
+def _without_comments(name: str, content: str) -> str:
+    """Blank out comments (keeping line numbers) so prose such as "the eval (…)" is not code."""
+    def blank(m: re.Match) -> str:
+        return m.group(1) + re.sub(r"[^\n]", " ", m.group(2))
+    if name.endswith((".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".rs")):
+        content = re.sub(r"()(/\*[\s\S]*?\*/)", blank, content)
+        return re.sub(r"(?m)(^|[\s;{}(),])(//[^\n]*)", blank, content)
+    if name.endswith(".py"):
+        return re.sub(r"(?m)(^|\s)(#[^\n]*)", blank, content)
+    return content
 
 
 class SecurityAuditor(BaseAuditor):
@@ -62,7 +93,7 @@ class SecurityAuditor(BaseAuditor):
                     "Ajanın sistem prompt'u, kaynak kodu veya canlı endpoint'i sağlanmadı. "
                     "Prompt injection, aşırı yetki ve sır sızıntısı kontrolleri "
                     "çalıştırılamadı; bu skor bir güvenlik onayı değildir.",
-                    evidence="prompt/kod/endpoint yok (yalnızca zincir kimliği verildi)",
+                    evidence="no prompt, code or endpoint (on-chain identity only)",
                     remediation="Repo, agent card veya endpoint sağlayın; registry metadata URI "
                     "üzerinden erişilebilir bir agent card yayınlamak yeterlidir.",
                     grade=EvidenceGrade.CONFIRMED,
@@ -96,6 +127,7 @@ class SecurityAuditor(BaseAuditor):
         findings += architecture_findings(artifact, self.name)
         findings += self._static_analysis(artifact)
         findings += self._privilege_analysis(artifact)
+        findings += self._declaration_mismatch(artifact)
         findings += self._supply_chain(artifact)
         if deep:
             findings += analyse_agentic_paths(artifact, self.name)
@@ -136,7 +168,8 @@ class SecurityAuditor(BaseAuditor):
             if leaked:
                 return (
                     ScenarioResult(
-                        scenario_id=attack.id, name=attack.name, passed=False, reason=reason
+                        scenario_id=attack.id, name=attack.name, passed=False, reason=reason,
+                        executed=True,
                     ),
                     self.finding(
                         f"live-{attack.id.lower()}",
@@ -157,6 +190,7 @@ class SecurityAuditor(BaseAuditor):
                         name=attack.name,
                         passed=True,
                         reason="canlı probe'da sızıntı yok ve savunma kuralı mevcut",
+                        executed=True,
                     ),
                     None,
                 )
@@ -248,11 +282,20 @@ class SecurityAuditor(BaseAuditor):
         if not artifact.code_files:
             return out
 
+        analysed = set(artifact.code_profile.get("analysed_files", []))
+        code = {name: _without_comments(name, content) for name, content in artifact.code_files.items()}
         for pattern, title, severity, detail in DANGEROUS_CODE_PATTERNS:
             rx = re.compile(pattern)
             hits: list[str] = []
-            for fname, content in artifact.code_files.items():
+            execution = severity is not Severity.CRITICAL and not _CREDENTIAL_TITLE.search(title)
+            for fname, content in code.items():
+                if execution and fname in analysed:
+                    # The data-flow analysis decides whether input reaches eval/exec in
+                    # these files; a name match would only repeat or contradict it.
+                    continue
                 for m in rx.finditer(content):
+                    if _CREDENTIAL_TITLE.search(title) and _placeholder(m.group(0)):
+                        continue
                     line = content[: m.start()].count("\n") + 1
                     hits.append(f"{fname}:{line}")
                     if len(hits) >= 5:
@@ -267,7 +310,7 @@ class SecurityAuditor(BaseAuditor):
                         severity,
                         title,
                         detail,
-                        evidence="konum: " + ", ".join(hits),
+                        evidence="locations: " + ", ".join(hits),
                         remediation=self._remediation_for(title),
                         references=["text-pattern candidate; validate executable context"],
                         grade=EvidenceGrade.INFERRED,
@@ -300,6 +343,62 @@ class SecurityAuditor(BaseAuditor):
             return "URL allowlist'i uygulayın ve kullanıcı girdisini URL'ye birleştirmeyin."
         return "İlgili kod yolunu güvenli desenle değiştirin."
 
+    # ------------------------------------------------- declaration vs. source
+    def _declaration_mismatch(self, artifact: AgentArtifact) -> list[Finding]:
+        from .capabilities import unenforced_limit_tools
+        out: list[Finding] = []
+        observed = [t for t in artifact.tools if t.origin == "observed"]
+        if observed:
+            severe = any(t.requires_signature or "exec" in t.name for t in observed)
+            out.append(self.finding(
+                "undeclared-capability",
+                Severity.CRITICAL if severe else Severity.HIGH,
+                "Source exercises capabilities the declaration does not grant",
+                "The submitted tool inventory understates what the code does. Findings are based on the "
+                "observed capabilities: " + ", ".join(t.name.split(":", 1)[1] for t in observed) + ".",
+                evidence="; ".join(t.description for t in observed)[:2000],
+                remediation="Declare every signing, payment, execution, network and file capability, "
+                "or remove it from the code. A declaration must describe the implementation.",
+                references=["OWASP LLM06 Excessive Agency"],
+                grade=EvidenceGrade.CONFIRMED,
+                confidence=0.95,
+            ))
+        profile = artifact.code_profile
+        not_selected = list(artifact.raw_metadata.get("source_not_selected") or [])
+        incomplete = profile.get("unparsed_files") or profile.get("error") or not_selected
+        if incomplete:
+            evidence = ", ".join(profile.get("unparsed_files", [])) or profile.get("error", "")
+            if not_selected:
+                evidence = (evidence + "; " if evidence else "") + (
+                    f"{len(not_selected)} source file(s) outside the review budget: " + ", ".join(not_selected[:40]))
+            out.append(self.finding(
+                "source-analysis-incomplete",
+                Severity.MEDIUM,
+                "Part of the source could not be analysed",
+                "Data-flow analysis did not cover all source, so capabilities and paths in "
+                "that code are unknown. The review cannot pass until the source is analysable.",
+                evidence=evidence[:2000],
+                remediation="Submit syntactically valid Python, JavaScript or TypeScript source within the size limits, or run the deep review, which closes this gap only after reading every unparsed file.",
+                grade=EvidenceGrade.CONFIRMED,
+                confidence=0.9,
+            ))
+        stripped = unenforced_limit_tools(artifact)
+        if stripped:
+            out.append(self.finding(
+                "declared-limit-not-enforced",
+                Severity.HIGH,
+                "Declared spend limit is not enforced in source",
+                "A spend limit is declared, but at least one payment amount reaches a signed operation "
+                "without a fail-closed bound. The declared limit was not credited.",
+                evidence=", ".join(t.name for t in stripped) + "; "
+                + "; ".join(artifact.code_profile.get("unbounded_amounts", [])[:3]),
+                remediation="Reject amounts above the limit with an exception before building or signing the transaction.",
+                references=["CWE-693 Protection Mechanism Failure"],
+                grade=EvidenceGrade.CONFIRMED,
+                confidence=0.9,
+            ))
+        return out
+
     # ----------------------------------------------------------- privileges
     def _privilege_analysis(self, artifact: AgentArtifact) -> list[Finding]:
         out: list[Finding] = []
@@ -310,6 +409,8 @@ class SecurityAuditor(BaseAuditor):
             if t.requires_signature or any(s in SIGNING_SCOPES for s in t.scopes)
         ]
         unlimited = [t.name for t in signing_tools if t.spend_limit_usdc is None]
+        if unlimited and code_enforced_spend_limit(artifact):
+            unlimited = []  # the source caps every untrusted payment; see capabilities.py
         if unlimited:
             out.append(
                 self.finding(
@@ -318,7 +419,7 @@ class SecurityAuditor(BaseAuditor):
                     "Harcama limiti tanımsız araçlar",
                     "İmza/harcama yetkisi olan şu araçlarda tutar tavanı yok: "
                     + ", ".join(unlimited),
-                    evidence=f"tool tanımlarında spend_limit_usdc alanı boş: {', '.join(unlimited)}",
+                    evidence=f"no spend_limit_usdc on: {', '.join(unlimited)}",
                     remediation="Her finansal araç için `spend_limit_usdc` tanımlayın ve zincir "
                     "tarafında policy kontratıyla zorunlu kılın.",
                     references=["AAI-03 Excessive Agency"],
@@ -327,8 +428,11 @@ class SecurityAuditor(BaseAuditor):
                 )
             )
 
+        # Name-based exposure applies to tools the agent offers. Code-observed execution is
+        # judged by data flow and the deep review, not by its presence alone.
         dangerous = [
-            t.name for t in artifact.tools if any(d in t.name.lower() for d in DANGEROUS_TOOL_NAMES)
+            t.name for t in artifact.tools
+            if t.origin == "declared" and any(d in t.name.lower() for d in DANGEROUS_TOOL_NAMES)
         ]
         if dangerous:
             out.append(
@@ -382,8 +486,11 @@ class SecurityAuditor(BaseAuditor):
         out: list[Finding] = []
         if not artifact.dependencies:
             return out
+        locked = bool(artifact.lockfiles) or any(
+            name.lower().endswith(LOCKFILE_NAMES) for name in artifact.code_files)
 
-        unpinned = [
+        # A lockfile pins every version the manifest leaves as a range.
+        unpinned = [] if locked else [
             d
             for d in artifact.dependencies
             if not re.search(r"[=@]\s*\d", d) or any(m in d for m in UNPINNED_MARKERS)

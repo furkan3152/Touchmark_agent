@@ -58,23 +58,31 @@ def test_studio_limits_body_before_json_decoding():
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_home_opens_studio_and_preserves_operator_console():
+def test_home_opens_demo_and_preserves_studio_and_operator_console():
     with TestClient(api.app) as client:
         home = client.get("/")
+        studio = client.get("/studio")
         operator = client.get("/operator")
     assert home.status_code == 200
-    assert 'id="review-form"' in home.text
+    assert 'id="audit-form"' in home.text
+    assert studio.status_code == 200
+    assert 'id="review-form"' in studio.text
     assert operator.status_code == 200
     assert 'id="reportCard"' in operator.text
 
 
-def test_read_only_fixture_needs_evidence_not_a_fabricated_critical_fix():
+def test_read_only_fixture_passes_without_a_fabricated_critical_fix():
     fixtures = json.loads((Path(__file__).resolve().parents[2] / "frontend/studio-fixtures.json").read_text())
     with TestClient(api.app) as client:
         response = client.post("/api/v1/studio/review", json=fixtures["reader"])
     assert response.status_code == 200
-    assert response.json()["decision"] == "needs_evidence"
-    assert response.json()["priority_finding_ids"] == []
+    body = response.json()
+    # Prompt, tools and source were all reviewed and no risk needs fixing. Missing
+    # ownership and supply-chain metadata are evidence gaps, which keep it below SAFE.
+    assert body["decision"] == "pass"
+    assert body["priority_finding_ids"] == []
+    assert body["report"]["result"]["badge"] != "SAFE"
+    assert body["report"]["result"]["evidence_gap_count"] > 0
 
 
 def test_studio_keeps_source_out_of_integrations_and_persistent_lists(settings, monkeypatch):

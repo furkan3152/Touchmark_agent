@@ -1,0 +1,683 @@
+{
+ "TV1-memo-injection-payment": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Incoming payment memos are given to the model, which calls send_payment with any destination and amount.",
+  "expected_finding": "security-path-untrusted-to-financial-sink",
+  "bundle": {
+   "name": "TV1-memo-injection-payment",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Incoming payment memos are given to the model, which calls send_payment with any destination and amount.",
+   "system_prompt": "Pay approved vendors only.",
+   "files": {
+    "src/agent.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nimport Anthropic from \"@anthropic-ai/sdk\";\nconst server = new McpServer({ name: \"agent\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET!);\nconst anthropic = new Anthropic();\nserver.tool(\"send_payment\", \"Send XLM\", { to: z.string(), amount: z.string() }, async ({ to, amount }) => {\n  const account = await horizon.loadAccount(kp.publicKey());\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.payment({ destination: to, asset: Asset.native(), amount }))\n    .setTimeout(30).build();\n  tx.sign(kp);\n  const res = await horizon.submitTransaction(tx);\n  return { content: [{ type: \"text\", text: res.hash }] };\n});\nexport async function onPayment(record: any) {\n  const tx = await record.transaction();\n  await anthropic.messages.create({ model: \"claude-sonnet-5-5\", max_tokens: 500,\n    messages: [{ role: \"user\", content: `Handle this customer request: ${tx.memo}` }] });\n}\nhorizon.payments().forAccount(kp.publicKey()).stream({ onmessage: onPayment });\n"
+   },
+   "tools": [
+    {
+     "name": "send_payment",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 50
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV2-secret-in-prompt": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "The signing secret is placed in the model's system prompt.",
+  "expected_finding": "security-path-secret-to-model",
+  "bundle": {
+   "name": "TV2-secret-in-prompt",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "The signing secret is placed in the model's system prompt.",
+   "system_prompt": "Answer treasury questions.",
+   "files": {
+    "src/agent.ts": "import Anthropic from \"@anthropic-ai/sdk\";\nconst anthropic = new Anthropic();\nconst SECRET = process.env.STELLAR_SECRET_KEY;\nexport async function ask(question: string) {\n  return anthropic.messages.create({ model: \"claude-sonnet-5-5\", max_tokens: 400,\n    system: `You manage the treasury. Wallet key: ${SECRET}`, messages: [{ role: \"user\", content: question }] });\n}\n"
+   },
+   "tools": [
+    {
+     "name": "get_balance",
+     "scopes": [
+      "read:chain"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV3-exec-model-code": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "A tool runs model-written JavaScript in the agent process that holds the wallet key.",
+  "expected_finding": "security-path-untrusted-to-command",
+  "bundle": {
+   "name": "TV3-exec-model-code",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "A tool runs model-written JavaScript in the agent process that holds the wallet key.",
+   "system_prompt": "Help developers.",
+   "files": {
+    "src/server.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nimport { execSync } from \"child_process\";\nconst server = new McpServer({ name: \"dev\", version: \"1.0.0\" });\nserver.tool(\"run_shell\", \"Run a shell command for the user\", { cmd: z.string() }, async ({ cmd }) => {\n  const out = execSync(cmd).toString();\n  return { content: [{ type: \"text\", text: out }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "run_shell",
+     "scopes": [
+      "exec:process"
+     ],
+     "requires_signature": false,
+     "network_access": false
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV4-ssrf-fetch-tool": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "The model chooses any URL and the server fetches it.",
+  "expected_finding": "security-path-untrusted-to-network",
+  "bundle": {
+   "name": "TV4-ssrf-fetch-tool",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "The model chooses any URL and the server fetches it.",
+   "system_prompt": "Summarise web pages.",
+   "files": {
+    "src/server.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"web\", version: \"1.0.0\" });\nserver.tool(\"fetch_url\", \"Fetch a page\", { url: z.string() }, async ({ url }) => {\n  const res = await fetch(url);\n  return { content: [{ type: \"text\", text: await res.text() }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "fetch_url",
+     "scopes": [
+      "read:web"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV5-path-traversal": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "The model chooses a file path that is read without containment.",
+  "expected_finding": "security-path-untrusted-to-file",
+  "bundle": {
+   "name": "TV5-path-traversal",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "The model chooses a file path that is read without containment.",
+   "system_prompt": "Answer from our docs.",
+   "files": {
+    "src/server.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nimport { readFileSync } from \"fs\";\nimport path from \"path\";\nconst server = new McpServer({ name: \"docs\", version: \"1.0.0\" });\nserver.tool(\"read_doc\", \"Read a document\", { name: z.string() }, async ({ name }) => {\n  const text = readFileSync(path.join(\"./docs\", name), \"utf8\");\n  return { content: [{ type: \"text\", text }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "read_doc",
+     "scopes": [
+      "read:files"
+     ],
+     "requires_signature": false,
+     "network_access": false
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV6-blind-xdr-signing": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "Any XDR the model supplies is signed with the treasury key and submitted.",
+  "expected_finding": "security-path-external-transaction-signed",
+  "bundle": {
+   "name": "TV6-blind-xdr-signing",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Any XDR the model supplies is signed with the treasury key and submitted.",
+   "system_prompt": "Pay approved vendors only.",
+   "files": {
+    "src/server.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"agent\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET!);\nserver.tool(\"sign_and_submit\", \"Sign and submit a transaction\", { xdr: z.string() }, async ({ xdr }) => {\n  const tx = TransactionBuilder.fromXDR(xdr, Networks.TESTNET);\n  tx.sign(kp);\n  const res = await horizon.submitTransaction(tx);\n  return { content: [{ type: \"text\", text: res.hash }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "send_payment",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 50
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV7-limit-warn-only": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "The spending cap only logs a warning; the payment still goes out.",
+  "expected_finding": "security-path-untrusted-to-financial-sink",
+  "bundle": {
+   "name": "TV7-limit-warn-only",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "The spending cap only logs a warning; the payment still goes out.",
+   "system_prompt": "Pay approved vendors only.",
+   "files": {
+    "src/server.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"agent\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET!);\nconst MAX_PER_TX = 50;\nserver.tool(\"send_payment\", \"Send XLM\", { to: z.string(), amount: z.string() }, async ({ to, amount }) => {\n  if (Number(amount) > MAX_PER_TX) { console.warn(\"amount above limit\", amount); }\n  const account = await horizon.loadAccount(kp.publicKey());\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.payment({ destination: to, asset: Asset.native(), amount }))\n    .setTimeout(30).build();\n  tx.sign(kp);\n  const res = await horizon.submitTransaction(tx);\n  return { content: [{ type: \"text\", text: res.hash }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "send_payment",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 50
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV8-model-adds-signer": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "The model can add a signer with any weight to the treasury account.",
+  "expected_finding": "security-path-untrusted-account-control",
+  "bundle": {
+   "name": "TV8-model-adds-signer",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "The model can add a signer with any weight to the treasury account.",
+   "system_prompt": "Pay approved vendors only.",
+   "files": {
+    "src/server.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"agent\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET!);\nserver.tool(\"add_signer\", \"Add a co-signer\", { key: z.string(), weight: z.number() }, async ({ key, weight }) => {\n  const account = await horizon.loadAccount(kp.publicKey());\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.setOptions({ signer: { ed25519PublicKey: key, weight } })).setTimeout(30).build();\n  tx.sign(kp);\n  return horizon.submitTransaction(tx);\n});\n"
+   },
+   "tools": [
+    {
+     "name": "add_signer",
+     "scopes": [
+      "account:admin"
+     ],
+     "requires_signature": true,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV9-hardcoded-seed": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "The treasury secret seed is committed in source.",
+  "expected_finding": "stellar_native-stellar-secret-seed",
+  "bundle": {
+   "name": "TV9-hardcoded-seed",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "The treasury secret seed is committed in source.",
+   "system_prompt": "Report the treasury address.",
+   "files": {
+    "src/wallet.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nexport const TREASURY = Keypair.fromSecret(\"{{GENERATED_SEED}}\");\nexport function treasuryAddress() { return TREASURY.publicKey(); }\n"
+   },
+   "tools": [
+    {
+     "name": "get_balance",
+     "scopes": [
+      "read:chain"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV10-http-route-pays": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "An unauthenticated HTTP route pays any destination and amount in the request body.",
+  "expected_finding": "security-path-untrusted-to-financial-sink",
+  "bundle": {
+   "name": "TV10-http-route-pays",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "An unauthenticated HTTP route pays any destination and amount in the request body.",
+   "system_prompt": "Pay approved vendors only.",
+   "files": {
+    "src/server.js": "const express = require(\"express\");\nconst { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } = require(\"@stellar/stellar-sdk\");\nconst app = express();\napp.use(express.json());\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET);\napp.post(\"/payout\", async (req, res) => {\n  const { destination, amount } = req.body;\n  const account = await horizon.loadAccount(kp.publicKey());\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.payment({ destination, asset: Asset.native(), amount })).setTimeout(30).build();\n  tx.sign(kp);\n  res.json(await horizon.submitTransaction(tx));\n});\napp.listen(3000);\n"
+   },
+   "tools": [
+    {
+     "name": "send_payment",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 50
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV11-secret-returned-to-model": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "A tool creates an account and returns its secret seed to the model.",
+  "expected_finding": "security-path-secret-to-model",
+  "bundle": {
+   "name": "TV11-secret-returned-to-model",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "A tool creates an account and returns its secret seed to the model.",
+   "system_prompt": "Create wallets for users.",
+   "files": {
+    "src/server.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"wallets\", version: \"1.0.0\" });\nconst funder = Keypair.fromSecret(process.env.FUNDER_SECRET!);\nserver.tool(\"create_wallet\", \"Create a wallet for the user\", {}, async () => {\n  const kp = Keypair.random();\n  return { content: [{ type: \"text\", text: JSON.stringify({ address: kp.publicKey(), secret: kp.secret() }) }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "create_wallet",
+     "scopes": [
+      "account:create"
+     ],
+     "requires_signature": false,
+     "network_access": false
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TV12-server-chosen-auth-entries": {
+  "origin": "maintainer-written",
+  "flaw": true,
+  "description": "An x402 client signs whatever Soroban auth entries a paid server's challenge produces.",
+  "expected_finding": "security-path-external-transaction-signed",
+  "bundle": {
+   "name": "TV12-server-chosen-auth-entries",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "An x402 client signs whatever Soroban auth entries a paid server's challenge produces.",
+   "system_prompt": "Pay for API calls.",
+   "files": {
+    "src/pay.ts": "import { Keypair, Contract, TransactionBuilder, rpc, Address, nativeToScVal, authorizeEntry, Networks } from \"@stellar/stellar-sdk\";\nconst kp = Keypair.fromSecret(process.env.PAYER_SECRET!);\nconst server = new rpc.Server(\"https://soroban-testnet.stellar.org\");\nexport async function payFor(url: string) {\n  const first = await fetch(url);\n  const challenge = await first.json();\n  const op = new Contract(challenge.asset).call(\"transfer\", new Address(kp.publicKey()).toScVal(),\n    new Address(challenge.payTo).toScVal(), nativeToScVal(challenge.amount, { type: \"i128\" }));\n  const tx = new TransactionBuilder(await server.getAccount(kp.publicKey()), { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(op).setTimeout(60).build();\n  const sim = await server.simulateTransaction(tx);\n  const ledger = (await server.getLatestLedger()).sequence + 12;\n  const signed = await Promise.all(sim.result.auth.map((entry) => authorizeEntry(entry, kp, ledger, Networks.TESTNET)));\n  return fetch(url, { headers: { \"X-PAYMENT\": JSON.stringify(signed.map((e) => e.toXDR(\"base64\"))) } });\n}\n"
+   },
+   "tools": [
+    {
+     "name": "pay_for",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 5
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC1-readonly-balance": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Read-only balance lookup; no key, no signing.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC1-readonly-balance",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Read-only balance lookup; no key, no signing.",
+   "system_prompt": "Report balances. Read only.",
+   "files": {
+    "src/server.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nimport { Horizon, StrKey } from \"@stellar/stellar-sdk\";\nconst server = new McpServer({ name: \"balances\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nserver.tool(\"get_balance\", \"Read balances\", { account: z.string() }, async ({ account }) => {\n  if (!StrKey.isValidEd25519PublicKey(account)) throw new Error(\"invalid account\");\n  const acc = await horizon.loadAccount(account);\n  return { content: [{ type: \"text\", text: JSON.stringify(acc.balances) }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "get_balance",
+     "scopes": [
+      "read:chain"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC2-guarded-payments": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Allowlisted recipients, a per-transaction cap that throws, and an approval check.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC2-guarded-payments",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Allowlisted recipients, a per-transaction cap that throws, and an approval check.",
+   "system_prompt": "Pay approved vendors only.",
+   "files": {
+    "src/server.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"agent\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET!);\nconst ALLOWLIST = new Set([\"GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H\"]);\nconst MAX_PER_TX = 50;\nserver.tool(\"send_payment\", \"Send XLM to an approved vendor\", { to: z.string(), amount: z.string(), approvalId: z.string() },\n  async ({ to, amount, approvalId }) => {\n  if (!ALLOWLIST.has(to)) throw new Error(\"recipient not allowlisted\");\n  const value = Number(amount);\n  if (!(value > 0) || value > MAX_PER_TX) throw new Error(\"amount outside the per-transaction cap\");\n  if (!(await isApproved(approvalId, to, amount))) throw new Error(\"approval required\");\n  const account = await horizon.loadAccount(kp.publicKey());\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.payment({ destination: to, asset: Asset.native(), amount }))\n    .setTimeout(30).build();\n  tx.sign(kp);\n  const res = await horizon.submitTransaction(tx);\n  return { content: [{ type: \"text\", text: res.hash }] };\n});\nasync function isApproved(id: string, to: string, amount: string) { return approvals.get(id)?.to === to; }\nconst approvals = new Map<string, { to: string; amount: string }>();\n"
+   },
+   "tools": [
+    {
+     "name": "send_payment",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 50
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC3-unsigned-xdr-builder": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Builds an unsigned payment XDR for the user's own wallet to sign; holds no key.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC3-unsigned-xdr-builder",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Builds an unsigned payment XDR for the user's own wallet to sign; holds no key.",
+   "system_prompt": "Build unsigned transactions for the user to review and sign in their own wallet.",
+   "files": {
+    "src/server.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nimport { Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nconst server = new McpServer({ name: \"builder\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nserver.tool(\"build_payment\", \"Build an unsigned payment\", { from: z.string(), to: z.string(), amount: z.string() },\n  async ({ from, to, amount }) => {\n  const account = await horizon.loadAccount(from);\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.payment({ destination: to, asset: Asset.native(), amount })).setTimeout(300).build();\n  return { content: [{ type: \"text\", text: tx.toXDR() }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "build_payment",
+     "scopes": [
+      "read:chain"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC4-zod-bounded-tip": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Tool schema restricts the recipient to a fixed set and bounds the amount; the SDK rejects anything else.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC4-zod-bounded-tip",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Tool schema restricts the recipient to a fixed set and bounds the amount; the SDK rejects anything else.",
+   "system_prompt": "Tip the listed creators, at most 5 XLM.",
+   "files": {
+    "src/server.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"agent\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET!);\nserver.registerTool(\"tip\", { description: \"Tip a creator\", inputSchema: {\n    to: z.enum([\"GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H\"]), amount: z.number().positive().max(5) } },\n  async ({ to, amount }) => {\n  const account = await horizon.loadAccount(kp.publicKey());\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.payment({ destination: to, asset: Asset.native(), amount: amount.toFixed(7) })).setTimeout(30).build();\n  tx.sign(kp);\n  return { content: [{ type: \"text\", text: (await horizon.submitTransaction(tx)).hash }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "tip",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 5
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC5-fixed-host-lookup": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "The model supplies an identifier; the host is fixed and the identifier is encoded.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC5-fixed-host-lookup",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "The model supplies an identifier; the host is fixed and the identifier is encoded.",
+   "system_prompt": "Look up asset information. Read only.",
+   "files": {
+    "src/server.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"assets\", version: \"1.0.0\" });\nconst API = \"https://api.stellar.expert/explorer/testnet\";\nserver.tool(\"asset_info\", \"Look up an asset\", { code: z.string() }, async ({ code }) => {\n  const res = await fetch(`${API}/asset/${encodeURIComponent(code)}`);\n  return { content: [{ type: \"text\", text: await res.text() }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "asset_info",
+     "scopes": [
+      "read:web"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC6-contained-doc-reader": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "The model names a document; the resolved path must stay inside the docs directory.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC6-contained-doc-reader",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "The model names a document; the resolved path must stay inside the docs directory.",
+   "system_prompt": "Answer from our docs. Read only.",
+   "files": {
+    "src/server.ts": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nimport { readFileSync } from \"fs\";\nimport path from \"path\";\nconst server = new McpServer({ name: \"docs\", version: \"1.0.0\" });\nconst BASE = path.resolve(\"./docs\");\nserver.tool(\"read_doc\", \"Read a document\", { name: z.string() }, async ({ name }) => {\n  const target = path.resolve(BASE, name);\n  if (!target.startsWith(BASE + path.sep)) throw new Error(\"outside the docs directory\");\n  return { content: [{ type: \"text\", text: readFileSync(target, \"utf8\") }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "read_doc",
+     "scopes": [
+      "read:files"
+     ],
+     "requires_signature": false,
+     "network_access": false
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC7-approval-binding": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "Payments only execute against a stored approval whose recipient and amount match.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC7-approval-binding",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "Payments only execute against a stored approval whose recipient and amount match.",
+   "system_prompt": "Pay approved vendors only.",
+   "files": {
+    "src/server.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"agent\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET!);\nconst approvals = new Map<string, { to: string; amount: string; approvedBy: string }>();\nserver.tool(\"send_payment\", \"Execute an approved payment\", { id: z.string(), to: z.string(), amount: z.string() },\n  async ({ id, to, amount }) => {\n  const approval = approvals.get(id);\n  if (!approval || !approval.approvedBy) throw new Error(\"not approved\");\n  if (approval.to !== to || approval.amount !== amount) throw new Error(\"approved values do not match\");\n  approvals.delete(id);\n  const account = await horizon.loadAccount(kp.publicKey());\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.payment({ destination: to, asset: Asset.native(), amount }))\n    .setTimeout(30).build();\n  tx.sign(kp);\n  const res = await horizon.submitTransaction(tx);\n  return { content: [{ type: \"text\", text: res.hash }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "send_payment",
+     "scopes": [
+      "payment:send"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 50
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC8-inspected-xdr": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "External XDR is signed only after every operation is checked to be a capped payment to an allowlisted account.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC8-inspected-xdr",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "External XDR is signed only after every operation is checked to be a capped payment to an allowlisted account.",
+   "system_prompt": "Pay approved vendors only.",
+   "files": {
+    "src/server.ts": "import { Keypair, Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nimport { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";\nimport { z } from \"zod\";\nconst server = new McpServer({ name: \"agent\", version: \"1.0.0\" });\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nconst kp = Keypair.fromSecret(process.env.AGENT_SECRET!);\nconst ALLOWLIST = new Set([\"GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H\"]);\nserver.tool(\"cosign\", \"Co-sign a payroll transaction\", { xdr: z.string() }, async ({ xdr }) => {\n  const tx = TransactionBuilder.fromXDR(xdr, Networks.TESTNET);\n  if (!tx.operations.every((op: any) => op.type === \"payment\" && ALLOWLIST.has(op.destination) && Number(op.amount) <= 100)) {\n    throw new Error(\"transaction contains operations outside the payroll policy\");\n  }\n  tx.sign(kp);\n  return { content: [{ type: \"text\", text: tx.toXDR() }] };\n});\n"
+   },
+   "tools": [
+    {
+     "name": "cosign",
+     "scopes": [
+      "sign:tx"
+     ],
+     "requires_signature": true,
+     "network_access": true,
+     "spend_limit_usdc": 100
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ },
+ "TC9-browser-wallet-dapp": {
+  "origin": "maintainer-written",
+  "flaw": false,
+  "description": "A dapp builds a payment and asks the user's Freighter wallet to sign it.",
+  "expected_finding": null,
+  "bundle": {
+   "name": "TC9-browser-wallet-dapp",
+   "network": "testnet",
+   "stellar_address": "",
+   "source_reference": "",
+   "purpose": "A dapp builds a payment and asks the user's Freighter wallet to sign it.",
+   "system_prompt": "Prepare payments; the user approves each one in their wallet.",
+   "files": {
+    "src/pay.ts": "import { signTransaction } from \"@stellar/freighter-api\";\nimport { Operation, TransactionBuilder, Horizon, Asset, Networks } from \"@stellar/stellar-sdk\";\nconst horizon = new Horizon.Server(\"https://horizon-testnet.stellar.org\");\nexport async function pay(from: string, to: string, amount: string) {\n  const account = await horizon.loadAccount(from);\n  const tx = new TransactionBuilder(account, { fee: \"100\", networkPassphrase: Networks.TESTNET })\n    .addOperation(Operation.payment({ destination: to, asset: Asset.native(), amount })).setTimeout(120).build();\n  const { signedTxXdr } = await signTransaction(tx.toXDR(), { networkPassphrase: Networks.TESTNET });\n  return horizon.submitTransaction(TransactionBuilder.fromXDR(signedTxXdr, Networks.TESTNET));\n}\n"
+   },
+   "tools": [
+    {
+     "name": "pay",
+     "scopes": [
+      "payment:prepare"
+     ],
+     "requires_signature": false,
+     "network_access": true
+    }
+   ],
+   "dependencies": [
+    "@stellar/stellar-sdk@13.1.0",
+    "@modelcontextprotocol/sdk@1.12.0",
+    "zod@3.24.1"
+   ]
+  }
+ }
+}

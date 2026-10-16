@@ -11,7 +11,7 @@ Run the original ten-case opt-in check from the repository root:
   -k 'not (11-seed or 12-ops or 13-payment or 14-treasury or 15-leaky or 16-network)'
 ```
 
-The original baseline has **3 failed / 7 passed**: cross-file secret tracing and parameter-rename detection miss risks, while a fixed caller triggers a false positive. Failures are deliberate evidence of current limitations, not waived acceptance criteria. This file is not in the default backend suite.
+With policy 2026-10-16.2 all sixteen cases pass (see [the analysis model](../../../docs/ANALYSIS_MODEL.md)); the analyser was improved with these cases in view, so they are now regression checks. The original baseline had **3 failed / 7 passed**: cross-file secret tracing and parameter-rename detection miss risks, while a fixed caller triggers a false positive. Failures are deliberate evidence of current limitations, not waived acceptance criteria. This file is not in the default backend suite.
 
 The second six-case batch has **2 failed / 4 passed**: import and bound-method aliases obscure specific source paths despite separate generic permission warnings. See its [results and focused command](../../../docs/AGENT_BENCHMARK_ROUND2_2026-09-11.md). The cohorts are deliberately selected diagnostics, not independent accuracy samples.
 

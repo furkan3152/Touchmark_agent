@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from hashlib import sha256
 import inspect
+import json
 import math
 import time
 from urllib.parse import urlsplit
@@ -23,9 +24,33 @@ from stellar_sdk import SorobanServer
 from ..reporting.generator import canonical_json
 from .report_delivery import DeliveryRequest, decode_report
 from . import testnet_checkout as checkout
+from ..swarm.policy import PASS_SCORE
 
 STEPS = ('respond', 'submit', 'complete', 'issue')
 TERMINAL = {'confirmed', 'observed', 'failed'}
+# Seconds past a signed envelope's max_time before it is treated as unlandable.
+EXPIRY_MARGIN = 300
+
+
+def _decision(result) -> str:
+    try:
+        return json.loads(result['report_json']).get('review_decision', 'needs_evidence')
+    except (KeyError, TypeError, ValueError):
+        return 'needs_evidence'
+
+
+def credential_eligible(result, score=None) -> bool:
+    """Payment settles for every delivered audit; a credential only for a pass.
+
+    Without an explicit registry score, the rounded score of the canonical report is used.
+    """
+    if score is None:
+        try:
+            value = json.loads(result['report_json'])['result']['overall_score']
+            score = int(round(value)) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+        except (KeyError, TypeError, ValueError):
+            score = 0
+    return _decision(result) == 'pass' and score >= PASS_SCORE
 
 
 class SettlementPending(ValueError):
@@ -151,6 +176,26 @@ class TestnetChain:
     async def status(self, intent):
         return await asyncio.to_thread(self._rpc_tx, intent, False)
 
+    async def expired(self, intent):
+        return await asyncio.to_thread(self._expired, intent)
+
+    @staticmethod
+    def _expired(intent, now=None):
+        """True only when the envelope can never execute: its time bound has passed,
+        the network has no receipt and the signer has not consumed its sequence."""
+        envelope = TransactionEnvelope.from_xdr(intent['signed_xdr'], checkout.PASSPHRASE)
+        max_time = envelope.transaction.preconditions.time_bounds.max_time
+        if (now if now is not None else time.time()) < max_time + EXPIRY_MARGIN:
+            return False
+        client = RequestsClient(num_retries=0, request_timeout=12, post_timeout=12)
+        try:
+            server = SorobanServer(checkout.RPC_URL, client)
+            if server.get_transaction(intent['tx_hash']).status.value != 'NOT_FOUND':
+                return False
+            return server.load_account(intent['signer']).sequence < intent['sequence']
+        finally:
+            client.close()
+
     async def broadcast(self, intent):
         return await asyncio.to_thread(self._rpc_tx, intent, True)
 
@@ -268,6 +313,11 @@ class TestnetOrderSettlement:
         return quote, raw, digest, int(round(value)), value
 
     @staticmethod
+    def credential_eligible(result, score) -> bool:
+        """A credential is issued only for a passing audit (no open actionable risk)."""
+        return credential_eligible(result, score)
+
+    @staticmethod
     def _state(quote, state, digest, uri, score):
         checkout._assert_bindings(quote, state)
         if any(not state.get(k) for k in ('agent', 'validation', 'job', 'binding')):
@@ -303,8 +353,10 @@ class TestnetOrderSettlement:
 
     async def __call__(self, order, result, publication):
         quote, raw, digest, score, original_score = self._validate(order, result)
+        eligible = credential_eligible(result, score)
+        steps = STEPS if eligible else tuple(step for step in STEPS if step != 'issue')
         uri = await self._publication(order, publication, raw, digest)
-        for step in STEPS:
+        for step in steps:
             state = await self.chain.snapshot(quote)
             completed = self._state(quote, state, digest, uri, score)
             intent = await _await(self.store.get_chain_intent(order['id'], step))
@@ -321,6 +373,11 @@ class TestnetOrderSettlement:
                 continue
             if intent and intent.get('status') in TERMINAL:
                 raise ValueError('A terminal transaction intent has no matching live contract state; operator review is required.')
+            if intent and await self.chain.expired(intent):
+                # The envelope can never land; archive it so this order and the signer lane can proceed.
+                await _await(self.store.expire_chain_intent(order['id'], step, intent['tx_hash'],
+                                                            lease_token=order['lease_token']))
+                intent = None
             if not intent:
                 candidate = await self.chain.prepare(step, quote, digest, uri, score, int(time.time()) + 7 * 86400)
                 intent = await _await(self.store.reserve_chain_intent(order['id'], step, candidate,
@@ -354,19 +411,26 @@ class TestnetOrderSettlement:
             if not self._state(quote, verified, digest, uri, score)[step]:
                 raise ValueError('The successful transaction did not produce the expected live contract state.')
         state = await self.chain.snapshot(quote)
-        if not all(self._state(quote, state, digest, uri, score).values()):
+        final = self._state(quote, state, digest, uri, score)
+        if not all(final[step] for step in steps):
             raise ValueError('The final Testnet delivery is incomplete.')
+        if final['issue'] and not eligible:
+            raise ValueError('A credential exists for a report that did not pass.')
         transactions = []
-        for step in STEPS:
+        for step in steps:
             intent = await _await(self.store.get_chain_intent(order['id'], step))
             if intent:
                 transactions.append({'step': step, 'hash': intent['tx_hash'], 'status': intent['status'],
                                      'ledger': intent.get('ledger')})
         return {'schema': 'veritas.testnet-order-delivery/v1', 'status': 'delivered', 'network': 'testnet',
                 'request_id': quote.request_id, 'agent_id': quote.agent_id, 'report_sha256': digest,
-                'report_uri': uri, 'report_visibility': publication['visibility'], 'token_id': quote.request_id,
+                'report_uri': uri, 'report_visibility': publication['visibility'],
+                'token_id': quote.request_id if eligible else None,
+                'credential_status': 'issued' if eligible else 'not_eligible',
+                'review_decision': _decision(result),
                 'credential_contract_id': quote.contracts['credential'], 'escrow_contract_id': quote.contracts['escrow'],
                 'score': score, 'report_score': original_score, 'score_conversion': 'nearest_integer_ties_to_even',
-                'owner': quote.requester, 'is_current': True, 'checked_at_ledger': state['ledger'],
-                'credential_expires_at': state['credential']['expires_at'], 'payment_state': 'Complete',
+                'owner': quote.requester, 'is_current': eligible, 'checked_at_ledger': state['ledger'],
+                'credential_expires_at': state['credential']['expires_at'] if eligible else None,
+                'payment_state': 'Complete',
                 'transactions': transactions, 'independent_evaluator': False}

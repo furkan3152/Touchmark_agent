@@ -74,6 +74,28 @@ class EvidenceGrade(str, Enum):
         return self is EvidenceGrade.CONFIRMED
 
 
+WARNING_PENALTY_SHARE = 0.25
+
+
+class FindingKind(str, Enum):
+    """What a finding asserts.
+
+    RISK: the submitted material shows a defect or dangerous capability.
+    EVIDENCE_GAP: something that would support trust was not supplied or not
+    observable (no lockfile, no ownership proof, no defensive prompt wording).
+    Gaps limit assurance and block a passing decision on their own terms, but they
+    are not vulnerabilities and never lower the risk score.
+    WARNING: the agent acts without a human approval step (autonomy). That is a
+    design choice the operator can accept, so it lowers the score a little and is
+    shown as a warning, but never makes a review fail. Unbounded spend, missing
+    allowlists and other authority defects stay risks.
+    """
+
+    RISK = "risk"
+    EVIDENCE_GAP = "evidence_gap"
+    WARNING = "warning"  # a real but operator-accepted exposure (e.g. autonomy without approval)
+
+
 class AssuranceLevel(str, Enum):
     """Rapor girdilerinin Stellar kimlik ve ledger verisine bağlılık seviyesi."""
 
@@ -140,6 +162,9 @@ class ToolSpec(BaseModel):
     requires_signature: bool = False
     spend_limit_usdc: float | None = None
     network_access: bool = False
+    #: "declared" by the submitter, or "observed" when the analyser found the
+    #: capability in source and the declaration did not grant it.
+    origin: str = "declared"  # declared by the submitter | observed (capability in code) | registered (named in code)
 
 
 class OnchainActivity(BaseModel):
@@ -211,8 +236,16 @@ class AgentArtifact(BaseModel):
     domain: str = "general"
 
     onchain: OnchainActivity = Field(default_factory=OnchainActivity)
+    #: Dependency lockfiles found with the source (path -> sha256). They pin direct and
+    #: transitive versions even when the manifest uses ranges.
+    lockfiles: dict[str, str] = Field(default_factory=dict)
     raw_metadata: dict[str, Any] = Field(default_factory=dict)
     architecture: dict[str, Any] = Field(default_factory=dict)
+    #: Capabilities, controls and data flows derived from source by the analyser.
+    #: Filled during the audit; never part of the submitted input commitment.
+    code_profile: dict[str, Any] = Field(default_factory=dict)
+    #: On-ledger authority facts read at audit time (stellar.authority). Evidence, not input.
+    chain_authority: dict[str, Any] = Field(default_factory=dict)
 
     def text_surface(self) -> str:
         """Denetçilerin tarayacağı birleşik metin yüzeyi."""
@@ -236,11 +269,23 @@ class Finding(BaseModel):
     references: list[str] = Field(default_factory=list)
     auditor: str = ""
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+    kind: FindingKind = FindingKind.RISK
+
+    @property
+    def is_risk(self) -> bool:
+        return self.kind is FindingKind.RISK
 
     @property
     def penalty(self) -> float:
-        """Skordan düşülecek etkin ceza."""
-        return self.severity.weight * self.evidence_grade.penalty_multiplier * max(0.4, self.confidence)
+        """Skordan düşülecek etkin ceza. Kanıt boşlukları risk skorunu düşürmez.
+
+        Warnings lower the score by a quarter of a risk of the same severity and never
+        make a report fail on their own.
+        """
+        if self.kind is FindingKind.EVIDENCE_GAP:
+            return 0.0
+        full = self.severity.weight * self.evidence_grade.penalty_multiplier * max(0.4, self.confidence)
+        return full * (WARNING_PENALTY_SHARE if self.kind is FindingKind.WARNING else 1.0)
 
 
 class ScenarioResult(BaseModel):
@@ -251,6 +296,9 @@ class ScenarioResult(BaseModel):
     reason: str = ""
     evidence_grade: EvidenceGrade = EvidenceGrade.INFERRED
     evidence: str = ""
+    #: True only when the scenario was actually run against the agent (live probe
+    #: or sandbox). Static signal checks are recorded but do not affect the score.
+    executed: bool = False
 
 
 class AuditorVerdict(BaseModel):
@@ -325,6 +373,10 @@ class AuditReport(BaseModel):
 
     overall_score: float = 0.0
     badge: Badge = Badge.CAUTION
+    #: pass | needs_fixes | needs_evidence (see swarm.policy.review_decision).
+    decision: str = ""
+    #: Deep model review record (services.deep_review); empty when not run.
+    deep_review: dict[str, Any] = Field(default_factory=dict)
     dimension_scores: list[DimensionScore] = Field(default_factory=list)
     verdicts: list[AuditorVerdict] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
@@ -348,9 +400,11 @@ class AuditReport(BaseModel):
     attestation: Attestation | None = None
 
     def counts(self) -> dict[str, int]:
+        """Severity counts of risk findings; evidence gaps are counted separately."""
         out = {s.value: 0 for s in Severity}
         for f in self.findings:
-            out[f.severity.value] += 1
+            if f.is_risk:
+                out[f.severity.value] += 1
         return out
 
 

@@ -56,6 +56,8 @@ class ReviewRequest(BaseModel):
     tools: list[ToolSpec] = Field(default_factory=list, max_length=20)
     dependencies: list[str] = Field(default_factory=list, max_length=100)
     stellar_address: str = Field(default="", max_length=56)
+    #: Public key the agent signs with; lets the audit verify its on-chain weight.
+    agent_signing_key: str = Field(default="", max_length=56)
     network: Literal["testnet", "mainnet"] = "testnet"
     source_revision: str = Field(default="", pattern=r"^(?:[a-f0-9]{40})?$")
     source_reference: str = Field(default="", max_length=240)
@@ -64,6 +66,8 @@ class ReviewRequest(BaseModel):
     def bound_source(self) -> "ReviewRequest":
         if not self.name.strip() or len(self.purpose.strip()) < 12:
             raise ValueError("Provide an agent name and a meaningful purpose (at least 12 characters).")
+        if self.agent_signing_key and not is_valid_stellar_address(self.agent_signing_key, account_only=True):
+            raise ValueError("agent_signing_key must be a public G... key.")
         if self.stellar_address and not is_valid_stellar_address(self.stellar_address):
             raise ValueError("Use a public Stellar G-account or C-contract address, never a secret key.")
         if self.source_reference:
@@ -105,10 +109,13 @@ class ReviewRequest(BaseModel):
 
 
 async def review_source(request: ReviewRequest, settings: Settings) -> dict:
+    from .deep_review import reviewer_from_settings
+    deep_reviewer = None
     if request.ai_assistance:
         if not request.external_processing_consent:
             raise ValueError("Explicit consent is required to send source to the configured AI provider.")
-        if not settings.enable_public_ai_review or not settings.llm_enabled:
+        deep_reviewer = reviewer_from_settings(settings)
+        if deep_reviewer is None and (not settings.enable_public_ai_review or not settings.llm_enabled):
             raise ValueError("AI review is unavailable. Run a static review or ask the operator to enable the provider.")
     # Copy explicit settings, then disable every external integration. Server .env
     # cannot silently turn a free source review into an external upload or probe.
@@ -121,7 +128,17 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
     })
     embedded_instructions = instruction_literals(request.files) if not request.system_prompt.strip() else []
     candidate_prompt = request.system_prompt or '\n\n'.join(item['text'] for item in embedded_instructions)
+    chain_facts: dict = {}
+    if settings.enable_onchain_verification:
+        from ..stellar.authority import AuthorityReader
+        account = request.stellar_address if request.stellar_address.startswith("G") else ""
+        try:
+            chain_facts = await AuthorityReader(request.network).collect(
+                account, agent_key=request.agent_signing_key, code_files=request.files)
+        except Exception:  # ledger reads must never fail the source review
+            chain_facts = {"network": request.network, "source": "horizon", "status": "unavailable"}
     artifact = AgentArtifact(
+        chain_authority=chain_facts,
         source_kind=SourceKind.UPLOAD if request.files or request.system_prompt else SourceKind.ONCHAIN_ADDRESS,
         source_ref=f"studio:{request.network}:{request.source_reference or request.stellar_address or 'submitted-bundle'}:{request.source_revision}",
         name=request.name, description=request.purpose,
@@ -132,9 +149,9 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         agent_contract_id=request.stellar_address if request.stellar_address.startswith("C") else "",
         owner_verification_note="Not checked during source review.",
     )
-    report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP)
+    report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=deep_reviewer)
     from ..reporting.english import english_finding
-    from ..swarm.policy import finding_set_commitment
+    from ..swarm.policy import actionable_risks, finding_set_commitment
     report.findings = [english_finding(f) for f in report.findings]
     report.finding_set_hash = finding_set_commitment(report.findings)
     payload = report_to_dict(report, artifact)
@@ -177,7 +194,15 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         ],
     }
     payload["ai_review"] = {"status": "not_requested", "observations": []}
-    if request.ai_assistance:
+    if deep_reviewer is not None:
+        payload["ai_review"] = {"status": report.deep_review.get("status"), "mode": "deep_review",
+                                "observations": [], "scores_changed": bool(report.deep_review.get("accepted_findings"))}
+        scope["external_processors"] = [f"anthropic:{settings.deep_review_model}"]
+        scope["limits"].append("Source was sent to Anthropic with consent for a grounded deep review. "
+                               "Model findings are accepted only with a verified source quote and can never remove a rule finding.")
+        payload["result"]["external_processors"] = scope["external_processors"]
+        payload["result"]["deterministic"] = False
+    elif request.ai_assistance:
         import asyncio
         from .ai_review import second_opinion
         try:
@@ -189,18 +214,13 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         payload["result"]["external_processors"] = scope["external_processors"]
         payload["result"]["deterministic"] = False
     payload["review_scope"] = scope
-    # Missing ownership is an explicit scope boundary in this route, not a code
-    # defect. Heuristic signals remain in the report for investigation.
-    actionable = [
-        f for f in report.findings
-        if f.severity.rank >= Severity.HIGH.rank
-        and f.evidence_grade is EvidenceGrade.CONFIRMED
-        and f.id != "compliance-owner-unverified"
-    ]
+    # One shared rule (swarm.policy.review_decision) decides for every route.
+    decision = report.decision
+    actionable = actionable_risks(report.findings)
     if not request.files and not request.system_prompt:
-        actionable = []
-    decision = "needs_fixes" if actionable else "needs_evidence"
+        actionable, decision = [], "needs_evidence"
     payload["review_decision"] = decision
+    payload["result"]["decision"] = decision
     payload["priority_finding_ids"] = [f.id for f in actionable]
     encoded = canonical_json(payload)
     return {

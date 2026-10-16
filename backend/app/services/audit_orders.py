@@ -31,6 +31,7 @@ from stellar_sdk import StrKey
 
 from ..reporting.generator import canonical_json
 from .audit_product import EngagementRequest, build_plan
+from .order_settlement import SettlementPending, credential_eligible
 from .report_delivery import DeliveryRequest, decode_report
 from .testnet_checkout import (CheckoutRequest, CheckoutStepRequest, Quote,
                               _deployment, _verify_quote, prepare_checkout)
@@ -38,6 +39,7 @@ from .testnet_checkout import (CheckoutRequest, CheckoutStepRequest, Quote,
 STATUSES = ('awaiting_payment', 'queued', 'running', 'report_ready', 'settling',
             'delivered', 'failed', 'refunded')
 MIN_EXECUTION_LEDGERS = 120
+SETTLEMENT_RETRY_SECONDS = 30
 _HEX = re.compile(r'^[a-f0-9]{64}$')
 _CHAIN_STEPS = {'respond', 'submit', 'complete', 'issue'}
 
@@ -136,6 +138,9 @@ class AuditOrderStore:
                     step TEXT NOT NULL, tx_hash TEXT NOT NULL, intent_json TEXT NOT NULL,
                     network TEXT NOT NULL, signer TEXT NOT NULL, sequence INTEGER NOT NULL,
                     status TEXT NOT NULL, PRIMARY KEY(order_id, step), UNIQUE(network,signer,sequence));
+                CREATE TABLE IF NOT EXISTS audit_order_expired_intents (
+                    order_id TEXT NOT NULL REFERENCES audit_orders(id), step TEXT NOT NULL,
+                    tx_hash TEXT PRIMARY KEY, intent_json TEXT NOT NULL, expired_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS audit_order_used_proofs (
                     nonce TEXT PRIMARY KEY, requester TEXT NOT NULL, consumed_at REAL NOT NULL);
             ''')
@@ -286,7 +291,7 @@ class AuditOrderStore:
             db.execute('UPDATE audit_orders SET lease_until=?,updated_at=? WHERE id=?', (now + lease_seconds, now, order_id))
 
     def _checkpoint(self, order_id, lease_token, status, *, result=None, publication=None, delivery=None,
-                    failure_code=None, retryable=False, release=False, retry_delay=0):
+                    failure_code=None, retryable=False, release=False, retry_delay=0, keep_attempt=False):
         if status not in STATUSES:
             raise OrderError('Unknown order status.')
         now = self.clock()
@@ -297,6 +302,9 @@ class AuditOrderStore:
                       'delivery_json': _json(delivery) if delivery is not None else row['delivery_json']}
             if status == 'refunded':
                 db.execute('UPDATE audit_orders SET paid=0 WHERE id=?', (order_id,))
+            if keep_attempt:
+                # Waiting on ledger confirmation is not a failed attempt.
+                db.execute('UPDATE audit_orders SET attempts=MAX(attempts-1,0) WHERE id=?', (order_id,))
             db.execute('''UPDATE audit_orders SET status=?,result_json=?,publication_json=?,delivery_json=?,
                 failure_code=?,retryable=?,updated_at=?,lease_token=?,lease_until=?,retry_at=? WHERE id=?''',
                 (status, *values.values(), failure_code, int(retryable and row['attempts'] < self.max_attempts), now,
@@ -335,6 +343,20 @@ class AuditOrderStore:
             except sqlite3.IntegrityError as exc:
                 raise OrderError('This official signer sequence is already reserved.') from exc
             return json.loads(encoded)
+
+    def expire_chain_intent(self, order_id, step, tx_hash, *, lease_token):
+        """Archive an unresolved intent the caller proved can never execute."""
+        if step not in _CHAIN_STEPS:
+            raise OrderError('Unknown settlement step.')
+        with self._connect(write=True) as db:
+            self._lease(db, order_id, lease_token, self.clock(), settling=True)
+            row = db.execute('SELECT tx_hash,intent_json,status FROM audit_order_chain_intents WHERE order_id=? AND step=?',
+                             (order_id, step)).fetchone()
+            if not row or row['tx_hash'] != tx_hash or row['status'] not in ('prepared', 'pending', 'unknown'):
+                raise OrderError('Only an unresolved settlement intent can expire.')
+            db.execute('INSERT INTO audit_order_expired_intents VALUES (?,?,?,?,?)',
+                       (order_id, step, tx_hash, row['intent_json'], self.clock()))
+            db.execute('DELETE FROM audit_order_chain_intents WHERE order_id=? AND step=?', (order_id, step))
 
     def update_chain_intent(self, order_id, step, tx_hash, updates, *, lease_token):
         if not isinstance(updates, dict) or set(updates) - {'status', 'ledger', 'submitted_at', 'verified_at', 'attempts', 'error_code'}:
@@ -572,14 +594,15 @@ def _validate_publication(publication, result):
 
 def _validate_delivery(delivery, order, result, publication):
     quote = order['quote']
+    eligible = credential_eligible(result)
     expected = {'schema': 'veritas.testnet-order-delivery/v1', 'status': 'delivered', 'network': 'testnet',
                 'request_id': order['id'], 'agent_id': quote['agent_id'], 'report_sha256': result['report_sha256'],
                 'report_uri': publication['report_uri'], 'credential_contract_id': quote['contracts']['credential'],
                 'escrow_contract_id': quote['contracts']['escrow'], 'owner': quote['requester'],
-                'is_current': True, 'payment_state': 'Complete', 'independent_evaluator': False}
+                'is_current': eligible, 'payment_state': 'Complete', 'independent_evaluator': False}
     if (not isinstance(delivery, dict) or any(delivery.get(k) != v for k, v in expected.items())
-            or delivery.get('is_current') is not True or delivery.get('independent_evaluator') is not False
-            or delivery.get('token_id') != order['id']
+            or delivery.get('is_current') is not eligible or delivery.get('independent_evaluator') is not False
+            or delivery.get('token_id') != (order['id'] if eligible else None)
             or type(delivery.get('checked_at_ledger')) is not int or delivery['checked_at_ledger'] < order['checked_ledger']):
         raise OrderError('Settlement adapter did not verify this exact report, owner and completed escrow.')
 
@@ -662,6 +685,13 @@ async def run_order_once(store: AuditOrderStore, worker_id: str, *, settings, ex
     except asyncio.CancelledError:
         # Leave the lease to expire; another worker reconciles durable checkpoints.
         raise
+    except SettlementPending:
+        # Keep the order claimable so a later worker pass reconciles or expires the saved intent.
+        try:
+            store._checkpoint(order_id, token, 'settling', failure_code='settlement_pending', release=True,
+                              retry_delay=SETTLEMENT_RETRY_SECONDS, keep_attempt=True)
+        except LeaseLost:
+            return {'order_id': order_id, 'status': 'lease_lost'}
     except Exception:
         try:
             store._checkpoint(order_id, token, 'failed', failure_code=stage + '_failed', retryable=True, release=True)

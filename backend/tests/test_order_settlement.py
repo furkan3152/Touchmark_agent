@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 from hashlib import sha256
 import time
 
@@ -31,6 +32,12 @@ class Journal:
         self.writes.append(('reserve', step))
         return deepcopy(self.intents[step])
 
+    def expire_chain_intent(self, order, step, tx_hash, *, lease_token):
+        assert self.allow_write, 'lease lost'
+        assert self.intents[step]['tx_hash'] == tx_hash
+        del self.intents[step]
+        self.writes.append(('expire', step))
+
     def update_chain_intent(self, order, step, tx_hash, updates, *, lease_token):
         assert self.allow_write, 'lease lost'
         assert self.intents[step]['tx_hash'] == tx_hash
@@ -50,6 +57,7 @@ class FakeChain:
         self.apply = True
         self.issue_fail = False
         self.fail_prepare = None
+        self.unlandable = set()
 
     async def snapshot(self, quote):
         return deepcopy(self.state)
@@ -69,6 +77,9 @@ class FakeChain:
 
     async def status(self, intent):
         return self.receipts.get(intent['tx_hash'], {'status': 'NOT_FOUND'})
+
+    async def expired(self, intent):
+        return intent['tx_hash'] in self.unlandable
 
     async def broadcast(self, intent):
         step = next(step for step, value in self.journal.intents.items() if value['tx_hash'] == intent['tx_hash'])
@@ -112,8 +123,8 @@ def flow(monkeypatch):
         plan_sha256=plan_hash, agent_id=agent, request_id=request, amount_atomic='1000000',
         contracts=checkout.PINNED_CONTRACTS, provider=provider.public_key, evaluator=evaluator.public_key,
         treasury=manifest['roles']['treasury'], deadline_ledger=10000, issued_at=100, expires_at=700)
-    report = {'agent': {'name': 'Our fixture'}, 'findings': [], 'result': {'overall_score': 63.7},
-        'engagement': {'plan': plan, 'plan_sha256': plan_hash}, 'review_decision': 'needs_evidence'}
+    report = {'agent': {'name': 'Our fixture'}, 'findings': [], 'result': {'overall_score': 72.5},
+        'engagement': {'plan': plan, 'plan_sha256': plan_hash}, 'review_decision': 'pass'}
     result = {'report': report, 'report_json': canonical_json(report)}
     result['report_sha256'] = sha256(result['report_json'].encode()).hexdigest()
     order = {'id': request, 'order_id': request, 'quote': quote.model_dump(), 'lease_token': 'private-lease',
@@ -142,7 +153,8 @@ async def test_exact_flow_expired_checkout_quote_allowed_and_idempotent(flow):
     adapter, order, result, publication, chain, journal = flow
     receipt = await adapter(order, result, publication)
     assert receipt['status'] == 'delivered' and receipt['payment_state'] == 'Complete'
-    assert receipt['score'] == 64 and receipt['report_score'] == 63.7
+    assert receipt['score'] == 72 and receipt['report_score'] == 72.5
+    assert receipt['credential_status'] == 'issued' and receipt['is_current'] is True
     assert receipt['token_id'] == order['id']
     assert receipt['report_sha256'] != sha256(publication['report_uri'].encode()).hexdigest()
     assert [s for s, _ in chain.sent] == ['respond', 'submit', 'complete', 'issue']
@@ -292,3 +304,70 @@ async def test_history_missing_uses_observed_not_fabricated_success(flow):
     assert receipt['transactions'][0]['status'] == 'observed'
     assert receipt['transactions'][0]['ledger'] is None
     assert [s for s, _ in chain.sent].count('respond') == 1
+
+
+@pytest.mark.anyio
+async def test_unlandable_pending_intent_is_archived_and_replaced(flow):
+    adapter, order, result, publication, chain, journal = flow
+    chain.apply = False
+    with pytest.raises(settlement.SettlementPending):
+        await adapter(order, result, publication)
+    stuck = journal.intents['respond']
+    assert stuck['status'] == 'pending'
+    chain.unlandable.add(stuck['tx_hash'])
+    chain.apply = True
+    receipt = await adapter(order, result, publication)
+    assert receipt['status'] == 'delivered'
+    assert ('expire', 'respond') in journal.writes
+    assert journal.intents['respond']['tx_hash'] != stuck['tx_hash']
+    assert [s for s, _ in chain.prepared].count('respond') == 2
+
+
+def test_envelope_is_not_expired_before_its_time_bound(flow, monkeypatch):
+    adapter, order, result, publication, chain, journal = flow
+    tx = (TransactionBuilder(Account(Keypair.random().public_key, 7), checkout.PASSPHRASE)
+          .append_manage_data_op('k', b'v').set_timeout(180).build())
+    intent = {'signed_xdr': tx.to_xdr(), 'tx_hash': tx.hash_hex(), 'signer': tx.transaction.source.account_id,
+              'sequence': tx.transaction.sequence}
+    def offline(*args, **kwargs):
+        pytest.fail('No RPC call is needed while the time bound is open')
+    monkeypatch.setattr(settlement, 'SorobanServer', offline)
+    max_time = tx.transaction.preconditions.time_bounds.max_time
+    assert settlement.TestnetChain._expired(intent, now=max_time + settlement.EXPIRY_MARGIN - 1) is False
+
+    class Server:
+        def __init__(self, sequence, status='NOT_FOUND'):
+            self.sequence, self.status = sequence, status
+        def __call__(self, *args):
+            return self
+        def get_transaction(self, tx_hash):
+            return type('R', (), {'status': type('S', (), {'value': self.status})})()
+        def load_account(self, signer):
+            return Account(signer, self.sequence)
+    late = max_time + settlement.EXPIRY_MARGIN
+    monkeypatch.setattr(settlement, 'SorobanServer', Server(intent['sequence'] - 1))
+    assert settlement.TestnetChain._expired(intent, now=late) is True
+    monkeypatch.setattr(settlement, 'SorobanServer', Server(intent['sequence']))
+    assert settlement.TestnetChain._expired(intent, now=late) is False
+    monkeypatch.setattr(settlement, 'SorobanServer', Server(intent['sequence'] - 1, 'FAILED'))
+    assert settlement.TestnetChain._expired(intent, now=late) is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('decision,score', [('needs_fixes', 39.0), ('needs_evidence', 84.0), ('pass', 63.7)])
+async def test_failing_audit_settles_payment_without_issuing_a_credential(flow, decision, score):
+    adapter, order, result, publication, chain, journal = flow
+    report = json.loads(result['report_json'])
+    report['review_decision'], report['result']['overall_score'] = decision, score
+    result['report'] = report
+    result['report_json'] = canonical_json(report)
+    result['report_sha256'] = order['report_sha256'] = sha256(result['report_json'].encode()).hexdigest()
+    publication['report_sha256'] = result['report_sha256']
+    publication['report_uri'] = 'https://reports.example/immutable/' + result['report_sha256'] + '.json'
+    adapter.transport = httpx.MockTransport(lambda req: httpx.Response(200, content=result['report_json'].encode()))
+    receipt = await adapter(order, result, publication)
+    assert receipt['payment_state'] == 'Complete'
+    assert receipt['credential_status'] == 'not_eligible'
+    assert receipt['is_current'] is False and receipt['token_id'] is None
+    assert [s for s, _ in chain.sent] == ['respond', 'submit', 'complete']
+    assert not chain.state.get('credential')
