@@ -167,6 +167,7 @@ class AuditSwarm:
         if failures or len(verdicts) != len(self.auditors):
             raise RuntimeError("Audit quorum not completed: " + "; ".join(failures))
 
+        verdicts = self._apply_verifiability(artifact, verdicts)
         deep_record: dict = {}
         if deep_reviewer is not None:
             verdicts, deep_record = await self._deep_review(deep_reviewer, artifact, verdicts, chain_facts)
@@ -265,6 +266,53 @@ class AuditSwarm:
 
         return report
 
+    @staticmethod
+    def _rescore(verdict, findings):
+        from .base import BaseAuditor
+        return verdict.model_copy(update={
+            "findings": findings, "score": BaseAuditor.score_from(findings, verdict.scenarios),
+            "coverage": {**verdict.coverage, "findings": len(findings)}})
+
+    def _apply_verifiability(self, artifact, verdicts):
+        """Turn unverifiable absence claims into gaps, and add a blocking gap for them.
+
+        "No spending limit" is evidence only where the analyser can see limits. Authority
+        in TypeScript or Rust is judged by the deep review; until it reads those files the
+        review cannot pass.
+        """
+        from ..models import Dimension, EvidenceGrade, Finding, FindingKind, Severity
+        from .capabilities import unverifiable_control_files
+        from .policy import ABSENCE_OF_CONTROL_RULES, DECLARATION_RULES
+        unverifiable = unverifiable_control_files(artifact)
+        declared_any = any(t.origin == "declared" for t in artifact.tools)
+        updated = []
+        for verdict in verdicts:
+            changed = False
+            findings = []
+            for finding in verdict.findings:
+                if ((unverifiable and finding.id in ABSENCE_OF_CONTROL_RULES)
+                        or (not declared_any and finding.id in DECLARATION_RULES)):
+                    reason = ("Controls in " + ", ".join(unverifiable[:5]) + " are not visible to data-flow analysis; "
+                              "the deep review judges them." if finding.id in ABSENCE_OF_CONTROL_RULES
+                              else "No tool declaration was supplied, so there is nothing to contradict.")
+                    finding = finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP,
+                                                         "detail": finding.detail + " " + reason})
+                    changed = True
+                findings.append(finding)
+            if verdict.dimension is Dimension.SECURITY and unverifiable:
+                findings.append(Finding(
+                    id="security-controls-unverifiable", dimension=Dimension.SECURITY, severity=Severity.MEDIUM,
+                    title="Signing or execution authority is in code the rules cannot verify",
+                    detail="Spending limits, recipient checks and approvals in these files must be read to be "
+                           "judged. A passing decision requires a completed deep review that read all of them.",
+                    evidence=", ".join(unverifiable[:20]), evidence_grade=EvidenceGrade.CONFIRMED,
+                    remediation="Run the deep review, or move signing behind a Python policy layer or an on-chain "
+                                "spending policy that can be verified.",
+                    auditor=verdict.auditor, confidence=0.9, kind=FindingKind.EVIDENCE_GAP))
+                changed = True
+            updated.append(self._rescore(verdict, findings) if changed else verdict)
+        return updated
+
     async def _deep_review(self, reviewer, artifact, verdicts, chain_facts):
         """Add verified model findings to the matching dimension. Never removes a finding."""
         from .base import BaseAuditor
@@ -274,18 +322,21 @@ class AuditSwarm:
         by_dimension: dict = {}
         for finding in result.findings:
             by_dimension.setdefault(finding.dimension, []).append(classify_finding(finding))
+        # The unverifiable-controls gap is closed by evidence (every such file was read in a
+        # completed review), never by the model's opinion of those files.
+        from .capabilities import unverifiable_control_files
+        closed = (result.status == "completed"
+                  and set(unverifiable_control_files(artifact)) <= set(result.files_read))
         updated = []
         for verdict in verdicts:
-            extra = by_dimension.get(verdict.dimension, [])
-            if extra:
-                findings = verdict.findings + extra
-                verdict = verdict.model_copy(update={
-                    "findings": findings,
-                    "score": BaseAuditor.score_from(findings, verdict.scenarios),
-                    "coverage": {**verdict.coverage, "findings": len(findings)},
-                })
+            findings = [f for f in verdict.findings if not (closed and f.id == "security-controls-unverifiable")]
+            findings += by_dimension.get(verdict.dimension, [])
+            if findings != verdict.findings:
+                verdict = self._rescore(verdict, findings)
             updated.append(verdict)
-        return updated, result.report()
+        record = result.report()
+        record["unverifiable_controls_resolved"] = closed
+        return updated, record
 
     @property
     def last_payouts(self) -> dict[str, float]:
