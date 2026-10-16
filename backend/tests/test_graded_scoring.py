@@ -38,8 +38,18 @@ def test_score_falls_with_number_severity_certainty_and_scope():
     critical, _ = scored([risk(1, Severity.CRITICAL)])
     two_critical, _ = scored([risk(1, Severity.CRITICAL), risk(2, Severity.CRITICAL)])
     assert inferred > one > widespread and one > three
-    assert all(FIX_BAND[0] <= s <= FIX_BAND[1] for s in (one, three, inferred, widespread))
+    assert all(s <= FIX_BAND[1] for s in (one, three, inferred, widespread))
     assert BLOCKLIST_BAND[0] <= two_critical < critical <= BLOCKLIST_BAND[1]
+
+
+def test_risky_reports_are_capped_not_charged_twice():
+    # Below the ceiling the raw score stands; above it, it is squeezed, never flattened.
+    assert band_score(25.0, [risk(1, Severity.CRITICAL)])[0] == 25.0
+    assert band_score(50.0, [risk(1)])[0] == 50.0
+    high = [band_score(raw, [risk(1)])[0] for raw in (60.0, 80.0, 95.0)]
+    critical = [band_score(raw, [risk(1, Severity.CRITICAL)])[0] for raw in (40.0, 70.0, 95.0)]
+    assert high == sorted(high) and len(set(high)) == 3 and max(high) <= FIX_BAND[1]
+    assert critical == sorted(critical) and len(set(critical)) == 3 and max(critical) <= BLOCKLIST_BAND[1]
 
 
 def test_breakdown_adds_up_and_gaps_cost_nothing():
