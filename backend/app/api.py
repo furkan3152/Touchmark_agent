@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
 import time
 from collections import defaultdict, deque
@@ -25,6 +26,7 @@ from .services.chain_status import ChainStatusService
 from .services.escrow import EscrowIndeterminateError, ExternalSignatureRequired
 from .services.pipeline import AuditPipeline
 from .services.studio import ReviewRequest, review_source
+from .services.demo_flow import DemoAuditRequest as DemoAuditRequestModel, DemoCredentialRequest as DemoCredentialRequestModel
 from .studio_guard import StudioGuard
 from .services.studio_intake import AddressRequest, GitHubRequest, identify_address, import_github_bundle
 
@@ -795,6 +797,67 @@ async def studio_resolve(req: ResolveRequest) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+_demo_issuance: dict[str, deque] = defaultdict(deque)
+_demo_issuance_all: deque = deque()
+
+
+def _demo_client(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "") if os.environ.get("VERCEL") else ""
+    return (forwarded.split(",")[-1].strip() or (request.client.host if request.client else "unknown"))[:64]
+
+
+def _demo_issuance_allowed(client: str) -> bool:
+    """Each issuance writes four Testnet transactions: 3 per client per 10 minutes, 40 per hour overall."""
+    now = time.monotonic()
+    mine = _demo_issuance[client]
+    while mine and now - mine[0] >= 600:
+        mine.popleft()
+    while _demo_issuance_all and now - _demo_issuance_all[0] >= 3600:
+        _demo_issuance_all.popleft()
+    if len(mine) >= 3 or len(_demo_issuance_all) >= 40:
+        return False
+    mine.append(now)
+    _demo_issuance_all.append(now)
+    return True
+
+
+@app.get("/api/v1/demo/config")
+async def demo_config() -> dict:
+    from .services.demo_flow import issuance_enabled, manifest
+    data = manifest()
+    return {"issuance_enabled": issuance_enabled(), "network": "testnet",
+            "contracts": {k: v.get("id") for k, v in data.get("contracts", {}).items()},
+            "operator": data.get("operator", "")}
+
+
+@app.post("/api/v1/demo/audit")
+async def demo_audit(req: "DemoAuditRequestModel") -> dict:
+    """Audit a GitHub repository, folder or agent reference with the deterministic analysers."""
+    from .services.demo_flow import run_demo_audit
+    try:
+        return await asyncio.wait_for(run_demo_audit(req.reference, settings), timeout=170)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="The audit did not finish within the demo time limit. "
+                                                    "Large repositories can be audited with scripts/audit_agent.py.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/demo/credential")
+async def demo_credential(req: "DemoCredentialRequestModel", request: Request) -> dict:
+    """Issue the Testnet AuditCredential for a passing demo audit (server-signed ticket required)."""
+    from .services.demo_flow import DemoError, issue_demo_credential
+    if not _demo_issuance_allowed(_demo_client(request)):
+        raise HTTPException(status_code=429, detail="Too many credential requests; try again in a few minutes.")
+    try:
+        return await issue_demo_credential(req.ticket)
+    except DemoError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - chain failures are reported, not hidden
+        logging.getLogger(__name__).warning("demo issuance failed: %s", exc)
+        raise HTTPException(status_code=502, detail="The Testnet transaction failed; nothing was issued. Try again.") from exc
+
+
 @app.post("/api/v1/studio/import")
 async def studio_import(req: GitHubRequest) -> dict:
     try:
@@ -1149,6 +1212,10 @@ if FRONTEND_DIR.exists():
 
     @app.get("/")
     async def index() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "demo.html")
+
+    @app.get("/studio")
+    async def studio_page() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "studio.html")
 
     @app.get("/operator")

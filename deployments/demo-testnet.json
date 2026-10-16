@@ -1,0 +1,25 @@
+{
+  "schema": "agentveritas.demo-deployment.v1",
+  "network": "testnet",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "network_passphrase": "Test SDF Network ; September 2015",
+  "operator": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU",
+  "contracts": {
+    "registry": {
+      "id": "CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W",
+      "wasm_sha256": "a77262a8430e5c172569845973d927b73701f0a8306311d5c0ffea20d88cd677"
+    },
+    "credential": {
+      "id": "CBBTOBL6XTLWYPT5GSVUA3JWNQMVMT4DGGHEGZ4NHC3V4SLXKP5AO4R5",
+      "wasm_sha256": "92df7e319f08497598925505acf3ceff25efc22e4c15f83e24367910a46a1436"
+    }
+  },
+  "transactions": [
+    {
+      "function": "set_valid",
+      "hash": "1152357fcdf7e6c90f8cb92888abaf045c7105db3431dad17ff29ccde80cbd38"
+    }
+  ],
+  "purpose": "Public demo: audit a reference, then issue a credential for a passing report. One operator is admin and validator; agent ownership is not verified.",
+  "validator_enabled": true
+}
