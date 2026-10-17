@@ -31,6 +31,7 @@ def main() -> None:
     parser.add_argument("--resolve-only", action="store_true")
     parser.add_argument("--no-deep", action="store_true")
     parser.add_argument("--out", default="")
+    parser.add_argument("--compare", default="", help="a second reference (e.g. the fixed commit) to audit and compare")
     args = parser.parse_args()
     settings = Settings()
     if args.resolve_only:
@@ -38,6 +39,13 @@ def main() -> None:
         return
     result = asyncio.run(audit_reference(args.reference, settings, network=args.network,
                                          deep=not args.no_deep, purpose=args.purpose))
+    if args.compare:
+        from backend.app.services.report_diff import compare_reports
+        after = asyncio.run(audit_reference(args.compare, settings, network=args.network,
+                                            deep=not args.no_deep, purpose=args.purpose))
+        print(json.dumps({"comparison": compare_reports(result["report"], after["report"]),
+                          "before_sha256": result["report_sha256"], "after_sha256": after["report_sha256"]}, indent=1))
+        return
     report = result["report"]
     if args.out:
         Path(args.out).write_text(result["report_json"])

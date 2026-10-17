@@ -70,6 +70,7 @@ Stellar-specific dangers:
 |---|---|
 | 46 labelled agents (Python + TS): 28 TP, 18 TN, 0 FP, 0 FN | Reproducible with `scripts/evaluate.py`. Written by us and used in development, so this is a regression measure. |
 | 199 findings on 12 open-source Stellar agents checked by hand: 161 true, 32 partly true, 5 false | Self-verified with one annotator; recall unknown. The dataset is hash-committed now and published after disclosure. |
+| Automatic second-opinion verifier: refutes 3/5 false findings, never refuted a true one (0/42), κ 0.65 against hand labels | Calibrated with `scripts/calibrate_verifier.py`; self-verified. |
 | Contract rules enforced | 57 contract tests plus testnet transactions. **Not externally audited, not on mainnet.** |
 | Adoption | None yet: no outside users, and not yet indexed by ecosystem directories. |
 
@@ -99,7 +100,9 @@ contract security review and the trust boundaries are described in
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python scripts/audit_agent.py https://github.com/owner/repo --no-deep   # audit from the CLI
+.venv/bin/python scripts/audit_agent.py https://github.com/owner/repo --no-deep   # rules only, no API key
+ENABLE_DEEP_REVIEW=1 ENABLE_FINDING_VERIFICATION=1 \
+  .venv/bin/python scripts/audit_agent.py <ref> --compare <fixed-ref>            # AI review + verification + re-audit
 .venv/bin/uvicorn app:app --port 8000                                            # demo at /, Studio at /studio
 .venv/bin/python scripts/evaluate.py                                             # reproduce the evaluation
 .venv/bin/python -m pytest -q && cargo test --workspace                          # tests

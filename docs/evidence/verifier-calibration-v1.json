@@ -1,0 +1,83 @@
+{
+ "schema": "agentveritas.verifier-calibration/v1",
+ "model": "claude-sonnet-5-5",
+ "effort": "medium",
+ "dataset_sha256": "ab227f9db37b03092d26346f7194fce30a98408ac77b7c39ba56a36d70a706f1",
+ "sample": {
+  "all_non_true": 38,
+  "random_true": 42,
+  "seed": 7
+ },
+ "metrics": {
+  "rows": 80,
+  "confusion": {
+   "FALSE->confirmed": 1,
+   "FALSE->partial": 2,
+   "FALSE->refuted": 1,
+   "FALSE->unverifiable": 1,
+   "PARTIAL->confirmed": 16,
+   "PARTIAL->partial": 12,
+   "PARTIAL->refuted": 1,
+   "PARTIAL->unverifiable": 3,
+   "TRUE->confirmed": 32,
+   "TRUE->partial": 6,
+   "TRUE->unverifiable": 4,
+   "UNVERIFIABLE->partial": 1
+  },
+  "decided_by_both": 71,
+  "real_vs_false_agreement": 0.944,
+  "cohen_kappa_real_vs_false": 0.307,
+  "exact_label_agreement": 0.562,
+  "false_findings_refuted": "1/5",
+  "true_findings_wrongly_refuted": "0/42",
+  "unverifiable_rate": 0.1
+ },
+ "by_source": {
+  "ai": {
+   "rows": 69,
+   "confusion": {
+    "FALSE->confirmed": 1,
+    "PARTIAL->confirmed": 16,
+    "PARTIAL->partial": 12,
+    "PARTIAL->unverifiable": 1,
+    "TRUE->confirmed": 31,
+    "TRUE->partial": 6,
+    "TRUE->unverifiable": 2
+   },
+   "decided_by_both": 66,
+   "real_vs_false_agreement": 0.985,
+   "cohen_kappa_real_vs_false": 0.0,
+   "exact_label_agreement": 0.623,
+   "false_findings_refuted": "0/1",
+   "true_findings_wrongly_refuted": "0/39",
+   "unverifiable_rate": 0.043
+  },
+  "rule": {
+   "rows": 11,
+   "confusion": {
+    "FALSE->partial": 2,
+    "FALSE->refuted": 1,
+    "FALSE->unverifiable": 1,
+    "PARTIAL->refuted": 1,
+    "PARTIAL->unverifiable": 2,
+    "TRUE->confirmed": 1,
+    "TRUE->unverifiable": 2,
+    "UNVERIFIABLE->partial": 1
+   },
+   "decided_by_both": 5,
+   "real_vs_false_agreement": 0.4,
+   "cohen_kappa_real_vs_false": -0.154,
+   "exact_label_agreement": 0.182,
+   "false_findings_refuted": "1/4",
+   "true_findings_wrongly_refuted": "0/3",
+   "unverifiable_rate": 0.455
+  }
+ },
+ "usage": {
+  "input_tokens": 624,
+  "output_tokens": 49681,
+  "cache_read_input_tokens": 435662,
+  "cache_creation_input_tokens": 221446
+ },
+ "note": "Hand labels come from one AI-assisted annotator; agreement measures consistency between two independent passes, not ground truth."
+}
