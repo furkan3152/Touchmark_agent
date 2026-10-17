@@ -39,6 +39,7 @@ import re
 from dataclasses import dataclass, field
 
 from .codeflow import DIRECT, UNTRUSTED, CodeProfile, Flow, Location  # noqa: F401  (re-exported types)
+from .codeflow import _HUMAN_DECISION, _LOOKUP, _NOT_HUMAN
 
 JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts")
 _RESOLVE_SUFFIXES = ("", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts",
@@ -1155,9 +1156,20 @@ class _JsInterp:
                     self._cap("secret_material", node)
                     return {"secret"}
                 return set()
-            return self.tags(obj, state) | self.tags(index, state)
+            container, key = self.tags(obj, state), self.tags(index, state)
+            if key & UNTRUSTED and not container & UNTRUSTED:
+                key = key | {"stored_record"}
+            return container | key
         if t in {"call_expression", "new_expression"}:
-            return self.call(node, state)
+            found = self.call(node, state)
+            fn = _unwrap(node.child_by_field_name("function")) if t == "call_expression" else None
+            name = _dotted(fn) if fn is not None else ""
+            if _HUMAN_DECISION.search(name.rsplit(".", 1)[-1]) and not _NOT_HUMAN.search(name):
+                found = found | {"human_decision"}
+            if (fn is not None and fn.type == "member_expression" and _LOOKUP.match(name.rsplit(".", 1)[-1])
+                    and not self.tags(fn.child_by_field_name("object"), state) & UNTRUSTED):
+                found = found | {"stored_record"}
+            return found
         if t == "assignment_expression":
             value = self.tags(node.child_by_field_name("right"), state)
             self.assign(node.child_by_field_name("left"), value, state, node.child_by_field_name("right"))
@@ -1694,7 +1706,13 @@ class _JsInterp:
                 return
         if t in {"identifier", "member_expression"} and truth:
             ident = _txt(cond.child_by_field_name("property")) if t == "member_expression" else _txt(cond)
-            if not ident.isupper() and re.search(r"approv", ident, re.I):
+            if not ident.isupper() and re.search(r"approv|confirm", ident, re.I):
+                found = self.tags(cond, state)
+                if found & UNTRUSTED and not found & {"human_decision", "stored_record"}:
+                    # `if (!args.approved) throw`: the requester supplies the approval itself.
+                    if self.record:
+                        self.p.profile.forgeable_approvals.append(self.p.location(self.module, node))
+                    return
                 self.approved = True
                 self._control("approval", node)
                 return

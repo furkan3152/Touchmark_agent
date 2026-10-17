@@ -254,6 +254,24 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             references=["CWE-693 Protection Mechanism Failure"], auditor=auditor, confidence=0.95,
         ))
 
+    if profile.forgeable_approvals:
+        moves_funds = any(profile.has(cap) for cap in ("stellar_signing", "tx_submission", "payment", "contract_invocation",
+                                                       "foreign_tx_signing", "account_control"))
+        findings.append(Finding(
+            id="security-path-forgeable-approval", dimension=Dimension.SECURITY,
+            severity=Severity.CRITICAL if moves_funds else Severity.HIGH,
+            title="The approval gate checks a value the requester supplies",
+            detail="The code refuses to act unless an approval flag is set, but that flag is a tool argument, request "
+                   "field or fetched value. Whoever can talk to the agent can set it: a request the model refuses "
+                   "when asked plainly passes when reworded so the model fills in the flag. The gate is not an approval.",
+            evidence="; ".join(loc.render() for loc in profile.forgeable_approvals[:5]),
+            evidence_grade=EvidenceGrade.CONFIRMED,
+            remediation="Take approval from outside the model's reach: a signed approval record, a wallet prompt the "
+                        "human answers, or an operator decision stored server-side and bound to the exact recipient and amount.",
+            references=["CWE-807 Reliance on Untrusted Inputs in a Security Decision", "OWASP LLM06 Excessive Agency"],
+            auditor=auditor, confidence=0.93,
+        ))
+
     # Non-Python sources keep lexical candidates; they are never reported as confirmed data flow.
     lexical_command: list[_Hit] = []
     lexical_financial: list[_Hit] = []
@@ -296,4 +314,63 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             references=["Soroban authorization", "OWASP LLM06 Excessive Agency"],
             auditor=auditor, confidence=0.82,
         ))
+
+    # A payment rule the instructions state but the code does not enforce: the model is the
+    # only control, and a reworded, role-played or indirect request gets past a model.
+    moving = {f.id for f in findings} & {"security-path-untrusted-to-financial-sink", "security-path-forgeable-approval",
+                                         "security-path-external-transaction-signed", "security-path-x402-payment-unbounded"}
+    rules = _prompt_payment_rules(artifact)
+    if moving and rules:
+        findings.append(Finding(
+            id="security-policy-only-in-prompt", dimension=Dimension.SECURITY, severity=Severity.HIGH,
+            title="A payment rule is stated to the model but not enforced in code",
+            detail="The instructions tell the model what it may pay, but the payment path does not check it. The model "
+                   "is then the only control: a plain request may be refused while the same request reworded, "
+                   "role-played, translated, split up or planted in content the agent reads is carried out.",
+            evidence="; ".join(rules[:3]), evidence_grade=EvidenceGrade.CONFIRMED,
+            remediation="Enforce each stated rule in the code that builds or signs the transaction (allowlist, caps, "
+                        "approval bound to recipient and amount), and test it with reworded and indirect requests.",
+            references=["OWASP LLM01 Prompt Injection", "OWASP LLM06 Excessive Agency"], auditor=auditor, confidence=0.9,
+        ))
+
+    # A per-payment cap with no running total: many small requests each pass it.
+    pay_files = {loc.file for cap in ("stellar_signing", "tx_submission", "payment", "contract_invocation")
+                 for loc in profile.capabilities.get(cap, [])}
+    if profile.controls.get("amount_cap") and pay_files and not any(
+            _CUMULATIVE.search(artifact.code_files.get(f, "")) for f in pay_files):
+        findings.append(Finding(
+            id="security-per-call-cap-only", dimension=Dimension.SECURITY, severity=Severity.MEDIUM,
+            title="Payments are capped per call, with no total or rate limit",
+            detail="Each payment is checked against a maximum, but nothing tracks how much has been sent. Splitting a "
+                   "large request into many calls that each stay under the cap moves any amount.",
+            evidence="caps at " + "; ".join(loc.render() for loc in profile.controls["amount_cap"][:3])
+                     + " · no running total in " + ", ".join(sorted(pay_files)[:5]),
+            evidence_grade=EvidenceGrade.INFERRED,
+            remediation="Keep a persistent spent-amount per period (and per user for shared funds), reject when it "
+                        "would exceed the budget, and rate-limit payment calls.",
+            references=["CWE-770 Allocation of Resources Without Limits or Throttling"], auditor=auditor, confidence=0.7,
+        ))
     return findings
+
+
+_PAY_WORDS = re.compile(r"\b(?:pay\w*|send\w*|transfer\w*|withdraw\w*|spend\w*|xlm|usdc|funds?|payments?|recipients?)\b", re.I)
+_RULE_WORDS = re.compile(r"\b(?:never|do not|don't|must not|must only|only (?:send|pay|transfer)|at most|no more than|"
+                         r"maximum|max(?:imum)? of|limit(?:ed)? to|cap(?:ped)?|without (?:approval|confirmation)|"
+                         r"(?:ask|require)s? (?:for )?(?:approval|confirmation)|refuse)\b", re.I)
+_CUMULATIVE = re.compile(r"spent|total_?(?:spent|paid|sent|amount)|daily|per_?(?:day|hour|period)|cumulative|budget|"
+                         r"quota|remaining|allowance|rate_?limit|window_?(?:start|total)|spend_?tracker|ledger", re.I)
+
+
+def _prompt_payment_rules(artifact: AgentArtifact) -> list[str]:
+    """Sentences in the agent's instructions that state a payment rule, with their file."""
+    found: list[str] = []
+    for block in re.split(r"\n(?=\[[^\]\n]+\]\n)", artifact.system_prompt or ""):
+        head = re.match(r"\[([^\]\n]+)\]\n", block)
+        where = head.group(1) if head else "instructions"
+        if where.lower().startswith("readme"):
+            continue  # a README describes the project to people; it does not instruct the model
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", block[head.end():] if head else block):
+            sentence = sentence.strip(" -*#>")
+            if 12 <= len(sentence) <= 300 and _PAY_WORDS.search(sentence) and _RULE_WORDS.search(sentence):
+                found.append(f"{where}: \"{sentence}\"")
+    return found[:5]
