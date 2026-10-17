@@ -94,3 +94,12 @@ def test_stellar_reference_is_available():
                    evidence_quote="", reason="not decidable")),
     ])
     assert client.requests[1]["messages"][2]["content"][0]["content"] != "Unknown tool."
+
+
+def test_a_passed_deadline_leaves_findings_unverified_without_calling_the_model():
+    import time
+    client = Scripted([])
+    verifier = FindingVerifier(client, model="m", fallbacks=False)
+    verifier.deadline = time.monotonic() - 1
+    result = asyncio.run(verifier.verify([finding()], FILES))
+    assert result.results[0].note == "timeout" and not client.requests

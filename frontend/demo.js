@@ -35,11 +35,34 @@
     return data;
   }
 
+  const VERDICTS = {
+    confirmed: "Verified: a second model confirmed this in the code",
+    partial: "Partly verified: real, but narrower or less severe",
+    refuted: "Disputed: a second model could not confirm this",
+    unverifiable: "Not verified: the cited code could not be checked",
+  };
+
   function finding(f) {
+    const v = f.verification && f.verification.verdict;
     return el("li", { class: f.severity },
       el("span", { class: "sev", text: f.severity }), el("span", { class: "title", text: f.title }),
+      f.source === "ai_review" ? el("span", { class: "tag", text: "AI review" }) : null,
+      v ? el("span", { class: "tag verdict-" + v, text: VERDICTS[v] || v, title: f.verification.reason || "" }) : null,
       f.evidence ? el("code", { text: f.evidence }) : null,
       f.remediation ? el("p", { class: "fix", text: "Fix: " + f.remediation }) : null);
+  }
+
+  function aiLine(ai) {
+    if (ai.review === "no_source") return "AI review: not applicable; no source code is linked to this reference.";
+    if (ai.review === "off") return "AI review: not enabled on this deployment; rules only.";
+    if (ai.review === "rate_limited") return "AI review: hourly allowance used; this audit used the rules only.";
+    if (!ai.review) return "";
+    const status = { completed: "completed", timeout: "stopped at the time limit (findings so far kept)",
+      skipped: "skipped (no time left)", unavailable: "unavailable (provider error)", incomplete: "incomplete" }[ai.review] || ai.review;
+    let line = `AI review ${status}: read ${ai.files_read || 0} of ${ai.files_total || 0} files, added ${ai.findings_added || 0} findings.`;
+    const v = ai.verification || {};
+    if (v.checked) line += ` Verifier re-checked ${v.checked}: ${v.confirmed || 0} confirmed, ${v.partial || 0} partly, ${v.refuted || 0} disputed.`;
+    return line;
   }
 
   function render(data) {
@@ -65,6 +88,7 @@
     const c = data.counts || {};
     $("counts").textContent = `${data.files || 0} ${data.files === 1 ? "file" : "files"} analysed · ${c.risks || 0} risks (${c.critical || 0} critical, ${c.high || 0} high) · ${c.gaps || 0} evidence gaps`;
 
+    $("ai").textContent = aiLine(data.ai || {});
     const risks = $("risks"); risks.textContent = "";
     if (!data.risks.length) risks.append(el("li", { class: "low" }, el("span", { class: "title", text: "No exploitable path from untrusted input to keys, payments, commands or network was found." })));
     data.risks.forEach((f) => risks.append(finding(f)));
