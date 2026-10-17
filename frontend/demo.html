@@ -7,6 +7,7 @@
 <title>AgentVeritas — Audit an agent</title>
 <link rel="icon" href="/ui/studio-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/demo.css">
+<script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script>
 <script src="/ui/demo.js" defer></script>
 </head>
 <body>
@@ -77,6 +78,7 @@
           <p class="ok">Issued and read back from the ledger</p>
           <dl>
             <dt>Token</dt><dd><code id="token"></code></dd>
+            <dt>Owner</dt><dd id="owner"></dd>
             <dt>Score on chain</dt><dd id="chain-score"></dd>
             <dt>Report hash</dt><dd id="chain-hash"></dd>
             <dt>Valid until</dt><dd id="expires"></dd>

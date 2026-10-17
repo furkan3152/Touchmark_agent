@@ -90,9 +90,15 @@
     const issue = $("issue");
     issue.hidden = !issuance.ticket;
     issue.disabled = false;
+    const ownerNote = issuance.owner
+      ? ` The repository names ${issuance.owner.slice(0, 6)}…${issuance.owner.slice(-4)} as owner: sign the registration with that account in Freighter and the credential is issued to it.`
+      : (data.ownership && data.ownership.error)
+        ? ` The ownership file was found but ${data.ownership.error}; the credential would go to the demo operator.`
+        : " No owner is named, so it is issued to the demo operator (ownership not verified). Add agentveritas.json with {\"stellar_owner\": \"G…\"} to your repository to receive it yourself.";
     $("cred-note").textContent = issuance.ticket
-      ? "This report passed. The validator writes its hash and score to the AgentVeritas registry, and the credential contract issues a non-transferable token bound to it."
+      ? "This report passed. The validator writes its hash and score to the AgentVeritas registry, and the credential contract issues a non-transferable token bound to it." + ownerNote
       : issuance.reason || (issuance.enabled ? "" : "Credential issuance is not configured on this deployment.");
+    $("issue").textContent = issuance.owner ? "Sign with Freighter and issue to my account" : "Issue credential on Stellar testnet";
     step("credential", issuance.ticket ? "" : "skip");
   }
 
@@ -126,7 +132,29 @@
     button.textContent = "Writing to Stellar testnet…";
     step("credential", "active");
     try {
-      const cred = await post("/api/v1/demo/credential", { ticket: current.issuance.ticket });
+      const owner = current.issuance.owner;
+      let signed = "";
+      if (owner) {
+        // The registry requires the owner's authorization: the named account signs in its own wallet.
+        const api = window.freighterApi;
+        if (!api) throw new Error("The Freighter library did not load. Install Freighter and reload.");
+        const installed = await api.isConnected();
+        if (installed.error || !installed.isConnected) throw new Error("Install the Freighter browser extension to sign as the owner.");
+        const access = await api.requestAccess();
+        if (access.error || access.address !== owner) throw new Error(`Switch Freighter to the account the repository names (${owner.slice(0, 6)}…${owner.slice(-4)}).`);
+        const network = await api.getNetworkDetails();
+        if (network.error || network.networkPassphrase !== "Test SDF Network ; September 2015") throw new Error("Switch Freighter to Stellar Testnet.");
+        button.textContent = "Preparing your registration…";
+        const prepared = await post("/api/v1/demo/credential/prepare", { ticket: current.issuance.ticket });
+        if (prepared.signature_needed) {
+          button.textContent = "Confirm in Freighter…";
+          const value = await api.signTransaction(prepared.unsigned_xdr, { networkPassphrase: prepared.network_passphrase, address: owner });
+          if (value.error || !value.signedTxXdr) throw new Error("The owner did not sign the registration.");
+          signed = value.signedTxXdr;
+        }
+        button.textContent = "Writing to Stellar testnet…";
+      }
+      const cred = await post("/api/v1/demo/credential", { ticket: current.issuance.ticket, signed_xdr: signed });
       step("credential", "done");
       $("cred-idle").hidden = true;
       $("cred-done").hidden = false;
@@ -134,6 +162,7 @@
       $("chain-score").textContent = `${cred.score} / 100${cred.is_current ? " · current" : ""}`;
       $("chain-hash").textContent = cred.report_matches ? "matches this report ✓" : "does not match this report";
       $("expires").textContent = new Date(cred.expires_at * 1000).toISOString().slice(0, 10);
+      $("owner").textContent = `${cred.owner.slice(0, 6)}…${cred.owner.slice(-4)} · ${cred.owner_verified ? "verified: named in the repository and signed" : "demo operator (ownership not verified)"}`;
       const contract = $("contract"); contract.href = cred.contract_url; contract.textContent = cred.contract;
       const txs = $("txs"); txs.textContent = "";
       if (cred.already_issued && !cred.transactions.length) txs.append(el("li", { text: "This report was already credentialed; read back from the ledger." }));
@@ -141,7 +170,7 @@
     } catch (error) {
       step("credential", "");
       button.disabled = false;
-      button.textContent = "Issue credential on Stellar testnet";
+      button.textContent = current.issuance.owner ? "Sign with Freighter and issue to my account" : "Issue credential on Stellar testnet";
       showError(error.message);
     }
   }

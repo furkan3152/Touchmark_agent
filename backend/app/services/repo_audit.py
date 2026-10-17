@@ -56,7 +56,25 @@ SIGNALS = re.compile(
 SECURITY_PATH = re.compile(r"(?:^|[/_.-])(?:auth\w*|router|routes?|middleware|guards?|netguard|polic(?:y|ies)|"
                            r"permissions?|admin|webhooks?|sessions?|keys|approvals?|x402|paymaster|signer|wallet)"
                            r"(?:[/_.-]|$)", re.I)
+#: An owner claim: the repository names the Stellar account its credential belongs to.
+OWNERSHIP_FILES = ("agentveritas.json", ".well-known/agentveritas.json")
 LICENSE_NAMES = {"license", "license.md", "license.txt", "licence", "licence.md", "copying"}
+
+
+def ownership_claim(record: dict) -> dict:
+    """Parse agentveritas.json: {"stellar_owner": "G..."}. Committing this file shows that
+    whoever controls the repository names that account; the account's signature, required
+    when the agent is registered, shows its key holder agrees."""
+    if not record:
+        return {}
+    try:
+        owner = str(json.loads(record["text"]).get("stellar_owner", "")).strip()
+    except (ValueError, AttributeError):
+        return {"path": record["path"], "error": "not valid JSON with a stellar_owner field"}
+    from stellar_sdk import StrKey
+    if not StrKey.is_valid_ed25519_public_key(owner):
+        return {"path": record["path"], "error": "stellar_owner is not a valid G... account"}
+    return {"path": record["path"], "stellar_owner": owner}
 
 
 def _is_repository_record(rel: Path) -> bool:
@@ -95,10 +113,14 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     """Choose the agent-defining source within a budget. Returns (files, manifest)."""
     root = root.resolve()
     candidates, instructions, manifests, skipped, oversized = [], {}, {}, 0, []
+    ownership: dict = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(root)
+        if rel.as_posix() in OWNERSHIP_FILES and not ownership and path.stat().st_size <= 4_000:
+            ownership = {"path": rel.as_posix(), "text": path.read_text(errors="replace")}
+            continue
         if _is_repository_record(rel) and path.stat().st_size <= 64_000:
             # License and CI definitions are provenance evidence, not source.
             manifests[rel.as_posix()] = path.read_text(errors="replace")
@@ -147,7 +169,7 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
-    return files, {"manifest": manifest, "instructions": instructions}
+    return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership}
 
 
 def registered_tools(files: dict[str, str]) -> list[ToolSpec]:
@@ -234,7 +256,9 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     if reviewer is not None:
         reviewer.max_turns = max(reviewer.max_turns, 40)
         reviewer.timeout_seconds = max(reviewer.timeout_seconds, 900.0)
+    claim = ownership_claim(selection.get("ownership") or {})
     payload_extra = {"repository": {"reference": source_reference, "revision": revision,
+                                    **({"ownership_claim": claim} if claim else {}),
                                     "source_sha256": sha256(canonical_json(files).encode()).hexdigest(),
                                     **selection["manifest"]}}
     notes = [] if selection["manifest"]["complete"] else [
