@@ -1,0 +1,84 @@
+{
+ "schema": "agentveritas.oss-study-commitment/v1",
+ "date": "2026-10-16",
+ "dataset_sha256": "ab227f9db37b03092d26346f7194fce30a98408ac77b7c39ba56a36d70a706f1",
+ "hash_of": "canonical JSON (sorted keys, no whitespace, UTF-8) of the dataset rows",
+ "repositories": [
+  {
+   "repository": "https://github.com/AstroForgeLabs/stellar-agentkit",
+   "commit": "713e34f64d9f88c94e47ced5a5fce2d32392c3d1"
+  },
+  {
+   "repository": "https://github.com/DarkLvrd/stellar-x402-mcp",
+   "commit": "6a07b49d0909059032f7afd77f805d012836383b"
+  },
+  {
+   "repository": "https://github.com/JoseCToscano/stellar-mcp",
+   "commit": "28d70bf039c9c63a66b741d21224c6d33b8e827b"
+  },
+  {
+   "repository": "https://github.com/Optimus-Primex/artificial-intelligence",
+   "commit": "516e8203c7f00332f912ba2f58fc9beb26e07959"
+  },
+  {
+   "repository": "https://github.com/Ranjeet2063/stellar-mcp-server",
+   "commit": "e42cc3279f60a1fdf753bf31c7c14f4d071a9476"
+  },
+  {
+   "repository": "https://github.com/StellarAgentic/StellarM2M",
+   "commit": "d49e15fe9fd09e3a402c04cca4eabaa388fd134b"
+  },
+  {
+   "repository": "https://github.com/agentpay-co/agentpay",
+   "commit": "fd830dbc0449e03eed837cb55cbe42ebfbee8cc6"
+  },
+  {
+   "repository": "https://github.com/dogoop/opuity",
+   "commit": "6b774f2e91c41fb3e89f4ead05654f665fc5c06c"
+  },
+  {
+   "repository": "https://github.com/elon00/qstellar",
+   "commit": "b453eba9cfed3fd1a4a15869fbde7a415751b192"
+  },
+  {
+   "repository": "https://github.com/mpprouter/stellar-agent-wallet-skill",
+   "commit": "894116aae2296bf4a13c109d48e6c1bfac7756bc"
+  },
+  {
+   "repository": "https://github.com/privexlabs/lumora",
+   "commit": "7334dd44ae63ae40aa5c46e4f5013e6b940a9604"
+  },
+  {
+   "repository": "https://github.com/stellar-x402-mcp/monorepo",
+   "commit": "bd5ff0516724ffa08f85e5afb7ef95770ea11fda"
+  }
+ ],
+ "findings": 199,
+ "verdicts": {
+  "TRUE": 161,
+  "PARTIAL": 32,
+  "FALSE": 5,
+  "UNVERIFIABLE": 1
+ },
+ "by_source": {
+  "ai:TRUE": 151,
+  "ai:PARTIAL": 29,
+  "rule:TRUE": 10,
+  "rule:FALSE": 4,
+  "ai:FALSE": 1,
+  "rule:PARTIAL": 3,
+  "rule:UNVERIFIABLE": 1
+ },
+ "precision_strict": 0.813,
+ "precision_including_partial": 0.975,
+ "method": [
+  "Each repository was audited at the listed commit with scripts/audit_repository.py (rules plus deep review).",
+  "Every reported finding was opened at its cited file and line and labelled TRUE, PARTIAL (real but overstated or narrower), FALSE or UNVERIFIABLE, with a written reason and a reviewed severity."
+ ],
+ "annotation": "One annotator: the maintainer's AI-assisted review session. There was no second, independent annotator and no inter-annotator agreement measure.",
+ "not_measured": [
+  "False negatives: there is no exhaustive ground truth for these repositories, so recall is unknown.",
+  "Independent replication: nobody outside the project has re-labelled the findings."
+ ],
+ "release": "The dataset contains unpublished vulnerability details. It is published, and this hash can then be checked, once each maintainer has fixed the issues or 90 days after private notification, whichever is first. It is shared earlier with reviewers or auditors on request."
+}
