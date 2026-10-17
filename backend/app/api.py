@@ -865,6 +865,20 @@ async def demo_compare(req: DemoCompareRequest) -> dict:
             "before_sha256": before["report_sha256"], "after_sha256": after["report_sha256"]}
 
 
+class DemoPrepareRequest(BaseModel):
+    ticket: str = Field(min_length=20, max_length=4000)
+
+
+@app.post("/api/v1/demo/credential/prepare")
+async def demo_credential_prepare(req: DemoPrepareRequest) -> dict:
+    """The registration transaction the repository's named owner signs in their wallet."""
+    from .services.demo_flow import DemoError, prepare_owner_registration
+    try:
+        return await prepare_owner_registration(req.ticket)
+    except DemoError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.post("/api/v1/demo/credential")
 async def demo_credential(req: "DemoCredentialRequestModel", request: Request) -> dict:
     """Issue the Testnet AuditCredential for a passing demo audit (server-signed ticket required)."""
@@ -872,7 +886,7 @@ async def demo_credential(req: "DemoCredentialRequestModel", request: Request) -
     if not _demo_issuance_allowed(_demo_client(request)):
         raise HTTPException(status_code=429, detail="Too many credential requests; try again in a few minutes.")
     try:
-        return await issue_demo_credential(req.ticket)
+        return await issue_demo_credential(req.ticket, req.signed_xdr)
     except DemoError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - chain failures are reported, not hidden
