@@ -1,20 +1,28 @@
 <p align="center">
-  <img src="frontend/studio-mark.svg" width="64" alt="AgentVeritas">
+  <img src="frontend/brand/mark.svg" width="88" alt="Touchmark">
 </p>
 
-<h1 align="center">AgentVeritas</h1>
+<h1 align="center">touchmark</h1>
 
 <p align="center">
-  <strong>Paste an AI agent's code or Stellar address. Find out whether it is safe to give it the keys, and get the answer recorded on Stellar.</strong>
+  <strong>Test the agent. Stamp the proof.</strong><br>
+  Before an AI agent gets your keys, Touchmark reads its code, tries to misuse it, and stamps the result on Stellar, where anyone can check it.
 </p>
 
 <p align="center">
-  <a href="https://agentveritas-stellar.vercel.app"><img src="https://img.shields.io/badge/Live_demo-agentveritas--stellar.vercel.app-255a43?style=for-the-badge" alt="Live demo"></a>
-  <img src="https://img.shields.io/badge/Stellar-Testnet-7C3AED?style=for-the-badge&logo=stellar&logoColor=white" alt="Stellar testnet">
+  <a href="https://agentveritas-stellar.vercel.app"><img src="https://img.shields.io/badge/Live_demo-agentveritas--stellar.vercel.app-1d2b4f?style=for-the-badge" alt="Live demo"></a>
+  <img src="https://img.shields.io/badge/Stellar-Testnet-e2432a?style=for-the-badge&logo=stellar&logoColor=white" alt="Stellar testnet">
   <a href="https://github.com/furkan3152/agentveritas-stellar/actions/workflows/verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/agentveritas-stellar/verify.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
-  <img src="https://img.shields.io/badge/External_audit-not_yet-9a6a12?style=for-the-badge" alt="External audit: not yet">
-  <img src="https://img.shields.io/badge/License-Apache_2.0-D22B2B?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/External_audit-not_yet-b97c0b?style=for-the-badge" alt="External audit: not yet">
+  <img src="https://img.shields.io/badge/License-Apache_2.0-1f7a5a?style=for-the-badge" alt="License">
 </p>
+
+<p align="center">
+  <a href="public/media/touchmark-how-to.mp4"><img src="frontend/brand/video-poster.jpg" width="640" alt="Watch: how to use Touchmark, start to stamp"></a><br>
+  <sub>▶ <a href="public/media/touchmark-how-to.mp4">How to use Touchmark</a>: paste an agent, read the verdict, fix and re-test, stamp it on Stellar.</sub>
+</p>
+
+> A **touchmark** is the maker's mark struck into tested metal: a promise that someone checked it and stands behind it. Touchmark (formerly AgentVeritas) does the same for AI agents that hold Stellar keys.
 
 ---
 
@@ -25,13 +33,13 @@
 1. **Paste** a GitHub repository or folder, an AgentRegistry agent id, a `C…` contract or a `G…` account.
 2. **Read the verdict.** The exact commit is pinned, the code is traced from model input to keys, payments and the network, and a report is committed with its SHA-256 hash. "Why this score?" shows every point deducted.
 3. **Issue the credential.** If the audit passes, a validator writes the report hash and score to the registry on Stellar testnet, a Soroban contract issues a credential bound to them, and the page reads it back from the ledger.
-   - **To your account:** add `agentveritas.json` with `{"stellar_owner": "G…"}` to your repository. You then sign the registration in Freighter, and the credential is issued to your account.
+   - **To your account:** add `touchmark.json` with `{"stellar_owner": "G…"}` to your repository. You then sign the registration in Freighter, and the credential is issued to your account.
    - **Declare your agent** in the same file (`purpose`, `tools` with `spend_limit_usdc`, `forbidden_goals`). The audit checks the code against what you declare; a limit the code does not enforce is reported, not credited.
 4. **Fix and re-audit.** Paste the fixed commit; the page shows which risks were closed and how the score changed.
 
-| An unsafe agent: refused | The same agent, fixed: credentialed on Stellar |
+| An unsafe agent: not yet | The same agent, fixed: touchmarked on Stellar |
 |---|---|
-| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: needs fixes, score 32.2" width="420"> | <img src="docs/media/demo-credential.png" alt="Safe treasury agent: pass, score 99.6, credential issued on testnet" width="420"> |
+| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: not yet, score 30.6" width="420"> | <img src="docs/media/demo-credential.png" alt="Safe treasury agent: touchmarked, score 93.4, credential stamped on testnet" width="420"> |
 
 Both are the same MCP treasury agent, in [`examples/demo`](examples/demo). In the unsafe
 one the model picks the recipient, the amount and the URL to fetch. In the safe one,

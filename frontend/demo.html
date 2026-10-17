@@ -3,53 +3,77 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Paste a GitHub repository or a Stellar agent reference. AgentVeritas audits the code and, if it passes, issues a credential on Stellar testnet.">
-<title>AgentVeritas — Audit an agent</title>
-<link rel="icon" href="/ui/studio-mark.svg" type="image/svg+xml">
+<meta name="description" content="Touchmark tests an AI agent's code before you hand it the keys, and stamps the proof on Stellar.">
+<title>Touchmark — test the agent, stamp the proof</title>
+<link rel="icon" href="/ui/brand/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/fonts/fonts.css">
 <link rel="stylesheet" href="/ui/demo.css">
 <script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script>
+<script src="/ui/hero.js" defer></script>
 <script src="/ui/demo.js" defer></script>
 </head>
 <body>
+<svg width="0" height="0" class="defs" aria-hidden="true">
+  <!-- Rough ink edge for rubber stamps. -->
+  <filter id="ink"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter>
+  <symbol id="mark" viewBox="0 0 64 64">
+    <path d="M14 4h36a10 10 0 0 0 10 10v36a10 10 0 0 0-10 10H14A10 10 0 0 0 4 50V14A10 10 0 0 0 14 4Z" class="mark-plate"/>
+    <path d="M33.6 11.5c1.5 11.4 7.9 17.8 19.3 19.3-11.4 1.5-17.8 7.9-19.3 19.3-1.5-11.4-7.9-17.8-19.3-19.3 11.4-1.5 17.8-7.9 19.3-19.3Z" class="mark-star"/>
+    <path d="M32 13c1.5 11.4 7.9 17.8 19.3 19.3C39.9 33.8 33.5 40.2 32 51.6 30.5 40.2 24.1 33.8 12.7 32.3 24.1 30.8 30.5 24.4 32 13Z" class="mark-line"/>
+  </symbol>
+</svg>
+
 <header class="bar">
-  <a class="brand" href="/"><img src="/ui/studio-mark.svg" alt="" width="30" height="30">AgentVeritas <span>on Stellar</span></a>
-  <nav><a href="https://github.com/furkan3152/agentveritas-stellar" rel="noopener">GitHub</a><a href="/studio">Full studio</a></nav>
+  <a class="brand" href="/" aria-label="Touchmark home"><svg class="logo" width="34" height="34"><use href="#mark"/></svg><span class="word">touchmark</span><span class="where">on Stellar</span></a>
+  <nav><a href="#how">How it works</a><a href="#video">Video</a><a href="https://github.com/furkan3152/agentveritas-stellar" rel="noopener">GitHub</a><a href="/studio">Studio</a></nav>
 </header>
 
 <main>
-  <section class="intro">
-    <p class="eyebrow"><span class="dot"></span>AI AGENT VERIFICATION ON STELLAR</p>
-    <h1>Should this agent get the keys?</h1>
-    <p class="lede">Paste an agent's GitHub repository or Stellar reference. AgentVeritas reads the code, traces what the model can make it do, and, if it passes, issues a verifiable credential on Stellar testnet.</p>
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow"><span>Agent assay office</span><span>Stellar testnet</span></p>
+      <h1>Test the agent.<br><em>Stamp the proof.</em></h1>
+      <p class="lede">Before an AI agent gets your keys, Touchmark reads its code, traces what a request can make it do, and stamps the result on Stellar, where anyone can check it.</p>
+    </div>
+    <figure class="hero-art" aria-hidden="true">
+      <canvas id="dots" width="480" height="480"></canvas>
+      <figcaption id="dots-caption">an agent</figcaption>
+    </figure>
   </section>
 
-  <form id="audit-form" class="input-card" autocomplete="off">
-    <label for="reference">Agent reference</label>
+  <form id="audit-form" class="ticket" autocomplete="off">
+    <div class="ticket-head"><label for="reference">Nº 01 · Agent to test</label><span>GitHub repo or folder · agent id · C… contract · G… account</span></div>
     <div class="input-row">
       <input id="reference" name="reference" required minlength="3" maxlength="300"
-             placeholder="https://github.com/owner/repo   ·   agent id   ·   C… contract   ·   G… account">
-      <button id="run" type="submit">Audit <span aria-hidden="true">→</span></button>
+             placeholder="https://github.com/owner/repo">
+      <button id="run" type="submit">Test it <span aria-hidden="true">→</span></button>
     </div>
     <div class="examples" aria-label="Examples">
-      <span>Try:</span>
+      <span>Try one:</span>
       <button type="button" data-ref="https://github.com/furkan3152/agentveritas-stellar/tree/main/examples/demo/unsafe-treasury-agent">Unsafe treasury agent</button>
       <button type="button" data-ref="https://github.com/furkan3152/agentveritas-stellar/tree/main/examples/demo/safe-treasury-agent">Safe treasury agent</button>
     </div>
   </form>
 
   <ol id="steps" class="steps" hidden>
-    <li data-step="resolve"><b>1</b>Resolve &amp; pin the source</li>
-    <li data-step="analyse"><b>2</b>Trace model input to keys, payments and network</li>
-    <li data-step="decide"><b>3</b>Decide and commit the report</li>
-    <li data-step="credential"><b>4</b>Credential on Stellar</li>
+    <li data-step="resolve"><b>1</b>Pin the source</li>
+    <li data-step="analyse"><b>2</b>Trace requests to keys, payments, network</li>
+    <li data-step="decide"><b>3</b>Decide &amp; seal the report</li>
+    <li data-step="credential"><b>4</b>Stamp on Stellar</li>
   </ol>
 
   <p id="error" class="error" role="alert" hidden></p>
 
   <section id="result" class="result" hidden aria-live="polite">
     <div class="verdict">
-      <div class="score"><svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="52" class="track"/><circle id="ring" cx="60" cy="60" r="52" class="ring"/></svg><span id="score">–</span><small>/ 100</small></div>
-      <div>
+      <div class="stamp-wrap">
+        <div id="stamp" class="stamp">
+          <svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="52" class="track"/><circle id="ring" cx="60" cy="60" r="52" class="ring"/></svg>
+          <span id="score">–</span><small>/ 100</small>
+          <span id="stamp-word" class="stamp-word"></span>
+        </div>
+      </div>
+      <div class="verdict-copy">
         <p id="decision" class="decision">–</p>
         <h2 id="headline">–</h2>
         <p id="source" class="source"></p>
@@ -73,10 +97,10 @@
         <h3>Stellar credential</h3>
         <div id="cred-idle">
           <p id="cred-note" class="note"></p>
-          <button id="issue" type="button" hidden>Issue credential on Stellar testnet</button>
+          <button id="issue" type="button" hidden>Stamp it on Stellar testnet</button>
         </div>
         <div id="cred-done" hidden>
-          <p class="ok">Issued and read back from the ledger</p>
+          <p class="ok">Stamped, and read back from the ledger</p>
           <dl>
             <dt>Token</dt><dd><code id="token"></code></dd>
             <dt>Owner</dt><dd id="owner"></dd>
@@ -95,8 +119,8 @@
     </div>
 
     <form id="recheck" class="panel recheck" autocomplete="off">
-      <h3>Fixed it? Re-audit</h3>
-      <p class="note">Paste the fixed commit or folder. Both versions are audited and compared: what the fix closed, what remains, and anything new.</p>
+      <h3>Fixed it? Test again</h3>
+      <p class="note">Paste the fixed commit or folder. Both versions are tested and compared: what the fix closed, what is still open, and anything new.</p>
       <div class="input-row">
         <input id="fixed" required minlength="3" maxlength="300" placeholder="https://github.com/owner/repo/tree/<fixed-commit>">
         <button id="run-recheck" type="submit">Compare <span aria-hidden="true">→</span></button>
@@ -112,13 +136,23 @@
     </form>
   </section>
 
-  <section class="how">
-    <div><h3>Reads the code, not the claims</h3><p>Python, JavaScript and TypeScript are parsed into data flow. A tool's declared permissions never override what the code can do.</p></div>
-    <div><h3>Stellar-aware</h3><p>Payments, signing, trustlines, Soroban auth and TTL, x402 and SEP-10/45 boundaries. Contracts are read from the ledger and their WASM hash is recomputed.</p></div>
-    <div><h3>Credentials that can't lie</h3><p>The Soroban credential contract only accepts a completed validation from an approved validator, bound to the report hash, with score ≥ 65.</p></div>
+  <section id="how" class="how">
+    <h2 class="section-title">How a touchmark is earned</h2>
+    <div class="how-grid">
+      <div class="card"><span class="num">i.</span><h3>Reads the code, not the claims</h3><p>Python, JavaScript and TypeScript are traced from what a request says to what the agent signs, pays or fetches. A declared limit the code does not enforce is reported, never credited.</p></div>
+      <div class="card"><span class="num">ii.</span><h3>Asks it the wrong way</h3><p>Reworded, split, role-played and planted requests; approval flags the model fills in; a server the requester picks. If only the prompt stops it, it is not stopped.</p></div>
+      <div class="card"><span class="num">iii.</span><h3>Stamps what passed</h3><p>A Soroban contract issues the credential only for a validated report: bound to its hash, its score of 65 or more, and the version that was tested.</p></div>
+    </div>
+  </section>
+
+  <section id="video" class="video">
+    <h2 class="section-title">Ninety seconds, start to stamp</h2>
+    <video controls preload="none" playsinline poster="/ui/brand/video-poster.jpg" width="1280" height="720">
+      <source src="/media/touchmark-how-to.mp4" type="video/mp4">
+    </video>
   </section>
 </main>
 
-<footer class="foot">Testnet demo · Deterministic analysers only (the paid AI review is not run here) · A pass is not a guarantee of safety.</footer>
+<footer class="foot"><svg class="logo" width="20" height="20"><use href="#mark"/></svg><span>Touchmark · testnet demo · A touchmark means no actionable risk was found in the reviewed code. It is not a guarantee of safety.</span></footer>
 </body>
 </html>

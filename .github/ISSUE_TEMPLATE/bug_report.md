@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve the AgentVeritas system
+about: Create a report to help us improve the Touchmark system
 title: '[BUG] '
 labels: bug
 assignees: ''

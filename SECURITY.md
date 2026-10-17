@@ -1,6 +1,6 @@
 # Security Policy
 
-The AgentVeritas Stellar team takes the security of our evidence-first verification and audit system very seriously. We appreciate your efforts to responsibly disclose your findings.
+The Touchmark Stellar team takes the security of our evidence-first verification and audit system very seriously. We appreciate your efforts to responsibly disclose your findings.
 
 ## Supported Versions
 
@@ -13,7 +13,7 @@ Only the current major version is actively supported with security updates.
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in AgentVeritas Stellar, please do **not** open a public issue.
+If you discover a security vulnerability in Touchmark Stellar, please do **not** open a public issue.
 
 Instead, please send an email to **security@agentveritas.dev**. 
 
