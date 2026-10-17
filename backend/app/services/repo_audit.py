@@ -21,6 +21,10 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from stellar_sdk import StrKey
+
 from ..config import Settings
 from ..models import AgentArtifact, AuditTier, SourceKind, ToolSpec
 from ..reporting.generator import canonical_json, report_to_dict
@@ -60,6 +64,9 @@ SECURITY_PATH = re.compile(r"(?:^|[/_.-])(?:auth\w*|router|routes?|middleware|gu
 VERIFY_RESERVE_SECONDS = 50.0
 #: An owner claim: the repository names the Stellar account its credential belongs to.
 OWNERSHIP_FILES = ("agentveritas.json", ".well-known/agentveritas.json")
+#: The Veritas Blueprint project map; its purpose and components are read as declarations.
+BLUEPRINT_FILE = "veritas.json"
+DECLARATION_BYTES = 64_000
 LICENSE_NAMES = {"license", "license.md", "license.txt", "licence", "licence.md", "copying"}
 
 
@@ -77,6 +84,64 @@ def ownership_claim(record: dict) -> dict:
     if not StrKey.is_valid_ed25519_public_key(owner):
         return {"path": record["path"], "error": "stellar_owner is not a valid G... account"}
     return {"path": record["path"], "stellar_owner": owner}
+
+
+class _DeclaredTool(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=600)
+    scopes: list[str] = Field(default_factory=list, max_length=20)
+    requires_signature: bool = False
+    network_access: bool = False
+    spend_limit_usdc: float | None = Field(default=None, ge=0)
+
+
+class _Declaration(BaseModel):
+    """The optional self-declaration in agentveritas.json, next to stellar_owner.
+
+    A declaration states intent; it never closes a risk on its own. Declared tools are
+    reconciled with what the source can do (swarm/capabilities.py), and a declared
+    spending limit counts only when the source bounds every payment amount.
+    """
+    model_config = ConfigDict(extra="ignore")
+    name: str = Field(default="", max_length=100)
+    description: str = Field(default="", max_length=2_000)
+    purpose: str = Field(default="", max_length=2_000)
+    domain: str = Field(default="", max_length=40)
+    capabilities: list[str] = Field(default_factory=list, max_length=40)
+    tools: list[_DeclaredTool] = Field(default_factory=list, max_length=60)
+    forbidden_goals: list[str] = Field(default_factory=list, max_length=30)
+    human_oversight: bool = False
+    discloses_ai: bool = False
+    agent_wallet: str = Field(default="", max_length=56)
+
+
+def declarations(selection: dict) -> dict:
+    """What the repository declares about itself (agentveritas.json, veritas.json).
+
+    Returns the parsed fields plus a record of which files were read, for the report."""
+    out: dict = {"files": [], "errors": []}
+    record = selection.get("ownership") or {}
+    if record:
+        try:
+            raw = json.loads(record["text"])
+            if not isinstance(raw, dict):
+                raise ValueError("not a JSON object")
+            decl = _Declaration.model_validate({k: v for k, v in raw.items() if v is not None})
+            out["files"].append(record["path"])
+            out["declaration"] = decl
+        except (ValueError, ValidationError) as exc:
+            out["errors"].append(f"{record['path']}: {str(exc).splitlines()[0][:200]}")
+    blueprint = selection.get("blueprint") or {}
+    if blueprint:
+        from .blueprint import parse_blueprint
+        try:
+            parsed = parse_blueprint(blueprint["text"])
+            out["files"].append(blueprint["path"])
+            out["blueprint"] = parsed
+        except ValueError as exc:
+            out["errors"].append(f"{blueprint['path']}: {exc}")
+    return out
 
 
 def _is_repository_record(rel: Path) -> bool:
@@ -116,12 +181,16 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     root = root.resolve()
     candidates, instructions, manifests, skipped, oversized = [], {}, {}, 0, []
     ownership: dict = {}
+    blueprint: dict = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(root)
-        if rel.as_posix() in OWNERSHIP_FILES and not ownership and path.stat().st_size <= 4_000:
+        if rel.as_posix() in OWNERSHIP_FILES and not ownership and path.stat().st_size <= DECLARATION_BYTES:
             ownership = {"path": rel.as_posix(), "text": path.read_text(errors="replace")}
+            continue
+        if rel.as_posix() == BLUEPRINT_FILE and path.stat().st_size <= DECLARATION_BYTES:
+            blueprint = {"path": BLUEPRINT_FILE, "text": path.read_text(errors="replace")}
             continue
         if _is_repository_record(rel) and path.stat().st_size <= 64_000:
             # License and CI definitions are provenance evidence, not source.
@@ -171,7 +240,7 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
-    return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership}
+    return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint}
 
 
 def registered_tools(files: dict[str, str]) -> list[ToolSpec]:
@@ -224,6 +293,31 @@ def _dependencies(root: Path) -> list[str]:
     return deps[:200]
 
 
+#: The resolver's purpose when nothing better is known (agent_resolver.audit_reference).
+GENERIC_PURPOSE = "Agent resolved from"
+
+
+def _tools(decl: "_Declaration", files: dict[str, str]) -> list[ToolSpec]:
+    """Declared tools, then tools the source registers that the declaration leaves out."""
+    tools = [ToolSpec(**t.model_dump(), origin="declared") for t in decl.tools]
+    named = {t.name for t in tools}
+    return tools + [t for t in registered_tools(files) if t.name not in named]
+
+
+def _declaration_record(declared: dict, root: Path) -> dict:
+    """For the report: which declarations were read, and blueprint components that do not exist."""
+    record: dict = {"files": declared["files"], "errors": declared["errors"]}
+    decl = declared.get("declaration")
+    if decl is not None:
+        record["tools_declared"] = [t.name for t in decl.tools]
+        record["fields"] = sorted(k for k, v in decl.model_dump().items() if v not in ("", [], False))
+    blueprint = declared.get("blueprint")
+    if blueprint is not None:
+        record["blueprint_missing_files"] = [c.path for c in blueprint.components
+                                             if not (root / c.path).is_file()][:20]
+    return record
+
+
 async def audit_repository(root: str | Path, *, name: str, purpose: str, settings: Settings,
                            forbidden_goals: list[str] | None = None, network: str = "testnet",
                            stellar_address: str = "", agent_signing_key: str = "",
@@ -239,8 +333,17 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     if not files:
         raise ValueError("No supported source files were found in the repository.")
     instructions = "\n\n".join(f"[{path}]\n{text}" for path, text in selection["instructions"].items())
-    goals = forbidden_goals or []
+    declared = declarations(selection)
+    decl: _Declaration = declared.get("declaration") or _Declaration()
+    blueprint = declared.get("blueprint")
+    # The repository's own statement of purpose replaces a generic one from the caller.
+    stated = decl.purpose or decl.description or (blueprint.purpose if blueprint else "")
+    if stated and (not purpose or purpose.startswith(GENERIC_PURPOSE)):
+        purpose = stated
+    goals = forbidden_goals or [g for g in decl.forbidden_goals if g.strip()]
     description = purpose + ("\nForbidden goals: " + "; ".join(goals) if goals else "")
+    if not stellar_address and StrKey.is_valid_ed25519_public_key(decl.agent_wallet):
+        stellar_address = decl.agent_wallet
     chain = await _chain_facts(settings, network, stellar_address, agent_signing_key, files)
     if contract_facts:
         chain["contract"] = contract_facts
@@ -250,7 +353,9 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         source_kind=SourceKind.REPO,
         source_ref=f"repo:{source_reference or root.name}@{revision}",
         name=name, description=description, system_prompt=instructions[:12_000],
-        code_files=files, tools=registered_tools(files), dependencies=_dependencies(root), chain_authority=chain, lockfiles=_lockfiles(root),
+        code_files=files, tools=_tools(decl, files), dependencies=_dependencies(root), chain_authority=chain, lockfiles=_lockfiles(root),
+        declared_capabilities=decl.capabilities, human_oversight=decl.human_oversight,
+        discloses_ai=decl.discloses_ai, domain=decl.domain or "general",
         raw_metadata={"source_not_selected": (selection["manifest"]["source_files_not_selected"]
                                               + selection["manifest"]["files_too_large"])},
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
@@ -264,6 +369,7 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     claim = ownership_claim(selection.get("ownership") or {})
     payload_extra = {"repository": {"reference": source_reference, "revision": revision,
                                     **({"ownership_claim": claim} if claim else {}),
+                                    "declarations": _declaration_record(declared, root),
                                     "source_sha256": sha256(canonical_json(files).encode()).hexdigest(),
                                     **selection["manifest"]}}
     notes = [] if selection["manifest"]["complete"] else [
