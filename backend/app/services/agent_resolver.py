@@ -381,7 +381,8 @@ class AgentResolver:
 
 
 async def audit_reference(reference: str, settings: Settings, *, network: str = "testnet", deep: bool = True,
-                          purpose: str = "", transport: httpx.AsyncBaseTransport | None = None) -> dict:
+                          purpose: str = "", transport: httpx.AsyncBaseTransport | None = None,
+                          deadline: float | None = None) -> dict:
     """Resolve, then audit the source if any is bound; otherwise audit the on-chain evidence."""
     from .repo_audit import audit_repository, audit_onchain
 
@@ -422,7 +423,8 @@ async def audit_reference(reference: str, settings: Settings, *, network: str = 
                                                 network=network, stellar_address=stellar_address, deep=deep,
                                                 source_reference=source["repository"], revision=source["revision"],
                                                 contract_facts=resolution.get("contract"),
-                                                source_binding={**source, "onchain": onchain_identity})
+                                                source_binding={**source, "onchain": onchain_identity},
+                                                deadline=deadline)
                 return await _finish(resolution, result)
     result = await audit_onchain(resolution, name=name, purpose=purpose, settings=settings, network=network,
                                  stellar_address=stellar_address, deep=deep)

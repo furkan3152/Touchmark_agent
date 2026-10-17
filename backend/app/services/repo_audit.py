@@ -56,6 +56,8 @@ SIGNALS = re.compile(
 SECURITY_PATH = re.compile(r"(?:^|[/_.-])(?:auth\w*|router|routes?|middleware|guards?|netguard|polic(?:y|ies)|"
                            r"permissions?|admin|webhooks?|sessions?|keys|approvals?|x402|paymaster|signer|wallet)"
                            r"(?:[/_.-]|$)", re.I)
+#: Time kept for independent verification when a request deadline bounds the audit.
+VERIFY_RESERVE_SECONDS = 50.0
 #: An owner claim: the repository names the Stellar account its credential belongs to.
 OWNERSHIP_FILES = ("agentveritas.json", ".well-known/agentveritas.json")
 LICENSE_NAMES = {"license", "license.md", "license.txt", "licence", "licence.md", "copying"}
@@ -226,7 +228,10 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
                            forbidden_goals: list[str] | None = None, network: str = "testnet",
                            stellar_address: str = "", agent_signing_key: str = "",
                            deep: bool = True, source_reference: str = "", revision: str = "",
-                           contract_facts: dict | None = None, source_binding: dict | None = None) -> dict:
+                           contract_facts: dict | None = None, source_binding: dict | None = None,
+                           deadline: float | None = None) -> dict:
+    """``deadline`` (a ``time.monotonic()`` value) bounds the model review and verification,
+    for callers with a request time limit; the deterministic analysis always runs in full."""
     from .deep_review import reviewer_from_settings
 
     root = Path(root)
@@ -266,6 +271,12 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         "See repository.source_files_not_selected."]
     from .finding_verifier import verifier_from_settings
     verifier = verifier_from_settings(settings) if deep else None
+    if deadline is not None:
+        # The review stops early enough to leave the verifier time to re-check what it found.
+        if reviewer is not None:
+            reviewer.deadline = deadline - (VERIFY_RESERVE_SECONDS if verifier is not None else 0)
+        if verifier is not None:
+            verifier.deadline = deadline
     return await _run_and_package(artifact, settings, reviewer, name, purpose, goals, payload_extra, notes,
                                   verifier=verifier)
 
