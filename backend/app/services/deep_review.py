@@ -70,7 +70,9 @@ Work in this order:
    - one user acting on funds, keys or records that belong to another user or to a shared vault or treasury (is the caller bound to the account debited and to the recipient?);
    - instructions hidden in data the agent reads choosing the recipient, amount, asset or action;
    - keyword or pattern filters on the request text that a synonym, another language or an encoding passes;
-   - unit, decimal or asset confusion (stroops vs XLM, an asset code without its issuer), a network switch the requester controls;
+   - unit, decimal or asset confusion (stroops vs XLM, an asset code without its issuer);
+   - an RPC, Horizon or service URL, network or passphrase the requester can choose: a malicious RPC returns any simulation or auth tree and the agent signs it (see stellar_reference "endpoints");
+   - committed secrets: key files, notes or .env copies in the repository, and resources or tools that hand a key to the model;
    - replaying a signed transaction, a retry that pays twice, a check that runs after the send.
    Record each that works against the shipped code, and put the reworded or indirect request in the attack scenario.
 4. Check that the code actually works: wrong SDK or API usage, calls to functions that do not exist, broken imports, values of the wrong type or unit (stroops vs XLM, float amounts), unreachable or dead paths, and error handling that hides failures. Record these as functional_defect.

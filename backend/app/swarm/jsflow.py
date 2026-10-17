@@ -69,6 +69,7 @@ _JS_GLOBALS = frozenset({
     "performance", "structuredClone", "AbortSignal", "ArrayBuffer", "Uint8Array", "DataView", "Iterator"})
 _CHAIN_READ = re.compile(r"\.(?:transactions|payments|operations|effects|trades|claimableBalances)\b.*\.call$|"
                          r"\.(?:getEvents|getTransaction|getTransactions|getLedgerEntries|getContractData)$")
+_LEDGER_ENDPOINT = re.compile(r"(?:^|\.)(?:rpc|SorobanRpc|Horizon|StellarSdk)\.Server$|^Server$", re.I)
 _COMMAND_SINK = re.compile(r"^(?:eval|Function)$|^child_process\.(?:exec|execSync|spawn|spawnSync|execFile|execFileSync|fork)$|"
                            r"^vm\.(?:runInNewContext|runInThisContext|runInContext|compileFunction)$|^(?:execa|shelljs\.exec|zx)$")
 _SHELL_ALWAYS = re.compile(r"\.(?:exec|execSync)$")
@@ -1375,6 +1376,12 @@ class _JsInterp:
             if not options & _X402_LIMITS and not self.approved:
                 self._flow("x402_unbounded", node, {"external"}, "402 responses decide the payment; no maximum or selector is set")
             return every | receiver
+        if is_new and short == "Server" and _LEDGER_ENDPOINT.search(label) and arg_nodes:
+            # The RPC or Horizon server decides what the agent signs (simulation, auth entries, quotes).
+            endpoint = self.tags(arg_nodes[0], state)
+            if endpoint & UNTRUSTED and not self._fixed_host(arg_nodes[0]):
+                self._flow("endpoint", node, endpoint, "the ledger RPC or Horizon URL comes from input")
+            return set()
         if _HTTP_CALL.search(label):
             self._cap("network_fetch", node)
             url = arg_nodes[0] if arg_nodes else None
@@ -1405,7 +1412,6 @@ class _JsInterp:
 
         # ---- sinks
         if _COMMAND_SINK.search(label) or (is_new and short == "Function"):
-            self._cap("code_execution", node)
             shell = bool(_SHELL_ALWAYS.search(label)) or any("shell" in _props(a) for a in arg_nodes if _unwrap(a) is not None and _unwrap(a).type == "object")
             # The command and its argument list; an options object (cwd, env, stdio) is not code.
             command = set()
@@ -1414,7 +1420,14 @@ class _JsInterp:
                 if a_u is not None and a_u.type == "object" or _is_function(a_u):
                     continue
                 command |= tags
-            if command & UNTRUSTED:
+            # `execFileSync("stellar", ["keys", "secret", name])`: no shell and a fixed program, so
+            # input is one argument to that program and cannot start another command.
+            program = _unwrap(arg_nodes[0]) if arg_nodes else None
+            fixed = (not shell and not is_new and short != "eval" and program is not None and program.type == "string"
+                     and len(arg_nodes) > 1 and _unwrap(arg_nodes[1]) is not None and _unwrap(arg_nodes[1]).type == "array")
+            # Running one fixed program is not arbitrary code execution.
+            self._cap("process_spawn" if fixed else "code_execution", node)
+            if command & UNTRUSTED and not fixed:
                 self._flow("command", node, command, "shell command" if shell else "argument list, no shell")
             return set()
         if _FILE_SINK.search(label):

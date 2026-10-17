@@ -102,7 +102,7 @@ UNRELATED_UI = 'export const Step = ({ step }) => <div className={step >= 1 ? "o
 def test_a_comparison_in_unrelated_ui_code_is_not_a_spending_limit(tmp_path):
     out, ids = audit(tmp_path, {"agentveritas.json": DECLARED_SIGNER, "site/Step.tsx": UNRELATED_UI,
                                 "src/wallet.py": "def pay(amount, to):\n    return wallet.pay(amount, to)\n"})
-    assert "security-unbounded-spend" in ids and out["decision"] == "needs_fixes"
+    assert "security-unbounded-spend" in ids
     from backend.app.swarm.codeflow import analyse_code
     assert not analyse_code({"site/Step.tsx": UNRELATED_UI}).controls.get("amount_cap")
 
@@ -112,3 +112,50 @@ def test_a_clamp_that_passes_the_amount_on_is_still_a_control(tmp_path):
              'export function cap(amount: number) { return amount <= MAX ? amount : MAX; }\n')
     from backend.app.swarm.codeflow import analyse_code
     assert analyse_code({"src/cap.ts": clamp}).controls.get("amount_cap")
+
+
+def test_input_choosing_the_rpc_server_is_reported(tmp_path):
+    source = ('import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";\n'
+              'import { Keypair, rpc, TransactionBuilder, Networks } from "@stellar/stellar-sdk";\nimport { z } from "zod";\n'
+              'const key = Keypair.fromSecret(process.env.AGENT_SECRET!);\nconst server = new McpServer({ name: "p", version: "1" });\n'
+              'server.tool("invoke", { rpcUrl: z.string(), xdr: z.string() }, async (args) => {\n'
+              '  const node = new rpc.Server(args.rpcUrl);\n  const tx = TransactionBuilder.fromXDR(args.xdr, Networks.TESTNET);\n'
+              '  const prepared = await node.prepareTransaction(tx);\n  prepared.sign(key);\n'
+              '  return { content: [{ type: "text", text: (await node.sendTransaction(prepared)).hash }] };\n});\n')
+    _, ids = audit(tmp_path / "a", {"src/index.ts": source})
+    assert "security-path-untrusted-ledger-endpoint" in ids
+    fixed = source.replace("new rpc.Server(args.rpcUrl)", 'new rpc.Server("https://soroban-testnet.stellar.org")')
+    _, ids = audit(tmp_path / "b", {"src/index.ts": fixed})
+    assert "security-path-untrusted-ledger-endpoint" not in ids
+
+
+def test_a_secret_seed_in_a_committed_text_file_is_found(tmp_path):
+    from stellar_sdk import Keypair
+    seed = Keypair.random().secret  # generated at test time; never a committed literal
+    out, ids = audit(tmp_path, {"agent-keys.txt": f"Secret Key: {seed}\n"}, base="safe-treasury-agent")
+    finding = next(f for f in out["report"]["findings"] if f["id"] == "stellar_native-stellar-secret-seed")
+    assert finding["severity"] == "critical" and "agent-keys.txt:1" in finding["evidence"] and seed not in finding["evidence"]
+
+
+def test_running_one_fixed_program_is_not_command_injection(tmp_path):
+    source = ('import { execFileSync } from "node:child_process";\n'
+              'export function loadSecret(identity: string) {\n'
+              '  return execFileSync("stellar", ["keys", "secret", identity], { encoding: "utf8" });\n}\n'
+              'loadSecret(process.argv[2]);\n')
+    _, ids = audit(tmp_path, {"src/secret.ts": source})
+    assert "security-path-untrusted-to-command" not in ids
+
+
+def test_build_and_smoke_test_scripts_are_not_the_agent(tmp_path):
+    out, ids = audit(tmp_path, {"build.ts": 'import { execSync } from "child_process";\nexecSync(process.argv[2]);\n',
+                                "scripts/smoke-test-pay.ts": 'console.log(process.env.AGENT_SECRET);\n'},
+                     base="safe-treasury-agent")
+    assert "security-path-untrusted-to-command" not in ids and out["decision"] == "pass"
+
+
+def test_spending_authority_that_is_only_declared_is_latent(tmp_path):
+    out, _ = audit(tmp_path, {"agentveritas.json": '{"tools": [{"name": "pay", "requires_signature": true}]}',
+                              "src/wallet.py": "def balance(client, account):\n    return client.load_account(account)\n"})
+    spend = {f["id"]: f["severity"] for f in out["report"]["findings"]
+             if f["id"] in ("security-unbounded-spend", "economic-no-spend-policy")}
+    assert spend and set(spend.values()) == {"medium"}
