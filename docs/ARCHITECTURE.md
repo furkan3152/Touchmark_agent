@@ -1,6 +1,6 @@
 # Architecture
 
-AgentVeritas answers one question about an AI agent: **is it safe to give it authority
+Touchmark answers one question about an AI agent: **is it safe to give it authority
 over funds, and can that answer be checked later?** It has two halves. An off-chain
 analysis engine reads the agent's code and produces a committed report. The on-chain
 contracts on Stellar record that report and enforce what a passing report allows.
@@ -99,7 +99,7 @@ Nothing submitted is imported or executed.
    - **Breakdown:** the report carries the calculation in `result.score_breakdown`.
 7. **Report.** The report is canonical JSON with a SHA-256 hash, and includes the
    resolution, source pin, findings, breakdown, coverage and verification.
-8. **Declarations and ownership.** `agentveritas.json` at the audited commit can name the
+8. **Declarations and ownership.** `touchmark.json` (the older name `agentveritas.json` is also read) at the audited commit can name the
    owner (`stellar_owner`) and declare the agent: `purpose`, `tools` (with
    `requires_signature`, `network_access`, `spend_limit_usdc`), `forbidden_goals`,
    `human_oversight`, `discloses_ai`. A Blueprint `veritas.json` adds its purpose and
@@ -161,7 +161,7 @@ This review is the project's own. **No external audit has been done.** See
 | Repository fetch | Pinned commit; safe zip extraction (no symlinks, size cap) | A repository can differ from what is deployed; attestation narrows this for contracts |
 | Model review | Line-quoted claims; cannot remove rule findings; isolated per request | Prompt injection in code comments; hallucinated claims are filtered, not eliminated |
 | Demo issuance | Server-signed ticket over report hash, score, source and named owner; per-client limits | One operator is admin and validator on the demo registry |
-| Ownership | `agentveritas.json` at the audited commit names the owner account. The owner signs the registry registration (`owner.require_auth`); the server accepts only that exact call from that account, with its signature | Shows control of the repository and of the key, not real-world identity. A fork can name its own owner, but its credential names the fork. Without the file, ownership is not verified and the credential goes to the operator. |
+| Ownership | `touchmark.json` at the audited commit names the owner account. The owner signs the registry registration (`owner.require_auth`); the server accepts only that exact call from that account, with its signature | Shows control of the repository and of the key, not real-world identity. A fork can name its own owner, but its credential names the fork. Without the file, ownership is not verified and the credential goes to the operator. |
 | Public API | Rate limits, CSP, no secrets in responses | Serverless instances keep limits per instance |
 
 ## 5. Deployment

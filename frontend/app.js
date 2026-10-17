@@ -1,5 +1,5 @@
 /* ==========================================================================
-   AgentVeritas — interface logic
+   Touchmark — interface logic
    ==========================================================================
    No dependencies, no build step: backend serves it statically from under `/ui`
    and being a single file makes debugging easier.
