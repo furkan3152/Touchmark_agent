@@ -60,6 +60,13 @@ Nothing submitted is imported or executed.
      bounds, path containment, address-pinned network destinations, approvals, and
      transaction inspection. Wallet prompts (Freighter, Wallet Standard, EIP-1193) and
      signers supplied by the caller are delegated authority, not the agent's own.
+   - **Controls that only look like controls** are reported, because a request the model
+     refuses plainly passes when reworded: an approval flag the requester sets
+     (`security-path-forgeable-approval`), a payment rule stated only in the instructions
+     (`security-policy-only-in-prompt`), a per-call cap with no running total
+     (`security-per-call-cap-only`), and an RPC or Horizon URL the requester chooses
+     (`security-path-untrusted-ledger-endpoint`). The AI review attacks each value-moving
+     action with reworded, split and indirect requests, cross-user access and replay.
 3. **Auditors.** Seven dimensions: security, economic, Stellar-native, intent, compliance,
    reliability and provenance. Stellar-native covers Rust contract checks (`require_auth`
    paths, persistent TTL), payment success checks, SEP-10/45 boundaries and seed
@@ -92,9 +99,14 @@ Nothing submitted is imported or executed.
    - **Breakdown:** the report carries the calculation in `result.score_breakdown`.
 7. **Report.** The report is canonical JSON with a SHA-256 hash, and includes the
    resolution, source pin, findings, breakdown, coverage and verification.
-8. **Ownership.** A repository can name its owner in `agentveritas.json`
-   (`{"stellar_owner": "G…"}`), read from the audited commit. The credential is then
-   issued to that account, after it signs the registration in its own wallet.
+8. **Declarations and ownership.** `agentveritas.json` at the audited commit can name the
+   owner (`stellar_owner`) and declare the agent: `purpose`, `tools` (with
+   `requires_signature`, `network_access`, `spend_limit_usdc`), `forbidden_goals`,
+   `human_oversight`, `discloses_ai`. A Blueprint `veritas.json` adds its purpose and
+   component map. Declarations close evidence gaps but never a risk: declared tools are
+   reconciled with what the code can do, and a declared limit the code does not enforce is
+   reported as `security-declared-limit-not-enforced`. With an owner named, the credential
+   is issued to that account after it signs the registration in its own wallet.
 9. **Re-audit** (`services/report_diff.py`). Two references, for example a commit and
    its fix, are audited and compared: closed, remaining and introduced risks, and the
    score change (`audit_agent.py --compare`, `POST /api/v1/demo/compare`).

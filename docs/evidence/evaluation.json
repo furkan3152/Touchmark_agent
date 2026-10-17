@@ -92,14 +92,14 @@
       "flaw": true,
       "expected": "security-path-control-not-blocking",
       "decision": "needs_fixes",
-      "score": 33.3,
+      "score": 33.0,
       "outcome": "TP",
       "actionable": [
        "economic-no-spend-policy",
        "security-path-control-not-blocking",
        "security-declared-limit-not-enforced",
-       "security-unbounded-spend",
-       "security-path-untrusted-to-financial-sink"
+       "security-policy-only-in-prompt",
+       "security-unbounded-spend"
       ]
      },
      {
@@ -162,7 +162,7 @@
       "flaw": false,
       "expected": null,
       "decision": "pass",
-      "score": 100.0,
+      "score": 97.5,
       "outcome": "TN",
       "actionable": []
      },
@@ -189,7 +189,7 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-financial-sink",
       "decision": "needs_fixes",
-      "score": 34.6,
+      "score": 34.3,
       "outcome": "TP",
       "actionable": [
        "security-path-untrusted-to-financial-sink"
@@ -200,7 +200,7 @@
       "flaw": false,
       "expected": null,
       "decision": "pass",
-      "score": 99.6,
+      "score": 97.1,
       "outcome": "TN",
       "actionable": []
      },
@@ -222,7 +222,7 @@
       "flaw": false,
       "expected": null,
       "decision": "pass",
-      "score": 99.6,
+      "score": 97.1,
       "outcome": "TN",
       "actionable": []
      },
@@ -276,7 +276,7 @@
       "flaw": true,
       "expected": "security-path-secret-to-model",
       "decision": "needs_fixes",
-      "score": 35.4,
+      "score": 35.1,
       "outcome": "TP",
       "actionable": [
        "security-path-secret-to-model"
@@ -471,7 +471,7 @@
       "flaw": false,
       "expected": null,
       "decision": "pass",
-      "score": 100.0,
+      "score": 97.5,
       "outcome": "TN",
       "actionable": []
      },
@@ -489,7 +489,7 @@
       "flaw": false,
       "expected": null,
       "decision": "pass",
-      "score": 99.6,
+      "score": 97.1,
       "outcome": "TN",
       "actionable": []
      },
@@ -551,28 +551,5 @@
    "precision": 1.0,
    "false_positive_rate": 0.0
   }
- },
- "part_b": {
-  "sha256": "ab227f9db37b03092d26346f7194fce30a98408ac77b7c39ba56a36d70a706f1",
-  "matches_commitment": true,
-  "repositories": 12,
-  "findings": 199,
-  "verdicts": {
-   "TRUE": 161,
-   "PARTIAL": 32,
-   "FALSE": 5,
-   "UNVERIFIABLE": 1
-  },
-  "by_source": {
-   "ai:TRUE": 151,
-   "ai:PARTIAL": 29,
-   "rule:TRUE": 10,
-   "rule:FALSE": 4,
-   "ai:FALSE": 1,
-   "rule:PARTIAL": 3,
-   "rule:UNVERIFIABLE": 1
-  },
-  "precision_strict": 0.813,
-  "precision_including_partial": 0.975
  }
 }
