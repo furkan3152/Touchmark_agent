@@ -39,6 +39,7 @@ import re
 from dataclasses import dataclass, field
 
 from .codeflow import DIRECT, UNTRUSTED, CodeProfile, Flow, Location  # noqa: F401  (re-exported types)
+from .codeflow import _HUMAN_DECISION, _LOOKUP, _NOT_HUMAN
 
 JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts")
 _RESOLVE_SUFFIXES = ("", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts",
@@ -68,6 +69,7 @@ _JS_GLOBALS = frozenset({
     "performance", "structuredClone", "AbortSignal", "ArrayBuffer", "Uint8Array", "DataView", "Iterator"})
 _CHAIN_READ = re.compile(r"\.(?:transactions|payments|operations|effects|trades|claimableBalances)\b.*\.call$|"
                          r"\.(?:getEvents|getTransaction|getTransactions|getLedgerEntries|getContractData)$")
+_LEDGER_ENDPOINT = re.compile(r"(?:^|\.)(?:rpc|SorobanRpc|Horizon|StellarSdk)\.Server$|^Server$", re.I)
 _COMMAND_SINK = re.compile(r"^(?:eval|Function)$|^child_process\.(?:exec|execSync|spawn|spawnSync|execFile|execFileSync|fork)$|"
                            r"^vm\.(?:runInNewContext|runInThisContext|runInContext|compileFunction)$|^(?:execa|shelljs\.exec|zx)$")
 _SHELL_ALWAYS = re.compile(r"\.(?:exec|execSync)$")
@@ -1095,7 +1097,8 @@ class _JsInterp:
             self.p.flow(category, self.module, self.fn, node, labels, detail)
 
     def _control(self, kind: str, node) -> None:
-        if self.record:
+        # A condition that only chooses a value (`a ? b : c`) stops nothing; it is not a control.
+        if self.record and not getattr(self, "_choosing", False):
             self.p.control(kind, self.module, node)
 
     # ------------------------------------------------------------------ values
@@ -1155,9 +1158,20 @@ class _JsInterp:
                     self._cap("secret_material", node)
                     return {"secret"}
                 return set()
-            return self.tags(obj, state) | self.tags(index, state)
+            container, key = self.tags(obj, state), self.tags(index, state)
+            if key & UNTRUSTED and not container & UNTRUSTED:
+                key = key | {"stored_record"}
+            return container | key
         if t in {"call_expression", "new_expression"}:
-            return self.call(node, state)
+            found = self.call(node, state)
+            fn = _unwrap(node.child_by_field_name("function")) if t == "call_expression" else None
+            name = _dotted(fn) if fn is not None else ""
+            if _HUMAN_DECISION.search(name.rsplit(".", 1)[-1]) and not _NOT_HUMAN.search(name):
+                found = found | {"human_decision"}
+            if (fn is not None and fn.type == "member_expression" and _LOOKUP.match(name.rsplit(".", 1)[-1])
+                    and not self.tags(fn.child_by_field_name("object"), state) & UNTRUSTED):
+                found = found | {"stored_record"}
+            return found
         if t == "assignment_expression":
             value = self.tags(node.child_by_field_name("right"), state)
             self.assign(node.child_by_field_name("left"), value, state, node.child_by_field_name("right"))
@@ -1172,9 +1186,15 @@ class _JsInterp:
             cond = node.child_by_field_name("condition")
             self.tags(cond, state)
             when_true = {k: set(v) for k, v in state.items()}
+            # It controls a value only when it passes that value on (`a <= MAX ? a : MAX`);
+            # choosing between constants (`step >= 1 ? "on" : "off"`) controls nothing.
+            outcomes = (self._names_in(node.child_by_field_name("consequence"))
+                        | self._names_in(node.child_by_field_name("alternative")))
+            self._choosing = not (self._names_in(cond) & outcomes)
             self.assume(cond, True, when_true, node=node)
             when_false = {k: set(v) for k, v in state.items()}
             self.assume(cond, False, when_false, node=node)
+            self._choosing = False
             return (self.tags(node.child_by_field_name("consequence"), when_true)
                     | self.tags(node.child_by_field_name("alternative"), when_false))
         if t in {"binary_expression"}:
@@ -1356,6 +1376,12 @@ class _JsInterp:
             if not options & _X402_LIMITS and not self.approved:
                 self._flow("x402_unbounded", node, {"external"}, "402 responses decide the payment; no maximum or selector is set")
             return every | receiver
+        if is_new and short == "Server" and _LEDGER_ENDPOINT.search(label) and arg_nodes:
+            # The RPC or Horizon server decides what the agent signs (simulation, auth entries, quotes).
+            endpoint = self.tags(arg_nodes[0], state)
+            if endpoint & UNTRUSTED and not self._fixed_host(arg_nodes[0]):
+                self._flow("endpoint", node, endpoint, "the ledger RPC or Horizon URL comes from input")
+            return set()
         if _HTTP_CALL.search(label):
             self._cap("network_fetch", node)
             url = arg_nodes[0] if arg_nodes else None
@@ -1386,7 +1412,6 @@ class _JsInterp:
 
         # ---- sinks
         if _COMMAND_SINK.search(label) or (is_new and short == "Function"):
-            self._cap("code_execution", node)
             shell = bool(_SHELL_ALWAYS.search(label)) or any("shell" in _props(a) for a in arg_nodes if _unwrap(a) is not None and _unwrap(a).type == "object")
             # The command and its argument list; an options object (cwd, env, stdio) is not code.
             command = set()
@@ -1395,7 +1420,14 @@ class _JsInterp:
                 if a_u is not None and a_u.type == "object" or _is_function(a_u):
                     continue
                 command |= tags
-            if command & UNTRUSTED:
+            # `execFileSync("stellar", ["keys", "secret", name])`: no shell and a fixed program, so
+            # input is one argument to that program and cannot start another command.
+            program = _unwrap(arg_nodes[0]) if arg_nodes else None
+            fixed = (not shell and not is_new and short != "eval" and program is not None and program.type == "string"
+                     and len(arg_nodes) > 1 and _unwrap(arg_nodes[1]) is not None and _unwrap(arg_nodes[1]).type == "array")
+            # Running one fixed program is not arbitrary code execution.
+            self._cap("process_spawn" if fixed else "code_execution", node)
+            if command & UNTRUSTED and not fixed:
                 self._flow("command", node, command, "shell command" if shell else "argument list, no shell")
             return set()
         if _FILE_SINK.search(label):
@@ -1694,7 +1726,13 @@ class _JsInterp:
                 return
         if t in {"identifier", "member_expression"} and truth:
             ident = _txt(cond.child_by_field_name("property")) if t == "member_expression" else _txt(cond)
-            if not ident.isupper() and re.search(r"approv", ident, re.I):
+            if not ident.isupper() and re.search(r"approv|confirm", ident, re.I):
+                found = self.tags(cond, state)
+                if found & UNTRUSTED and not found & {"human_decision", "stored_record"}:
+                    # `if (!args.approved) throw`: the requester supplies the approval itself.
+                    if self.record:
+                        self.p.profile.forgeable_approvals.append(self.p.location(self.module, node))
+                    return
                 self.approved = True
                 self._control("approval", node)
                 return

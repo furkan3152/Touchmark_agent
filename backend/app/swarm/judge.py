@@ -43,6 +43,7 @@ ROOT_CAUSES: dict[str, frozenset[str]] = {
         "security-path-untrusted-to-financial-sink",
         "economic-no-spend-policy", "security-unbounded-spend", "security-path-controls-not-enforced",
         "security-declared-limit-not-enforced", "compliance-no-human-oversight", "intent-full-autonomy-over-funds",
+        "security-policy-only-in-prompt",
     }),
 }
 RESTATEMENT_SHARE = 0.3

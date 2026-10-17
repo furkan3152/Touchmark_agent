@@ -31,7 +31,7 @@ from .attacks import (
 from .base import BaseAuditor
 from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
-from .capabilities import code_enforced_spend_limit
+from .capabilities import authority_only_declared, code_enforced_spend_limit
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
 DANGEROUS_TOOL_NAMES = ("shell", "exec", "bash", "eval", "python", "run_code", "subprocess")
@@ -412,10 +412,11 @@ class SecurityAuditor(BaseAuditor):
         if unlimited and code_enforced_spend_limit(artifact):
             unlimited = []  # the source caps every untrusted payment; see capabilities.py
         if unlimited:
+            latent = authority_only_declared(artifact)
             out.append(
                 self.finding(
                     "unbounded-spend",
-                    Severity.CRITICAL if len(unlimited) > 1 else Severity.HIGH,
+                    Severity.MEDIUM if latent else Severity.CRITICAL if len(unlimited) > 1 else Severity.HIGH,
                     "Harcama limiti tanımsız araçlar",
                     "İmza/harcama yetkisi olan şu araçlarda tutar tavanı yok: "
                     + ", ".join(unlimited),
