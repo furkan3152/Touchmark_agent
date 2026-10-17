@@ -1,0 +1,55 @@
+# Evidence
+
+AgentVeritas is a security product, so every claim it makes about itself has to be
+checkable. This page lists each claim, how to reproduce it, and who has verified it so
+far. A claim marked **self-verified** has been checked only by this project.
+
+## Claims ledger
+
+| Claim | How to check it | Verified by | Status |
+|---|---|---|---|
+| The analysers classify the labelled corpora correctly: 46 cases, 28 TP, 18 TN, 0 FP, 0 FN | `python scripts/evaluate.py` → [`evidence/evaluation.json`](evidence/evaluation.json) (one row per case) | Project | Self-verified. The corpora were written by the maintainers and used during development, so this is a regression measure, not an independent accuracy estimate. |
+| On 12 open-source Stellar agents, 199 reported findings were checked by hand: 161 true, 32 partly true, 5 false, 1 unverifiable. Strict precision is 0.81; counting partly true it is 0.97 | Repositories and commits, method, annotation and aggregate numbers: [`evidence/oss-study-commitment.json`](evidence/oss-study-commitment.json). The dataset hash can be recomputed with `scripts/evaluate.py --oss-dataset` | Project, one AI-assisted annotator | Self-verified. **Recall and false negatives are unknown** (there is no exhaustive ground truth), and there is no second annotator. The dataset holds unpublished vulnerabilities and is released after disclosure; its SHA-256 is published now so it cannot be changed later. |
+| The credential contract refuses a score below 65, an unapproved or removed validator, and a changed agent | 57 Rust tests (`cargo test --workspace`), named in [ARCHITECTURE.md §3](ARCHITECTURE.md#contract-security-review-self-assessed) | Project | Self-verified on testnet and in unit tests. **Not externally audited. Not deployed on mainnet.** |
+| Credentials are issued and read back on Stellar testnet | Demo registry and credential contracts in [`../deployments/demo-testnet.json`](../deployments/demo-testnet.json); every issuance links its four transactions | Ledger (public) | Verifiable by anyone on a testnet explorer |
+| An agent account enforces session spending limits | 7 testnet transactions in [`../deployments/agent-account-testnet-2026-10-15.json`](../deployments/agent-account-testnet-2026-10-15.json): an authorized transfer, then a forbidden recipient, an over-budget transfer and a revoked key all rejected | Ledger (public) | Testnet only; not externally audited |
+| Real issues are found in real agents | Private reports to 9 maintainers (drafted, not yet sent) | — | **Not yet.** It counts as evidence only once maintainers confirm or fix. |
+
+## Not claimed
+
+- **No external audit.** No third party has audited the contracts or the analysers.
+- **No adoption evidence.** The repository is new and not yet indexed by ecosystem
+  directories; no outside team uses it yet.
+- **No mainnet deployment.** All contract evidence is from testnet.
+- **No runtime guarantee.** The analysis is static. A pass means that no actionable risk
+  was found in the reviewed code; it does not mean the agent is safe.
+
+## Evaluation method
+
+- **Corpora (public).** Each case is a small agent bundle with a label (`flaw`) and, for
+  flawed cases, the finding it must produce (`expected_finding`).
+  - A flawed case counts only if that finding is reported.
+  - A sound case is a false positive if any high or critical risk, or a `needs_fixes`
+    decision, is reported.
+- **Open-source study.**
+  - Each repository was audited at a pinned commit.
+  - Every reported finding was opened at its cited line and labelled TRUE, PARTIAL (real
+    but overstated or narrower), FALSE or UNVERIFIABLE, with a written reason.
+  - The labelled set is hashed as canonical JSON. The hash and aggregate numbers are
+    public, and the rows are released after disclosure.
+- **What would make these independent:** a corpus written by someone outside the project,
+  a second annotator on the open-source study, and an exhaustive manual review of at
+  least a few repositories to measure recall. These are milestones below.
+
+## Evidence milestones
+
+Each milestone is defined by the evidence it produces, so funding can be tied to proof
+rather than to features.
+
+| # | Deliverable | Evidence produced | Acceptance |
+|---|---|---|---|
+| 1 | **Coordinated disclosure** to the 9 maintainers with confirmed issues | Maintainer acknowledgements and fix commits; the study dataset released and matching the published hash | At least 3 maintainers confirm; the dataset hash matches |
+| 2 | **Independent benchmark.** At least 30 agents labelled by an outside reviewer, including benign near-misses, plus an exhaustive manual review of 3 repositories | Public dataset, labelling guide and `evaluate.py` output, with precision, recall and false-positive rate | Results published whatever they are, misses included |
+| 3 | **External contract audit** of AgentRegistry, AuditCredential, AuditEscrow and AgentAccount | Auditor's report and the fixes | All high and critical issues fixed or accepted in writing |
+| 4 | **Governance hardening.** Multisig admin, admin transfer, a validator timelock, ids derived in the contract | Contract tests and a testnet deployment manifest | Tests for each open item in the contract security review |
+| 5 | **Outside users.** At least 2 teams audit their own agents and act on the result | Consented before/after reports linked to their commits | Reports and fixes public, with the teams' consent |
