@@ -8,7 +8,7 @@ An MCP server that lets an AI assistant pay two listed suppliers on Stellar test
 
 The agent key is read from `AGENT_SECRET_KEY` and is never returned to the model. Every payment
 result is checked (`successful`) before it is reported. This folder is a demonstration fixture for
-AgentVeritas; it is not a production treasury.
+Touchmark; it is not a production treasury.
 
-This copy also names its owner in `agentveritas.json`. Its credential is issued only to that
+This copy also names its owner in `touchmark.json`. Its credential is issued only to that
 account, after the account signs the registration; anyone else is refused.

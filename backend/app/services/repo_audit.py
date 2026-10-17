@@ -63,7 +63,8 @@ SECURITY_PATH = re.compile(r"(?:^|[/_.-])(?:auth\w*|router|routes?|middleware|gu
 #: Time kept for independent verification when a request deadline bounds the audit.
 VERIFY_RESERVE_SECONDS = 50.0
 #: An owner claim: the repository names the Stellar account its credential belongs to.
-OWNERSHIP_FILES = ("agentveritas.json", ".well-known/agentveritas.json")
+#: touchmark.json is the current name; agentveritas.json is still read for older repositories.
+OWNERSHIP_FILES = ("touchmark.json", ".well-known/touchmark.json", "agentveritas.json", ".well-known/agentveritas.json")
 #: The Veritas Blueprint project map; its purpose and components are read as declarations.
 BLUEPRINT_FILE = "veritas.json"
 DECLARATION_BYTES = 64_000
@@ -219,8 +220,11 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(root)
-        if rel.as_posix() in OWNERSHIP_FILES and not ownership and path.stat().st_size <= DECLARATION_BYTES:
-            ownership = {"path": rel.as_posix(), "text": path.read_text(errors="replace")}
+        if rel.as_posix() in OWNERSHIP_FILES and path.stat().st_size <= DECLARATION_BYTES:
+            # The first name in OWNERSHIP_FILES wins when a repository has both.
+            rank = OWNERSHIP_FILES.index(rel.as_posix())
+            if not ownership or rank < OWNERSHIP_FILES.index(ownership["path"]):
+                ownership = {"path": rel.as_posix(), "text": path.read_text(errors="replace")}
             continue
         if rel.as_posix() == BLUEPRINT_FILE and path.stat().st_size <= DECLARATION_BYTES:
             blueprint = {"path": BLUEPRINT_FILE, "text": path.read_text(errors="replace")}
