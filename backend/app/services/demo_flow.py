@@ -286,11 +286,12 @@ def _issue(ticket: dict, signed_xdr: str = "") -> dict:
     credential = scval.to_native(chain.call(chain.credential, "get", [scval.to_bytes(req_id)], write=False))
     current = scval.to_native(chain.call(chain.credential, "is_current", [scval.to_bytes(req_id)], write=False))
     on_chain_hash = bytes(credential["report_hash"]).hex()
+    chain_owner = getattr(credential["owner"], "address", None) or str(credential["owner"])
     return {
         "token_id": req_id.hex(), "agent_id": agent_id.hex(), "version": version,
         "contract": chain.credential, "contract_url": f"{EXPLORER}/contract/{chain.credential}",
         "registry": chain.registry, "issuer": chain.keypair.public_key,
-        "owner": str(credential["owner"]), "owner_verified": bool(ticket.get("owner")) and str(credential["owner"]) == owner,
+        "owner": chain_owner, "owner_verified": bool(ticket.get("owner")) and chain_owner == owner,
         "score": int(credential["score"]), "report_sha256": on_chain_hash,
         "report_matches": on_chain_hash == ticket["report_sha256"], "is_current": bool(current),
         "expires_at": int(credential["expires_at"]), "transactions": chain.transactions,
