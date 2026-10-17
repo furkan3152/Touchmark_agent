@@ -90,6 +90,23 @@
         </div>
       </article>
     </div>
+
+    <form id="recheck" class="panel recheck" autocomplete="off">
+      <h3>Fixed it? Re-audit</h3>
+      <p class="note">Paste the fixed commit or folder. Both versions are audited and compared: what the fix closed, what remains, and anything new.</p>
+      <div class="input-row">
+        <input id="fixed" required minlength="3" maxlength="300" placeholder="https://github.com/owner/repo/tree/<fixed-commit>">
+        <button id="run-recheck" type="submit">Compare <span aria-hidden="true">→</span></button>
+      </div>
+      <div id="diff" hidden>
+        <p id="diff-head" class="diff-head"></p>
+        <div class="diff-cols">
+          <div><h4>Closed</h4><ul id="diff-closed" class="findings small"></ul></div>
+          <div><h4>Still open</h4><ul id="diff-remaining" class="findings small"></ul></div>
+          <div><h4>New</h4><ul id="diff-introduced" class="findings small"></ul></div>
+        </div>
+      </div>
+    </form>
   </section>
 
   <section class="how">
