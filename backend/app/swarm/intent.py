@@ -48,7 +48,9 @@ UNCERTAINTY_SIGNALS = (
     "kaynak",
 )
 SCOPE_SIGNALS = ("only", "never", "do not", "must not", "scope", "refuse", "yalnızca", "asla")
-FINANCIAL_CAP_WORDS = ("trad", "pay", "transfer", "rebalanc", "swap", "yield", "invoice")
+FINANCIAL_CAP_WORDS = ("trad", "pay", "transfer", "rebalanc", "swap", "yield", "invoice",
+                       # Signing and submitting transactions is financial authority on Stellar.
+                       "sign", "transaction", "xdr", "soroban", "fund", "wallet", "withdraw", "send")
 
 
 class IntentAuditor(BaseAuditor):
