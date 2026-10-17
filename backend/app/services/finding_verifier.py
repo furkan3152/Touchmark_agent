@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from dataclasses import dataclass, field
 
 from ..models import AgentArtifact, Finding, Severity
@@ -106,6 +107,8 @@ class FindingVerifier:
                  concurrency: int = 4, timeout_seconds: float = 180.0, fallbacks: bool = True):
         self.client, self.model, self.effort = client, model, effort
         self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
+        #: time.monotonic() value by which verification must stop (a serverless request limit).
+        self.deadline: float | None = None
         self.semaphore = asyncio.Semaphore(concurrency)
 
     @staticmethod
@@ -214,8 +217,13 @@ class FindingVerifier:
         run = VerificationRun(model=self.model)
 
         async def one(f: Finding) -> Verification:
+            timeout = self.timeout_seconds
+            if self.deadline is not None:
+                timeout = min(timeout, self.deadline - time.monotonic())
+                if timeout <= 0:
+                    return Verification(finding_id=f.id, note="timeout")
             try:
-                return await asyncio.wait_for(self.verify_one(f, files, run), timeout=self.timeout_seconds)
+                return await asyncio.wait_for(self.verify_one(f, files, run), timeout=timeout)
             except asyncio.TimeoutError:
                 return Verification(finding_id=f.id, note="timeout")
         run.results = list(await asyncio.gather(*(one(f) for f in findings)))

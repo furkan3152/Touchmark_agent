@@ -799,6 +799,8 @@ async def studio_resolve(req: ResolveRequest) -> dict:
 
 _demo_issuance: dict[str, deque] = defaultdict(deque)
 _demo_issuance_all: deque = deque()
+_demo_ai: dict[str, deque] = defaultdict(deque)
+_demo_ai_all: deque = deque()
 
 
 def _demo_client(request: Request) -> str:
@@ -830,12 +832,30 @@ async def demo_config() -> dict:
             "operator": data.get("operator", "")}
 
 
+def _demo_ai_allowed(client: str) -> bool:
+    """The model review is paid per audit: 5 per client per hour, 60 per hour overall.
+    Past that, audits still run with the deterministic analysers only."""
+    now = time.monotonic()
+    mine = _demo_ai[client]
+    while mine and now - mine[0] >= 3600:
+        mine.popleft()
+    while _demo_ai_all and now - _demo_ai_all[0] >= 3600:
+        _demo_ai_all.popleft()
+    if len(mine) >= 5 or len(_demo_ai_all) >= 60:
+        return False
+    mine.append(now)
+    _demo_ai_all.append(now)
+    return True
+
+
 @app.post("/api/v1/demo/audit")
-async def demo_audit(req: "DemoAuditRequestModel") -> dict:
-    """Audit a GitHub repository, folder or agent reference with the deterministic analysers."""
+async def demo_audit(req: "DemoAuditRequestModel", request: Request) -> dict:
+    """Audit a GitHub repository, folder or agent reference: the deterministic analysers, plus
+    the model review and verification when configured and within the per-client allowance."""
     from .services.demo_flow import run_demo_audit
+    ai = bool(settings.enable_deep_review and settings.anthropic_api_key) and _demo_ai_allowed(_demo_client(request))
     try:
-        return await asyncio.wait_for(run_demo_audit(req.reference, settings), timeout=170)
+        return await asyncio.wait_for(run_demo_audit(req.reference, settings, ai=ai), timeout=285)
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="The audit did not finish within the demo time limit. "
                                                     "Large repositories can be audited with scripts/audit_agent.py.") from exc

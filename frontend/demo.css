@@ -39,6 +39,8 @@ h1{font-size:clamp(34px,6vw,58px);line-height:1.02;letter-spacing:-2px;margin:0 
 .findings li.critical,.findings li.high{border-left-color:var(--red)}.findings li.medium{border-left-color:var(--amber)}.findings li.low,.findings li.info{border-left-color:var(--green)}
 .findings .sev{font-size:10.5px;font-weight:750;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-right:6px}
 .findings .title{font-weight:620}.findings code{display:block;margin-top:7px;font-size:12px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+.findings .tag{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:9px;font-size:11px;background:var(--line);color:var(--muted)}
+.findings .tag.verdict-confirmed{color:var(--green)}.findings .tag.verdict-refuted{color:var(--red)}
 .findings .fix{margin:7px 0 0;color:var(--muted);font-size:12.5px}
 .findings.small li{font-size:12.5px;padding:9px 12px}
 .empty{color:var(--muted);font-size:14px}

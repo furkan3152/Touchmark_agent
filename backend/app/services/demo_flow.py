@@ -27,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "deployments/demo-testnet.json"
 LOCAL_KEY = ROOT / "data/demo-operator.json"
 TICKET_TTL = 30 * 60
+#: The model review and verification stop by then, inside the 300 s function limit (vercel.json).
+DEMO_DEADLINE_SECONDS = 250.0
 CREDENTIAL_DAYS = 90
 EXPLORER = "https://stellar.expert/explorer/testnet"
 NO_ENDPOINT = hashlib.sha256(b"agentveritas.demo.no-endpoint").digest()
@@ -86,13 +88,39 @@ def _verify(ticket: str) -> dict:
 
 
 def _summary(finding: dict) -> dict:
-    return {"id": finding["id"], "severity": finding["severity"], "kind": finding.get("kind", "risk"),
-            "title": finding.get("title", ""), "evidence": (finding.get("evidence") or "")[:400],
-            "remediation": (finding.get("remediation") or "")[:400]}
+    out = {"id": finding["id"], "severity": finding["severity"], "kind": finding.get("kind", "risk"),
+           "title": finding.get("title", ""), "evidence": (finding.get("evidence") or "")[:400],
+           "remediation": (finding.get("remediation") or "")[:400]}
+    if finding.get("auditor") == "deep-review":
+        out["source"] = "ai_review"
+    if (finding.get("verification") or {}).get("verdict"):
+        v = finding["verification"]
+        out["verification"] = {"verdict": v["verdict"], "reason": (v.get("reason") or "")[:300]}
+    return out
 
 
-async def run_demo_audit(reference: str, settings: Settings) -> dict:
-    result = await audit_reference(reference.strip(), settings, network="testnet", deep=False)
+def _ai_summary(report: dict, ai: bool, settings: Settings) -> dict:
+    """What the model review and the verifier did, so a reader knows which checks ran."""
+    review = report.get("deep_review") or {}
+    if not review:
+        if not report.get("repository"):
+            return {"review": "no_source"}
+        configured = bool(settings.enable_deep_review and settings.anthropic_api_key)
+        return {"review": "rate_limited" if configured and not ai else "off"}
+    verification = report.get("verification") or {}
+    coverage = review.get("coverage") or {}
+    return {"review": review.get("status", "not_run"), "note": review.get("note", ""),
+            "findings_added": len(review.get("accepted_findings") or []),
+            "files_read": len(coverage.get("files_read") or []), "files_total": coverage.get("files_total", 0),
+            "verification": {k: verification[k] for k in ("checked", "confirmed", "partial", "refuted",
+                                                         "unverifiable", "agreement") if k in verification}}
+
+
+async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True) -> dict:
+    """``ai`` allows the model review and verification when they are configured; the
+    deterministic analysis always runs. Both stop by DEMO_DEADLINE_SECONDS."""
+    deadline = time.monotonic() + DEMO_DEADLINE_SECONDS
+    result = await audit_reference(reference.strip(), settings, network="testnet", deep=ai, deadline=deadline)
     report = result["report"]
     findings = report.get("findings", [])
     risks = [f for f in findings if f.get("kind", "risk") == "risk"]
@@ -120,6 +148,7 @@ async def run_demo_audit(reference: str, settings: Settings) -> dict:
         "files": (report.get("repository") or {}).get("source_files_selected", 0),
         "ownership": (report.get("repository") or {}).get("ownership_claim") or {},
         "issuance": {"enabled": issuance_enabled(), "eligible": result["decision"] == "pass"},
+        "ai": _ai_summary(report, ai, settings),
     }
     repository = source.get("repository") or ""
     if repository and source.get("path"):

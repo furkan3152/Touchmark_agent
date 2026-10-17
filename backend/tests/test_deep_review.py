@@ -176,3 +176,13 @@ def test_model_quotes_of_secret_literals_are_masked_in_the_report():
     finding = result.findings[0]
     assert seed not in finding.evidence and seed not in finding.detail
     assert "[REDACTED]" in finding.evidence
+
+
+def test_a_passed_deadline_skips_the_review_without_calling_the_model():
+    import time
+    client = ScriptedClient([])
+    reviewer = DeepReviewer(client, model="m")
+    reviewer.deadline = time.monotonic() + 5  # below the minimum useful review time
+    artifact = AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files={"a.py": "x = 1\n"})
+    result = asyncio.run(reviewer.review(artifact, []))
+    assert result.status == "skipped" and not client.requests
