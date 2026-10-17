@@ -843,6 +843,28 @@ async def demo_audit(req: "DemoAuditRequestModel") -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+class DemoCompareRequest(BaseModel):
+    before: str = Field(min_length=3, max_length=300)
+    after: str = Field(min_length=3, max_length=300)
+
+
+@app.post("/api/v1/demo/compare")
+async def demo_compare(req: DemoCompareRequest) -> dict:
+    """Re-audit: audit two references (for example a commit and its fix) and show what changed."""
+    from .services.agent_resolver import audit_reference
+    from .services.report_diff import compare_reports
+    try:
+        before, after = await asyncio.wait_for(asyncio.gather(
+            audit_reference(req.before, settings, network="testnet", deep=False),
+            audit_reference(req.after, settings, network="testnet", deep=False)), timeout=170)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="The comparison did not finish within the demo time limit.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"comparison": compare_reports(before["report"], after["report"]),
+            "before_sha256": before["report_sha256"], "after_sha256": after["report_sha256"]}
+
+
 @app.post("/api/v1/demo/credential")
 async def demo_credential(req: "DemoCredentialRequestModel", request: Request) -> dict:
     """Issue the Testnet AuditCredential for a passing demo audit (server-signed ticket required)."""

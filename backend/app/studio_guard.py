@@ -67,7 +67,7 @@ class StudioGuard:
             '/api/v1/studio/capsule/import', '/api/v1/studio/capsule/export',
             '/api/v1/studio/ai/check',
             '/api/v1/studio/checkout', '/api/v1/studio/checkout/prepare',
-            '/api/v1/demo/audit', '/api/v1/demo/credential',
+            '/api/v1/demo/audit', '/api/v1/demo/credential', '/api/v1/demo/compare',
         }):
             return await self.app(scope, receive, send)
 
