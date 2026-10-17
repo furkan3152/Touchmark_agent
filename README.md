@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="frontend/brand/touchmark-how-to.mp4"><img src="frontend/brand/video-poster.png" width="640" alt="Watch: how to use Touchmark, start to stamp"></a><br>
-  <sub>▶ <a href="frontend/brand/touchmark-how-to.mp4">How to use Touchmark</a>: paste an agent, read the verdict, fix and re-test, stamp it on Stellar.</sub>
+  <a href="public/media/touchmark-how-to.mp4"><img src="frontend/brand/video-poster.jpg" width="640" alt="Watch: how to use Touchmark, start to stamp"></a><br>
+  <sub>▶ <a href="public/media/touchmark-how-to.mp4">How to use Touchmark</a>: paste an agent, read the verdict, fix and re-test, stamp it on Stellar.</sub>
 </p>
 
 > A **touchmark** is the maker's mark struck into tested metal: a promise that someone checked it and stands behind it. Touchmark (formerly AgentVeritas) does the same for AI agents that hold Stellar keys.
@@ -37,9 +37,9 @@
    - **Declare your agent** in the same file (`purpose`, `tools` with `spend_limit_usdc`, `forbidden_goals`). The audit checks the code against what you declare; a limit the code does not enforce is reported, not credited.
 4. **Fix and re-audit.** Paste the fixed commit; the page shows which risks were closed and how the score changed.
 
-| An unsafe agent: refused | The same agent, fixed: credentialed on Stellar |
+| An unsafe agent: not yet | The same agent, fixed: touchmarked on Stellar |
 |---|---|
-| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: needs fixes, score 32.2" width="420"> | <img src="docs/media/demo-credential.png" alt="Safe treasury agent: pass, score 99.6, credential issued on testnet" width="420"> |
+| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: not yet, score 30.6" width="420"> | <img src="docs/media/demo-credential.png" alt="Safe treasury agent: touchmarked, score 93.4, credential stamped on testnet" width="420"> |
 
 Both are the same MCP treasury agent, in [`examples/demo`](examples/demo). In the unsafe
 one the model picks the recipient, the amount and the URL to fetch. In the safe one,
