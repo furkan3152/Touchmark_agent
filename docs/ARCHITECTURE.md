@@ -67,7 +67,20 @@ Nothing submitted is imported or executed.
 4. **Deep review (optional).** A Claude model reads the code with file and line tools.
    Each claim must quote a real line, and the model can add findings but never remove
    a rule finding.
-5. **Decision and score** (`swarm/policy.py`, `swarm/judge.py`).
+5. **Independent verification** (`services/finding_verifier.py`, optional). A second
+   model re-checks every medium-or-higher risk from source.
+   - **Withheld context:** it sees only the claim and the lines it points to, not the
+     reasoning that produced it.
+   - **Verdicts:** confirmed, partial (real but narrower, latent or less severe), refuted
+     or unverifiable.
+   - **Quote gate:** every verdict except unverifiable must quote a real line, and a
+     verdict whose quote is not in the file becomes unverifiable.
+   - **Effect:** verification annotates each finding and adds an agreement rate to the
+     report. It never changes the score or decision, so code comments cannot talk the
+     audit out of a risk.
+   - **Calibration:** `scripts/calibrate_verifier.py` measures it against hand-labelled
+     findings (see [EVIDENCE.md](EVIDENCE.md)).
+6. **Decision and score** (`swarm/policy.py`, `swarm/judge.py`).
    - **Decision:**
      - `needs_fixes`: an actionable high or critical risk.
      - `needs_evidence`: no risk, but code, tools and instructions were not all reviewed.
@@ -77,8 +90,11 @@ Nothing submitted is imported or executed.
      `100 × e^(−points/100)`, capped at 39 with a confirmed critical and at 64 with any
      other actionable risk. Evidence gaps never cost points.
    - **Breakdown:** the report carries the calculation in `result.score_breakdown`.
-6. **Report.** The report is canonical JSON with a SHA-256 hash, and includes the
-   resolution, source pin, findings, breakdown and coverage.
+7. **Report.** The report is canonical JSON with a SHA-256 hash, and includes the
+   resolution, source pin, findings, breakdown, coverage and verification.
+8. **Re-audit** (`services/report_diff.py`). Two references, for example a commit and
+   its fix, are audited and compared: closed, remaining and introduced risks, and the
+   score change (`audit_agent.py --compare`, `POST /api/v1/demo/compare`).
 
 ## 3. On-chain layer
 
