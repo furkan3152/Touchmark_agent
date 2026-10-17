@@ -817,7 +817,7 @@
       if (!file || file.size > 2000000) throw new Error("Choose a report smaller than 2 MB.");
       const bytes = await file.arrayBuffer();
       const report = JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(bytes));
-      if (!report.schema || !report.input_hash) throw new Error("The file is not an AgentVeritas audit report.");
+      if (!report.schema || !report.input_hash) throw new Error("The file is not an Touchmark audit report.");
       const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((v) => v.toString(16).padStart(2,"0")).join("");
       output.textContent = hash === byId("verify-hash").value.toLowerCase() ? "Integrity match. Exact bytes match your fingerprint. Issuer, chain status, expiry and revocation are not checked here." : "Mismatch. This file does not match the expected fingerprint. Do not rely on this copy.";
     } catch (failure) { output.textContent = failure.message || "Verification failed."; }
