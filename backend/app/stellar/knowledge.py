@@ -49,7 +49,13 @@ TOPICS: dict[str, str] = {
 - Horizon facts that are easy to get wrong:
   - a synchronous POST /transactions returns the full transaction resource (id, successful, created_at, source_account, fee_charged, operation_count ...), the same shape as GET /transactions/{hash}; SDK typings for the submit response are narrower than the real body;
   - GET /transactions/{hash} and /transactions/{hash}/operations also return FAILED transactions (successful=false), so payment verification must check `successful`;
-  - js-stellar-sdk and py-stellar-sdk `submitTransaction` / `submit_transaction` run the SEP-29 memo-required check by default unless explicitly skipped.""",
+  - js-stellar-sdk and py-stellar-sdk `submitTransaction` / `submit_transaction` run the SEP-29 memo-required check by default unless explicitly skipped.
+  - Protocol 23 returns transaction meta version 4. Code that reads `meta.v3()` (or assumes v3) throws after the transaction was already submitted; if that error is reported as a failure, the agent or user retries and pays twice.""",
+    "endpoints": """Network endpoints
+- The RPC, Horizon and network passphrase decide what the agent signs. If the requester (a tool argument, CLI flag, request field or fetched config) can choose the RPC URL, a malicious RPC returns whatever simulation, auth entries, footprint or fee it likes, and the agent signs it. Checks on the 402 challenge or the user's request do not cover what the RPC returns.
+- A requester-chosen Horizon URL controls balances, sequence numbers and path-payment quotes; a fake quote sets dest_min or send_max and removes slippage protection.
+- A requester-chosen network passphrase or a mainnet/testnet switch moves a "test" flow onto real funds.
+- Endpoints should come from operator configuration, never from the request; when they can be overridden, pin an allowlist.""",
     "key_management": """Key management
 - Secret seeds (S...) must never appear in source, logs, model prompts, tool results or error messages.
 - Keys should live in an external signer, KMS or a separate process the model cannot read.

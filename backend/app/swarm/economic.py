@@ -8,6 +8,8 @@ Böylece Horizon sequence veya eksik alanlar işlem geçmişi gibi sunulmaz.
 
 from __future__ import annotations
 
+import re
+
 from ..models import (
     AgentArtifact,
     Dimension,
@@ -18,7 +20,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import code_enforced_spend_limit, has_source
+from .capabilities import authority_only_declared, code_enforced_spend_limit, has_source
 from .textscan import find_signals, scan
 
 
@@ -74,6 +76,10 @@ SWAP_SIGNALS = (
 PRICE_EXPOSED_DOMAINS = ("defi_trading", "defi_yield", "defi_lending", "trading")
 
 
+
+
+_SLIPPAGE_BOUND = re.compile(r"\b(?:destMin|dest_min|sendMax|send_max|minAmountOut|min_amount_out|amountOutMin|"
+                             r"min_received|minReceived|slippage\w*)\b", re.I)
 
 
 class EconomicAuditor(BaseAuditor):
@@ -141,7 +147,7 @@ class EconomicAuditor(BaseAuditor):
                 findings.append(
                     self.finding(
                         "no-spend-policy",
-                        Severity.CRITICAL,
+                        Severity.MEDIUM if authority_only_declared(artifact) and not denied else Severity.CRITICAL,
                         "Harcama politikası açıkça reddediliyor"
                         if denied
                         else "Harcama politikası yok",
@@ -177,7 +183,9 @@ class EconomicAuditor(BaseAuditor):
         swap_surface, swap_evidence = self._price_exposure(artifact)
         if swap_surface:
             mev = scan(prompt_l, MEV_SIGNALS)
-            mev_aware = mev.present
+            # A swap whose code sets a minimum received / maximum sent is protected, whatever the prompt says.
+            code_bound = any(_SLIPPAGE_BOUND.search(text) for text in artifact.code_files.values())
+            mev_aware = mev.present or code_bound
             scenarios.append(
                 ScenarioResult(
                     scenario_id="E-02",

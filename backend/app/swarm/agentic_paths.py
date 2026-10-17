@@ -157,6 +157,11 @@ _PATH_RULES = {
         "Signer, threshold, trustline or merge operations are built from untrusted input and signed. A prompt injection or forged request can add a signer or merge the account.",
         "Remove account-administration tools from the agent, or require an out-of-band human approval and fixed parameters for each change.",
         ["Stellar set_options", "OWASP LLM06 Excessive Agency"]),
+    "endpoint": ("security-path-untrusted-ledger-endpoint", Severity.CRITICAL,
+        "Input chooses the Stellar RPC or Horizon server the agent trusts",
+        "The URL of the RPC or Horizon server comes from a tool argument, flag or request field. That server returns the simulation, authorization entries, sequence numbers and quotes the agent then signs, so a malicious server chooses what the agent's key authorizes. Checks on the user's request do not cover what the server returns.",
+        "Take RPC, Horizon and network passphrase from operator configuration only; if overrides are needed, allowlist them. Inspect the authorization tree before signing.",
+        ["Stellar RPC simulation", "OWASP LLM06 Excessive Agency"]),
     "ssrf": ("security-path-untrusted-to-network", Severity.HIGH,
         "Untrusted input chooses a server-side request URL",
         "A URL derived from model or request input is fetched without a fixed host. The agent can be steered to internal services, cloud metadata endpoints or attacker hosts.",
@@ -227,6 +232,12 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
         if not flows:
             continue
         direct = [f for f in flows if f.direct or category.startswith("secret")]
+        if category == "endpoint":
+            # A skill's commands are run by the model, so their flags are the model's choice.
+            skill = bool(re.search(r"^\[(?:[^\]\n]*/)?(?:skill|agents)\.md\]$", artifact.system_prompt or "", re.I | re.M))
+            direct = [f for f in flows if f.direct or (skill and "caller" in f.labels)]
+            if not any(profile.has(cap) for cap in ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation")):
+                severity = Severity.MEDIUM  # nothing is signed against what that server returns
         chosen = direct or flows
         confirmed = bool(direct)
         findings.append(Finding(
@@ -373,4 +384,9 @@ def _prompt_payment_rules(artifact: AgentArtifact) -> list[str]:
             sentence = sentence.strip(" -*#>")
             if 12 <= len(sentence) <= 300 and _PAY_WORDS.search(sentence) and _RULE_WORDS.search(sentence):
                 found.append(f"{where}: \"{sentence}\"")
+    # Approval and limit rules first: they are what a reworded request gets past.
+    found.sort(key=lambda rule: not _GATE_WORDS.search(rule))
     return found[:5]
+
+
+_GATE_WORDS = re.compile(r"approv|confirm|prompt|limit|cap\b|max|at most|no more than|only (?:pay|send|transfer)", re.I)
