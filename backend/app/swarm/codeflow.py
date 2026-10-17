@@ -70,6 +70,13 @@ _FOREIGN_TX = re.compile(r"(?:TransactionEnvelope\.from_xdr|from_xdr_object|pars
                          r"FeeBumpTransactionEnvelope\.from_xdr)$")
 _SUBMIT = re.compile(r"\.(?:submit_transaction|send_transaction)$")
 _SOROBAN_SINK = re.compile(r"\.(?:invoke|invoke_contract|authorize_entry|sign_auth_entries?)$|^token\.transfer$")
+#: Calls that ask a person and return their decision (an operator console, a wallet prompt).
+#: A decision they return is not something the requester can set.
+_HUMAN_DECISION = re.compile(r"approv|confirm|consent|prompt_?(?:user|human|operator)|ask_?(?:user|human|operator|owner)|"
+                             r"human|operator|review|sign_?off", re.I)
+#: Reading a record from the agent's own store: the requester picks the key, not the content.
+_LOOKUP = re.compile(r"^(?:get|find\w*|lookup|load\w*|fetch_?(?:one|record|approval)\w*|read|select|query|first)$", re.I)
+_NOT_HUMAN = re.compile(r"llm|model|chat|complet|generat|agent|openai|anthropic|claude|gpt", re.I)
 _APPROVAL_CALL = re.compile(r"approv|authori[sz]|verify|confirm|permi(?:t|ssion)|allowed|check_auth|require_auth", re.I)
 _HANDLER_DECORATOR = re.compile(r"(?:^|\.)(?:tool|function_tool|mcp_tool)$|(?:^|\.)tool\(|\.tool$")
 _ROUTE_DECORATOR = re.compile(r"\.(?:get|post|put|patch|delete|route|websocket|api_route)$")
@@ -106,6 +113,9 @@ class CodeProfile:
     flows: list[Flow] = field(default_factory=list)
     controls: dict[str, list[Location]] = field(default_factory=dict)
     nonblocking_controls: list[Location] = field(default_factory=list)
+    #: Approval gates that test a value the model, the caller or fetched content supplies.
+    #: Whoever can ask the agent can set it, so the gate approves nothing.
+    forgeable_approvals: list[Location] = field(default_factory=list)
     entrypoints: dict[str, str] = field(default_factory=dict)
     unparsed: list[str] = field(default_factory=list)
     unbounded_amounts: list[Location] = field(default_factory=list)
@@ -125,6 +135,7 @@ class CodeProfile:
             "flows": [{"category": f.category, "labels": sorted(f.labels), "function": f.function,
                        "location": f.location.render()} for f in self.flows],
             "nonblocking_controls": [loc.render() for loc in self.nonblocking_controls[:5]],
+            "forgeable_approvals": [loc.render() for loc in self.forgeable_approvals[:5]],
             "unbounded_amounts": [loc.render() for loc in self.unbounded_amounts[:5]],
             "unparsed_files": sorted(self.unparsed),
             "analysed_files": sorted(self.analysed_files),
@@ -619,9 +630,19 @@ class _Interp:
                 if isinstance(env, str) and _SECRET_ENV.search(env):
                     self._cap("secret_material", node)
                     return value | {"secret"}
-            return value | self.tags(node.slice, state)
+            key = self.tags(node.slice, state)
+            if key & UNTRUSTED and not value & UNTRUSTED:
+                key = key | {"stored_record"}
+            return value | key
         if isinstance(node, ast.Call):
-            return self.call(node, state)
+            found = self.call(node, state)
+            short = _dotted(node.func).rsplit(".", 1)[-1]
+            if _HUMAN_DECISION.search(short) and not _NOT_HUMAN.search(_dotted(node.func)):
+                found = found | {"human_decision"}
+            if (_LOOKUP.match(short) and isinstance(node.func, ast.Attribute)
+                    and not self.tags(node.func.value, state) & UNTRUSTED):
+                found = found | {"stored_record"}
+            return found
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
             inner = dict(state)
             for gen in node.generators:
@@ -641,6 +662,11 @@ class _Interp:
         if isinstance(target, (ast.Tuple, ast.List)):
             return [n for e in target.elts for n in _Interp._names(e)]
         return []
+
+    def forgeable(self, node: ast.AST, state: dict[str, set[str]]) -> bool:
+        """An approval value the requester supplies, not one a person returned."""
+        found = self.tags(node, state)
+        return bool(found & UNTRUSTED) and not found & {"human_decision", "stored_record"}
 
     def _cap(self, name: str, node: ast.AST) -> None:
         if self.record:
@@ -862,6 +888,11 @@ class _Interp:
             # An approval record (approval, approved_by), not a constant table named APPROVED.
             ident = sub.id if isinstance(sub, ast.Name) else sub.attr if isinstance(sub, ast.Attribute) else ""
             approval_name = bool(ident) and not ident.isupper() and re.search(r"approv", ident, re.I)
+            if approval_name and not approval_call and self.forgeable(sub, state):
+                # `if not args.approved`: the requester supplies the approval itself.
+                if self.record:
+                    self.p.profile.forgeable_approvals.append(self.p.location(self.module, node))
+                break
             if approval_call or approval_name:
                 self.approved = True
                 self._control("approval", node)

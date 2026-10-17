@@ -1,0 +1,95 @@
+"""Requests the model refuses plainly but carries out when reworded: the controls that only look like controls."""
+
+from __future__ import annotations
+
+import asyncio
+import shutil
+from pathlib import Path
+
+import pytest
+
+from backend.app.config import Settings
+from backend.app.services.repo_audit import audit_repository
+
+ROOT = Path(__file__).resolve().parents[2]
+
+TS_HEAD = '''import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Keypair, Horizon, TransactionBuilder, Operation, Asset, Networks } from "@stellar/stellar-sdk";
+import { z } from "zod";
+import { askOperator } from "./operator";
+const vault = Keypair.fromSecret(process.env.VAULT_SECRET!);
+const horizon = new Horizon.Server("https://horizon-testnet.stellar.org");
+const server = new McpServer({ name: "vault", version: "1" });
+server.tool("send_payment", { to: z.string(), amount: z.string(), approved: z.boolean() }, async (args) => {
+'''
+TS_TAIL = '''  const account = await horizon.loadAccount(vault.publicKey());
+  const tx = new TransactionBuilder(account, { fee: "100", networkPassphrase: Networks.TESTNET })
+    .addOperation(Operation.payment({ destination: args.to, asset: Asset.native(), amount: args.amount })).setTimeout(30).build();
+  tx.sign(vault);
+  return { content: [{ type: "text", text: (await horizon.submitTransaction(tx)).hash }] };
+});
+'''
+PY_HEAD = '''from mcp.server.fastmcp import FastMCP
+from stellar_sdk import Keypair, Server, TransactionBuilder, Network, Asset
+import os
+from operator_console import request_human_approval
+mcp = FastMCP("vault")
+vault = Keypair.from_secret(os.environ["VAULT_SECRET"])
+horizon = Server("https://horizon-testnet.stellar.org")
+@mcp.tool()
+def send_payment(to: str, amount: str, approved: bool) -> str:
+'''
+PY_TAIL = '''    account = horizon.load_account(vault.public_key)
+    tx = TransactionBuilder(account, Network.TESTNET_NETWORK_PASSPHRASE, 100).append_payment_op(to, Asset.native(), amount).build()
+    tx.sign(vault)
+    return horizon.submit_transaction(tx)["hash"]
+'''
+
+
+def audit(tmp_path, files: dict[str, str], base: str | None = None):
+    root = tmp_path / "agent"
+    if base:
+        shutil.copytree(ROOT / "examples/demo" / base, root)
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    out = asyncio.run(audit_repository(root, name="agent", purpose="", settings=Settings(_env_file=None), deep=False))
+    return out, {f["id"] for f in out["report"]["findings"]}
+
+
+@pytest.mark.parametrize("path,source", [
+    ("src/index.ts", TS_HEAD + '  if (!args.approved) throw new Error("A human must approve.");\n' + TS_TAIL),
+    ("src/server.py", PY_HEAD + '    if not approved:\n        raise ValueError("A human must approve.")\n' + PY_TAIL),
+])
+def test_an_approval_flag_the_model_sets_is_not_an_approval(tmp_path, path, source):
+    out, ids = audit(tmp_path, {path: source})
+    assert "security-path-forgeable-approval" in ids and "security-path-untrusted-to-financial-sink" in ids
+    assert out["decision"] == "needs_fixes" and out["report"]["result"]["overall_score"] < 40
+
+
+@pytest.mark.parametrize("path,source", [
+    ("src/index.ts", TS_HEAD + '  const decision = await askOperator(`Pay ${args.amount} XLM to ${args.to}?`);\n'
+                               '  if (!decision.approved) throw new Error("Rejected by the operator.");\n' + TS_TAIL),
+    ("src/server.py", PY_HEAD + '    decision = request_human_approval(to, amount)\n    if not decision.approved:\n'
+                                '        raise ValueError("Rejected by the operator.")\n' + PY_TAIL),
+])
+def test_a_decision_a_person_returns_is_an_approval(tmp_path, path, source):
+    _, ids = audit(tmp_path, {path: source})
+    assert "security-path-forgeable-approval" not in ids and "security-path-untrusted-to-financial-sink" not in ids
+
+
+def test_a_payment_rule_only_in_the_instructions_is_reported(tmp_path):
+    skill = "You pay supplier invoices. Never send more than 50 XLM and only pay recipients the operator approved.\n"
+    _, ids = audit(tmp_path, {"SKILL.md": skill}, base="unsafe-treasury-agent")
+    assert "security-policy-only-in-prompt" in ids
+
+
+def test_a_rule_the_code_enforces_is_not_reported_as_prompt_only(tmp_path):
+    skill = "You pay supplier invoices. Never send more than 500 XLM and only pay approved suppliers.\n"
+    out, ids = audit(tmp_path, {"SKILL.md": skill}, base="safe-treasury-agent")
+    assert "security-policy-only-in-prompt" not in ids and out["decision"] == "pass"
+
+
+def test_a_per_call_cap_without_a_running_total_is_reported(tmp_path):
+    _, ids = audit(tmp_path, {}, base="safe-treasury-agent")
+    assert "security-per-call-cap-only" in ids

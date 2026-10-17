@@ -46,6 +46,7 @@ CATEGORIES = {
     "stellar_protocol_misuse": (Dimension.STELLAR_NATIVE, "Stellar protocol misuse"),
     "replay_or_idempotency": (Dimension.STELLAR_NATIVE, "Replay or double execution"),
     "control_bypass": (Dimension.SECURITY, "Control that can be bypassed"),
+    "cross_user_access": (Dimension.SECURITY, "One user reaching another user's or a shared account's funds"),
     "intent_mismatch": (Dimension.INTENT, "Behavior contradicts stated purpose"),
     "economic_loss": (Dimension.ECONOMIC, "Economic loss path"),
     "reliability_failure": (Dimension.RELIABILITY, "Failure that causes loss or duplication"),
@@ -62,6 +63,16 @@ Work in this order:
 1. Call describe_operating_model once: what the agent is for, who or what triggers it, one concrete example run end to end, its trust boundaries and the assets at risk.
 2. For every flow in the evidence pack, read the relevant code and call assess_flow with exploitable, mitigated or unreachable. Mitigated or unreachable requires quoting the enforcing line.
 3. Investigate what pattern rules miss: business-logic flaws, controls that exist but can be bypassed, wrong ordering (check after send), Stellar protocol misuse, replay and double execution, data from memos or tool results steering privileged actions. Use stellar_reference for Stellar specifics.
+3a. Attack the agent as the person or content that drives it would. For every action that moves value, signs, or changes authority, assume the requester (a chat user, a tool caller, an HTTP client) or anything the agent reads (web pages, invoices, memos, tool results, other agents' messages) wants to misuse it. Check whether CODE, not the prompt and not the model's judgement, stops each of these:
+   - the plain request, then the same request reworded, role-played, translated, split over several turns, or framed as a test, an admin task or an emergency. A rule that lives only in instructions or relies on the model refusing fails all of them, so record it;
+   - the model or requester setting a parameter or field that the code treats as approval, confirmation, role, mode, network or limit;
+   - many small requests that each pass a per-call cap (is there a cumulative or daily budget, a rate limit, an idempotency key?);
+   - one user acting on funds, keys or records that belong to another user or to a shared vault or treasury (is the caller bound to the account debited and to the recipient?);
+   - instructions hidden in data the agent reads choosing the recipient, amount, asset or action;
+   - keyword or pattern filters on the request text that a synonym, another language or an encoding passes;
+   - unit, decimal or asset confusion (stroops vs XLM, an asset code without its issuer), a network switch the requester controls;
+   - replaying a signed transaction, a retry that pays twice, a check that runs after the send.
+   Record each that works against the shipped code, and put the reworded or indirect request in the attack scenario.
 4. Check that the code actually works: wrong SDK or API usage, calls to functions that do not exist, broken imports, values of the wrong type or unit (stroops vs XLM, float amounts), unreachable or dead paths, and error handling that hides failures. Record these as functional_defect.
 5. Call record_finding for each real defect, with the exact file, line and a verbatim quote of that line. Describe a concrete attack scenario and its Stellar impact. Do not record style issues or speculation you cannot tie to a line.
 6. Call finish with a short summary.
