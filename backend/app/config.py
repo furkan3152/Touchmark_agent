@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     # 2 = an investigation pass plus a challenger pass that hunts for what the first missed.
     deep_review_passes: int = Field(default=2, ge=1, le=3)
     deep_review_timeout_seconds: float = Field(default=240.0, ge=30.0, le=900.0)
+    # Independent re-check of each finding by a second model (services/finding_verifier.py).
+    enable_finding_verification: bool = False
+    verifier_model: str = "claude-sonnet-5-5"
+    verifier_effort: str = Field(default="medium", pattern="^(low|medium|high|xhigh|max)$")
     # Gerçek endpoint'e adversarial payload yalnız izole hedefte açık opt-in ile gönderilir.
     enable_active_agent_probes: bool = False
 

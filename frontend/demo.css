@@ -55,3 +55,6 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px;margi
 .why table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}.why th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line);padding:6px 4px}
 .why td{border-bottom:1px solid var(--line);padding:7px 4px;vertical-align:top}.why td:last-child,.why th:last-child{text-align:right;font-variant-numeric:tabular-nums}
 .why .restated{color:var(--muted);font-size:11.5px}.why .sev-critical,.why .sev-high{color:var(--red);font-weight:650}.why .sev-medium{color:var(--amber);font-weight:650}
+.recheck{margin-top:16px}.recheck .input-row{margin-top:10px}#run-recheck{background:var(--ink);color:var(--paper);border:0;border-radius:14px;padding:0 22px;font-weight:650;cursor:pointer;min-height:50px}
+#run-recheck:disabled{opacity:.55;cursor:wait}.diff-head{font-weight:650;margin:16px 0 10px}.diff-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.diff-cols h4{margin:0 0 8px;font-size:13px;color:var(--muted)}
+@media (max-width:760px){.diff-cols{grid-template-columns:1fr}#run-recheck{min-height:48px}}

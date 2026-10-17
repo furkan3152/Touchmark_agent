@@ -240,7 +240,10 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     notes = [] if selection["manifest"]["complete"] else [
         "Repository selection was budget-limited; unselected files were not reviewed. "
         "See repository.source_files_not_selected."]
-    return await _run_and_package(artifact, settings, reviewer, name, purpose, goals, payload_extra, notes)
+    from .finding_verifier import verifier_from_settings
+    verifier = verifier_from_settings(settings) if deep else None
+    return await _run_and_package(artifact, settings, reviewer, name, purpose, goals, payload_extra, notes,
+                                  verifier=verifier)
 
 
 async def audit_onchain(resolution: dict, *, name: str, purpose: str, settings: Settings, network: str = "testnet",
@@ -283,7 +286,7 @@ async def _chain_facts(settings: Settings, network: str, stellar_address: str, a
 
 
 async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer, name: str, purpose: str,
-                           goals: list[str], payload_extra: dict, notes: list[str]) -> dict:
+                           goals: list[str], payload_extra: dict, notes: list[str], verifier=None) -> dict:
     from ..swarm.orchestrator import AuditSwarm
     from ..reporting.english import english_report
     from ..swarm.policy import actionable_risks, finding_set_commitment
@@ -299,6 +302,18 @@ async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer
     payload["review_decision"] = report.decision
     payload["priority_finding_ids"] = [f.id for f in actionable_risks(report.findings)]
     payload["judge_notes"].extend(notes)
+    if verifier is not None:
+        # A second model re-checks each risk from source. It annotates; it never changes
+        # the score or the decision (services/finding_verifier.py).
+        from .finding_verifier import verify_artifact
+        verification = await verify_artifact(verifier, artifact, report.findings)
+        by_id = {v["finding_id"]: v for v in verification["results"]}
+        for f in payload["findings"]:
+            if f["id"] in by_id:
+                v = by_id[f["id"]]
+                f["verification"] = {k: v[k] for k in ("verdict", "reviewed_severity", "file", "line", "quote",
+                                                       "reason", "quote_verified", "note")}
+        payload["verification"] = verification["summary"]
     encoded = canonical_json(payload)
     return {"decision": report.decision, "report": payload, "report_json": encoded,
             "report_sha256": sha256(encoded.encode()).hexdigest()}
