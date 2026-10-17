@@ -4,7 +4,7 @@
   "functions": {
     "app.py": {
       "maxDuration": 300,
-      "excludeFiles": "{target/**,.venv/**,contracts/**,docs/**,backend/tests/**}"
+      "excludeFiles": "{target/**,.venv/**,contracts/**,docs/**,backend/tests/**,public/**}"
     }
   }
 }

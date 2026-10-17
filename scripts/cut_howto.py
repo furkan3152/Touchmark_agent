@@ -36,7 +36,7 @@ def main(build: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     video = dest / "touchmark-how-to.mp4"
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(raw), "-filter_complex", graph, "-map", "[out]",
-                    "-c:v", "libx264", "-preset", "slow", "-crf", "27", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                    "-c:v", "libx264", "-preset", "slow", "-crf", "29", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                     str(video)], check=True)
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", "1.8", "-i", str(video), "-frames:v", "1",
                     str(dest / "video-poster.png")], check=True)

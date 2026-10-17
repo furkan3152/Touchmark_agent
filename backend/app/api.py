@@ -1279,3 +1279,7 @@ if FRONTEND_DIR.exists():
         return FileResponse(FRONTEND_DIR / "index.html")
 
     app.mount("/ui", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="ui")
+    # On Vercel, public/ is served by the CDN before the function; this serves it locally.
+    MEDIA_DIR = FRONTEND_DIR.parent / "public" / "media"
+    if MEDIA_DIR.is_dir():
+        app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")

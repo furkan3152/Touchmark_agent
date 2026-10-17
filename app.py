@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 @app.middleware("http")
 async def public_surface_only(request, call_next):
     path = request.url.path
-    allowed = (path == "/" or path == "/studio" or path == "/api/v1/health" or path.startswith("/ui/")
+    allowed = (path == "/" or path == "/studio" or path == "/api/v1/health" or path.startswith(("/ui/", "/media/"))
                or path in {"/api/v1/demo/config", "/api/v1/demo/audit", "/api/v1/demo/credential", "/api/v1/demo/compare",
                            "/api/v1/demo/credential/prepare"}
                or path == '/api/v1/studio/orders' or path.startswith('/api/v1/studio/orders/')
