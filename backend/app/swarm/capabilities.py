@@ -116,7 +116,11 @@ def code_enforced_spend_limit(artifact: AgentArtifact) -> bool:
         return False
     profile = artifact.code_profile
     controls = profile.get("controls", {})
-    gated = bool(controls.get("amount_cap") or controls.get("approval"))
+    # The cap or gate must sit in code that can pay; a comparison elsewhere limits nothing.
+    paying = {loc.split(":", 1)[0] for cap in FINANCIAL_CAPABILITIES + ("payment",)
+              for loc in profile.get("capabilities", {}).get(cap, [])}
+    gated = any(loc.split(":", 1)[0] in paying
+                for loc in controls.get("amount_cap", []) + controls.get("approval", []))
     unsafe = {"financial", "account_control", "foreign_signing"}
     return gated and not profile.get("unbounded_amounts") and not any(
         f["category"] in unsafe for f in profile.get("flows", []))
