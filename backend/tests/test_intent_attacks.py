@@ -93,3 +93,22 @@ def test_a_rule_the_code_enforces_is_not_reported_as_prompt_only(tmp_path):
 def test_a_per_call_cap_without_a_running_total_is_reported(tmp_path):
     _, ids = audit(tmp_path, {}, base="safe-treasury-agent")
     assert "security-per-call-cap-only" in ids
+
+
+DECLARED_SIGNER = '{"tools": [{"name": "pay", "requires_signature": true}]}'
+UNRELATED_UI = 'export const Step = ({ step }) => <div className={step >= 1 ? "opacity-100" : "opacity-0"} />;\n'
+
+
+def test_a_comparison_in_unrelated_ui_code_is_not_a_spending_limit(tmp_path):
+    out, ids = audit(tmp_path, {"agentveritas.json": DECLARED_SIGNER, "site/Step.tsx": UNRELATED_UI,
+                                "src/wallet.py": "def pay(amount, to):\n    return wallet.pay(amount, to)\n"})
+    assert "security-unbounded-spend" in ids and out["decision"] == "needs_fixes"
+    from backend.app.swarm.codeflow import analyse_code
+    assert not analyse_code({"site/Step.tsx": UNRELATED_UI}).controls.get("amount_cap")
+
+
+def test_a_clamp_that_passes_the_amount_on_is_still_a_control(tmp_path):
+    clamp = ('import { Keypair } from "@stellar/stellar-sdk";\nconst MAX = 50;\n'
+             'export function cap(amount: number) { return amount <= MAX ? amount : MAX; }\n')
+    from backend.app.swarm.codeflow import analyse_code
+    assert analyse_code({"src/cap.ts": clamp}).controls.get("amount_cap")
