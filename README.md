@@ -25,6 +25,8 @@
 1. **Paste** a GitHub repository or folder, an AgentRegistry agent id, a `C…` contract or a `G…` account.
 2. **Read the verdict.** The exact commit is pinned, the code is traced from model input to keys, payments and the network, and a report is committed with its SHA-256 hash. "Why this score?" shows every point deducted.
 3. **Issue the credential.** If the audit passes, a validator writes the report hash and score to the registry on Stellar testnet, a Soroban contract issues a credential bound to them, and the page reads it back from the ledger.
+   - **To your account:** add `agentveritas.json` with `{"stellar_owner": "G…"}` to your repository. You then sign the registration in Freighter, and the credential is issued to your account.
+4. **Fix and re-audit.** Paste the fixed commit; the page shows which risks were closed and how the score changed.
 
 | An unsafe agent: refused | The same agent, fixed: credentialed on Stellar |
 |---|---|
@@ -117,6 +119,7 @@ set `DEMO_OPERATOR_SECRET`.
   left to the AI review, and there is no runtime guarantee.
 - Chain rules are **Stellar-specific**.
 - The demo runs on **testnet**, where one operator is both admin and validator.
+- Ownership means control of the repository and of the named key, not legal identity.
 - A pass means no actionable risk was found in the reviewed code. **It is not a
   certificate of safety.**
 
