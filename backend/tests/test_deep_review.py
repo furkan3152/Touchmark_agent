@@ -186,3 +186,11 @@ def test_a_passed_deadline_skips_the_review_without_calling_the_model():
     artifact = AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files={"a.py": "x = 1\n"})
     result = asyncio.run(reviewer.review(artifact, []))
     assert result.status == "skipped" and not client.requests
+
+
+def test_a_missing_model_sdk_leaves_the_rules_running(monkeypatch):
+    import sys
+    from backend.app.services.finding_verifier import verifier_from_settings
+    monkeypatch.setitem(sys.modules, "anthropic", None)  # import fails as on a deployment without it
+    keyed = Settings(_env_file=None, enable_deep_review=True, enable_finding_verification=True, anthropic_ai_key="k")
+    assert deep_review.reviewer_from_settings(keyed) is None and verifier_from_settings(keyed) is None

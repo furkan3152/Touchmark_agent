@@ -377,7 +377,10 @@ class DeepReviewer:
 def reviewer_from_settings(settings) -> DeepReviewer | None:
     if not (settings.enable_deep_review and settings.anthropic_api_key):
         return None
-    from anthropic import AsyncAnthropic
+    try:
+        from anthropic import AsyncAnthropic
+    except ImportError:  # the deterministic audit runs without the model reviewer
+        return None
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=120.0, max_retries=2)
     return DeepReviewer(client, model=settings.deep_review_model, effort=settings.deep_review_effort,
                         max_turns=settings.deep_review_max_turns, timeout_seconds=settings.deep_review_timeout_seconds,

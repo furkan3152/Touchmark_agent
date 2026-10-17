@@ -239,7 +239,10 @@ def selectable(findings: list[Finding], limit: int = 30) -> list[Finding]:
 def verifier_from_settings(settings) -> FindingVerifier | None:
     if not (settings.enable_finding_verification and settings.anthropic_api_key):
         return None
-    from anthropic import AsyncAnthropic
+    try:
+        from anthropic import AsyncAnthropic
+    except ImportError:  # the deterministic audit runs without the model verifier
+        return None
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=120.0, max_retries=2)
     return FindingVerifier(client, model=settings.verifier_model, effort=settings.verifier_effort)
 
