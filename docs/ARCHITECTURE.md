@@ -163,7 +163,7 @@ Configuration:
 | Variable | Purpose |
 |---|---|
 | `DEMO_OPERATOR_SECRET` | Testnet key that admins the demo registry and acts as its validator. Created by `scripts/deploy_demo_testnet.py` and stored in gitignored `data/`. |
-| `ANTHROPIC_AI_KEY` | Enables the deep review. |
+| `ANTHROPIC_AI_KEY` | With `ENABLE_DEEP_REVIEW` and `ENABLE_FINDING_VERIFICATION`, the demo adds the model review and verification: 5 audits per client and 60 overall per hour, stopped by a 250 s deadline (findings found so far are kept, and the page says the review stopped). Past the allowance, audits run the rules only. |
 | `STELLAR_NETWORK`, `ALLOW_MAINNET` | Network selection. Mainnet stays off unless explicitly allowed. |
 | `ADMIN_API_KEY` | Operator API on a persistent deployment (not exposed on Vercel). |
 

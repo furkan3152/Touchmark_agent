@@ -23,11 +23,15 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass, field
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar import knowledge
 from .ai_review import redact
+
+#: A review given less time than this would read a file or two and stop; it is skipped instead.
+MIN_REVIEW_SECONDS = 20.0
 
 CATEGORIES = {
     # category: (dimension, label)
@@ -198,6 +202,8 @@ class DeepReviewer:
                  timeout_seconds: float = 240.0, fallbacks: bool = True, passes: int = 1):
         self.client, self.model, self.effort = client, model, effort
         self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
+        #: time.monotonic() value by which the review must stop (a serverless request limit).
+        self.deadline: float | None = None
         self.passes = max(1, min(passes, 3))
 
     # ------------------------------------------------------------------ tools
@@ -291,8 +297,14 @@ class DeepReviewer:
     async def review(self, artifact: AgentArtifact, findings: list[Finding], chain: dict | None = None) -> DeepReviewResult:
         reviewable = _reviewable(artifact)
         result = DeepReviewResult(model=self.model, total_files=len(reviewable), reviewable=reviewable)
+        timeout = self.timeout_seconds
+        if self.deadline is not None:
+            timeout = min(timeout, self.deadline - time.monotonic())
+            if timeout < MIN_REVIEW_SECONDS:
+                result.status, result.note = "skipped", "No time was left for the review within the request limit."
+                return result
         try:
-            await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=self.timeout_seconds)
+            await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=timeout)
             if result.status == "not_run":
                 result.status = "completed" if result.operating_model else "incomplete"
         except asyncio.TimeoutError:
