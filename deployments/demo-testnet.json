@@ -20,6 +20,38 @@
       "hash": "1152357fcdf7e6c90f8cb92888abaf045c7105db3431dad17ff29ccde80cbd38"
     }
   ],
-  "purpose": "Public demo: audit a reference, then issue a credential for a passing report. One operator is admin and validator; agent ownership is not verified.",
-  "validator_enabled": true
+  "purpose": "Public demo: audit a reference, then issue a credential for a passing report. One operator is admin and validator. If the audited commit names an owner in agentveritas.json, the owner signs the registration and the credential is issued to that account; otherwise ownership is not verified and the credential names the operator.",
+  "validator_enabled": true,
+  "owner_flow_example": {
+    "date": "2026-10-17",
+    "source": "examples/demo/owned-treasury-agent",
+    "owner": "GDM7FY4WBPRLTY4WYE7FKFHQVUI5FYE3WDLNHTDVNKMJ2VNTTQEPBYZV",
+    "refused_before_submission": [
+      "registration signed by an account other than the named owner",
+      "issuance requested without the owner's signed registration"
+    ],
+    "transactions": [
+      {
+        "function": "reg_agent",
+        "signer": "owner",
+        "hash": "9b7e1d8cee93d0aefe17890661488ded2d54d12679f0593a1ac333e64989e65b"
+      },
+      {
+        "function": "req_valid",
+        "signer": "operator",
+        "hash": "e885861fe06e4c9380e7a65489957ed8762cc5fa0930d21b3a017f6ada8ea175"
+      },
+      {
+        "function": "respond",
+        "signer": "validator",
+        "hash": "d573469114a73a9d4a98c33230d5a13999d412fdbf143d3f82a9f5a615f02fbd"
+      },
+      {
+        "function": "issue",
+        "signer": "validator",
+        "hash": "8d601f2ae139b8ed4f6fafd40896fbb675d8331002f24a09828cf9f84815513e"
+      }
+    ],
+    "read_back": "credential owner equals the named owner; report hash matches; is_current true"
+  }
 }
