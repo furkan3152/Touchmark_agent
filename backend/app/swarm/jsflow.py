@@ -1096,7 +1096,8 @@ class _JsInterp:
             self.p.flow(category, self.module, self.fn, node, labels, detail)
 
     def _control(self, kind: str, node) -> None:
-        if self.record:
+        # A condition that only chooses a value (`a ? b : c`) stops nothing; it is not a control.
+        if self.record and not getattr(self, "_choosing", False):
             self.p.control(kind, self.module, node)
 
     # ------------------------------------------------------------------ values
@@ -1184,9 +1185,15 @@ class _JsInterp:
             cond = node.child_by_field_name("condition")
             self.tags(cond, state)
             when_true = {k: set(v) for k, v in state.items()}
+            # It controls a value only when it passes that value on (`a <= MAX ? a : MAX`);
+            # choosing between constants (`step >= 1 ? "on" : "off"`) controls nothing.
+            outcomes = (self._names_in(node.child_by_field_name("consequence"))
+                        | self._names_in(node.child_by_field_name("alternative")))
+            self._choosing = not (self._names_in(cond) & outcomes)
             self.assume(cond, True, when_true, node=node)
             when_false = {k: set(v) for k, v in state.items()}
             self.assume(cond, False, when_false, node=node)
+            self._choosing = False
             return (self.tags(node.child_by_field_name("consequence"), when_true)
                     | self.tags(node.child_by_field_name("alternative"), when_false))
         if t in {"binary_expression"}:
