@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for the AgentVeritas project
+about: Suggest an idea for the Touchmark project
 title: '[FEAT] '
 labels: enhancement
 assignees: ''
