@@ -108,6 +108,15 @@ def unverifiable_control_files(artifact: AgentArtifact) -> list[str]:
     return sorted(f for f in files if f not in analysed and not f.lower().endswith(".py"))
 
 
+def authority_only_declared(artifact: AgentArtifact) -> bool:
+    """Signing or payment authority is declared, but the submitted source never signs, submits
+    or pays. The missing control is real but latent until that code exists."""
+    if not has_source(artifact):
+        return False
+    caps = artifact.code_profile.get("capabilities", {})
+    return not any(caps.get(cap) for cap in FINANCIAL_CAPABILITIES + ("payment", "account_control"))
+
+
 def code_enforced_spend_limit(artifact: AgentArtifact) -> bool:
     """The source caps or gates every untrusted payment: an amount bound or approval
     gate is enforced, no untrusted amount reaches signing unbounded, and no untrusted

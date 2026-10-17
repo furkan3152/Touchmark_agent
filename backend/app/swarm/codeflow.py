@@ -728,6 +728,12 @@ class _Interp:
             if "secret" in leaked:
                 self._flow("secret_to_model", node, leaked, "secret material is placed in a model request")
             return {"model"}
+        if short in {"Server", "ServerAsync", "SorobanServer", "SorobanServerAsync"} and label.startswith("stellar_sdk") and node.args:
+            # The RPC or Horizon server decides what the agent signs (simulation, auth entries, quotes).
+            endpoint = self.tags(node.args[0], state)
+            if endpoint & UNTRUSTED and not self._fixed_host(node.args[0], state):
+                self._flow("endpoint", node, endpoint, "the ledger RPC or Horizon URL comes from input")
+            return set()
         if _HTTP_CALL.search(label) or (short in {"get", "post", "put", "patch", "delete", "request"} and
                                         label.split(".")[0] in {"requests", "httpx", "session", "client", "http"}):
             self._cap("network_fetch", node)
@@ -763,9 +769,16 @@ class _Interp:
 
         # Sinks.
         if _COMMAND_SINK.search(label):
-            self._cap("code_execution", node)
             shell = any(kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value for kw in node.keywords)
-            if every & UNTRUSTED:
+            # `subprocess.run(["stellar", "keys", name])`: no shell and a fixed program, so input
+            # is one argument to that program and cannot start another command.
+            first = node.args[0] if node.args else None
+            fixed = (not shell and isinstance(first, (ast.List, ast.Tuple)) and first.elts
+                     and isinstance(first.elts[0], ast.Constant) and isinstance(first.elts[0].value, str)
+                     and not label.startswith(("os.system", "os.popen")))
+            # Running one fixed program is not arbitrary code execution.
+            self._cap("process_spawn" if fixed else "code_execution", node)
+            if every & UNTRUSTED and not fixed:
                 self._flow("command", node, every, "shell=True" if shell else "")
             return set()
         if _FILE_SINK.search(label) or (short in _PATH_METHODS and isinstance(node.func, ast.Attribute)):

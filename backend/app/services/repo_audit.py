@@ -144,6 +144,32 @@ def declarations(selection: dict) -> dict:
     return out
 
 
+_SEED = re.compile(rb"\bS[A-Z2-7]{55}\b")
+
+
+def committed_seeds(root: Path, selected: set[str], limit: int = 20) -> list[str]:
+    """Valid Stellar secret seeds in committed files the source selection leaves out
+    (key files, notes, .env copies). Locations only; the seed itself never leaves here."""
+    from stellar_sdk import StrKey
+    found: list[str] = []
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root)
+        if (not path.is_file() or path.is_symlink() or rel.as_posix() in selected
+                or any(p.lower() in SKIP_DIRS for p in rel.parts[:-1]) or path.stat().st_size > 400_000):
+            continue
+        data = path.read_bytes()
+        if b"\x00" in data[:4096]:
+            continue
+        for match in _SEED.finditer(data):
+            seed = match.group(0).decode()
+            if StrKey.is_valid_ed25519_secret_seed(seed):  # placeholders fail the checksum
+                line = data[:match.start()].count(b"\n") + 1
+                found.append(f"{rel.as_posix()}:{line} (S{seed[1:5]}…redacted)")
+                if len(found) >= limit:
+                    return found
+    return found
+
+
 def _is_repository_record(rel: Path) -> bool:
     posix = rel.as_posix().lower()
     return ((len(rel.parts) == 1 and rel.name.lower() in LICENSE_NAMES)
@@ -151,10 +177,17 @@ def _is_repository_record(rel: Path) -> bool:
             or posix == ".gitlab-ci.yml")
 
 
+#: Build, code-generation, release and smoke-test scripts: developer tooling, not the agent.
+#: They run on a developer's machine, not when the agent acts, so they are not its authority.
+_DEV_TOOLING = re.compile(r"^(?:build(?:[-_.][\w-]+)?|smoke[-_]?tests?(?:[-_][\w-]+)?|generate[-_][\w-]+|gen[-_]types|"
+                          r"codegen[\w-]*|test|tests|release|publish|bump[-_]?version|postinstall)"
+                          r"\.(?:[cm]?[jt]s|py)$", re.I)
+
+
 def _skipped(rel: Path) -> bool:
     parts = [p.lower() for p in rel.parts[:-1]]
     name = rel.name.lower()
-    return (any(p in SKIP_DIRS or p.startswith(".") for p in parts)
+    return (any(p in SKIP_DIRS or p.startswith(".") for p in parts) or bool(_DEV_TOOLING.match(name))
             or name.endswith((".d.ts", ".min.js", ".test.ts", ".spec.ts", ".test.js", ".spec.js", "_test.py", ".map"))
             or name.startswith("test_"))
 
@@ -240,7 +273,8 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
-    return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint}
+    return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint,
+                   "committed_seeds": committed_seeds(root, set(files))}
 
 
 def registered_tools(files: dict[str, str]) -> list[ToolSpec]:
@@ -357,7 +391,8 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         declared_capabilities=decl.capabilities, human_oversight=decl.human_oversight,
         discloses_ai=decl.discloses_ai, domain=decl.domain or "general",
         raw_metadata={"source_not_selected": (selection["manifest"]["source_files_not_selected"]
-                                              + selection["manifest"]["files_too_large"])},
+                                              + selection["manifest"]["files_too_large"]),
+                      "committed_seeds": selection.get("committed_seeds", [])},
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
         agent_contract_id=(contract_facts or {}).get("contract_id", ""),
         owner_verification_note="Not checked during repository review.",

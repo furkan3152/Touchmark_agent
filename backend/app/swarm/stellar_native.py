@@ -133,10 +133,14 @@ class StellarNativeAuditor(BaseAuditor):
             for m in re.finditer(r"\bS[A-Z2-7]{55}\b", content)
             if StrKey.is_valid_ed25519_secret_seed(m.group(0))  # placeholders fail the checksum
         ]
-        seed_locations = [f"{n}:{line} (S{s[1:5]}…redacted)" for n, line, s in seeds][:5]
-        test_only = bool(seeds) and all(
+        # Seeds in committed files outside the analysed source (key files, notes), located
+        # during repository selection; only their redacted locations are passed on.
+        committed = list(artifact.raw_metadata.get("committed_seeds") or [])
+        seed_locations = ([f"{n}:{line} (S{s[1:5]}…redacted)" for n, line, s in seeds] + committed)[:5]
+        test_only = bool(seeds or committed) and all(
             re.search(r"(^|/)(tests?|spec|fixtures?|examples?|scripts)/|test|spec|smoke|example|fixture", n, re.I)
-            for n, _, _ in seeds)
+            for n in [n for n, _, _ in seeds] + [c.split(":", 1)[0] for c in committed])
+        seeds = seeds or committed
         if seeds:
             findings.append(
                 self.finding(
