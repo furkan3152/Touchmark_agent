@@ -43,6 +43,9 @@ exist and whether it is still valid:
 
 - **Authorization.** `require_auth` is required on every role: owner, requester,
   validator and revoker.
+- **Owner-signed credentials.** When a repository names its owner, the owner's own
+  wallet signs the registration, and the credential is issued to that account. Neither
+  the demo server nor anyone else can register the agent in the owner's name.
 - **Validator authority.** Only a validator the registry approved can complete a
   validation, and only the one pinned when the request was made. Removing a validator
   invalidates every credential it issued, immediately.
@@ -74,6 +77,7 @@ Stellar-specific dangers:
 | 199 findings on 12 open-source Stellar agents checked by hand: 161 true, 32 partly true, 5 false | Self-verified with one annotator; recall unknown. The dataset is hash-committed now and published after disclosure. |
 | Automatic second-opinion verifier: refutes 3/5 false findings, never refuted a true one (0/42), κ 0.65 against hand labels | Calibrated with `scripts/calibrate_verifier.py`; self-verified. |
 | Contract rules enforced | 57 contract tests plus testnet transactions. **Not externally audited, not on mainnet.** |
+| Credentials go only to the owner who signs | Testnet run with the owner's four transactions, in [`deployments/demo-testnet.json`](deployments/demo-testnet.json). A registration signed by another account and an unsigned request were both refused. |
 | Adoption | None yet: no outside users, and not yet indexed by ecosystem directories. |
 
 The full claims ledger, the method and the **evidence milestones** this project is
@@ -89,9 +93,13 @@ working toward are in **[docs/EVIDENCE.md](docs/EVIDENCE.md)**:
 ```mermaid
 flowchart LR
     R["Reference"] --> RES["Resolver<br/>pin commit · read ledger"]
-    RES --> AN["Analysis<br/>data flow · 7 auditors · optional AI review"]
-    AN --> REP["Report + SHA-256<br/>pass · needs_fixes · needs_evidence"]
-    REP -->|"pass"| CHAIN["AgentRegistry → AuditCredential<br/>on Stellar"]
+    RES --> AN["Analysis<br/>data flow · 7 auditors · AI review"]
+    AN --> VER["Independent verifier<br/>re-checks each finding"]
+    VER --> REP["Report + SHA-256<br/>pass · needs_fixes · needs_evidence"]
+    REP -->|"needs_fixes"| FIX["Owner fixes"]
+    FIX -->|"re-audit: closed · remaining · new"| RES
+    REP -->|"pass"| SIGN["Owner signs<br/>in Freighter"]
+    SIGN --> CHAIN["AgentRegistry → AuditCredential<br/>to the owner's account"]
 ```
 
 The components, the score formula, the contract state machine, the self-assessed
