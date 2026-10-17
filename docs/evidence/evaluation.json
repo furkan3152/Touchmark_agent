@@ -1,0 +1,578 @@
+{
+ "schema": "agentveritas.evaluation/v1",
+ "part_a": {
+  "corpora": {
+   "python": {
+    "source": "backend/tests/fixtures/agent_corpus.json",
+    "sha256": "5fec3f78bbc1016d768472f83e1baf3632ca3f6ee3ae67a948315b1fe345eb59",
+    "cases": 25,
+    "TP": 16,
+    "FP": 0,
+    "FN": 0,
+    "TN": 9,
+    "recall": 1.0,
+    "precision": 1.0,
+    "false_positive_rate": 0.0,
+    "rows": [
+     {
+      "case": "V1-memo-injection-payment",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-financial-sink",
+      "decision": "needs_fixes",
+      "score": 33.3,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-financial-sink",
+       "economic-no-spend-policy",
+       "security-unbounded-spend",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "V2-secret-in-prompt",
+      "flaw": true,
+      "expected": "security-path-secret-to-model",
+      "decision": "needs_fixes",
+      "score": 35.5,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-secret-to-model"
+      ]
+     },
+     {
+      "case": "V3-exec-llm-code",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-command",
+      "decision": "needs_fixes",
+      "score": 33.3,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-command",
+       "security-undeclared-capability"
+      ]
+     },
+     {
+      "case": "V4-ssrf-fetch-tool",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-network",
+      "decision": "needs_fixes",
+      "score": 61.2,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-network"
+      ]
+     },
+     {
+      "case": "V5-path-traversal",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-file",
+      "decision": "needs_fixes",
+      "score": 61.2,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-file"
+      ]
+     },
+     {
+      "case": "V6-blind-xdr-signing",
+      "flaw": true,
+      "expected": "security-path-external-transaction-signed",
+      "decision": "needs_fixes",
+      "score": 32.3,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-external-transaction-signed",
+       "economic-no-spend-policy",
+       "security-unbounded-spend",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "V7-limit-not-enforced",
+      "flaw": true,
+      "expected": "security-path-control-not-blocking",
+      "decision": "needs_fixes",
+      "score": 33.3,
+      "outcome": "TP",
+      "actionable": [
+       "economic-no-spend-policy",
+       "security-path-control-not-blocking",
+       "security-declared-limit-not-enforced",
+       "security-unbounded-spend",
+       "security-path-untrusted-to-financial-sink"
+      ]
+     },
+     {
+      "case": "V8-llm-add-signer",
+      "flaw": true,
+      "expected": "security-path-untrusted-account-control",
+      "decision": "needs_fixes",
+      "score": 32.3,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-account-control",
+       "economic-no-spend-policy",
+       "security-unbounded-spend",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "V9-hardcoded-seed",
+      "flaw": true,
+      "expected": "stellar_native-stellar-secret-seed",
+      "decision": "needs_fixes",
+      "score": 34.5,
+      "outcome": "TP",
+      "actionable": [
+       "stellar_native-stellar-secret-seed",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "V10-shell-tool-class",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-command",
+      "decision": "needs_fixes",
+      "score": 35.5,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-command"
+      ]
+     },
+     {
+      "case": "C1-readonly-summarizer",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "C2-guarded-payments",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "C3-unsigned-xdr-builder",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "C4-safe-doc-reader",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "C5-fixed-diagnostics",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "case-01",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-financial-sink",
+      "decision": "needs_fixes",
+      "score": 34.6,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-financial-sink"
+      ]
+     },
+     {
+      "case": "case-02",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 99.6,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "case-03",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-financial-sink",
+      "decision": "needs_fixes",
+      "score": 33.5,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-financial-sink",
+       "economic-no-spend-policy",
+       "security-unbounded-spend"
+      ]
+     },
+     {
+      "case": "case-04",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 99.6,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "case-05",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-financial-sink",
+      "decision": "needs_fixes",
+      "score": 34.4,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-financial-sink",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "case-06",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "case-07",
+      "flaw": true,
+      "expected": "security-path-external-transaction-signed",
+      "decision": "needs_fixes",
+      "score": 30.7,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-external-transaction-signed",
+       "security-undeclared-capability",
+       "economic-no-spend-policy",
+       "security-unbounded-spend",
+       "intent-undeclared-financial-capability"
+      ]
+     },
+     {
+      "case": "case-08",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "case-09",
+      "flaw": true,
+      "expected": "security-path-secret-to-model",
+      "decision": "needs_fixes",
+      "score": 35.4,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-secret-to-model"
+      ]
+     },
+     {
+      "case": "case-10",
+      "flaw": true,
+      "expected": "security-path-secret-to-exfiltration",
+      "decision": "needs_fixes",
+      "score": 35.1,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-secret-to-exfiltration"
+      ]
+     }
+    ]
+   },
+   "typescript": {
+    "source": "backend/tests/fixtures/ts_agent_corpus.json",
+    "sha256": "555a936636d123c62888b3a0aa1049c49be7cc03cac92f9460a1610cc9397f4e",
+    "cases": 21,
+    "TP": 12,
+    "FP": 0,
+    "FN": 0,
+    "TN": 9,
+    "recall": 1.0,
+    "precision": 1.0,
+    "false_positive_rate": 0.0,
+    "rows": [
+     {
+      "case": "TV1-memo-injection-payment",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-financial-sink",
+      "decision": "needs_fixes",
+      "score": 33.0,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-financial-sink",
+       "economic-no-spend-policy",
+       "security-declared-limit-not-enforced",
+       "security-unbounded-spend",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "TV2-secret-in-prompt",
+      "flaw": true,
+      "expected": "security-path-secret-to-model",
+      "decision": "needs_fixes",
+      "score": 35.5,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-secret-to-model"
+      ]
+     },
+     {
+      "case": "TV3-exec-model-code",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-command",
+      "decision": "needs_fixes",
+      "score": 33.4,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-command",
+       "security-dangerous-tools"
+      ]
+     },
+     {
+      "case": "TV4-ssrf-fetch-tool",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-network",
+      "decision": "needs_fixes",
+      "score": 61.2,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-network"
+      ]
+     },
+     {
+      "case": "TV5-path-traversal",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-file",
+      "decision": "needs_fixes",
+      "score": 61.2,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-file"
+      ]
+     },
+     {
+      "case": "TV6-blind-xdr-signing",
+      "flaw": true,
+      "expected": "security-path-external-transaction-signed",
+      "decision": "needs_fixes",
+      "score": 33.9,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-external-transaction-signed",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "TV7-limit-warn-only",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-financial-sink",
+      "decision": "needs_fixes",
+      "score": 32.0,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-financial-sink",
+       "economic-no-spend-policy",
+       "security-path-control-not-blocking",
+       "security-declared-limit-not-enforced",
+       "security-unbounded-spend"
+      ]
+     },
+     {
+      "case": "TV8-model-adds-signer",
+      "flaw": true,
+      "expected": "security-path-untrusted-account-control",
+      "decision": "needs_fixes",
+      "score": 32.3,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-account-control",
+       "economic-no-spend-policy",
+       "security-unbounded-spend",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "TV9-hardcoded-seed",
+      "flaw": true,
+      "expected": "stellar_native-stellar-secret-seed",
+      "decision": "needs_fixes",
+      "score": 35.4,
+      "outcome": "TP",
+      "actionable": [
+       "stellar_native-stellar-secret-seed"
+      ]
+     },
+     {
+      "case": "TV10-http-route-pays",
+      "flaw": true,
+      "expected": "security-path-untrusted-to-financial-sink",
+      "decision": "needs_fixes",
+      "score": 33.0,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-untrusted-to-financial-sink",
+       "economic-no-spend-policy",
+       "security-declared-limit-not-enforced",
+       "security-unbounded-spend",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "TV11-secret-returned-to-model",
+      "flaw": true,
+      "expected": "security-path-secret-to-model",
+      "decision": "needs_fixes",
+      "score": 35.5,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-secret-to-model"
+      ]
+     },
+     {
+      "case": "TV12-server-chosen-auth-entries",
+      "flaw": true,
+      "expected": "security-path-external-transaction-signed",
+      "decision": "needs_fixes",
+      "score": 34.6,
+      "outcome": "TP",
+      "actionable": [
+       "security-path-external-transaction-signed",
+       "security-path-controls-not-enforced"
+      ]
+     },
+     {
+      "case": "TC1-readonly-balance",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "TC2-guarded-payments",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "TC3-unsigned-xdr-builder",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "TC4-zod-bounded-tip",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 99.6,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "TC5-fixed-host-lookup",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "TC6-contained-doc-reader",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "TC7-approval-binding",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "TC8-inspected-xdr",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 96.6,
+      "outcome": "TN",
+      "actionable": []
+     },
+     {
+      "case": "TC9-browser-wallet-dapp",
+      "flaw": false,
+      "expected": null,
+      "decision": "pass",
+      "score": 100.0,
+      "outcome": "TN",
+      "actionable": []
+     }
+    ]
+   }
+  },
+  "total": {
+   "cases": 46,
+   "TP": 28,
+   "FP": 0,
+   "FN": 0,
+   "TN": 18,
+   "recall": 1.0,
+   "precision": 1.0,
+   "false_positive_rate": 0.0
+  }
+ },
+ "part_b": {
+  "sha256": "ab227f9db37b03092d26346f7194fce30a98408ac77b7c39ba56a36d70a706f1",
+  "matches_commitment": true,
+  "repositories": 12,
+  "findings": 199,
+  "verdicts": {
+   "TRUE": 161,
+   "PARTIAL": 32,
+   "FALSE": 5,
+   "UNVERIFIABLE": 1
+  },
+  "by_source": {
+   "ai:TRUE": 151,
+   "ai:PARTIAL": 29,
+   "rule:TRUE": 10,
+   "rule:FALSE": 4,
+   "ai:FALSE": 1,
+   "rule:PARTIAL": 3,
+   "rule:UNVERIFIABLE": 1
+  },
+  "precision_strict": 0.813,
+  "precision_including_partial": 0.975
+ }
+}
