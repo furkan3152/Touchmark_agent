@@ -148,6 +148,30 @@
 
   form.addEventListener("submit", (event) => { event.preventDefault(); const value = input.value.trim(); if (value) audit(value); });
   document.querySelectorAll(".examples button").forEach((b) => b.addEventListener("click", () => { input.value = b.dataset.ref; audit(b.dataset.ref); }));
+  async function recheck(event) {
+    event.preventDefault();
+    if (!current) return;
+    const button = $("run-recheck"); button.disabled = true; button.textContent = "Auditing both versions…";
+    $("error").hidden = true;
+    try {
+      const data = await post("/api/v1/demo/compare", { before: current.reference, after: $("fixed").value.trim() });
+      const c = data.comparison;
+      const sign = c.score_change >= 0 ? "+" : "";
+      $("diff-head").textContent = `${c.before.decision} ${c.before.score} → ${c.after.decision} ${c.after.score} (${sign}${c.score_change})`;
+      for (const [id, list] of [["diff-closed", c.closed], ["diff-remaining", c.remaining], ["diff-introduced", c.introduced]]) {
+        const ul = $(id); ul.textContent = "";
+        if (!list.length) ul.append(el("li", { class: "low" }, el("span", { class: "title", text: "None" })));
+        list.forEach((f) => ul.append(el("li", { class: f.severity }, el("span", { class: "sev", text: f.severity }), el("span", { class: "title", text: f.title || f.id }))));
+      }
+      $("diff").hidden = false;
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      button.disabled = false; button.textContent = "Compare →";
+    }
+  }
+
+  $("recheck").addEventListener("submit", recheck);
   $("issue").addEventListener("click", issueCredential);
   $("download").addEventListener("click", () => {
     if (!current) return;
