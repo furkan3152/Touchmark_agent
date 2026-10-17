@@ -1,6 +1,6 @@
 # Evidence
 
-AgentVeritas is a security product, so every claim it makes about itself has to be
+Touchmark is a security product, so every claim it makes about itself has to be
 checkable. This page lists each claim, how to reproduce it, and who has verified it so
 far. A claim marked **self-verified** has been checked only by this project.
 

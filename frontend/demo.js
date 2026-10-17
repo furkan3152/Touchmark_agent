@@ -35,6 +35,8 @@
     return data;
   }
 
+  const STAMP_WORDS = { pass: "Touchmarked", needs_fixes: "Not yet", needs_evidence: "Show more" };
+
   const VERDICTS = {
     confirmed: "Verified: a second model confirmed this in the code",
     partial: "Partly verified: real, but narrower or less severe",
@@ -68,9 +70,18 @@
   function render(data) {
     current = data;
     $("result").hidden = false;
-    $("score").textContent = Number(data.score).toFixed(1);
-    $("ring").style.strokeDashoffset = String(327 - 327 * Math.max(0, Math.min(100, data.score)) / 100);
-    $("ring").style.stroke = data.decision === "pass" ? "var(--green)" : data.decision === "needs_fixes" ? "var(--red)" : "var(--amber)";
+    // With no code to review there is nothing to score: show a dash, not a perfect 100.
+    const unscored = !data.files && data.decision === "needs_evidence";
+    $("score").textContent = unscored ? "—" : Number(data.score).toFixed(1);
+    $("ring").style.strokeDashoffset = "327";
+    const stamp = $("stamp");
+    stamp.className = "stamp " + data.decision;
+    $("stamp-word").textContent = STAMP_WORDS[data.decision] || data.decision;
+    void stamp.offsetWidth; // restart the stamp animation on every result
+    stamp.classList.add("slam");
+    requestAnimationFrame(() => {
+      $("ring").style.strokeDashoffset = String(327 - 327 * (unscored ? 0 : Math.max(0, Math.min(100, data.score))) / 100);
+    });
     const decision = $("decision");
     decision.className = "decision " + data.decision;
     decision.textContent = data.decision.replace("_", " ");
@@ -118,11 +129,11 @@
       ? ` The repository names ${issuance.owner.slice(0, 6)}…${issuance.owner.slice(-4)} as owner: sign the registration with that account in Freighter and the credential is issued to it.`
       : (data.ownership && data.ownership.error)
         ? ` The ownership file was found but ${data.ownership.error}; the credential would go to the demo operator.`
-        : " No owner is named, so it is issued to the demo operator (ownership not verified). Add agentveritas.json with {\"stellar_owner\": \"G…\"} to your repository to receive it yourself.";
+        : " No owner is named, so it is issued to the demo operator (ownership not verified). Add touchmark.json with {\"stellar_owner\": \"G…\"} to your repository to receive it yourself.";
     $("cred-note").textContent = issuance.ticket
-      ? "This report passed. The validator writes its hash and score to the AgentVeritas registry, and the credential contract issues a non-transferable token bound to it." + ownerNote
+      ? "This report passed. The validator writes its hash and score to the Touchmark registry, and the credential contract issues a non-transferable token bound to it: the touchmark." + ownerNote
       : issuance.reason || (issuance.enabled ? "" : "Credential issuance is not configured on this deployment.");
-    $("issue").textContent = issuance.owner ? "Sign with Freighter and issue to my account" : "Issue credential on Stellar testnet";
+    $("issue").textContent = issuance.owner ? "Sign with Freighter and issue to my account" : "Stamp it on Stellar testnet";
     step("credential", issuance.ticket ? "" : "skip");
   }
 
@@ -194,7 +205,7 @@
     } catch (error) {
       step("credential", "");
       button.disabled = false;
-      button.textContent = current.issuance.owner ? "Sign with Freighter and issue to my account" : "Issue credential on Stellar testnet";
+      button.textContent = current.issuance.owner ? "Sign with Freighter and issue to my account" : "Stamp it on Stellar testnet";
       showError(error.message);
     }
   }
@@ -229,7 +240,7 @@
   $("download").addEventListener("click", () => {
     if (!current) return;
     const blob = new Blob([current.report_json], { type: "application/json" });
-    const link = el("a", { href: URL.createObjectURL(blob), download: `agentveritas-${current.report_sha256.slice(0, 12)}.json` });
+    const link = el("a", { href: URL.createObjectURL(blob), download: `touchmark-${current.report_sha256.slice(0, 12)}.json` });
     document.body.append(link); link.click(); link.remove();
   });
   const preset = new URLSearchParams(location.search).get("ref");

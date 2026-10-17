@@ -1,6 +1,6 @@
 # Security Policy
 
-The AgentVeritas Stellar team takes the security of our evidence-first verification and audit system very seriously. We appreciate your efforts to responsibly disclose your findings.
+## Supported versions
 
 Only the current major version receives security fixes.
 
@@ -10,15 +10,7 @@ Only the current major version is actively supported with security updates.
 
 Please do not open a public issue for a security problem. Email **security@agentveritas.dev** instead.
 
-If you discover a security vulnerability in AgentVeritas Stellar, please do **not** open a public issue.
-
-Instead, please send an email to **security@agentveritas.dev**. 
-
-### What to Expect
-
-- We will acknowledge receipt of your vulnerability report within **48 hours**.
-- We will send you regular updates about our progress in verifying and addressing the issue.
-- Once the vulnerability is resolved, we will publish a security advisory and credit you for the discovery (unless you prefer to remain anonymous).
+We acknowledge reports within 48 hours and keep you updated while we verify and fix the issue. Once it is resolved we publish an advisory and credit you, unless you would rather stay anonymous.
 
 ## Scope
 

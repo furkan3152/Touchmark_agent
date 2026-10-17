@@ -1,12 +1,12 @@
-# Contributing to AgentVeritas Stellar
+# Contributing to Touchmark Stellar
 
-First off, thank you for considering contributing to AgentVeritas Stellar! It's people like you that make this an excellent evidence-first verification and audit system for AI agents on the Stellar network.
+Thanks for taking a look. Bug reports, fixes and new checks are all welcome.
 
 ## Setup
 
 You need:
 
-To contribute to AgentVeritas Stellar, you will need the following tools installed:
+To contribute to Touchmark Stellar, you will need the following tools installed:
 
 - **Python 3.10+**: Used for the backend and API services.
 - **Rust (latest stable)**: Required for writing and compiling Soroban smart contracts.

@@ -63,3 +63,13 @@ def test_blueprint_purpose_and_missing_components():
                  "entrypoint": {"component": "entry", "symbol": "main"}}
     found = declarations({"blueprint": {"path": "veritas.json", "text": json.dumps(blueprint)}})
     assert found["files"] == ["veritas.json"] and found["blueprint"].purpose == "Pays approved invoices only."
+
+
+def test_touchmark_json_is_read_and_preferred(tmp_path):
+    root = tmp_path / "agent"
+    shutil.copytree(ROOT / "examples/demo/safe-treasury-agent", root)
+    (root / "agentveritas.json").write_text(json.dumps({"purpose": "Old name, should be ignored here."}))
+    (root / "touchmark.json").write_text(json.dumps(DECLARATION))
+    out = asyncio.run(audit_repository(root, name="a", purpose="", settings=Settings(_env_file=None), deep=False))
+    assert out["report"]["repository"]["declarations"]["files"] == ["touchmark.json"]
+    assert out["report"]["subject"]["purpose"] == DECLARATION["purpose"]
