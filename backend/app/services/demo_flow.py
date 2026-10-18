@@ -138,7 +138,7 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True)
         "source": source, "kind": resolution.get("kind", ""),
         "steps": [{"check": s["check"], "result": s["result"], "evidence": (s.get("evidence") or "")[:300]}
                   for s in resolution.get("steps", [])],
-        "risks": [_summary(f) for f in risks[:12]], "gaps": [_summary(f) for f in gaps[:12]],
+        "risks": [_summary(f) for f in risks[:40]], "gaps": [_summary(f) for f in gaps[:20]],
         "breakdown": {k: v for k, v in (report["result"].get("score_breakdown") or {}).items() if k != "deductions"}
                      | {"deductions": [{key: d.get(key) for key in ("id", "title", "severity", "evidence_grade",
                                                                      "confidence", "places", "deduction", "restates")}
