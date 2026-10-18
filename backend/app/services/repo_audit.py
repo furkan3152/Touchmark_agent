@@ -171,6 +171,26 @@ def committed_seeds(root: Path, selected: set[str], limit: int = 20) -> list[str
     return found
 
 
+def committed_credentials(root: Path, selected: set[str], limit: int = 20) -> list[str]:
+    """API keys, tokens and private keys in committed files outside the source selection.
+    Redacted locations only."""
+    from ..swarm.hardening import find_credentials
+    found: list[str] = []
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root)
+        if (not path.is_file() or path.is_symlink() or rel.as_posix() in selected
+                or any(p.lower() in SKIP_DIRS - {"test", "tests", "examples", "example", "fixtures", "docs"} for p in rel.parts[:-1])
+                or path.stat().st_size > 400_000 or path.suffix.lower() in {".lock", ".svg", ".png", ".jpg", ".woff2", ".map"}):
+            continue
+        data = path.read_bytes()
+        if b"\x00" in data[:4096]:
+            continue
+        found += find_credentials(rel.as_posix(), data)
+        if len(found) >= limit:
+            return found[:limit]
+    return found
+
+
 def _is_repository_record(rel: Path) -> bool:
     posix = rel.as_posix().lower()
     return ((len(rel.parts) == 1 and rel.name.lower() in LICENSE_NAMES)
@@ -278,7 +298,8 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
     return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint,
-                   "committed_seeds": committed_seeds(root, set(files))}
+                   "committed_seeds": committed_seeds(root, set(files)),
+                   "committed_credentials": committed_credentials(root, set(files))}
 
 
 def registered_tools(files: dict[str, str]) -> list[ToolSpec]:
@@ -396,7 +417,8 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         discloses_ai=decl.discloses_ai, domain=decl.domain or "general",
         raw_metadata={"source_not_selected": (selection["manifest"]["source_files_not_selected"]
                                               + selection["manifest"]["files_too_large"]),
-                      "committed_seeds": selection.get("committed_seeds", [])},
+                      "committed_seeds": selection.get("committed_seeds", []),
+                      "committed_credentials": selection.get("committed_credentials", [])},
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
         agent_contract_id=(contract_facts or {}).get("contract_id", ""),
         owner_verification_note="Not checked during repository review.",

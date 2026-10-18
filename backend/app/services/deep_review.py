@@ -73,7 +73,17 @@ Work in this order:
    - unit, decimal or asset confusion (stroops vs XLM, an asset code without its issuer);
    - an RPC, Horizon or service URL, network or passphrase the requester can choose: a malicious RPC returns any simulation or auth tree and the agent signs it (see stellar_reference "endpoints");
    - committed secrets: key files, notes or .env copies in the repository, and resources or tools that hand a key to the model;
-   - replaying a signed transaction, a retry that pays twice, a check that runs after the send.
+   - replaying a signed transaction, a retry that rebuilds and pays twice after a timeout, a check that runs after the send, two concurrent requests that both pass a balance or budget check before either is recorded;
+   - the agent key signing bytes the requester supplies (a raw keypair.sign of a hash, nonce or "message"): a transaction hash or Soroban auth payload signed that way authorizes anything;
+   - auth entries or simulations accepted without checking the invoked contract, function, arguments and sub-invocations, so a "swap" also authorizes a transfer;
+   - signed transactions with no expiry (timeout 0) that can be held and submitted later; a fee or fee bump set from input;
+   - incoming payments checked by asset code without the issuer, by amount without the asset, or without checking the destination is the agent's own account; a memo or payment reused for a second order;
+   - path payments whose assets, path or minimum received come from input or a quote the requester controls;
+   - persistent memory, notes or a vector store that untrusted content can write and later prompts read, so one injected document steers every later session;
+   - tool descriptions, skills, prompts or MCP server lists loaded at run time from a URL or a third party (they can change after review), or containing hidden instructions or invisible Unicode;
+   - SQL, shell, template or eval built from model output; unsafe deserialization (pickle, yaml.load) of fetched data;
+   - a webhook, callback or agent-to-agent message accepted without a signature, so anyone can post a "payment confirmed" or "approved" event;
+   - session, wallet or API-key state shared across users or tenants of the same server process.
    Record each that works against the shipped code, and put the reworded or indirect request in the attack scenario.
 4. Check that the code actually works: wrong SDK or API usage, calls to functions that do not exist, broken imports, values of the wrong type or unit (stroops vs XLM, float amounts), unreachable or dead paths, and error handling that hides failures. Record these as functional_defect.
 5. Call record_finding for each real defect, with the exact file, line and a verbatim quote of that line. Describe a concrete attack scenario and its Stellar impact. Do not record style issues or speculation you cannot tie to a line.

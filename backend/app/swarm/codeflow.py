@@ -54,6 +54,13 @@ _COMMAND_SINK = re.compile(
     r"^(?:eval|exec|compile|__import__)$|^os\.(?:system|popen|exec\w*|spawn\w*)$|"
     r"^subprocess\.\w+$|^asyncio\.create_subprocess_\w+$|^pty\.spawn$"
 )
+_STRUCTURING = re.compile(r"^(?:dumps|canonicali[sz]e\w*|serialize\w*|digest|hexdigest|hash\w*|sha\d+|keccak\w*|to_xdr|hash_message)$", re.I)
+#: Loaders that run code embedded in the data they read.
+_DESERIALIZE = re.compile(r"^(?:c?pickle|dill|marshal|cloudpickle)\.loads?$|^jsonpickle\.decode$|^yaml\.(?:load|load_all|unsafe_load|full_load)$|"
+                          r"^(?:torch|joblib)\.load$|^shelve\.open$")
+#: A query string with SQL in it; a database call whose query embeds input is SQL injection.
+_SQL_TEXT = re.compile(r"\b(?:select\s.+\sfrom|insert\s+into|update\s+\w+\s+set|delete\s+from|where\s|drop\s+table)\b", re.I | re.S)
+_SQL_CALL = {"execute", "executemany", "executescript", "raw", "fetch", "fetchrow", "fetchval", "query"}
 _FILE_SINK = re.compile(r"^(?:open|io\.open|os\.remove|os\.unlink|os\.rename|shutil\.\w+)$")
 _PATH_METHODS = {"read_text", "read_bytes", "write_text", "write_bytes", "open", "unlink", "rename"}
 _LOG_SINK = re.compile(r"^print$|(?:^|\.)(?:log|logger|logging)\.(?:debug|info|warning|warn|error|critical|exception)$")
@@ -643,6 +650,10 @@ class _Interp:
                     and not self.tags(node.func.value, state) & UNTRUSTED):
                 found = found | {"stored_record"}
             return found
+        if isinstance(node, ast.JoinedStr) and node.values and isinstance(node.values[0], ast.Constant) \
+                and str(node.values[0].value).strip():
+            # Text with a fixed prefix cannot be made equal to a transaction hash.
+            return set().union(*(self.tags(v, state) for v in node.values)) | {"structured"}
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
             inner = dict(state)
             for gen in node.generators:
@@ -767,6 +778,30 @@ class _Interp:
                 self._flow("command", node, every, "untrusted input reaches a dynamically resolved module function")
             return every
 
+        # A hash, JSON encoding or fixed-prefix text cannot be made equal to a transaction hash.
+        if _STRUCTURING.match(short) or label.startswith("hashlib."):
+            return every | receiver | {"structured"}
+        # Deserializers that execute code from their input (pickle, unsafe YAML).
+        if _DESERIALIZE.search(label):
+            safe_yaml = label.startswith("yaml.") and short == "load" and any(
+                kw.arg == "Loader" and "Safe" in _dotted(kw.value) for kw in node.keywords)
+            data = (args[0] if args else set()) | kwargs.get("data", set())
+            if data & UNTRUSTED and not safe_yaml:
+                self._cap("code_execution", node)
+                self._flow("command", node, data, "untrusted data is deserialized by a loader that runs embedded code")
+            return data
+        # A SQL string built from input (f-string, concatenation, format), not a bound parameter.
+        if short in _SQL_CALL and isinstance(node.func, ast.Attribute) and node.args:
+            query = node.args[0]
+            text = " ".join(str(c.value) for c in ast.walk(query) if isinstance(c, ast.Constant) and isinstance(c.value, str))
+            built = isinstance(query, (ast.JoinedStr, ast.BinOp)) or (
+                isinstance(query, ast.Call) and isinstance(query.func, ast.Attribute) and query.func.attr == "format")
+            if built and _SQL_TEXT.search(text) and args[0] & UNTRUSTED:
+                self._flow("sql", node, args[0], "a SQL statement is built from untrusted input")
+        # The network passphrase decides which network a signature is valid on.
+        passphrase = kwargs.get("network_passphrase", set()) | (args[0] if short == "Network" and label.startswith("stellar_sdk") and args else set())
+        if passphrase & UNTRUSTED and (short in {"TransactionBuilder", "Network", "TransactionEnvelope", "build_transaction"}):
+            self._flow("endpoint", node, passphrase, "the network passphrase comes from input")
         # Sinks.
         if _COMMAND_SINK.search(label):
             shell = any(kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value for kw in node.keywords)
@@ -804,11 +839,16 @@ class _Interp:
             if every & UNTRUSTED:
                 out |= {"acct_untrusted"} | (every & UNTRUSTED)
             return out
-        if short == "sign" and isinstance(node.func, ast.Attribute):
+        if short in {"sign", "sign_decorated"} and isinstance(node.func, ast.Attribute):
             signer = every | receiver
             if "signer" in signer:
                 self._cap("stellar_signing", node)
                 self._check_signed(node, receiver)
+            # keypair.sign(data): the key signs raw bytes. If the requester picks them, they can
+            # submit any transaction hash or Soroban authorization payload for signature.
+            if "signer" in receiver and args and args[0] & UNTRUSTED and not args[0] & {"tx_built", "signer", "structured"} \
+                    and not self.approved:
+                self._flow("signing_oracle", node, args[0], "the agent key signs bytes chosen by the requester")
             return receiver
         if _SUBMIT.search("." + label):
             self._cap("tx_submission", node)
@@ -868,6 +908,13 @@ class _Interp:
             return out  # an approval gate in this function covers recipient and amount
         if dest_tags & UNTRUSTED:
             out |= {"pay_dest_untrusted"} | (dest_tags & UNTRUSTED)
+        # Only a conversion makes the asset choice matter: a plain payment can move only an asset
+        # the account already holds, but a path payment trades through whatever assets and
+        # pools it is given.
+        if _dotted(node.func).rsplit(".", 1)[-1].startswith("append_path_payment"):
+            route = [arg("send_asset", 1), arg("dest_asset", 3), arg("path", 5)]
+            if any(t & UNTRUSTED for t in (self.tags(r, state) for r in route if r is not None)):
+                out.add("pay_route_untrusted")
         if amount is not None and amount_tags & UNTRUSTED and "bounded" not in amount_tags:
             if self.record:
                 self.p.profile.unbounded_amounts.append(self.p.location(self.module, node))
@@ -889,6 +936,8 @@ class _Interp:
             self._flow("financial", node, tx_tags, "untrusted " + " and ".join(detail))
         if "acct_untrusted" in tx_tags:
             self._flow("account_control", node, tx_tags, "untrusted input changes account authority settings")
+        if "pay_route_untrusted" in tx_tags:
+            self._flow("asset_route", node, tx_tags, "the assets or path of a path payment come from input")
 
     # -------------------------------------------------------------- guards
     def guard(self, test: ast.AST, state: dict[str, set[str]], *, blocking: bool, node: ast.AST) -> None:

@@ -162,6 +162,21 @@ _PATH_RULES = {
         "The URL of the RPC or Horizon server comes from a tool argument, flag or request field. That server returns the simulation, authorization entries, sequence numbers and quotes the agent then signs, so a malicious server chooses what the agent's key authorizes. Checks on the user's request do not cover what the server returns.",
         "Take RPC, Horizon and network passphrase from operator configuration only; if overrides are needed, allowlist them. Inspect the authorization tree before signing.",
         ["Stellar RPC simulation", "OWASP LLM06 Excessive Agency"]),
+    "signing_oracle": ("security-path-key-signs-arbitrary-bytes", Severity.CRITICAL,
+        "The agent key signs whatever bytes the requester supplies",
+        "Raw data from a tool argument or request is signed with the agent's keypair. A Stellar transaction is authorized by a signature over its hash, and a Soroban authorization entry by a signature over its payload hash, so a requester who chooses the bytes can get any transaction or contract call signed as this account.",
+        "Never expose raw signing. Sign only transactions the server builds and inspects; for login or proof of control use SEP-10/SEP-45 or SEP-53 message signing, which prefixes the message so it cannot be a transaction.",
+        ["Stellar transaction signatures", "SEP-53", "OWASP LLM06 Excessive Agency"]),
+    "asset_route": ("security-path-untrusted-conversion-route", Severity.HIGH,
+        "Input chooses the assets or route of a path payment",
+        "A signed path payment takes its send asset, destination asset or path from a tool argument or request. The conversion then runs through whatever assets and liquidity pools the requester names, including a look-alike token or a thin pool they control, and the value lost in the trade goes to them.",
+        "Fix the assets (code and issuer) and allowed paths in configuration, and require a minimum received amount computed from an independent price.",
+        ["Stellar path payments", "OWASP LLM06 Excessive Agency"]),
+    "sql": ("security-path-untrusted-to-sql", Severity.HIGH,
+        "Input is written into a SQL statement",
+        "A SQL statement is built by string formatting with a value from a tool argument, request or model output. The requester can rewrite the query: read other users' records, or change balances, approvals and spending totals that controls depend on.",
+        "Pass values as bound parameters (cursor.execute(sql, params), $1 placeholders, tagged sql templates); never format them into the statement.",
+        ["CWE-89", "OWASP LLM05 Improper Output Handling"]),
     "ssrf": ("security-path-untrusted-to-network", Severity.HIGH,
         "Untrusted input chooses a server-side request URL",
         "A URL derived from model or request input is fetched without a fixed host. The agent can be steered to internal services, cloud metadata endpoints or attacker hosts.",
@@ -244,7 +259,9 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             id=fid, dimension=Dimension.SECURITY,
             # A file path its caller chooses is the caller's own business unless input from
             # outside reaches it; that case is confirmed above.
-            severity=severity if confirmed else severity.downgrade(2 if category == "path_traversal" else 1),
+            # A library that exposes raw signing to its integrators is an API choice until
+            # outside input is shown to reach it.
+            severity=severity if confirmed else severity.downgrade(2 if category in {"path_traversal", "signing_oracle"} else 1),
             title=title,
             detail=detail if confirmed else detail + " The value enters through a public function whose callers are not in the submitted source, so the input origin is unresolved.",
             evidence=_evidence(chosen),
