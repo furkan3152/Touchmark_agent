@@ -103,6 +103,8 @@
     const risks = $("risks"); risks.textContent = "";
     if (!data.risks.length) risks.append(el("li", { class: "low" }, el("span", { class: "title", text: "No exploitable path from untrusted input to keys, payments, commands or network was found." })));
     data.risks.forEach((f) => risks.append(finding(f)));
+    const more = (c.risks || 0) - data.risks.length;
+    if (more > 0) risks.append(el("li", { class: "low" }, el("span", { class: "title", text: `${more} more lower-severity ${more === 1 ? "risk" : "risks"} in the report JSON.` })));
     const gaps = $("gaps"); gaps.textContent = "";
     data.gaps.forEach((f) => gaps.append(finding(f)));
     $("gap-count").textContent = `(${(data.counts || {}).gaps || 0})`;
