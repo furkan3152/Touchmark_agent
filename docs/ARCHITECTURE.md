@@ -67,6 +67,21 @@ Nothing submitted is imported or executed.
      (`security-per-call-cap-only`), and an RPC or Horizon URL the requester chooses
      (`security-path-untrusted-ledger-endpoint`). The AI review attacks each value-moving
      action with reworded, split and indirect requests, cross-user access and replay.
+   - **Beyond the payment path** (`swarm/hardening.py` and the flow engines):
+     - the agent key signing raw bytes the requester picks (`security-path-key-signs-arbitrary-bytes`).
+       A hash, JSON or fixed-prefix preimage is not an oracle;
+     - SQL built from input (`security-path-untrusted-to-sql`);
+     - unsafe deserialization of fetched data, reported as command execution;
+     - a requester-chosen network passphrase (`security-path-untrusted-ledger-endpoint`);
+     - a requester-chosen path-payment route (`security-path-untrusted-conversion-route`);
+     - poisoned tool descriptions (`security-tool-description-injection`);
+     - invisible Unicode (`security-hidden-unicode`);
+     - committed API keys, reported with redacted locations only (`security-committed-credential`);
+     - signed transactions that never expire (`security-transaction-never-expires`);
+     - plain-HTTP Horizon/RPC (`security-ledger-endpoint-plain-http`);
+     - retries that rebuild the transaction and can pay twice (`security-retry-may-pay-twice`);
+     - incoming payments checked by asset code without the issuer (`security-asset-checked-by-code-only`);
+     - Soroban crates without `overflow-checks` (`security-soroban-overflow-unchecked`).
 3. **Auditors.** Seven dimensions: security, economic, Stellar-native, intent, compliance,
    reliability and provenance. Stellar-native covers Rust contract checks (`require_auth`
    paths, persistent TTL), payment success checks, SEP-10/45 boundaries and seed

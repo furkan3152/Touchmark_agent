@@ -60,7 +60,14 @@ TOPICS: dict[str, str] = {
 - Secret seeds (S...) must never appear in source, logs, model prompts, tool results or error messages.
 - Keys should live in an external signer, KMS or a separate process the model cannot read.
 - A model that can see a key can be induced to reveal it through prompt injection.
-- Scope the agent key: low-weight signer, per-agent account, spending policy contract (Soroban custom account) with recipient and budget limits.""",
+- Scope the agent key: low-weight signer, per-agent account, spending policy contract (Soroban custom account) with recipient and budget limits.
+- Raw signing is an oracle: a transaction signature is an ed25519 signature over a 32-byte hash, and so is a Soroban auth entry's. keypair.sign(bytes) on bytes the requester picks (a "nonce", "message" or hash) can authorize any transaction. Sign messages with SEP-53 (prefixed) or over a fixed-structure preimage, never bare input.""",
+    "agent_surfaces": """Agent surfaces beyond the transaction
+- Tool descriptions, skills and system prompts are instructions the model obeys. Loading them from a URL or a third-party MCP server at run time lets their owner change behavior after review (rug pull); hidden instructions or invisible Unicode in them are tool poisoning.
+- Persistent memory, notes and vector stores written from untrusted content (web pages, emails, memos, other agents) inject every later session that reads them.
+- Webhooks and agent-to-agent callbacks ("payment confirmed", "order approved") must be signed and checked; otherwise anyone can post them.
+- Concurrency: two requests that both read a balance or budget before either records its spend both pass; the check and the debit need one lock or one atomic update.
+- Multi-tenant servers must bind each request to its own wallet, session and API key; a module-level client or key shared across users lets one user act as another.""",
 }
 
 CHECKLIST = "\n".join(f"- {name}: {text.splitlines()[0]}" for name, text in TOPICS.items())

@@ -73,6 +73,10 @@ _LEDGER_ENDPOINT = re.compile(r"(?:^|\.)(?:rpc|SorobanRpc|Horizon|StellarSdk)\.S
 _COMMAND_SINK = re.compile(r"^(?:eval|Function)$|^child_process\.(?:exec|execSync|spawn|spawnSync|execFile|execFileSync|fork)$|"
                            r"^vm\.(?:runInNewContext|runInThisContext|runInContext|compileFunction)$|^(?:execa|shelljs\.exec|zx)$")
 _SHELL_ALWAYS = re.compile(r"\.(?:exec|execSync)$")
+#: node-serialize style loaders that run functions embedded in the data.
+_DESERIALIZE = re.compile(r"(?:^|\.)unserialize$|^funcster\.deepDeserialize$")
+_SQL_TEXT = re.compile(r"\b(?:select\s.+\sfrom|insert\s+into|update\s+\w+\s+set|delete\s+from|where\s|drop\s+table)\b", re.I | re.S)
+_SQL_CALL = {"query", "execute", "raw", "exec", "run", "all", "get", "prepare", "$queryRawUnsafe", "$executeRawUnsafe", "unsafe"}
 _FILE_SINK = re.compile(r"^(?:fs|fs/promises|fs\.promises|fsp|node:fs|node:fs/promises)\.(?:readFile|readFileSync|writeFile|"
                         r"writeFileSync|appendFile|appendFileSync|createReadStream|createWriteStream|unlink|unlinkSync|rm|rmSync|"
                         r"readdir|readdirSync|open|openSync|copyFile|rename)$")
@@ -89,6 +93,9 @@ _SUBMIT = re.compile(r"\.(?:submitTransaction|sendTransaction|submitAsyncTransac
 _SOROBAN_SINK = re.compile(r"(?:^|\.)(?:invoke|invoke_contract|invokeContract|invokeContractFunction|callContract)$|^token\.transfer$")
 _WALLET_PROMPT = re.compile(r"freighter|wallets?[-_]?kit|WalletsKit|walletKit|@creit|albedo|xbull|lobstr|rabet|hana|"
                             r"walletConnect|^browserwallet\.", re.I)
+#: Functions whose output has a fixed structure or is a one-way hash of the input.
+_STRUCTURING = re.compile(r"^(?:stringify|canonicali[sz]e\w*|serialize\w*|digest|hash\w*|sha\d+|keccak\w*|createHash|toXDR|"
+                          r"encodeStructured\w*|hashMessage)$", re.I)
 #: Functions whose output hides a secret (masking, redaction, one-way hashing).
 _MASKING = re.compile(r"^(?:mask|redact|obfuscate|truncate|fingerprint|sha256|hash)\w*$", re.I)
 #: Values that are the user's browser wallet: Wallet Standard features and injected providers.
@@ -1127,6 +1134,10 @@ class _JsInterp:
             found: set[str] = set()
             head = self._url_head(node)
             head_tags = self.tags(head, state) if head is not None and head.type != "string_fragment" else set()
+            if head is not None and (head.type == "string_fragment" and _txt(head).strip() or (
+                    head.type != "string_fragment" and (_txt(head) in self.module.constants
+                                                         or re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", _txt(head))))):
+                found.add("structured")  # a fixed prefix: the text cannot be an arbitrary hash
             if (head is not None and head.type == "string_fragment" and _SAFE_URL_PREFIX.match(_txt(head))) or \
                     (head is not None and head.type != "string_fragment" and not head_tags & UNTRUSTED
                      and _dotted(head) and re.search(r"url|host|base|api|endpoint|server|horizon|rpc|origin", _dotted(head), re.I)):
@@ -1267,6 +1278,15 @@ class _JsInterp:
 
     # ------------------------------------------------------------------ calls
     def call(self, node, state) -> set[str]:
+        out = self._call(node, state)
+        callee = node.child_by_field_name("constructor" if node.type == "new_expression" else "function")
+        if _STRUCTURING.match(self.canonical(callee).rsplit(".", 1)[-1]):
+            # A hash, JSON encoding or canonical form fixes the shape of what is later signed:
+            # the requester can no longer make it equal a transaction hash.
+            out = out | {"structured"}
+        return out
+
+    def _call(self, node, state) -> set[str]:
         is_new = node.type == "new_expression"
         callee = node.child_by_field_name("constructor" if is_new else "function")
         label = self.canonical(callee)
@@ -1411,6 +1431,22 @@ class _JsInterp:
             return every | receiver | {"chain"}
 
         # ---- sinks
+        if _DESERIALIZE.search(label):
+            data = args[0] if args else set()
+            if data & UNTRUSTED:
+                self._cap("code_execution", node)
+                self._flow("command", node, data, "untrusted data is deserialized by a loader that runs embedded code")
+            return data
+        if short in _SQL_CALL and callee_u is not None and callee_u.type == "member_expression" and arg_nodes:
+            query = _unwrap(arg_nodes[0])
+            built = query is not None and (query.type == "binary_expression" or (
+                query.type == "template_string" and any(c.type == "template_substitution" for c in query.named_children)))
+            if built and _SQL_TEXT.search(_txt(query)) and args and args[0] & UNTRUSTED:
+                self._flow("sql", node, args[0], "a SQL statement is built from untrusted input")
+        if (short == "setNetworkPassphrase" and args and args[0] & UNTRUSTED) or (
+                short == "TransactionBuilder" and is_new and len(arg_nodes) > 1
+                and self.tags(_props(arg_nodes[1]).get("networkPassphrase"), state) & UNTRUSTED):
+            self._flow("endpoint", node, every, "the network passphrase comes from input")
         if _COMMAND_SINK.search(label) or (is_new and short == "Function"):
             shell = bool(_SHELL_ALWAYS.search(label)) or any("shell" in _props(a) for a in arg_nodes if _unwrap(a) is not None and _unwrap(a).type == "object")
             # The command and its argument list; an options object (cwd, env, stdio) is not code.
@@ -1456,7 +1492,7 @@ class _JsInterp:
         if label.startswith(("Operation.", "StellarSdk.Operation.", "Op.")) or (short in _PAYMENT_OPS | _ACCOUNT_OPS | _INVOKE_OPS and "Operation" in label):
             if short in _PAYMENT_OPS:
                 self._cap("payment", node)
-                return self._payment_markers(arg_nodes, state)
+                return self._payment_markers(arg_nodes, state, short.startswith("pathPayment"))
             if short in _ACCOUNT_OPS:
                 self._cap("account_control", node)
                 return ({"acct_untrusted"} | (every & UNTRUSTED)) if every & UNTRUSTED else set()
@@ -1469,7 +1505,15 @@ class _JsInterp:
             return receiver | every
         if short in {"build", "setTimeout", "addMemo", "setTimebounds", "setNetworkPassphrase", "toXDR", "toEnvelope"} and receiver:
             return receiver | (every - {"signer"})
+        if short in {"signDecorated", "signPayloadDecorated"} and "signer" in receiver and args \
+                and args[0] & UNTRUSTED and not args[0] & {"tx_built", "signer", "structured"} and not self.approved:
+            self._flow("signing_oracle", node, args[0], "the agent key signs bytes chosen by the requester")
         if short == "sign" and callee_u is not None and callee_u.type == "member_expression":
+            # keypair.sign(data): raw bytes the requester picks can be a transaction hash or a
+            # Soroban authorization payload.
+            if "signer" in receiver and args and args[0] & UNTRUSTED and not args[0] & {"tx_built", "signer", "structured"} \
+                    and not self.approved:
+                self._flow("signing_oracle", node, args[0], "the agent key signs bytes chosen by the requester")
             if "signer" in every | receiver:
                 self._cap("stellar_signing", node)
                 self._check_signed(node, receiver)
@@ -1609,7 +1653,7 @@ class _JsInterp:
         value = _string_value(url)
         return value is not None and bool(_SAFE_URL_PREFIX.match(value))
 
-    def _payment_markers(self, arg_nodes, state) -> set[str]:
+    def _payment_markers(self, arg_nodes, state, path_payment: bool = False) -> set[str]:
         out: set[str] = set()
         if not arg_nodes:
             return out
@@ -1622,6 +1666,8 @@ class _JsInterp:
             return out
         if dest_tags & UNTRUSTED:
             out |= {"pay_dest_untrusted"} | (dest_tags & UNTRUSTED)
+        if path_payment and any(self.tags(props.get(k), state) & UNTRUSTED for k in ("sendAsset", "destAsset", "path")):
+            out.add("pay_route_untrusted")
         if amount is not None and amount_tags & UNTRUSTED and "bounded" not in amount_tags:
             if self.record:
                 self.p.profile.unbounded_amounts.append(self.p.location(self.module, arg_nodes[0]))
@@ -1647,6 +1693,8 @@ class _JsInterp:
             self._flow("account_control", node, tx_tags, "untrusted input changes account authority settings")
         if "invoke_untrusted" in tx_tags:
             self._flow("financial", node, tx_tags, "untrusted values reach a contract invocation")
+        if "pay_route_untrusted" in tx_tags:
+            self._flow("asset_route", node, tx_tags, "the assets or path of a path payment come from input")
 
     # ------------------------------------------------------------------ guards
     def assume(self, cond, truth: bool, state, *, node) -> None:
