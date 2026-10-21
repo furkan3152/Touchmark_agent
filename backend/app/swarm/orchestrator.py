@@ -118,6 +118,7 @@ class AuditSwarm:
         reward_pool_usdc: float = 0.0,
         deep_reviewer=None,
         chain_facts: dict | None = None,
+        finding_verifier=None,
     ) -> AuditReport:
         t0 = time.perf_counter()
         deep = tier == AuditTier.DEEP
@@ -171,6 +172,11 @@ class AuditSwarm:
         deep_record: dict = {}
         if deep_reviewer is not None:
             verdicts, deep_record = await self._deep_review(deep_reviewer, artifact, verdicts, chain_facts)
+        verification: dict = {}
+        if finding_verifier is not None:
+            from ..services.finding_verifier import verify_artifact
+            verification = await verify_artifact(finding_verifier, artifact, [f for v in verdicts for f in v.findings])
+            verdicts = self._apply_disputes(verdicts, verification)
 
         score, badge, dim_scores, findings, notes, disagreement, breakdown, assurance = (
             self.judge.synthesise(artifact, verdicts, tier=tier)
@@ -238,6 +244,7 @@ class AuditSwarm:
             policy_version=AUDIT_POLICY_VERSION,
             input_hash=input_hash,
             finding_set_hash=finding_set_commitment(findings),
+            verification=verification,
             assurance_level=assurance,
             evidence_summary=evidence_summary(findings),
             coverage={
@@ -313,6 +320,32 @@ class AuditSwarm:
                 changed = True
             updated.append(self._rescore(verdict, findings) if changed else verdict)
         return updated
+
+    @staticmethod
+    def _apply_disputes(verdicts, verification: dict):
+        """A rule finding that independent verification refutes, quoting the code that
+        contradicts it, is lowered one level and marked as disputed. It is never removed,
+        and model-review findings are not lowered: the verifier is a second opinion on the
+        pattern rules, which cannot read intent, not a way to talk a risk away."""
+        disputed = {r["finding_id"]: r for r in verification.get("results", [])
+                    if r.get("verdict") == "refuted" and r.get("quote_verified")
+                    and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
+        if not disputed:
+            return verdicts
+        out = []
+        for verdict in verdicts:
+            findings = []
+            for f in verdict.findings:
+                r = disputed.get(f.id)
+                if r is not None and "-ai-" not in f.id and f.is_risk:
+                    f = f.model_copy(update={
+                        "severity": f.severity.downgrade(1),
+                        "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"
+                                  f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.5)})
+                findings.append(f)
+            out.append(verdict.model_copy(update={"findings": findings}))
+        return out
 
     async def _deep_review(self, reviewer, artifact, verdicts, chain_facts):
         """Add verified model findings to the matching dimension. Never removes a finding."""

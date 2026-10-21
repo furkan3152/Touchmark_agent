@@ -147,7 +147,10 @@ class EconomicAuditor(BaseAuditor):
                 findings.append(
                     self.finding(
                         "no-spend-policy",
-                        Severity.MEDIUM if authority_only_declared(artifact) and not denied else Severity.CRITICAL,
+                        # An absent limit is high; the paths that actually move unbounded funds are
+                        # reported as critical by the data-flow findings.
+                        Severity.MEDIUM if authority_only_declared(artifact) and not denied
+                        else Severity.CRITICAL if denied else Severity.HIGH,
                         "Harcama politikası açıkça reddediliyor"
                         if denied
                         else "Harcama politikası yok",

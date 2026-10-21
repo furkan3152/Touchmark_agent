@@ -209,7 +209,8 @@ def _is_repository_record(rel: Path) -> bool:
     posix = rel.as_posix().lower()
     return ((len(rel.parts) == 1 and rel.name.lower() in LICENSE_NAMES)
             or (posix.startswith(".github/workflows/") and posix.endswith((".yml", ".yaml")))
-            or posix == ".gitlab-ci.yml")
+            or posix == ".gitlab-ci.yml"
+            or re.fullmatch(r"(?:docker-)?compose(?:[.-][\w.-]+)?\.ya?ml", rel.name.lower()) is not None)
 
 
 #: Build, code-generation, release and smoke-test scripts: developer tooling, not the agent.
@@ -535,7 +536,8 @@ async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer
     isolated = settings.model_copy(update={
         "stellar_network": "offline", "llm_provider": "", "llm_api_key": "", "pinata_jwt": "",
         "enable_active_agent_probes": False, "enable_audit_escrow": False, "enable_ofac_screening": False})
-    report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=reviewer)
+    report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=reviewer,
+                                             finding_verifier=verifier)
     english_report(report)
     report.finding_set_hash = finding_set_commitment(report.findings)
     payload = report_to_dict(report, artifact)
@@ -545,10 +547,10 @@ async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer
     payload["priority_finding_ids"] = [f.id for f in actionable_risks(report.findings)]
     payload["judge_notes"].extend(notes)
     if verifier is not None:
-        # A second model re-checks each risk from source. It annotates; it never changes
-        # the score or the decision (services/finding_verifier.py).
-        from .finding_verifier import verify_artifact
-        verification = await verify_artifact(verifier, artifact, report.findings)
+        # A second model re-checked each risk from source before the decision. It annotates
+        # every finding; a rule finding it refutes with a quoted line was lowered one level
+        # (swarm/orchestrator.py, _apply_disputes).
+        verification = report.verification
         by_id = {v["finding_id"]: v for v in verification["results"]}
         for f in payload["findings"]:
             if f["id"] in by_id:

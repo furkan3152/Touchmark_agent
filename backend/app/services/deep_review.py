@@ -84,12 +84,26 @@ Work in this order:
    - SQL, shell, template or eval built from model output; unsafe deserialization (pickle, yaml.load) of fetched data;
    - a webhook, callback or agent-to-agent message accepted without a signature, so anyone can post a "payment confirmed" or "approved" event;
    - session, wallet or API-key state shared across users or tenants of the same server process.
+   - a configuration value (network, budget, allowlist, RPC) that is read in one path but ignored in the paths that pay or sign; a "testnet" default that the payment path does not honour; network names the SDK or CLI does not actually accept;
+   - an amount parsed two different ways (parseFloat or Number for the budget check, BigInt or the SDK for signing): try hex (0xFFFF), negatives, exponents (1e9), whitespace and units (stroops vs decimal, atomic vs display) and say exactly what gets signed;
+   - spend charged only after the paid call succeeds, budgets kept only in memory, a race between concurrent calls, and allowlist sentinels ("*", "DISABLED", empty) that turn a check into allow-all;
+   - paywalls: the paid target reachable directly without paying, settlement whose response body (not only the HTTP status) is never checked, payment taken before work that can fail with no refund, and a payment proof that is not bound to the payer, request and amount;
+   - submission results: a submitted transaction that is not polled to a final state, SDK response fields that do not exist or are compared with the wrong type, and errors raised after the send that make a caller retry and pay again;
+   - claims of on-chain enforcement (limits, multisig, k-of-n) that no contract or ledger read actually enforces;
+   - path payments, swaps and AMM deposits whose minimum received or maximum sent is missing, zero or computed from a quote the requester controls;
+   - a facilitator or fee sponsor that pays fees for transactions others build, with no limit or check of what it sponsors.
+   - a price, quote or amount computed from request fields (tokens, units, complexity) the payer chooses;
+   - an HTTP route, webhook or WebSocket that signs with the agent key, releases funds, approves, or returns secrets or ledgers with no authentication, including routes in examples and quickstarts a user is told to run;
+   - a transaction or XDR returned by a remote API and signed without checking its operations, destination and amount;
+   - an approval that passes on timeout, error or a missing reviewer; a placeholder or zero payTo address; a Stellar seed reused as another library's secret;
+   - Soroban contracts that keep per-user or per-escrow records in instance storage, or never extend TTL on entries they depend on; Soroban RPC calls whose parameters do not match the documented method;
+   - model, user or fetched text written into innerHTML or another HTML sink.
    Record each that works against the shipped code, and put the reworded or indirect request in the attack scenario.
 4. Check that the code actually works: wrong SDK or API usage, calls to functions that do not exist, broken imports, values of the wrong type or unit (stroops vs XLM, float amounts), unreachable or dead paths, and error handling that hides failures. Record these as functional_defect.
 5. Call record_finding for each real defect, with the exact file, line and a verbatim quote of that line. Describe a concrete attack scenario and its Stellar impact. Do not record style issues or speculation you cannot tie to a line.
 6. Call finish with a short summary.
 
-Be precise and concrete. A finding without a verifiable line is discarded.
+Be precise and concrete. A finding without a verifiable line is discarded. Never report that a file, module or function is missing because you could not open it: the submitted set can leave files out of a large repository, so say "not reviewed" instead. When you find a defect in one tool or route, search the sibling tools for the same pattern and cite each location.
 
 Severity, judged on the code as shipped, not on what it might become:
 - critical: an outside party can take funds or keys through a reachable path in the shipped code.
@@ -204,6 +218,10 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
                                                if t.origin == "registered"][:60],
                   "architecture": artifact.architecture},
         "files": files,
+        # Present in the repository but not readable here: lockfiles, and source left out of a
+        # large repository. Their absence from "files" is not absence from the repository.
+        "lockfiles_in_repository": sorted(artifact.lockfiles),
+        "source_files_not_reviewed": list(artifact.raw_metadata.get("source_not_selected") or [])[:200],
         "observed_capabilities": profile.get("capabilities", {}),
         "entrypoints": profile.get("entrypoints", {}),
         "enforced_controls": profile.get("controls", {}),
@@ -336,10 +354,23 @@ class DeepReviewer:
             result.status, result.note = "unavailable", f"{type(exc).__name__}: provider call failed."
         return result
 
+    def _time_for_pass(self) -> bool:
+        deadline = getattr(self, "deadline", None)
+        return deadline is None or deadline - time.monotonic() > 3 * MIN_REVIEW_SECONDS
+
     async def _passes(self, artifact, findings, chain, result: DeepReviewResult) -> None:
         """Pass 1 investigates; later passes challenge it, starting from what it did not cover."""
-        for number in range(1, self.passes + 1):
-            before = len(result.findings)
+        number, progressed = 0, True
+        while True:
+            number += 1
+            unread_share = len(_reviewable(artifact) - result.files_read) / max(1, len(_reviewable(artifact)))
+            # The configured passes always run; up to two more follow while over a fifth of the
+            # source is still unread and time allows, because misses cluster in unread files.
+            extra = number > self.passes
+            if extra and (number > self.passes + 2 or unread_share <= 0.2 or not self._time_for_pass()
+                          or not progressed):
+                break
+            before, read_before = len(result.findings), len(result.files_read)
             if number == 1:
                 instruction = ("Begin with describe_operating_model, then assess every flow, then investigate "
                                "and record findings, then finish.")
@@ -354,7 +385,10 @@ class DeepReviewer:
                     "protocol misuse. Skip describe_operating_model. Record findings, then finish.")
             status = await self._loop(artifact, findings, chain, result, instruction)
             result.passes.append({"pass": number, "status": status, "new_findings": len(result.findings) - before})
+            progressed = len(result.files_read) > read_before  # a pass that opened nothing new ends the extra ones
             if status in ("refused",):
+                break
+            if number >= self.passes and status != "completed":
                 break
         statuses = [p["status"] for p in result.passes]
         result.status = "completed" if all(s == "completed" for s in statuses) else statuses[-1]

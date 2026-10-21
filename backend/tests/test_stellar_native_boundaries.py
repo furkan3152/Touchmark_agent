@@ -136,13 +136,13 @@ pub fn read(env: Env, key: u32) { env.storage().persistent().get::<_,u32>(&key);
 ''')
     by_id = {f.id: f for f in helper.findings}
     assert by_id['stellar_native-soroban-auth-missing'].severity.value == 'medium'
-    assert by_id['stellar_native-persistent-ttl'].severity.value == 'medium'
+    assert by_id['stellar_native-persistent-ttl'].severity.value == 'low'  # restorable: a liveness risk
     # Everything reaches a checking helper: unverified, not shown missing.
     assert not by_id['stellar_native-soroban-auth-missing'].is_risk
     bare = check(settings, run, 'pub fn set(env: Env, key: u32) { env.storage().persistent().set(&key, &1); }')
     by_id = {f.id: f for f in bare.findings}
     assert by_id['stellar_native-soroban-auth-missing'].severity.value == 'high'
-    assert by_id['stellar_native-persistent-ttl'].severity.value == 'high'
+    assert by_id['stellar_native-persistent-ttl'].severity.value == 'medium'
 
 
 def test_temporary_storage_is_flagged_only_for_critical_keys(settings, run):
