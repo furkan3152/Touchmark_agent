@@ -110,6 +110,10 @@ _SECRET_ARG = re.compile(r"secret|^seed$|seed_?phrase|mnemonic|private_?key|priv
 #: x402 / MPP client wrappers that pay whatever a 402 response asks unless given a ceiling.
 _X402_PAYER = re.compile(r"(?:^|\.)(?:wrapFetchWithPayment\w*|withPaymentInterceptor|wrapAxiosWithPayment\w*|"
                          r"createPayingFetch|createPaymentFetch)$")
+#: Lower-level x402 / MPP client calls that sign a payment payload with the agent's key. The
+#: code around them decides what is paid, so they record the capability, not a flow.
+_X402_SIGNER = re.compile(r"(?:^|\.)(?:createPaymentPayload|createPaymentHeader|createEd25519Signer|"
+                          r"signPaymentPayload|createStellarSigner)$")
 _X402_LIMITS = {"maxValue", "maxAmount", "maxPaymentAmount", "maxAmountRequired", "policy", "policies",
                 "paymentRequirementsSelector", "selector", "budget", "maxPrice", "spendLimit"}
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s$]+(?:/|$)")
@@ -1390,6 +1394,10 @@ class _JsInterp:
             if "secret" in every:
                 self._flow("secret_to_model", node, every, "secret material is placed in a model request")
             return {"model"}
+        if _X402_SIGNER.search(label):
+            self._cap("payment", node)
+            self._cap("stellar_signing", node)
+            return every | receiver
         if _X402_PAYER.search(label):
             # The wrapped fetch signs whatever payment a 402 response requests. Without a
             # ceiling or selector, the paid server chooses recipient, asset and amount.
@@ -1873,6 +1881,9 @@ class _JsInterp:
             return set()
         if side.type in {"identifier", "member_expression"}:
             return {_dotted(side)}
+        if side.type == "binary_expression" and _txt(side.child_by_field_name("operator")) == "+":
+            # `spent + price > MAX`: a running total plus this payment, both bounded.
+            return self._compared(side.child_by_field_name("left")) | self._compared(side.child_by_field_name("right"))
         if side.type in {"call_expression", "new_expression"}:
             args = _args(side)
             if len(args) == 1:

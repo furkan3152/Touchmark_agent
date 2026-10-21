@@ -67,7 +67,7 @@ def test_someone_elses_signature_or_registration_is_refused(chain):
 def test_owner_claim_reaches_the_ticket(monkeypatch):
     monkeypatch.setenv("DEMO_OPERATOR_SECRET", Keypair.random().secret)
     monkeypatch.setattr(demo_flow, "manifest", lambda: {"contracts": {"credential": {"id": "C" + "A" * 55}}})
-    report = {"result": {"overall_score": 99.6}, "findings": [],
+    report = {"result": {"overall_score": 99.6}, "findings": [], "deep_review": {"status": "completed"},
               "repository": {"ownership_claim": {"path": "agentveritas.json", "stellar_owner": OWNER.public_key}},
               "resolution": {"source": {"repository": "https://github.com/o/r", "revision": "a" * 40}, "steps": []}}
 

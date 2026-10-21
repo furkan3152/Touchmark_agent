@@ -133,7 +133,11 @@ class StellarNativeAuditor(BaseAuditor):
                           if any(c == '' or name.startswith(c + '/') for c in crates)
                           and re.search(r'\bsoroban_sdk\b|#\[contract', content)}
         rust = '\n'.join(_rust_code(content) for content in rust_files.values())
-        functions = [{**fn, 'file': name} for name, content in rust_files.items() for fn in _rust_functions(content)]
+        # Entry points are the public functions of a #[contractimpl] block; a crate's client or
+        # helper modules that only use soroban_sdk types expose none.
+        functions = [{**fn, 'file': name} for name, content in rust_files.items()
+                     if artifact.source_kind != SourceKind.REPO or '#[contractimpl' in content
+                     for fn in _rust_functions(content)]
         lower = surface.lower()
 
         from stellar_sdk import StrKey
@@ -201,6 +205,27 @@ class StellarNativeAuditor(BaseAuditor):
             # Every gap reaches a helper that calls require_auth: nothing is shown to be
             # missing, only unverified. That is an evidence gap, not a risk.
             findings.append(finding if auth_hard else finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
+
+        # Per-record entries (a key with an id: Channel(id), Balance(addr)) in instance storage:
+        # the instance is one ledger entry, loaded on every call and size-limited, so records
+        # that grow with use make every call costlier and can lock the contract.
+        records = [f"{name}:{content[:m.start()].count(chr(10)) + 1}"
+                   for name, content in rust_files.items() if '#[contractimpl' in content
+                   for m in re.finditer(r"\.instance\(\)\s*\.set\(\s*&\s*(?:\w+::)?\w+\(\s*[^)\s]", _rust_code(content))]
+        if records:
+            findings.append(self.finding(
+                "instance-storage-records",
+                Severity.MEDIUM,
+                "Per-record state is kept in instance storage",
+                "Entries keyed by an id or address are written to the contract instance. The instance is a single "
+                "ledger entry that every call loads and that has a size limit, so records that grow with use raise the "
+                "cost of every call and can make the contract unusable; they also share the instance's lifetime.",
+                evidence="; ".join(records[:6]),
+                remediation="Keep per-user and per-record data in persistent storage, each entry with its own TTL "
+                            "extension, and keep instance storage for small contract-wide configuration.",
+                grade=EvidenceGrade.CONFIRMED,
+                confidence=0.85,
+            ))
 
         if ttl_gaps:
             finding = self.finding(

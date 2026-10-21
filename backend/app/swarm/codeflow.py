@@ -253,6 +253,9 @@ def _compared_names(side: ast.AST) -> set[str]:
     """Names whose value is compared: x, Decimal(x), int(x), float(x)."""
     if isinstance(side, ast.Name):
         return {side.id}
+    if isinstance(side, ast.BinOp) and isinstance(side.op, ast.Add):
+        # `spent + amount > LIMIT`: a running total plus this payment, both bounded.
+        return _compared_names(side.left) | _compared_names(side.right)
     if isinstance(side, ast.Call) and len(side.args) == 1 and isinstance(side.args[0], ast.Name):
         return {side.args[0].id}
     return set()

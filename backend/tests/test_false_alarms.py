@@ -190,3 +190,30 @@ def test_verification_verdicts_are_recorded_on_findings():
     out = AuditSwarm._apply_disputes([_verdict("security-ai-y"), _verdict("security-x")], results)
     assert out[0].findings[0].verified == "confirmed"
     assert out[1].findings[0].verified == ""  # an unverifiable quote confirms nothing
+
+
+def test_a_running_total_plus_the_payment_is_a_spending_cap():
+    js = ('let spent = 0;\nconst MAX = 1;\nexport async function pay(price) {\n'
+          '  if (spent + price > MAX) { throw new Error("budget"); }\n  spent += price;\n}\n')
+    py = 'spent = 0\nLIMIT = 5\ndef pay(amount):\n    if spent + amount > LIMIT:\n        raise ValueError("budget")\n'
+    assert analyse_code({"a.mjs": js}).controls.get("amount_cap")
+    assert analyse_code({"a.py": py}).controls.get("amount_cap")
+
+
+def test_signing_an_x402_payload_is_a_payment_capability():
+    js = ('import { createEd25519Signer, ExactStellarScheme } from "@x402/stellar";\n'
+          'export async function pay(req) {\n  const signer = createEd25519Signer(process.env.SECRET);\n'
+          '  return new ExactStellarScheme(signer).createPaymentPayload(2, req);\n}\n')
+    caps = analyse_code({"pay.mjs": js}).capabilities
+    assert caps.get("payment") and caps.get("stellar_signing")
+
+
+def test_per_record_state_in_instance_storage_is_reported(tmp_path):
+    channel = CONTRACT.replace("env.storage().instance().set(&to, &amount);",
+                               "to.require_auth();\n        env.storage().instance().set(&DataKey::Channel(to.clone()), &amount);")
+    config = CONTRACT.replace("env.storage().instance().set(&to, &amount);",
+                              "to.require_auth();\n        env.storage().instance().set(&DataKey::Admin, &to);")
+    manifest = '[package]\nname = "vault"\n[dependencies]\nsoroban-sdk = "22"\n'
+    found = audit(tmp_path / "a", {"vault/Cargo.toml": manifest, "vault/src/lib.rs": channel})
+    assert found["stellar_native-instance-storage-records"]["evidence"] == "vault/src/lib.rs:9"
+    assert "stellar_native-instance-storage-records" not in audit(tmp_path / "b", {"vault/Cargo.toml": manifest, "vault/src/lib.rs": config})
