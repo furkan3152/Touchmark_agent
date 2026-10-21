@@ -142,7 +142,7 @@ def code_enforced_spend_limit(artifact: AgentArtifact) -> bool:
     unsafe = {"financial", "account_control", "foreign_signing"}
     # Only a path from input the agent cannot vouch for (model, request, chain data) defeats the
     # cap; a public function whose callers are not in the source is an unresolved origin.
-    return gated and not profile.get("unbounded_amounts") and not any(
+    return gated and not profile.get("unbounded_direct_amounts") and not any(
         f["category"] in unsafe and set(f["labels"]) & {"model", "external", "chain"} for f in profile.get("flows", []))
 
 

@@ -235,10 +235,13 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
         direct = [f for f in flows if f.direct or category.startswith("secret")]
         if category == "endpoint":
             # A skill's commands are run by the model, so their flags are the model's choice.
-            # Only a skill's own SKILL.md makes the model the one running its commands; AGENTS.md
-            # guides coding assistants that work on the repository.
-            skill = bool(re.search(r"^\[(?:[^\]\n]*/)?skill\.md\]$", artifact.system_prompt or "", re.I | re.M))
-            direct = [f for f in flows if f.direct or (skill and "caller" in f.labels)]
+            # Only a skill's own SKILL.md makes the model the one running its commands (AGENTS.md
+            # guides coding assistants), and only for the scripts in that skill's folder: an SDK
+            # elsewhere in the repository is called by its integrators, not by the model.
+            skill_dirs = [m.group(1) for m in re.finditer(r"^\[((?:[^\]\n]*/)?)skill\.md\]$",
+                                                          artifact.system_prompt or "", re.I | re.M)]
+            direct = [f for f in flows if f.direct or ("caller" in f.labels
+                      and any(f.location.file.startswith(d) for d in skill_dirs))]
             if not any(profile.has(cap) for cap in ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation")):
                 severity = Severity.MEDIUM  # nothing is signed against what that server returns
         if category == "path_traversal" and not direct:
@@ -278,18 +281,22 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             references=["CWE-693 Protection Mechanism Failure"], auditor=auditor, confidence=0.95,
         ))
 
-    if profile.forgeable_approvals:
+    forgeable = profile.forgeable_approvals or profile.unresolved_approvals
+    if forgeable:
         moves_funds = any(profile.has(cap) for cap in ("stellar_signing", "tx_submission", "payment", "contract_invocation",
                                                        "foreign_tx_signing", "account_control"))
+        severity = Severity.CRITICAL if moves_funds else Severity.HIGH
+        # A flag only an unseen caller sets is the integrator's API until outside input reaches it.
+        resolved = bool(profile.forgeable_approvals)
         findings.append(Finding(
             id="security-path-forgeable-approval", dimension=Dimension.SECURITY,
-            severity=Severity.CRITICAL if moves_funds else Severity.HIGH,
+            severity=severity if resolved else severity.downgrade(2),
             title="The approval gate checks a value the requester supplies",
             detail="The code refuses to act unless an approval flag is set, but that flag is a tool argument, request "
                    "field or fetched value. Whoever can talk to the agent can set it: a request the model refuses "
                    "when asked plainly passes when reworded so the model fills in the flag. The gate is not an approval.",
-            evidence="; ".join(loc.render() for loc in profile.forgeable_approvals[:5]),
-            evidence_grade=EvidenceGrade.CONFIRMED,
+            evidence="; ".join(loc.render() for loc in forgeable[:5]),
+            evidence_grade=EvidenceGrade.CONFIRMED if resolved else EvidenceGrade.INFERRED,
             remediation="Take approval from outside the model's reach: a signed approval record, a wallet prompt the "
                         "human answers, or an operator decision stored server-side and bound to the exact recipient and amount.",
             references=["CWE-807 Reliance on Untrusted Inputs in a Security Decision", "OWASP LLM06 Excessive Agency"],

@@ -34,10 +34,12 @@ def test_unsafe_code_fails_the_job_and_is_annotated_on_the_line(monkeypatch, tmp
     assert ci_audit.main([str(repo), "--fail-on", "never"]) == 0
 
 
-def test_safe_code_with_a_valid_tmark_passes(monkeypatch, tmp_path):
+def test_safe_code_does_not_fail_but_the_rules_alone_never_report_a_pass(monkeypatch, tmp_path):
     gh = _actions_env(monkeypatch, tmp_path, ROOT)
     assert ci_audit.main([str(ROOT / "examples/demo/safe-treasury-agent")]) == 0
-    assert "tmark=valid" in (gh / "out").read_text()
+    outputs = (gh / "out").read_text()
+    assert "tmark=valid" in outputs and "decision=needs_evidence" in outputs
+    assert "not a Touchmark pass" in (gh / "summary.md").read_text()
     assert "`examples/demo/safe-treasury-agent/" in (gh / "summary.md").read_text()
 
 

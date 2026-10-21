@@ -153,12 +153,22 @@ def classify_finding(finding: Finding) -> Finding:
     return finding if finding.kind is kind else finding.model_copy(update={"kind": kind})
 
 
+#: Model-review categories where a working exploit, not a defect of function or style, is
+#: claimed: a way around a payment or security control, or to funds, keys or other users.
+BYPASS_CATEGORIES = re.compile(
+    r"-ai-(?:control-bypass|unauthorized-payment|foreign-transaction-signing|economic-loss|replay-or-idempotency|"
+    r"secret-exposure|account-takeover|cross-user-access|code-execution|path-traversal|ssrf|prompt-injection)-\d+$")
+
+
 def actionable_risks(findings: list[Finding]) -> list[Finding]:
-    """High or critical risks backed by source, configuration or live evidence."""
+    """High or critical risks backed by source, configuration or live evidence, and medium
+    bypasses the independent verifier confirmed at the quoted line: a confirmed way around a
+    payment or security control rules out a pass, whatever severity the review gave it."""
     return [
         f for f in findings
-        if f.is_risk and f.severity.rank >= Severity.HIGH.rank
-        and f.evidence_grade is not EvidenceGrade.SIMULATED
+        if f.is_risk and f.evidence_grade is not EvidenceGrade.SIMULATED
+        and (f.severity.rank >= Severity.HIGH.rank
+             or (f.severity is Severity.MEDIUM and f.verified == "confirmed" and BYPASS_CATEGORIES.search(f.id)))
     ]
 
 

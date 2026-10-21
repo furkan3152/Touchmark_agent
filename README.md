@@ -32,7 +32,7 @@
 
 1. **Paste** a GitHub repository or folder, an AgentRegistry agent id, a `C…` contract or a `G…` account.
 2. **Read the verdict.** The exact commit is pinned, the code is traced from model input to keys, payments and the network, and a report is committed with its SHA-256 hash. "Why this score?" shows every point deducted.
-3. **Issue the credential.** If the audit passes, a validator writes the report hash and score to the registry on Stellar testnet, a Soroban contract issues a credential bound to them, and the page reads it back from the ledger.
+3. **Issue the credential.** If the full audit passes (model review included: a pass from the rules alone is not credentialed), a validator writes the report hash and score to the registry on Stellar testnet, a Soroban contract issues a credential bound to them, and the page reads it back from the ledger.
    - **Declare your agent in a `.tmark` file** at the repository root: its purpose, network, the authority it holds, its limits and its tools. There is one strict structure ([docs/TMARK.md](docs/TMARK.md), [schema](https://touchmark-stellar.vercel.app/schemas/tmark-v1.json)), and `python scripts/tmark.py init` pre-fills it from the code. The audit checks the code against every claim; a limit the code does not enforce is reported, not credited.
    - **To your account:** put your `G…` account in `owner.stellar_account`. You then sign the registration in Freighter, and the credential is issued to your account.
 4. **Fix and re-audit.** Paste the fixed commit; the page shows which risks were closed and how the score changed.
@@ -150,7 +150,7 @@ jobs:
           annotate: medium       # lowest severity shown on the code
 ```
 
-Outputs: `decision`, `score`, `tmark` (valid, invalid or missing) and `report` (the full JSON).
+Outputs: `decision` (`needs_fixes`, or `needs_evidence` when the rules find no actionable risk: the rules alone never give a pass, which needs the full review), `score`, `tmark` (valid, invalid or missing) and `report` (the full JSON).
 The same check runs locally with `python scripts/ci_audit.py path/to/repo`.
 
 ## Limits

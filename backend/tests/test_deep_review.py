@@ -194,3 +194,45 @@ def test_a_missing_model_sdk_leaves_the_rules_running(monkeypatch):
     monkeypatch.setitem(sys.modules, "anthropic", None)  # import fails as on a deployment without it
     keyed = Settings(_env_file=None, enable_deep_review=True, enable_finding_verification=True, anthropic_ai_key="k")
     assert deep_review.reviewer_from_settings(keyed) is None and verifier_from_settings(keyed) is None
+
+
+def test_an_extra_pass_cut_short_by_the_time_limit_keeps_the_review_complete(monkeypatch):
+    class SlowAfterFirst(ScriptedClient):
+        async def create(self, **kwargs):
+            if len(self.requests) >= 2:  # the configured pass is done; the extra pass hangs
+                await asyncio.sleep(10)
+            return await super().create(**kwargs)
+
+    monkeypatch.setattr(deep_review, "MIN_REVIEW_SECONDS", 0.01)
+    files = {f"src/m{i}.py": f"x{i} = {i}\n" for i in range(10)}  # most of the source stays unread
+    read = call("read_source", path="src/m0.py", start_line=1, end_line=1)
+    client = SlowAfterFirst([reply(OPERATING, read), reply(SimpleNamespace(type="text", text="done"), stop="end_turn")])
+    reviewer = DeepReviewer(client, model="m", timeout_seconds=0.5)
+    result = asyncio.run(reviewer.review(AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files=files), []))
+    assert result.passes[0]["status"] == "completed"
+    assert result.status == "completed" and "extra challenge pass" in result.note
+
+
+def test_an_extra_pass_that_hits_its_turn_limit_keeps_the_review_complete():
+    files = {f"src/m{i}.py": f"x{i} = {i}\n" for i in range(10)}
+    read = call("read_source", path="src/m0.py", start_line=1, end_line=1)
+    endless = [reply(call("read_source", path=f"src/m{i % 10}.py", start_line=1, end_line=1)) for i in range(40)]
+    client = ScriptedClient([reply(OPERATING, read), reply(SimpleNamespace(type="text", text="done"), stop="end_turn"),
+                             *endless])
+    reviewer = DeepReviewer(client, model="m")
+    reviewer.max_turns = 3
+    result = asyncio.run(reviewer.review(AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files=files), []))
+    assert result.passes[0]["status"] == "completed" and result.passes[-1]["status"] == "turn_limit"
+    assert result.status == "completed" and "stopped early" in result.note
+
+
+def test_the_review_reads_the_files_holding_authority_first():
+    from backend.app.services.deep_review import _priority
+    files = {"src/a_util.py": "x = 1\n", "src/z_payments.py": "y = 2\n", "src/tests.rs": "", "docs/guide.py": "",
+             "src/b_core.py": "z = 3\n"}
+    artifact = AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files=files)
+    artifact.code_profile = {"capabilities": {"stellar_signing": ["src/b_core.py:1 `sign()`"]},
+                             "flows": [{"location": "src/b_core.py:1 `x`"}]}
+    order = _priority(artifact)
+    assert order[:2] == ["src/b_core.py", "src/z_payments.py"]  # observed authority, then a risk name
+    assert set(order[-2:]) == {"src/tests.rs", "docs/guide.py"}  # tests and docs last

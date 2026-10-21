@@ -109,7 +109,7 @@ Severity, judged on the code as shipped, not on what it might become:
 - critical: an outside party can take funds or keys through a reachable path in the shipped code.
 - high: a privileged or paid action is reachable without an enforced control, or the agent's core function does not work as shipped (a buyer could not use it for its stated purpose, or it loses money or access).
 - medium: exploitable only under realistic extra conditions, or limited impact.
-- low: latent (the path is not wired up, the function has no caller, settlement is mocked), demo/mock code, test-only code, hardening, or documentation.
+- low: latent (the path is not wired up, the function has no caller, settlement is mocked), demo/mock code, test-only code, hardening, or documentation. Files in unbuilt_contract_sources are not compiled into the agent (samples, fixtures, inputs it audits or deploys): a defect in them is at most low, and a deliberately vulnerable sample is not a finding.
 Before recording, check that the path is reached: who calls this code, is the dangerous call actually wired, does a control elsewhere (a helper, a caller, the platform) already stop it. If you rely on how an SDK or service behaves, say so in the scenario; prefer stellar_reference over memory.
 
 Stellar checklist (call stellar_reference for details):
@@ -152,6 +152,35 @@ TOOLS = [
 ]
 
 
+_RISK_NAME = re.compile(r"polic|approv|sign|pay|wallet|key|secret|limit|budget|auth|x402|mpp|settle|escrow|transfer|"
+                        r"vault|spend|guard|permission|tool|mcp|server|route|handler|webhook|contract|lib\.rs", re.I)
+_TEST_PATH = re.compile(r"(^|/)(tests?|spec|__tests__|e2e|fixtures?|examples?|docs?)/|\.(test|spec)\.|(^|/)tests?\.\w+$|"
+                        r"_test\.\w+$|(^|/)test_[^/]*$", re.I)
+
+
+def _priority(artifact) -> list[str]:
+    """Reviewable files, those holding the agent's authority first: where the analysis saw
+    signing, payment, approval or input entry points, then risk-named files, tests last.
+    In a repository larger than a review can read, this decides what gets read."""
+    profile = artifact.code_profile or {}
+    hits: dict[str, int] = {}
+    for group in ("capabilities", "controls"):
+        for locs in (profile.get(group) or {}).values():
+            for loc in locs:
+                path = loc.split(":", 1)[0]
+                hits[path] = hits.get(path, 0) + 2
+    for flow in profile.get("flows") or []:
+        path = str(flow.get("location", "")).split(":", 1)[0]
+        hits[path] = hits.get(path, 0) + 3
+    for entry in profile.get("entrypoints") or {}:
+        path = entry.split(":", 1)[0]
+        hits[path] = hits.get(path, 0) + 3
+
+    def score(path: str) -> tuple:
+        return (bool(_TEST_PATH.search(path)), -(hits.get(path, 0) + (2 if _RISK_NAME.search(path) else 0)), path)
+    return sorted(_reviewable(artifact), key=score)
+
+
 def _reviewable(artifact) -> set[str]:
     """Source files whose reading counts towards coverage (manifests are not code)."""
     from ..swarm.provenance import _is_manifest
@@ -192,6 +221,13 @@ class DeepReviewResult:
                 "can_remove_findings": False}
 
 
+def _unbuilt_contracts(files: dict[str, str]) -> list[str]:
+    """Rust files outside every Cargo crate: no build includes them."""
+    crates = {path.rsplit("/", 1)[0] if "/" in path else "" for path in files if path.endswith("Cargo.toml")}
+    return sorted(path for path in files if path.endswith(".rs")
+                  and not any(c == "" or path.startswith(c + "/") for c in crates))[:100]
+
+
 def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict | None) -> tuple[str, dict]:
     """The grounded context. Returns the JSON text and flow-id -> flow map."""
     profile = artifact.code_profile or {}
@@ -222,6 +258,10 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
         # large repository. Their absence from "files" is not absence from the repository.
         "lockfiles_in_repository": sorted(artifact.lockfiles),
         "source_files_not_reviewed": list(artifact.raw_metadata.get("source_not_selected") or [])[:200],
+        # Where the agent's authority lives, by what the analysis observed: read these first.
+        "read_first": _priority(artifact)[:40],
+        # Contract sources that no crate builds: samples, fixtures or inputs the agent processes.
+        "unbuilt_contract_sources": _unbuilt_contracts(artifact.code_files),
         "observed_capabilities": profile.get("capabilities", {}),
         "entrypoints": profile.get("entrypoints", {}),
         "enforced_controls": profile.get("controls", {}),
@@ -344,38 +384,51 @@ class DeepReviewer:
             if timeout < MIN_REVIEW_SECONDS:
                 result.status, result.note = "skipped", "No time was left for the review within the request limit."
                 return result
+        # The passes see the same time limit, so an extra pass starts only when it can finish.
+        self._review_ends = time.monotonic() + timeout
         try:
             await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=timeout)
             if result.status == "not_run":
                 result.status = "completed" if result.operating_model else "incomplete"
         except asyncio.TimeoutError:
-            result.status, result.note = "timeout", "The review stopped at its time limit; accepted findings are kept."
+            configured = result.passes[:self.passes]
+            if len(configured) == self.passes and all(p["status"] == "completed" for p in configured):
+                # Only an extra pass was cut short: the configured review is complete.
+                result.status = "completed"
+                result.note = "An extra challenge pass stopped at the time limit; its accepted findings are kept."
+            else:
+                result.status, result.note = "timeout", "The review stopped at its time limit; accepted findings are kept."
         except Exception as exc:  # provider errors must not fail the deterministic audit
             result.status, result.note = "unavailable", f"{type(exc).__name__}: provider call failed."
         return result
 
-    def _time_for_pass(self) -> bool:
-        deadline = getattr(self, "deadline", None)
-        return deadline is None or deadline - time.monotonic() > 3 * MIN_REVIEW_SECONDS
+    def _time_for_pass(self, durations: list[float] | None = None) -> bool:
+        """Enough time remains for one more pass as long as the ones so far took."""
+        ends = [t for t in (getattr(self, "deadline", None), getattr(self, "_review_ends", None)) if t is not None]
+        if not ends:
+            return True
+        need = max(3 * MIN_REVIEW_SECONDS, sum(durations) / len(durations) if durations else 0.0)
+        return min(ends) - time.monotonic() > need
 
     async def _passes(self, artifact, findings, chain, result: DeepReviewResult) -> None:
         """Pass 1 investigates; later passes challenge it, starting from what it did not cover."""
-        number, progressed = 0, True
+        number, progressed, durations = 0, True, []
         while True:
             number += 1
             unread_share = len(_reviewable(artifact) - result.files_read) / max(1, len(_reviewable(artifact)))
             # The configured passes always run; up to two more follow while over a fifth of the
             # source is still unread and time allows, because misses cluster in unread files.
             extra = number > self.passes
-            if extra and (number > self.passes + 2 or unread_share <= 0.2 or not self._time_for_pass()
+            if extra and (number > self.passes + 2 or unread_share <= 0.2 or not self._time_for_pass(durations)
                           or not progressed):
                 break
             before, read_before = len(result.findings), len(result.files_read)
             if number == 1:
                 instruction = ("Begin with describe_operating_model, then assess every flow, then investigate "
-                               "and record findings, then finish.")
+                               "and record findings, then finish. Read the files in read_first before others: "
+                               "they hold the signing, payment, approval and input-handling code.")
             else:
-                unread = sorted(_reviewable(artifact) - result.files_read)
+                unread = [path for path in _priority(artifact) if path not in result.files_read]
                 prior = "\n".join(f"- {f.id}: {f.title} ({f.evidence[:120]})" for f in result.findings) or "- none"
                 instruction = (
                     f"Challenge pass {number}. A previous reviewer already recorded:\n{prior}\n"
@@ -383,7 +436,9 @@ class DeepReviewer:
                     "Prioritise files it never read: " + (", ".join(unread[:40]) or "none") + ". Look for "
                     "logic flaws, missing checks on alternative code paths, functional defects and Stellar "
                     "protocol misuse. Skip describe_operating_model. Record findings, then finish.")
+            started = time.monotonic()
             status = await self._loop(artifact, findings, chain, result, instruction)
+            durations.append(time.monotonic() - started)
             result.passes.append({"pass": number, "status": status, "new_findings": len(result.findings) - before})
             progressed = len(result.files_read) > read_before  # a pass that opened nothing new ends the extra ones
             if status in ("refused",):
@@ -391,7 +446,12 @@ class DeepReviewer:
             if number >= self.passes and status != "completed":
                 break
         statuses = [p["status"] for p in result.passes]
-        result.status = "completed" if all(s == "completed" for s in statuses) else statuses[-1]
+        configured, extra = statuses[:self.passes], statuses[self.passes:]
+        # An extra challenge pass that stops early (turn or time limit) adds what it found and
+        # takes nothing away: the review is complete when every configured pass completed.
+        result.status = next((s for s in configured if s != "completed"), "completed")
+        if result.status == "completed" and any(s != "completed" for s in extra):
+            result.note = "An extra challenge pass stopped early; its accepted findings are kept."
 
     async def _loop(self, artifact, findings, chain, result: DeepReviewResult, instruction: str) -> str:
         pack, flows = evidence_pack(artifact, findings, chain)
