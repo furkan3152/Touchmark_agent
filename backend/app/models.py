@@ -270,6 +270,9 @@ class Finding(BaseModel):
     auditor: str = ""
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     kind: FindingKind = FindingKind.RISK
+    #: The independent verifier's verdict, when it ran: confirmed, partial or refuted. Kept out
+    #: of the serialized finding (the report carries the verification run separately).
+    verified: str = Field(default="", exclude=True)
 
     @property
     def is_risk(self) -> bool:

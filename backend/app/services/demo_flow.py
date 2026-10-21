@@ -131,6 +131,7 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True)
     resolution = report.get("resolution", {})
     source = resolution.get("source", {})
     score = round(float(report["result"]["overall_score"]), 1)
+    reviewed = (report.get("deep_review") or {}).get("status") == "completed"
     chain_score = int(score)  # the registry stores whole points (u32); never rounded up
     out = {
         "reference": reference, "decision": result["decision"], "score": score,
@@ -148,7 +149,9 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True)
         "files": (report.get("repository") or {}).get("source_files_selected", 0),
         "ownership": (report.get("repository") or {}).get("ownership_claim") or {},
         "tmark": ((report.get("repository") or {}).get("declarations") or {}).get("tmark") or {"status": "missing"},
-        "issuance": {"enabled": issuance_enabled(), "eligible": result["decision"] == "pass"},
+        # A credential says Touchmark found the agent sound, so it needs the full review: the
+        # rules alone missed business-logic bypasses on agents a person judged unsafe.
+        "issuance": {"enabled": issuance_enabled(), "eligible": result["decision"] == "pass" and reviewed},
         "ai": _ai_summary(report, ai, settings),
     }
     repository = source.get("repository") or ""
@@ -162,6 +165,10 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True)
             "revision": source.get("revision", ""), "owner": owner, "expires_at": int(time.time()) + TICKET_TTL})
     elif out["issuance"]["eligible"] and not repository:
         out["issuance"]["reason"] = "Only audits of a bound source repository can be credentialed."
+    elif result["decision"] == "pass" and not reviewed:
+        out["issuance"]["reason"] = ("The rules found no actionable risk, but only a full review (model review of the "
+                                     "source and independent verification) can be credentialed. Run the audit again "
+                                     "when the model review is available.")
     elif not out["issuance"]["eligible"]:
         out["issuance"]["reason"] = "Only a passing audit can be credentialed; the contract enforces score >= 65."
     return out

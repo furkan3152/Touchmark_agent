@@ -17,7 +17,7 @@ inputs:
 
 outputs:
   decision:
-    description: pass, needs_fixes or needs_evidence.
+    description: needs_fixes or needs_evidence. The rules alone never report pass; a pass needs the full review.
     value: ${{ steps.audit.outputs.decision }}
   score:
     description: Overall score, 0 to 100.

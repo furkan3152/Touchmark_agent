@@ -160,6 +160,9 @@ def declarations(selection: dict) -> dict:
 
 
 _SEED = re.compile(rb"\bS[A-Z2-7]{55}\b")
+#: Committed keys are searched in tests, examples and docs too: a key is public once pushed,
+#: whichever folder holds it. Only generated and vendored folders are skipped.
+_COMMITTED_SKIP = SKIP_DIRS - {"test", "tests", "__tests__", "spec", "e2e", "examples", "example", "fixtures", "docs"}
 
 
 def committed_seeds(root: Path, selected: set[str], limit: int = 20) -> list[str]:
@@ -170,7 +173,7 @@ def committed_seeds(root: Path, selected: set[str], limit: int = 20) -> list[str
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
         if (not path.is_file() or path.is_symlink() or rel.as_posix() in selected
-                or any(p.lower() in SKIP_DIRS for p in rel.parts[:-1]) or path.stat().st_size > 400_000):
+                or any(p.lower() in _COMMITTED_SKIP for p in rel.parts[:-1]) or path.stat().st_size > 400_000):
             continue
         data = path.read_bytes()
         if b"\x00" in data[:4096]:
@@ -193,7 +196,7 @@ def committed_credentials(root: Path, selected: set[str], limit: int = 20) -> li
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
         if (not path.is_file() or path.is_symlink() or rel.as_posix() in selected
-                or any(p.lower() in SKIP_DIRS - {"test", "tests", "examples", "example", "fixtures", "docs"} for p in rel.parts[:-1])
+                or any(p.lower() in _COMMITTED_SKIP for p in rel.parts[:-1])
                 or path.stat().st_size > 400_000 or path.suffix.lower() in {".lock", ".svg", ".png", ".jpg", ".woff2", ".map"}):
             continue
         data = path.read_bytes()

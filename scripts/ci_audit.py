@@ -57,9 +57,16 @@ def _tmark_state(root: Path) -> tuple[str, list[str], tmark.Tmark | None]:
     return ("valid" if parsed else "invalid"), errors, parsed
 
 
+def _decision(result: dict) -> str:
+    """The rules alone cannot give a pass: on agents a person judged unsafe they missed
+    business-logic bypasses that only the model review found. A clean rules run is
+    reported as needs_evidence, never as a Touchmark pass."""
+    return "needs_evidence" if result["decision"] == "pass" else result["decision"]
+
+
 def _summary(result: dict, state: str, errors: list[str], shown: list[dict], prefix: str) -> str:
     report = result["report"]
-    decision, score = result["decision"], report["result"]["overall_score"]
+    decision, score = _decision(result), report["result"]["overall_score"]
     mark = {"pass": "✅ pass", "needs_fixes": "❌ needs fixes", "needs_evidence": "⚠️ needs evidence"}.get(decision, decision)
     risks = [f for f in report["findings"] if f.get("kind") == "risk"]
     gaps = [f for f in report["findings"] if f.get("kind") == "evidence_gap"]
@@ -70,6 +77,10 @@ def _summary(result: dict, state: str, errors: list[str], shown: list[dict], pre
     lines += [f"- `{e}`" for e in errors[:10]]
     lines += ["", f"{len(risks)} risk(s), {len(gaps)} evidence gap(s). Deterministic analysis only; "
               "the hosted audit adds model review and independent verification.", ""]
+    if result["decision"] == "pass":
+        lines += ["The rules found no actionable risk. That is not a Touchmark pass: a pass, and the credential, "
+                  "need the full review, because some payment and control bypasses are found only by reading "
+                  "the code's intent.", ""]
     if shown:
         lines += ["| Severity | Finding | Where |", "|---|---|---|"]
         for f in shown[:40]:
@@ -123,11 +134,11 @@ def main(argv: list[str] | None = None) -> int:
                 fh.write(summary)
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
-                fh.write(f"decision={result['decision']}\nscore={report['result']['overall_score']}\n"
+                fh.write(f"decision={_decision(result)}\nscore={report['result']['overall_score']}\n"
                          f"tmark={state}\nreport={out}\n")
     else:
         print(summary)
-        print(json.dumps({"decision": result["decision"], "score": report["result"]["overall_score"],
+        print(json.dumps({"decision": _decision(result), "score": report["result"]["overall_score"],
                           "tmark": state, "report": str(out)}))
     return 1 if args.fail_on == "needs_fixes" and result["decision"] == "needs_fixes" else 0
 

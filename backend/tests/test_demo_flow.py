@@ -6,6 +6,8 @@ import asyncio
 
 import pytest
 
+from stellar_sdk import Keypair
+
 from backend.app.config import Settings
 from backend.app.services import demo_flow
 from backend.app.services.agent_resolver import github_subpath, parse_github
@@ -17,8 +19,9 @@ def operator(monkeypatch):
     monkeypatch.setattr(demo_flow, "manifest", lambda: {"contracts": {"credential": {"id": "C" + "A" * 55}}})
 
 
-def fake_result(decision: str, score: float, path: str = "") -> dict:
+def fake_result(decision: str, score: float, path: str = "", reviewed: bool = True) -> dict:
     report = {"result": {"overall_score": score}, "repository": {"source_files_selected": 3},
+              **({"deep_review": {"status": "completed"}} if reviewed else {}),
               "findings": [{"id": "security-path-untrusted-to-financial-sink", "severity": "critical", "kind": "risk",
                             "title": "t", "evidence": "e"}] if decision == "needs_fixes" else [],
               "resolution": {"kind": "repository", "steps": [],
@@ -73,7 +76,7 @@ def test_github_folder_links():
 
 def test_the_result_says_which_ai_checks_ran(monkeypatch):
     # No model review in the report: say whether it was off, rate-limited or not applicable.
-    assert audit(monkeypatch, fake_result("pass", 99.0))["ai"] == {"review": "off"}
+    assert audit(monkeypatch, fake_result("pass", 99.0, reviewed=False))["ai"] == {"review": "off"}
     keyed = Settings(_env_file=None, enable_deep_review=True, anthropic_ai_key="k")
     assert demo_flow._ai_summary({"repository": {"source_files_selected": 1}}, False, keyed) == {"review": "rate_limited"}
     assert demo_flow._ai_summary({"repository": {"source_files_selected": 1}}, True, Settings(_env_file=None)) == {"review": "off"}
@@ -100,3 +103,10 @@ def test_model_reviews_are_limited_per_client(monkeypatch):
     monkeypatch.setattr(api, "_demo_ai_all", deque())
     assert [api._demo_ai_allowed("a") for _ in range(6)] == [True] * 5 + [False]
     assert api._demo_ai_allowed("b")
+
+
+def test_a_pass_from_the_rules_alone_is_not_credentialed(monkeypatch):
+    monkeypatch.setenv("DEMO_OPERATOR_SECRET", Keypair.random().secret)
+    out = audit(monkeypatch, fake_result("pass", 97.0, reviewed=False))
+    assert out["decision"] == "pass" and not out["issuance"]["eligible"] and "ticket" not in out["issuance"]
+    assert "full review" in out["issuance"]["reason"]
