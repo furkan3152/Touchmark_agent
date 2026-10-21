@@ -113,7 +113,7 @@ def test_an_approval_flag_only_an_unseen_caller_sets_is_not_confirmed(tmp_path):
                     '    .addOperation(Operation.accountMerge({ destination: "GDM7FY4WBPRLTY4WYE7FKFHQVUI5FYE3WDLNHTDVNKMJ2VNTTQEPBYZV" })).setTimeout(30).build();\n'
                     '  tx.sign(key);\n  return horizon.submitTransaction(tx);\n}\n')
     finding = audit(tmp_path / "a", {"src/soul.ts": lib})["security-path-forgeable-approval"]
-    assert finding["severity"] == "medium" and finding["evidence_grade"] == "inferred"
+    assert finding["severity"] == "low" and finding["evidence_grade"] == "inferred"
     tool = lib + ('server.tool("merge", { dest: z.string(), confirmed: z.boolean() },\n'
                   '  async (args) => applyEdit(args.dest, { confirmed: args.confirmed }));\n')
     assert audit(tmp_path / "b", {"src/soul.ts": tool})["security-path-forgeable-approval"]["severity"] == "critical"
@@ -179,7 +179,8 @@ def test_a_confirmed_medium_bypass_rules_out_a_pass_but_a_functional_defect_does
     assert actionable_risks([bypass]) == [bypass]
     assert review_decision([bypass], complete, 85.0) == "needs_fixes"
     for other in (finding("security-ai-control-bypass-1", "partial"), finding("security-ai-control-bypass-1"),
-                  finding("reliability-ai-functional-defect-2", "confirmed")):
+                  finding("reliability-ai-functional-defect-2", "confirmed"),
+                  finding("security-ai-secret-exposure-14", "confirmed")):  # conditional exposure, not a bypass
         assert review_decision([other], complete, 85.0) == "pass"
     assert "verified" not in bypass.model_dump()  # not part of the serialized finding or its hash
 
