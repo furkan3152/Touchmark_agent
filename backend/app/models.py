@@ -377,6 +377,8 @@ class AuditReport(BaseModel):
     decision: str = ""
     #: Deep model review record (services.deep_review); empty when not run.
     deep_review: dict[str, Any] = Field(default_factory=dict)
+    #: Independent verification of the risks (services.finding_verifier); empty when not run.
+    verification: dict[str, Any] = Field(default_factory=dict, exclude=True)
     dimension_scores: list[DimensionScore] = Field(default_factory=list)
     #: The score itemised: 100 minus each finding's cost, then the band (judge.score_breakdown).
     score_breakdown: dict[str, Any] = Field(default_factory=dict)

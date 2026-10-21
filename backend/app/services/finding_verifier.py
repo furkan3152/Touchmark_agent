@@ -7,9 +7,11 @@ unverifiable must quote a line that exists in the source: confirmation quotes th
 that makes the claim true, refutation quotes the enforcing control. A verdict whose quote
 does not match the source is recorded as unverifiable.
 
-Verification annotates findings; it never changes the score or the decision. Source
-comments could otherwise talk a model out of a real risk. What it adds is a per-report
-measure of how many findings a second, independent pass agrees with.
+Verification annotates every finding and runs before the decision. A pattern-rule finding
+it refutes, quoting a code line (not a comment) that contradicts the claim, is lowered one
+level and marked disputed; nothing is removed, and model-review findings are not lowered,
+so source comments cannot talk the audit out of a risk. On an unseen set of 23 agents every
+rule finding it refuted was also false by hand (docs/EVIDENCE.md).
 """
 from __future__ import annotations
 
@@ -45,6 +47,7 @@ Rules:
 - Judge this claim only. Do not substitute a different issue you notice in the same file.
 - When the claim cites several locations, use partial if only some are right, and refuted only if none are.
 - Use confirmed only if the stated severity is also right; if you would assign a lower one, use partial.
+- A transaction built locally is not safe by that fact alone: trace where its destination, amount, asset, contract address, auth entries and simulation result come from. If any of them comes from a server, payment challenge or other outside party, the outside party shapes what is signed.
 - If your verdict depends on how an SDK, Horizon, Soroban RPC or a SEP behaves, call stellar_reference first. Do not rely on memory; if neither the code nor the reference settles it, use partial or unverifiable and say why.
 - Be skeptical in both directions: do not confirm a claim you cannot trace, and do not refute one without quoting the line that disproves it. The quote must be copied verbatim from the line you cite."""
 

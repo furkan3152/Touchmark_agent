@@ -69,10 +69,11 @@ _PAYMENT_OPS = {
     "append_create_account_op", "append_create_claimable_balance_op", "append_clawback_op",
 }
 _ACCOUNT_OPS = {
-    "append_set_options_op", "append_account_merge_op", "append_change_trust_op",
-    "append_allow_trust_op", "append_set_trust_line_flags_op", "append_manage_data_op",
+    "append_set_options_op", "append_account_merge_op", "append_manage_data_op",
     "append_revoke_sponsorship_op", "append_begin_sponsoring_future_reserves_op",
 }
+#: Trustline changes decide which assets the account holds; they change no signer or threshold.
+_TRUSTLINE_OPS = {"append_change_trust_op", "append_allow_trust_op", "append_set_trust_line_flags_op"}
 _FOREIGN_TX = re.compile(r"(?:TransactionEnvelope\.from_xdr|from_xdr_object|parse_transaction_envelope_from_xdr|"
                          r"FeeBumpTransactionEnvelope\.from_xdr)$")
 _SUBMIT = re.compile(r"\.(?:submit_transaction|send_transaction)$")
@@ -89,6 +90,11 @@ _HANDLER_DECORATOR = re.compile(r"(?:^|\.)(?:tool|function_tool|mcp_tool)$|(?:^|
 _ROUTE_DECORATOR = re.compile(r"\.(?:get|post|put|patch|delete|route|websocket|api_route)$")
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s]+(?:/|$)")
 _NAME_SOURCES = {"user_input", "prompt", "payload", "command", "cmd", "code", "webhook", "query", "message"}
+#: Names of values a spending cap compares: money, not counters, ratings or lengths.
+AMOUNT_NAME = re.compile(r"amount|value|price|cost|units|spend|spent|total|budget|sum|fee|usdc|xlm|stroop|balance|"
+                         r"limit|qty|quantity|max|cap\b|pay|charge|\bsize", re.I)
+#: A bound that is the money received: `required <= paid` checks a price was met, not a spending cap.
+RECEIVED_NAME = re.compile(r"paid|received|incoming|actual|deposit", re.I)
 
 
 @dataclass(frozen=True)
@@ -230,7 +236,8 @@ def _upper_bounded(test: ast.AST, negated: bool = False) -> set[str]:
         value, bound = (left, right) if (greater and not negated) or (less and negated) else \
                        (right, left) if (less and not negated) or (greater and negated) else (None, None)
         if value is not None and not (isinstance(bound, ast.Constant) and isinstance(bound.value, (int, float))
-                                      and bound.value <= 0):
+                                      and bound.value <= 0) \
+                and not any(RECEIVED_NAME.search(n) for n in _compared_names(bound)):
             names |= _compared_names(value)
         left = right
     return names
@@ -811,6 +818,10 @@ class _Interp:
             fixed = (not shell and isinstance(first, (ast.List, ast.Tuple)) and first.elts
                      and isinstance(first.elts[0], ast.Constant) and isinstance(first.elts[0].value, str)
                      and not label.startswith(("os.system", "os.popen")))
+            # `subprocess.run(cmd)` with an argument list built elsewhere and no shell: input can
+            # only be arguments to the program the list names, so it cannot start another one.
+            fixed = fixed or (label.startswith("subprocess.") and not shell and isinstance(first, (ast.Name, ast.Call, ast.Attribute))
+                              and self._argv_list(first, state))
             # Running one fixed program is not arbitrary code execution.
             self._cap("process_spawn" if fixed else "code_execution", node)
             if every & UNTRUSTED and not fixed:
@@ -833,6 +844,9 @@ class _Interp:
         if short in _PAYMENT_OPS:
             self._cap("payment", node)
             return receiver | self._payment_markers(node, state)
+        if short in _TRUSTLINE_OPS:
+            self._cap("trustline", node)
+            return set(receiver)
         if short in _ACCOUNT_OPS:
             self._cap("account_control", node)
             out = set(receiver)
@@ -875,6 +889,21 @@ class _Interp:
             # A method on a secret-holding object may return public data (a receipt).
             out = (out - {"secret"}) | {"secret_possible"}
         return out
+
+    def _argv_list(self, node: ast.AST, state) -> bool:
+        """A command value that is a list: a list literal assigned to the name, or a call whose
+        project function returns one."""
+        if isinstance(node, ast.Call):
+            key = self.p._resolve_ref(self.module, node.func, self.local_types)
+            fn = self.p.functions[key].node if key else None
+            return bool(fn) and any(isinstance(r.value, (ast.List, ast.ListComp)) for r in ast.walk(fn)
+                                    if isinstance(r, ast.Return) and r.value is not None)
+        if isinstance(node, ast.Name) and self.fn is not None:
+            return any(isinstance(a, ast.Assign) and any(isinstance(t, ast.Name) and t.id == node.id for t in a.targets)
+                       and isinstance(a.value, (ast.List, ast.ListComp, ast.Call)) and (
+                           not isinstance(a.value, ast.Call) or self._argv_list(a.value, state))
+                       for a in ast.walk(self.fn.node))
+        return False
 
     @staticmethod
     def _url_head(url: ast.AST) -> ast.AST:
@@ -961,7 +990,9 @@ class _Interp:
                 break
         for name in _upper_bounded(test):
             state[name] = state.get(name, set()) | {"bounded"}
-            self._control("amount_cap", node)
+            if AMOUNT_NAME.search(name):
+                # A retry counter or a rating range is a bound, but not a spending cap.
+                self._control("amount_cap", node)
         for sub in ast.walk(test):
             if isinstance(sub, ast.Compare):
                 left = sub.left
@@ -1105,7 +1136,7 @@ def _js_profile(files: dict[str, str], profile: CodeProfile) -> None:
         "stellar_signing": r"\.sign\(\s*\w*[Kk]eypair|signTransaction\(|authorizeEntry\(",
         "tx_submission": r"submitTransaction\(|sendTransaction\(",
         "payment": r"Operation\.(?:payment|pathPayment\w*|createAccount)\(",
-        "account_control": r"Operation\.(?:setOptions|accountMerge|changeTrust|allowTrust)\(",
+        "account_control": r"Operation\.(?:setOptions|accountMerge)\(",
         "code_execution": r"child_process|\beval\(|new Function\(|execSync\(|spawn\(",
         "network_fetch": r"\bfetch\(|axios\.|https?\.request\(",
         "file_access": r"fs\.(?:readFile|writeFile|createReadStream|unlink)",
