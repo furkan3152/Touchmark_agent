@@ -113,7 +113,7 @@ def test_an_approval_flag_only_an_unseen_caller_sets_is_not_confirmed(tmp_path):
                     '    .addOperation(Operation.accountMerge({ destination: "GDM7FY4WBPRLTY4WYE7FKFHQVUI5FYE3WDLNHTDVNKMJ2VNTTQEPBYZV" })).setTimeout(30).build();\n'
                     '  tx.sign(key);\n  return horizon.submitTransaction(tx);\n}\n')
     finding = audit(tmp_path / "a", {"src/soul.ts": lib})["security-path-forgeable-approval"]
-    assert finding["severity"] == "medium" and finding["evidence_grade"] == "inferred"
+    assert finding["severity"] == "low" and finding["evidence_grade"] == "inferred"
     tool = lib + ('server.tool("merge", { dest: z.string(), confirmed: z.boolean() },\n'
                   '  async (args) => applyEdit(args.dest, { confirmed: args.confirmed }));\n')
     assert audit(tmp_path / "b", {"src/soul.ts": tool})["security-path-forgeable-approval"]["severity"] == "critical"
