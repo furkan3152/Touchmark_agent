@@ -224,3 +224,15 @@ def test_an_extra_pass_that_hits_its_turn_limit_keeps_the_review_complete():
     result = asyncio.run(reviewer.review(AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files=files), []))
     assert result.passes[0]["status"] == "completed" and result.passes[-1]["status"] == "turn_limit"
     assert result.status == "completed" and "stopped early" in result.note
+
+
+def test_the_review_reads_the_files_holding_authority_first():
+    from backend.app.services.deep_review import _priority
+    files = {"src/a_util.py": "x = 1\n", "src/z_payments.py": "y = 2\n", "src/tests.rs": "", "docs/guide.py": "",
+             "src/b_core.py": "z = 3\n"}
+    artifact = AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files=files)
+    artifact.code_profile = {"capabilities": {"stellar_signing": ["src/b_core.py:1 `sign()`"]},
+                             "flows": [{"location": "src/b_core.py:1 `x`"}]}
+    order = _priority(artifact)
+    assert order[:2] == ["src/b_core.py", "src/z_payments.py"]  # observed authority, then a risk name
+    assert set(order[-2:]) == {"src/tests.rs", "docs/guide.py"}  # tests and docs last

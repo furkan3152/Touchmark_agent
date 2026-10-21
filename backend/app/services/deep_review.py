@@ -152,6 +152,35 @@ TOOLS = [
 ]
 
 
+_RISK_NAME = re.compile(r"polic|approv|sign|pay|wallet|key|secret|limit|budget|auth|x402|mpp|settle|escrow|transfer|"
+                        r"vault|spend|guard|permission|tool|mcp|server|route|handler|webhook|contract|lib\.rs", re.I)
+_TEST_PATH = re.compile(r"(^|/)(tests?|spec|__tests__|e2e|fixtures?|examples?|docs?)/|\.(test|spec)\.|(^|/)tests?\.\w+$|"
+                        r"_test\.\w+$|(^|/)test_[^/]*$", re.I)
+
+
+def _priority(artifact) -> list[str]:
+    """Reviewable files, those holding the agent's authority first: where the analysis saw
+    signing, payment, approval or input entry points, then risk-named files, tests last.
+    In a repository larger than a review can read, this decides what gets read."""
+    profile = artifact.code_profile or {}
+    hits: dict[str, int] = {}
+    for group in ("capabilities", "controls"):
+        for locs in (profile.get(group) or {}).values():
+            for loc in locs:
+                path = loc.split(":", 1)[0]
+                hits[path] = hits.get(path, 0) + 2
+    for flow in profile.get("flows") or []:
+        path = str(flow.get("location", "")).split(":", 1)[0]
+        hits[path] = hits.get(path, 0) + 3
+    for entry in profile.get("entrypoints") or {}:
+        path = entry.split(":", 1)[0]
+        hits[path] = hits.get(path, 0) + 3
+
+    def score(path: str) -> tuple:
+        return (bool(_TEST_PATH.search(path)), -(hits.get(path, 0) + (2 if _RISK_NAME.search(path) else 0)), path)
+    return sorted(_reviewable(artifact), key=score)
+
+
 def _reviewable(artifact) -> set[str]:
     """Source files whose reading counts towards coverage (manifests are not code)."""
     from ..swarm.provenance import _is_manifest
@@ -229,6 +258,8 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
         # large repository. Their absence from "files" is not absence from the repository.
         "lockfiles_in_repository": sorted(artifact.lockfiles),
         "source_files_not_reviewed": list(artifact.raw_metadata.get("source_not_selected") or [])[:200],
+        # Where the agent's authority lives, by what the analysis observed: read these first.
+        "read_first": _priority(artifact)[:40],
         # Contract sources that no crate builds: samples, fixtures or inputs the agent processes.
         "unbuilt_contract_sources": _unbuilt_contracts(artifact.code_files),
         "observed_capabilities": profile.get("capabilities", {}),
@@ -394,9 +425,10 @@ class DeepReviewer:
             before, read_before = len(result.findings), len(result.files_read)
             if number == 1:
                 instruction = ("Begin with describe_operating_model, then assess every flow, then investigate "
-                               "and record findings, then finish.")
+                               "and record findings, then finish. Read the files in read_first before others: "
+                               "they hold the signing, payment, approval and input-handling code.")
             else:
-                unread = sorted(_reviewable(artifact) - result.files_read)
+                unread = [path for path in _priority(artifact) if path not in result.files_read]
                 prior = "\n".join(f"- {f.id}: {f.title} ({f.evidence[:120]})" for f in result.findings) or "- none"
                 instruction = (
                     f"Challenge pass {number}. A previous reviewer already recorded:\n{prior}\n"
