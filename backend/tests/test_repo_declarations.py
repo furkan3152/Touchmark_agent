@@ -1,4 +1,6 @@
-"""A repository's own declarations (agentveritas.json, veritas.json) feed the audit, but never rescue it."""
+"""The older declaration files (agentveritas.json, touchmark.json, veritas.json) still feed the audit, but never rescue it.
+
+The examples now carry a .tmark, which takes precedence; these tests remove it to exercise the old files."""
 
 from __future__ import annotations
 
@@ -21,9 +23,14 @@ DECLARATION = {
 }
 
 
+def _copy(example, root):
+    shutil.copytree(ROOT / "examples/demo" / example, root)
+    (root / ".tmark").unlink(missing_ok=True)
+
+
 def audit(tmp_path, example, declaration=None, blueprint=None):
     root = tmp_path / example
-    shutil.copytree(ROOT / "examples/demo" / example, root)
+    _copy(example, root)
     if declaration is not None:
         (root / "agentveritas.json").write_text(json.dumps(declaration))
     if blueprint is not None:
@@ -67,7 +74,7 @@ def test_blueprint_purpose_and_missing_components():
 
 def test_touchmark_json_is_read_and_preferred(tmp_path):
     root = tmp_path / "agent"
-    shutil.copytree(ROOT / "examples/demo/safe-treasury-agent", root)
+    _copy("safe-treasury-agent", root)
     (root / "agentveritas.json").write_text(json.dumps({"purpose": "Old name, should be ignored here."}))
     (root / "touchmark.json").write_text(json.dumps(DECLARATION))
     out = asyncio.run(audit_repository(root, name="a", purpose="", settings=Settings(_env_file=None), deep=False))

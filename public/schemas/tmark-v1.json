@@ -1,0 +1,371 @@
+{
+  "$defs": {
+    "Agent": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 80,
+          "minLength": 2,
+          "title": "Name",
+          "type": "string"
+        },
+        "purpose": {
+          "description": "What the agent does and for whom, in one or two sentences.",
+          "maxLength": 1000,
+          "minLength": 20,
+          "title": "Purpose",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "mcp_server",
+            "autonomous_agent",
+            "x402_client",
+            "x402_server",
+            "sdk",
+            "skill",
+            "contract",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "network": {
+          "enum": [
+            "testnet",
+            "mainnet",
+            "both"
+          ],
+          "title": "Network",
+          "type": "string"
+        },
+        "discloses_ai": {
+          "default": true,
+          "description": "Users are told they talk to an AI.",
+          "title": "Discloses Ai",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "purpose",
+        "kind",
+        "network"
+      ],
+      "title": "Agent",
+      "type": "object"
+    },
+    "Authority": {
+      "additionalProperties": false,
+      "properties": {
+        "holds_keys": {
+          "description": "The agent itself holds a Stellar secret key.",
+          "title": "Holds Keys",
+          "type": "boolean"
+        },
+        "key_source": {
+          "enum": [
+            "env",
+            "kms",
+            "external_signer",
+            "wallet_prompt",
+            "none"
+          ],
+          "title": "Key Source",
+          "type": "string"
+        },
+        "signs": {
+          "items": {
+            "enum": [
+              "payments",
+              "contract_calls",
+              "account_changes",
+              "trustlines",
+              "foreign_transactions",
+              "messages"
+            ],
+            "type": "string"
+          },
+          "maxItems": 6,
+          "title": "Signs",
+          "type": "array"
+        },
+        "agent_account": {
+          "default": "",
+          "description": "G... account or C... contract the agent acts from, if fixed.",
+          "title": "Agent Account",
+          "type": "string"
+        }
+      },
+      "required": [
+        "holds_keys",
+        "key_source"
+      ],
+      "title": "Authority",
+      "type": "object"
+    },
+    "Contact": {
+      "additionalProperties": false,
+      "properties": {
+        "security": {
+          "description": "Email or URL for security reports.",
+          "maxLength": 200,
+          "minLength": 5,
+          "title": "Security",
+          "type": "string"
+        }
+      },
+      "required": [
+        "security"
+      ],
+      "title": "Contact",
+      "type": "object"
+    },
+    "Entrypoint": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$",
+          "title": "Path",
+          "type": "string"
+        },
+        "symbol": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,79}$",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "symbol"
+      ],
+      "title": "Entrypoint",
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "per_payment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "per_day": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "recipients": {
+          "description": "allowlist: only saved payees; any: whatever the request names; none: never pays.",
+          "enum": [
+            "allowlist",
+            "any",
+            "none"
+          ],
+          "title": "Recipients",
+          "type": "string"
+        },
+        "human_approval": {
+          "enum": [
+            "always",
+            "above_limit",
+            "never"
+          ],
+          "title": "Human Approval",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recipients",
+        "human_approval"
+      ],
+      "title": "Limits",
+      "type": "object"
+    },
+    "Money": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "description": "Decimal string, at most 7 decimal places, e.g. \"25\" or \"0.5\".",
+          "title": "Amount",
+          "type": "string"
+        },
+        "asset": {
+          "description": "XLM, CODE:G...ISSUER, or a C... token contract.",
+          "title": "Asset",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "asset"
+      ],
+      "title": "Money",
+      "type": "object"
+    },
+    "Owner": {
+      "additionalProperties": false,
+      "properties": {
+        "stellar_account": {
+          "description": "The G... account that receives the Touchmark credential.",
+          "title": "Stellar Account",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stellar_account"
+      ],
+      "title": "Owner",
+      "type": "object"
+    },
+    "Tool": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 400,
+          "minLength": 8,
+          "title": "Description",
+          "type": "string"
+        },
+        "moves_funds": {
+          "title": "Moves Funds",
+          "type": "boolean"
+        },
+        "signs": {
+          "title": "Signs",
+          "type": "boolean"
+        },
+        "network": {
+          "title": "Network",
+          "type": "boolean"
+        },
+        "max_amount": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "moves_funds",
+        "signs",
+        "network"
+      ],
+      "title": "Tool",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "default": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+      "title": "$Schema",
+      "type": "string"
+    },
+    "tmark": {
+      "const": "1",
+      "title": "Tmark",
+      "type": "string"
+    },
+    "agent": {
+      "$ref": "#/$defs/Agent"
+    },
+    "owner": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Owner"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "authority": {
+      "$ref": "#/$defs/Authority"
+    },
+    "limits": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Limits"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/Tool"
+      },
+      "maxItems": 60,
+      "title": "Tools",
+      "type": "array"
+    },
+    "forbidden": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 30,
+      "title": "Forbidden",
+      "type": "array"
+    },
+    "entrypoints": {
+      "items": {
+        "$ref": "#/$defs/Entrypoint"
+      },
+      "maxItems": 10,
+      "title": "Entrypoints",
+      "type": "array"
+    },
+    "contact": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Contact"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "tmark",
+    "agent",
+    "authority"
+  ],
+  "title": ".tmark v1",
+  "type": "object",
+  "$id": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "description": "What a repository declares about its Stellar agent. Checked against the code by Touchmark."
+}

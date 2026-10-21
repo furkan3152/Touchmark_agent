@@ -147,6 +147,7 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True)
                    **{sev: sum(1 for f in risks if f["severity"] == sev) for sev in rank}},
         "files": (report.get("repository") or {}).get("source_files_selected", 0),
         "ownership": (report.get("repository") or {}).get("ownership_claim") or {},
+        "tmark": ((report.get("repository") or {}).get("declarations") or {}).get("tmark") or {"status": "missing"},
         "issuance": {"enabled": issuance_enabled(), "eligible": result["decision"] == "pass"},
         "ai": _ai_summary(report, ai, settings),
     }

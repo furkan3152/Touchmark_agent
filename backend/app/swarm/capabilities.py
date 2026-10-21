@@ -38,17 +38,24 @@ def has_source(artifact: AgentArtifact) -> bool:
     return any(name.lower().endswith(_IMPLEMENTATION) for name in artifact.code_files)
 
 
-def profile_for(artifact: AgentArtifact) -> CodeProfile:
+def declared_entrypoints(artifact: AgentArtifact) -> dict[str, set[str]]:
+    """Entry functions the repository names, in .tmark or a legacy veritas.json Blueprint."""
     entrypoints: dict[str, set[str]] = {}
+    for item in (artifact.raw_metadata.get("tmark") or {}).get("entrypoints", []):
+        entrypoints.setdefault(item["path"], set()).add(item["symbol"])
     if "veritas.json" in artifact.code_files:
         from ..services.blueprint import parse_blueprint
         try:
             blueprint = parse_blueprint(artifact.code_files["veritas.json"])
             component = next(c for c in blueprint.components if c.id == blueprint.entrypoint.component)
-            entrypoints[component.path] = {blueprint.entrypoint.symbol}
+            entrypoints.setdefault(component.path, set()).add(blueprint.entrypoint.symbol)
         except (ValueError, StopIteration):
-            pass
-    return analyse_code(artifact.code_files, entrypoints)
+            pass  # an invalid declaration is reported by discovery; source is never imported
+    return entrypoints
+
+
+def profile_for(artifact: AgentArtifact) -> CodeProfile:
+    return analyse_code(artifact.code_files, declared_entrypoints(artifact))
 
 
 def _where(profile: CodeProfile, *capabilities: str) -> str:
