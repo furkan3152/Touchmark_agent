@@ -414,7 +414,12 @@ class DeepReviewer:
             if number >= self.passes and status != "completed":
                 break
         statuses = [p["status"] for p in result.passes]
-        result.status = "completed" if all(s == "completed" for s in statuses) else statuses[-1]
+        configured, extra = statuses[:self.passes], statuses[self.passes:]
+        # An extra challenge pass that stops early (turn or time limit) adds what it found and
+        # takes nothing away: the review is complete when every configured pass completed.
+        result.status = next((s for s in configured if s != "completed"), "completed")
+        if result.status == "completed" and any(s != "completed" for s in extra):
+            result.note = "An extra challenge pass stopped early; its accepted findings are kept."
 
     async def _loop(self, artifact, findings, chain, result: DeepReviewResult, instruction: str) -> str:
         pack, flows = evidence_pack(artifact, findings, chain)

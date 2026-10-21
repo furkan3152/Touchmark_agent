@@ -211,3 +211,16 @@ def test_an_extra_pass_cut_short_by_the_time_limit_keeps_the_review_complete(mon
     result = asyncio.run(reviewer.review(AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files=files), []))
     assert result.passes[0]["status"] == "completed"
     assert result.status == "completed" and "extra challenge pass" in result.note
+
+
+def test_an_extra_pass_that_hits_its_turn_limit_keeps_the_review_complete():
+    files = {f"src/m{i}.py": f"x{i} = {i}\n" for i in range(10)}
+    read = call("read_source", path="src/m0.py", start_line=1, end_line=1)
+    endless = [reply(call("read_source", path=f"src/m{i % 10}.py", start_line=1, end_line=1)) for i in range(40)]
+    client = ScriptedClient([reply(OPERATING, read), reply(SimpleNamespace(type="text", text="done"), stop="end_turn"),
+                             *endless])
+    reviewer = DeepReviewer(client, model="m")
+    reviewer.max_turns = 3
+    result = asyncio.run(reviewer.review(AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files=files), []))
+    assert result.passes[0]["status"] == "completed" and result.passes[-1]["status"] == "turn_limit"
+    assert result.status == "completed" and "stopped early" in result.note
