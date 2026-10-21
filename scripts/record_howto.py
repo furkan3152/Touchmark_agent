@@ -19,7 +19,7 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-REPO = "https://github.com/furkan3152/agentveritas-stellar/tree/main/examples/demo"
+REPO = "https://github.com/furkan3152/Touchmark_agent/tree/main/examples/demo"
 UNSAFE, SAFE = f"{REPO}/unsafe-treasury-agent", f"{REPO}/safe-treasury-agent"
 
 OVERLAY = r"""

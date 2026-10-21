@@ -106,7 +106,7 @@ EVIDENCE_GAP_RULES = frozenset({
     "economic-no-wallet", "economic-no-chain-data",
     "intent-no-declared-intent", "intent-no-system-prompt", "intent-thin-system-prompt",
     "intent-no-planning-structure", "intent-no-uncertainty-guard", "intent-no-scope-boundary",
-    "intent-scenario-failures",
+    "intent-scenario-failures", "intent-tmark-invalid", "intent-tmark-legacy",
     "provenance-missing-lockfile", "provenance-no-release-pipeline", "provenance-license-missing",
     "provenance-sbom-missing",
     "reliability-no-endpoint", "reliability-no-error-handling", "reliability-no-cost-controls",

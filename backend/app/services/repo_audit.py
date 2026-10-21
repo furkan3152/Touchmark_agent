@@ -65,8 +65,10 @@ VERIFY_RESERVE_SECONDS = 50.0
 #: An owner claim: the repository names the Stellar account its credential belongs to.
 #: touchmark.json is the current name; agentveritas.json is still read for older repositories.
 OWNERSHIP_FILES = ("touchmark.json", ".well-known/touchmark.json", "agentveritas.json", ".well-known/agentveritas.json")
-#: The Veritas Blueprint project map; its purpose and components are read as declarations.
+#: The Veritas Blueprint project map; still read for older repositories. .tmark replaces it.
 BLUEPRINT_FILE = "veritas.json"
+#: The one declaration file: identity, owner, authority, limits and tools (services/tmark.py).
+TMARK_FILE = ".tmark"
 DECLARATION_BYTES = 64_000
 LICENSE_NAMES = {"license", "license.md", "license.txt", "licence", "licence.md", "copying"}
 
@@ -122,6 +124,18 @@ def declarations(selection: dict) -> dict:
 
     Returns the parsed fields plus a record of which files were read, for the report."""
     out: dict = {"files": [], "errors": []}
+    tmark_record = selection.get("tmark") or {}
+    if tmark_record:
+        # .tmark is the single source of truth: when it is present, older files are not read,
+        # and when it has any error nothing in it is used.
+        from . import tmark
+        parsed, errors = tmark.parse(tmark_record["text"])
+        out["files"].append(tmark_record["path"])
+        out["tmark"] = {"status": "valid" if parsed else "invalid", "errors": errors}
+        if parsed:
+            out["tmark"]["parsed"] = parsed
+            out["declaration"] = _Declaration.model_validate(tmark.to_declaration(parsed))
+        return out
     record = selection.get("ownership") or {}
     if record:
         try:
@@ -236,6 +250,7 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     candidates, instructions, manifests, skipped, oversized = [], {}, {}, 0, []
     ownership: dict = {}
     blueprint: dict = {}
+    tmark_record: dict = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
@@ -245,6 +260,9 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
             rank = OWNERSHIP_FILES.index(rel.as_posix())
             if not ownership or rank < OWNERSHIP_FILES.index(ownership["path"]):
                 ownership = {"path": rel.as_posix(), "text": path.read_text(errors="replace")}
+            continue
+        if rel.as_posix() == TMARK_FILE:
+            tmark_record = {"path": TMARK_FILE, "text": path.read_text(errors="replace")[:DECLARATION_BYTES + 1]}
             continue
         if rel.as_posix() == BLUEPRINT_FILE and path.stat().st_size <= DECLARATION_BYTES:
             blueprint = {"path": BLUEPRINT_FILE, "text": path.read_text(errors="replace")}
@@ -298,6 +316,7 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
     return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint,
+                   "tmark": tmark_record,
                    "committed_seeds": committed_seeds(root, set(files)),
                    "committed_credentials": committed_credentials(root, set(files))}
 
@@ -366,6 +385,8 @@ def _tools(decl: "_Declaration", files: dict[str, str]) -> list[ToolSpec]:
 def _declaration_record(declared: dict, root: Path) -> dict:
     """For the report: which declarations were read, and blueprint components that do not exist."""
     record: dict = {"files": declared["files"], "errors": declared["errors"]}
+    if "tmark" in declared:
+        record["tmark"] = {"status": declared["tmark"]["status"], "errors": declared["tmark"]["errors"]}
     decl = declared.get("declaration")
     if decl is not None:
         record["tools_declared"] = [t.name for t in decl.tools]
@@ -375,6 +396,19 @@ def _declaration_record(declared: dict, root: Path) -> dict:
         record["blueprint_missing_files"] = [c.path for c in blueprint.components
                                              if not (root / c.path).is_file()][:20]
     return record
+
+
+def _tmark_metadata(declared: dict, selection: dict) -> dict:
+    """What the auditors need to compare the declaration with the code."""
+    info = declared.get("tmark")
+    if info is None:
+        legacy = [p for p in ((selection.get("ownership") or {}).get("path"), (selection.get("blueprint") or {}).get("path")) if p]
+        return {"status": "legacy" if legacy else "missing", "files": legacy}
+    out = {"status": info["status"], "errors": info["errors"]}
+    if info.get("parsed") is not None:
+        out["declared"] = info["parsed"].model_dump(by_alias=False, exclude={"schema_url"})
+        out["entrypoints"] = out["declared"]["entrypoints"]
+    return out
 
 
 async def audit_repository(root: str | Path, *, name: str, purpose: str, settings: Settings,
@@ -418,7 +452,8 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         raw_metadata={"source_not_selected": (selection["manifest"]["source_files_not_selected"]
                                               + selection["manifest"]["files_too_large"]),
                       "committed_seeds": selection.get("committed_seeds", []),
-                      "committed_credentials": selection.get("committed_credentials", [])},
+                      "committed_credentials": selection.get("committed_credentials", []),
+                      "tmark": _tmark_metadata(declared, selection)},
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
         agent_contract_id=(contract_facts or {}).get("contract_id", ""),
         owner_verification_note="Not checked during repository review.",
@@ -427,7 +462,12 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     if reviewer is not None:
         reviewer.max_turns = max(reviewer.max_turns, 40)
         reviewer.timeout_seconds = max(reviewer.timeout_seconds, 900.0)
-    claim = ownership_claim(selection.get("ownership") or {})
+    tm = (declared.get("tmark") or {}).get("parsed")
+    if (declared.get("tmark") or {}).get("status"):
+        claim = ({"path": TMARK_FILE, "stellar_owner": tm.owner.stellar_account} if tm is not None and tm.owner
+                 else {"path": TMARK_FILE, "error": "the .tmark is invalid" if tm is None else "the .tmark names no owner"})
+    else:
+        claim = ownership_claim(selection.get("ownership") or {})
     payload_extra = {"repository": {"reference": source_reference, "revision": revision,
                                     **({"ownership_claim": claim} if claim else {}),
                                     "declarations": _declaration_record(declared, root),

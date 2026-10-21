@@ -277,6 +277,9 @@ class IntentAuditor(BaseAuditor):
                 )
             )
 
+        from .tmark_check import tmark_findings
+        findings += tmark_findings(artifact, self.name)
+
         notes = (
             f"{len(scenarios)} senaryo çalıştırıldı, {len(scenarios) - len(failed)} başarılı. "
             f"Beyan edilen yetenek: {len(artifact.declared_capabilities)}, "
