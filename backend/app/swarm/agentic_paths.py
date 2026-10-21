@@ -228,24 +228,27 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
         by_category.setdefault(flow.category, []).append(flow)
     for category, (fid, severity, title, detail, remediation, refs) in _PATH_RULES.items():
         flows = by_category.get(category, [])
-        if category == "secret_exfiltration" and not flows and by_category.get("secret_possible"):
-            possible = by_category["secret_possible"]
-            findings.append(Finding(
-                id=fid, dimension=Dimension.SECURITY, severity=Severity.LOW,
-                title="Review an unresolved return value from a secret-bearing object",
-                detail="A method on an object initialized with a secret returns a value that is logged or sent. The return may be a public receipt; no secret disclosure is established.",
-                evidence=_evidence(possible), evidence_grade=EvidenceGrade.INFERRED,
-                remediation=remediation, references=refs, auditor=auditor, confidence=0.35))
-            continue
+        # A value merely derived from an object that holds a secret (a receipt, a form's other
+        # fields) is not reported: on unseen agents every such report was a false alarm.
         if not flows:
             continue
         direct = [f for f in flows if f.direct or category.startswith("secret")]
         if category == "endpoint":
             # A skill's commands are run by the model, so their flags are the model's choice.
-            skill = bool(re.search(r"^\[(?:[^\]\n]*/)?(?:skill|agents)\.md\]$", artifact.system_prompt or "", re.I | re.M))
+            # Only a skill's own SKILL.md makes the model the one running its commands; AGENTS.md
+            # guides coding assistants that work on the repository.
+            skill = bool(re.search(r"^\[(?:[^\]\n]*/)?skill\.md\]$", artifact.system_prompt or "", re.I | re.M))
             direct = [f for f in flows if f.direct or (skill and "caller" in f.labels)]
             if not any(profile.has(cap) for cap in ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation")):
                 severity = Severity.MEDIUM  # nothing is signed against what that server returns
+        if category == "path_traversal" and not direct:
+            # A file path from a public function with no caller in the source: on unseen agents
+            # these were all dead code or operator-chosen paths (env, argv, own templates).
+            continue
+        if category in {"secret_via_model", "secret_to_model"} and all("fresh" in f.labels for f in flows):
+            # A key generated in this call and handed back (create_account): not yet funded or
+            # used by anyone, so exposing it is a handling flaw, not a theft path.
+            severity = severity.downgrade(2)
         chosen = direct or flows
         confirmed = bool(direct)
         findings.append(Finding(
@@ -254,7 +257,7 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             # outside reaches it; that case is confirmed above.
             # A library that exposes raw signing to its integrators is an API choice until
             # outside input is shown to reach it.
-            severity=severity if confirmed else severity.downgrade(2 if category in {"path_traversal", "signing_oracle"} else 1),
+            severity=severity if confirmed else severity.downgrade(2),
             title=title,
             detail=detail if confirmed else detail + " The value enters through a public function whose callers are not in the submitted source, so the input origin is unresolved.",
             evidence=_evidence(chosen),
@@ -382,14 +385,19 @@ _CUMULATIVE = re.compile(r"spent|total_?(?:spent|paid|sent|amount)|daily|per_?(?
                          r"quota|remaining|allowance|rate_?limit|window_?(?:start|total)|spend_?tracker|ledger", re.I)
 
 
+_DEVELOPER_GUIDES = {"agents.md", "claude.md", "contributing.md", ".cursorrules", "copilot-instructions.md"}
+
+
 def _prompt_payment_rules(artifact: AgentArtifact) -> list[str]:
     """Sentences in the agent's instructions that state a payment rule, with their file."""
     found: list[str] = []
     for block in re.split(r"\n(?=\[[^\]\n]+\]\n)", artifact.system_prompt or ""):
         head = re.match(r"\[([^\]\n]+)\]\n", block)
         where = head.group(1) if head else "instructions"
-        if where.lower().startswith("readme"):
-            continue  # a README describes the project to people; it does not instruct the model
+        if where.lower().startswith("readme") or where.lower().rsplit("/", 1)[-1] in _DEVELOPER_GUIDES:
+            # A README describes the project to people, and AGENTS.md / CLAUDE.md guide the coding
+            # assistants that work on the repository; neither instructs the agent at run time.
+            continue
         for sentence in re.split(r"(?<=[.!?])\s+|\n+", block[head.end():] if head else block):
             sentence = sentence.strip(" -*#>")
             if 12 <= len(sentence) <= 300 and _PAY_WORDS.search(sentence) and _RULE_WORDS.search(sentence):

@@ -83,7 +83,8 @@ _FILE_SINK = re.compile(r"^(?:fs|fs/promises|fs\.promises|fsp|node:fs|node:fs/pr
 _LOG_SINK = re.compile(r"^console\.\w+$|(?:^|\.)(?:log|logger|logging|winston|pino)\.(?:debug|info|warn|warning|error|fatal|trace|log)$")
 _PAYMENT_OPS = {"payment", "pathPaymentStrictSend", "pathPaymentStrictReceive", "createAccount",
                 "createClaimableBalance", "clawback"}
-_ACCOUNT_OPS = {"setOptions", "accountMerge", "changeTrust", "allowTrust", "setTrustLineFlags", "manageData",
+_TRUSTLINE_OPS = {"changeTrust", "allowTrust", "setTrustLineFlags"}
+_ACCOUNT_OPS = {"setOptions", "accountMerge", "manageData",
                 "revokeSponsorship", "revokeAccountSponsorship", "revokeTrustlineSponsorship",
                 "beginSponsoringFutureReserves"}
 _INVOKE_OPS = {"invokeContractFunction", "invokeHostFunction", "createCustomContract", "uploadContractWasm"}
@@ -112,6 +113,7 @@ _X402_PAYER = re.compile(r"(?:^|\.)(?:wrapFetchWithPayment\w*|withPaymentInterce
 _X402_LIMITS = {"maxValue", "maxAmount", "maxPaymentAmount", "maxAmountRequired", "policy", "policies",
                 "paymentRequirementsSelector", "selector", "budget", "maxPrice", "spendLimit"}
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s$]+(?:/|$)")
+from .codeflow import AMOUNT_NAME, RECEIVED_NAME  # noqa: E402
 _NAME_SOURCES = {"userinput", "prompt", "payload", "command", "cmd", "code", "webhook", "query", "message", "body",
                  "request", "req", "event", "ctx"}
 _TOOL_REGISTER = re.compile(r"(?:^|\.)(?:tool|registerTool|addTool|defineTool|createTool)$")
@@ -1461,6 +1463,10 @@ class _JsInterp:
             program = _unwrap(arg_nodes[0]) if arg_nodes else None
             fixed = (not shell and not is_new and short != "eval" and program is not None and program.type == "string"
                      and len(arg_nodes) > 1 and _unwrap(arg_nodes[1]) is not None and _unwrap(arg_nodes[1]).type == "array")
+            # spawn/execFile(program, args) with no shell: input that is only in the argument list
+            # cannot start another program; the program itself must not come from input.
+            fixed = fixed or (not shell and not is_new and short in {"spawn", "spawnSync", "execFile", "execFileSync"}
+                              and len(args) > 1 and not args[0] & UNTRUSTED)
             # Running one fixed program is not arbitrary code execution.
             self._cap("process_spawn" if fixed else "code_execution", node)
             if command & UNTRUSTED and not fixed:
@@ -1489,10 +1495,14 @@ class _JsInterp:
             if every & UNTRUSTED:
                 out.add("foreign_tx")
             return out
-        if label.startswith(("Operation.", "StellarSdk.Operation.", "Op.")) or (short in _PAYMENT_OPS | _ACCOUNT_OPS | _INVOKE_OPS and "Operation" in label):
+        if label.startswith(("Operation.", "StellarSdk.Operation.", "Op.")) or (short in _PAYMENT_OPS | _ACCOUNT_OPS | _TRUSTLINE_OPS | _INVOKE_OPS and "Operation" in label):
             if short in _PAYMENT_OPS:
                 self._cap("payment", node)
                 return self._payment_markers(arg_nodes, state, short.startswith("pathPayment"))
+            if short in _TRUSTLINE_OPS:
+                # Which assets the account holds, not who controls it.
+                self._cap("trustline", node)
+                return set()
             if short in _ACCOUNT_OPS:
                 self._cap("account_control", node)
                 return ({"acct_untrusted"} | (every & UNTRUSTED)) if every & UNTRUSTED else set()
@@ -1735,7 +1745,10 @@ class _JsInterp:
                 if names and not self._non_positive(bound):
                     for name in names:
                         state[name] = state.get(name, set()) | {"bounded"}
-                    self._control("amount_cap", node)
+                    if any(AMOUNT_NAME.search(n) for n in names) and not any(
+                            RECEIVED_NAME.search(n) for n in self._compared(bound)):
+                        # A retry counter, a rating range or a price check is a bound, but not a spending cap.
+                        self._control("amount_cap", node)
                 return
             if (op in {"!==", "!="} and not truth) or (op in {"===", "=="} and truth):
                 for side, other in ((left, right), (right, left)):
@@ -1800,9 +1813,11 @@ class _JsInterp:
                         state[name] = state.get(name, set()) - UNTRUSTED
                     self._control("path_containment", node)
                 elif short in {"gt", "isGreaterThan", "greaterThan", "gte", "isGreaterThanOrEqualTo"} and receiver is not None and not truth:
-                    for name in self._compared(receiver):
+                    compared = self._compared(receiver)
+                    for name in compared:
                         state[name] = state.get(name, set()) | {"bounded"}
-                    self._control("amount_cap", node)
+                    if any(AMOUNT_NAME.search(n) for n in compared):
+                        self._control("amount_cap", node)
             elif sub.type == "member_expression" and _txt(sub.child_by_field_name("property")) == "operations":
                 for name in self._names_in(sub):
                     state[name] = state.get(name, set()) - {"foreign_tx"}

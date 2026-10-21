@@ -132,14 +132,30 @@ def code_enforced_spend_limit(artifact: AgentArtifact) -> bool:
         return False
     profile = artifact.code_profile
     controls = profile.get("controls", {})
-    # The cap or gate must sit in code that can pay; a comparison elsewhere limits nothing.
+    # The cap or gate must sit in the package that pays, in code rather than a UI component:
+    # a policy module next to the payer counts, a comparison in a React form limits nothing.
     paying = {loc.split(":", 1)[0] for cap in FINANCIAL_CAPABILITIES + ("payment",)
               for loc in profile.get("capabilities", {}).get(cap, [])}
-    gated = any(loc.split(":", 1)[0] in paying
-                for loc in controls.get("amount_cap", []) + controls.get("approval", []))
+    packages = {_package(path) for path in paying}
+    gated = any(path in paying or (_package(path) in packages and not path.endswith(_UI_FILES))
+                for path in (loc.split(":", 1)[0] for loc in controls.get("amount_cap", []) + controls.get("approval", [])))
     unsafe = {"financial", "account_control", "foreign_signing"}
+    # Only a path from input the agent cannot vouch for (model, request, chain data) defeats the
+    # cap; a public function whose callers are not in the source is an unresolved origin.
     return gated and not profile.get("unbounded_amounts") and not any(
-        f["category"] in unsafe for f in profile.get("flows", []))
+        f["category"] in unsafe and set(f["labels"]) & {"model", "external", "chain"} for f in profile.get("flows", []))
+
+
+_UI_FILES = (".tsx", ".jsx", ".vue", ".svelte")
+_MONOREPO_ROOTS = {"packages", "apps", "crates", "libs", "services", "modules"}
+
+
+def _package(path: str) -> str:
+    """The package a file belongs to: its top folder, or two levels in a monorepo."""
+    parts = path.split("/")
+    if len(parts) > 2 and parts[0] in _MONOREPO_ROOTS:
+        return "/".join(parts[:2])
+    return parts[0] if len(parts) > 1 else ""
 
 
 def human_approval_enforced(artifact: AgentArtifact, prompt_lower: str) -> bool:

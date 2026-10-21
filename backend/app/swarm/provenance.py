@@ -114,9 +114,15 @@ class ProvenanceAuditor(BaseAuditor):
                     r"(?m)^\s*-?\s*uses:\s*(?!\./)[\w.-]+/[\w./-]+@(?![0-9a-f]{40}\b)\S+.*$|"
                     r"^\s*(?:image|container):\s*\S+:latest\b.*$", text)]
         if floating:
+            # With dependencies locked, actions pinned by tag alone are a supply-chain hygiene
+            # point (a retagged action), not unpinned runtime code.
+            only_ci_tags = all(re.match(r"-?\s*uses:", line.strip()) for line in floating)
+            # A drifting dependency matters most where it runs with keys or the power to pay.
+            caps = artifact.code_profile.get("capabilities", {})
+            holds_authority = any(c in caps for c in ("key_custody", "stellar_signing", "tx_submission", "payment"))
             findings.append(self.finding(
                 "floating-dependencies",
-                Severity.MEDIUM,
+                Severity.LOW if only_ci_tags or not holds_authority else Severity.MEDIUM,
                 "Değişken bağımlılık/build girdileri bulundu",
                 "`latest`, wildcard veya alt sınır-only sürümler yeniden üretilebilirliği zayıflatıyor.",
                 evidence="\n".join(floating[:5]),

@@ -97,7 +97,25 @@ _ATTEMPT_LOOP = re.compile(r"\b(?:for|while)\s*\([^)\n]*\b(?:attempt|retr|tries|
 _ASSET_CODE_CMP = re.compile(
     r"""\b(?:asset_code|assetCode|asset(?:\.|\[["'])code(?:["']\])?)\s*(?:===?|!==?)\s*["'](?!native\b|XLM\b)[A-Za-z0-9]{3,12}["']|"""
     r"""["'](?!native\b|XLM\b)[A-Za-z0-9]{3,12}["']\s*(?:===?|!==?)\s*\b(?:asset_code|assetCode|asset(?:\.|\[["'])code(?:["']\])?)""")
+_SECRET_VAR = r"\w*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD)\w*"
+_DEFAULT_SECRET = re.compile(
+    r"\$\{(?P<a>" + _SECRET_VAR + r"):-(?P<av>[^}\s]+)\}"
+    r"|process\.env\.(?P<b>" + _SECRET_VAR + r")\s*(?:\|\||\?\?)\s*[\"'`](?P<bv>[^\"'`]+)[\"'`]"
+    r"|os\.(?:getenv|environ\.get)\(\s*[\"'](?P<c>" + _SECRET_VAR + r")[\"']\s*,\s*[\"'](?P<cv>[^\"']+)[\"']")
 _RECEIPT_CONTEXT = re.compile(r"payment|paid|deposit|incoming|receiv|operations|x402|verify|settle", re.I)
+
+
+def _block(text: str, start: int, limit: int = 6000) -> str:
+    """The brace-delimited block that begins at the first `{` after start."""
+    open_at = text.find("{", start, start + 400)
+    if open_at < 0:
+        return ""
+    depth = 0
+    for i in range(open_at, min(len(text), open_at + limit)):
+        depth += {"{": 1, "}": -1}.get(text[i], 0)
+        if depth == 0:
+            return text[open_at:i + 1]
+    return text[open_at:open_at + limit]
 
 
 def _line(text: str, pos: int) -> int:
@@ -268,7 +286,8 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
         else:
             for pattern in (_JS_RETRY_WRAPPER, _ATTEMPT_LOOP):
                 for m in pattern.finditer(text):
-                    window = text[m.start():m.start() + 2500]
+                    # Only the retried block itself: rebuilding and submitting must both repeat.
+                    window = _block(text, m.end())
                     if _REBUILD.search(window) and _SUBMIT.search(window):
                         double.append(f"{name}:{_line(text, m.start())}")
                         break
@@ -321,4 +340,26 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             "come out as small or negative numbers.",
             soroban, "Add overflow-checks = true under [profile.release] in the workspace Cargo.toml, or use checked arithmetic.",
             ["Soroban contract build profile", "CWE-190"], auditor, grade=EvidenceGrade.INFERRED, confidence=0.75))
+    # A secret that falls back to a fixed value: unset in production, the shipped default is the key.
+    defaults = []
+    for name, text in files.items():
+        if _TESTLIKE.search(name) and not re.search(r"(^|/)docker-compose[^/]*\.ya?ml$", name):
+            continue
+        for m in _DEFAULT_SECRET.finditer(text):
+            var = m.group("a") or m.group("b") or m.group("c")
+            value = m.group("av") or m.group("bv") or m.group("cv")
+            # A public key, an asset contract or a YOUR_... template placeholder is not a usable secret.
+            if (re.search(r"PUBLIC|ADDRESS|CONTRACT|_ID$", var, re.I) or re.fullmatch(r"[GC][A-Z2-7]{55}", value)
+                    or re.match(r"(?i)your[_-]|<|x{4,}", value) or _commented(text, m.start())):
+                continue
+            defaults.append(f"{name}:{_line(text, m.start())} {var}")
+    if defaults:
+        findings.append(_finding(
+            "security-default-secret", Severity.MEDIUM,
+            "A secret falls back to a fixed value when it is not configured",
+            "When the variable is missing, the code or deployment file uses the value written in the repository. "
+            "Anyone who reads the repository then holds the admin key, token or password of every deployment "
+            "that forgot to set it.",
+            defaults, "Fail at startup when the secret is unset instead of falling back to a default.",
+            ["CWE-1188 Insecure Default Initialization of Resource", "CWE-798"], auditor, confidence=0.85))
     return findings

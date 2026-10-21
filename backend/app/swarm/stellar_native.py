@@ -121,6 +121,13 @@ class StellarNativeAuditor(BaseAuditor):
         findings: list[Finding] = []
         surface = artifact.text_surface()
         rust_files = {name: content for name, content in artifact.code_files.items() if name.endswith('.rs')}
+        # A .rs file outside every crate is not built or deployed: a sample or fixture (an
+        # auditor's test inputs, a stray draft). Only crate sources are judged as contracts.
+        crates = {name.rsplit('/', 1)[0] if '/' in name else '' for name, text in artifact.code_files.items()
+                  if name.endswith('Cargo.toml') and re.search(r'soroban-sdk|\[workspace\]', text)}
+        if crates:
+            rust_files = {name: content for name, content in rust_files.items()
+                          if any(c == '' or name.startswith(c + '/') for c in crates)}
         rust = '\n'.join(_rust_code(content) for content in rust_files.values())
         functions = [{**fn, 'file': name} for name, content in rust_files.items() for fn in _rust_functions(content)]
         lower = surface.lower()
@@ -194,7 +201,8 @@ class StellarNativeAuditor(BaseAuditor):
         if ttl_gaps:
             finding = self.finding(
                 "persistent-ttl",
-                Severity.HIGH if ttl_hard else Severity.MEDIUM,
+                # Archived entries can be restored: a liveness and cost risk, not a loss of funds.
+                Severity.MEDIUM if ttl_hard else Severity.LOW,
                 "Persistent state lifetime paths require review",
                 "These public functions reference persistent storage without a recognized persistent-entry extend_ttl call in the same body. A helper or external maintenance policy may handle lifetime; its effectiveness was not verified.",
                 evidence=locations(ttl_hard + [fn for fn in ttl_gaps if fn not in ttl_hard]),
@@ -224,11 +232,16 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
 
-        if "getevents" in lower and not re.search(r"cursor|pagingtoken|sqlite|dedup|unique", lower):
+        # Only an ingestion loop loses events: polling getEvents and acting on what it returns.
+        # A tool that answers one query with getEvents keeps no state to lose.
+        code_l = "\n".join(artifact.code_files.values()).lower()
+        polls = re.search(r"getevents[\s\S]{0,1500}?(?:setinterval|while\s*\(|while\s+true|asyncio\.sleep|cron|schedule|subscribe)|"
+                          r"(?:setinterval|while\s*\(|while\s+true|cron|schedule)[\s\S]{0,1500}?getevents", code_l)
+        if "getevents" in lower and polls and not re.search(r"cursor|pagingtoken|sqlite|dedup|unique", lower):
             findings.append(
                 self.finding(
                     "event-cursor-missing",
-                    Severity.HIGH,
+                    Severity.MEDIUM,
                     "Soroban event ingestion cursor/dedup kanıtı yok",
                     "RPC event geçmişi kalıcı indeks değildir; restart veya retention boşluğu kayıt kaybettirebilir.",
                     remediation="Cursor'u dayanıklı DB'de tutun, event ID'yi unique yapın ve boşluk alarmı ekleyin.",
@@ -261,11 +274,14 @@ class StellarNativeAuditor(BaseAuditor):
                     )
                 )
 
-        if "sep-24" in lower and "payout" in lower and "sep-31" not in lower:
+        # Only a real SEP-24 client counts: the interactive endpoints or the anchor's SEP-24 server.
+        sep24_code = re.search(r"transactions/(?:deposit|withdraw)/interactive|TRANSFER_SERVER_SEP0024|sep24",
+                               "\n".join(artifact.code_files.values()), re.I)
+        if sep24_code and "payout" in lower and "sep-31" not in lower and "sep31" not in lower:
             findings.append(
                 self.finding(
                     "sep24-payout-confusion",
-                    Severity.HIGH,
+                    Severity.MEDIUM,
                     "SEP-24 kullanıcı çekimi, üçüncü taraf payout gibi kullanılıyor olabilir",
                     "Recipient payout için SEP-31 sınırı görünmüyor.",
                     remediation="Kullanıcının kendi withdrawal akışını SEP-24, alıcı payout'unu SEP-31 ile ayırın.",
@@ -279,8 +295,10 @@ class StellarNativeAuditor(BaseAuditor):
         for name, content in artifact.code_files.items():
             if not name.lower().endswith((".py", ".js", ".mjs", ".cjs", ".ts", ".tsx")):
                 continue
+            # A raw /transactions/{id} URL counts only on a Horizon base: anchors (SEP-6/24) expose
+            # the same path for their own transfer records.
             looks_up = re.search(r"\.transactions\(\)\s*\.\s*transaction\(|forTransaction\(|for_transaction\(|"
-                                 r"/transactions/\$\{|/transactions/\{|get_transaction\(|getTransaction\(", content)
+                                 r"horizon[^\n]{0,80}/transactions/(?:\$\{|\{)|get_transaction\(|getTransaction\(", content, re.I)
             pays = re.search(r"\bamount\b", content) and re.search(r"destination|payTo|pay_to|\.to\b|recipient", content)
             verifies = re.search(r"verif|validat", name + content[:4000], re.I)
             checks = re.search(r"\.successful\b|\[[\"']successful[\"']\]|[\"']SUCCESS[\"']|transaction_successful|"
@@ -426,13 +444,8 @@ class StellarNativeAuditor(BaseAuditor):
                     "Payments without a memo are not credited to any customer and are usually unrecoverable.",
                     evidence=f"{dest['location']}: {dest['address']} memo_required=true",
                     remediation="Attach the destination's required memo, and refuse to pay memo-required accounts without one."))
-            elif dest.get("status") == "not_found":
-                # A payment to a missing account fails; it does not lose funds.
-                out.append(self.finding(f"onchain-destination-missing-{len(out)}", Severity.LOW,
-                    "A hard-coded payment destination does not exist on this network",
-                    "Payments to it fail; create_account would be needed, which sends a different amount semantics.",
-                    evidence=f"{dest['location']}: {dest['address']} not found on {facts.get('network')}",
-                    remediation="Verify destinations on the target network before deployment."))
+            # A literal missing on the audited network is usually an asset issuer, a documentation
+            # example or a mainnet address checked on testnet; a payment to it fails without loss.
         contract = facts.get("contract") or {}
         if contract.get("status") == "found" and contract.get("executable") == "wasm":
             if contract.get("upgradeable"):

@@ -114,6 +114,17 @@ def test_a_clamp_that_passes_the_amount_on_is_still_a_control(tmp_path):
     assert analyse_code({"src/cap.ts": clamp}).controls.get("amount_cap")
 
 
+def test_a_price_check_on_money_received_is_not_a_spending_limit():
+    from backend.app.swarm.codeflow import analyse_code
+    ts = ('export function verify(paidStroops: bigint, requiredStroops: bigint) {\n'
+          '  if (paidStroops < requiredStroops) { throw new Error("underpaid"); }\n}\n')
+    py = 'def verify(paid_amount, required_amount):\n    if paid_amount < required_amount:\n        raise ValueError("underpaid")\n'
+    assert not analyse_code({"src/verify.ts": ts}).controls.get("amount_cap")
+    assert not analyse_code({"src/verify.py": py}).controls.get("amount_cap")
+    capped = 'def pay(amount):\n    if amount > MAX_AMOUNT:\n        raise ValueError("too much")\n'
+    assert analyse_code({"src/pay.py": capped}).controls.get("amount_cap")
+
+
 def test_input_choosing_the_rpc_server_is_reported(tmp_path):
     source = ('import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";\n'
               'import { Keypair, rpc, TransactionBuilder, Networks } from "@stellar/stellar-sdk";\nimport { z } from "zod";\n'
