@@ -1,0 +1,53 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1",
+  "agent": {
+    "name": "Treasury agent",
+    "purpose": "Pays two listed suppliers in XLM on request and reads invoices from one fixed host.",
+    "kind": "mcp_server",
+    "network": "testnet",
+    "discloses_ai": true
+  },
+  "owner": {
+    "stellar_account": "GDM7FY4WBPRLTY4WYE7FKFHQVUI5FYE3WDLNHTDVNKMJ2VNTTQEPBYZV"
+  },
+  "authority": {
+    "holds_keys": true,
+    "key_source": "env",
+    "signs": [
+      "payments"
+    ]
+  },
+  "limits": {
+    "per_payment": {
+      "amount": "500",
+      "asset": "XLM"
+    },
+    "recipients": "allowlist",
+    "human_approval": "never"
+  },
+  "tools": [
+    {
+      "name": "send_payment",
+      "description": "Pay a listed supplier in XLM, at most 500 per payment",
+      "moves_funds": true,
+      "signs": true,
+      "network": true,
+      "max_amount": {
+        "amount": "500",
+        "asset": "XLM"
+      }
+    },
+    {
+      "name": "fetch_invoice",
+      "description": "Read an invoice by id from the fixed invoice host",
+      "moves_funds": false,
+      "signs": false,
+      "network": true
+    }
+  ],
+  "forbidden": [
+    "pay anyone who is not in the supplier table",
+    "pay more than 500 XLM in one payment"
+  ]
+}

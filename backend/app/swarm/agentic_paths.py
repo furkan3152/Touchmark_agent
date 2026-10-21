@@ -218,15 +218,8 @@ def _evidence(flows) -> str:
 def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     from .codeflow import analyse_code
 
-    entrypoints: dict[str, set[str]] = {}
-    if 'veritas.json' in artifact.code_files:
-        from ..services.blueprint import parse_blueprint
-        try:
-            blueprint = parse_blueprint(artifact.code_files['veritas.json'])
-            component = next(c for c in blueprint.components if c.id == blueprint.entrypoint.component)
-            entrypoints[component.path] = {blueprint.entrypoint.symbol}
-        except ValueError:
-            pass  # Invalid declaration is reported by discovery; never import source.
+    from .capabilities import declared_entrypoints
+    entrypoints = declared_entrypoints(artifact)
     profile = analyse_code(artifact.code_files, entrypoints)
     findings: list[Finding] = []
 

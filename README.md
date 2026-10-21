@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://touchmark-stellar.vercel.app"><img src="https://img.shields.io/badge/Live_demo-touchmark--stellar.vercel.app-1d2b4f?style=for-the-badge" alt="Live demo"></a>
   <img src="https://img.shields.io/badge/Stellar-Testnet-e2432a?style=for-the-badge&logo=stellar&logoColor=white" alt="Stellar testnet">
-  <a href="https://github.com/furkan3152/agentveritas-stellar/actions/workflows/verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/agentveritas-stellar/verify.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
+  <a href="https://github.com/furkan3152/Touchmark_agent/actions/workflows/verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/Touchmark_agent/verify.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
   <img src="https://img.shields.io/badge/External_audit-not_yet-b97c0b?style=for-the-badge" alt="External audit: not yet">
   <img src="https://img.shields.io/badge/License-Apache_2.0-1f7a5a?style=for-the-badge" alt="License">
 </p>
@@ -33,8 +33,8 @@
 1. **Paste** a GitHub repository or folder, an AgentRegistry agent id, a `C…` contract or a `G…` account.
 2. **Read the verdict.** The exact commit is pinned, the code is traced from model input to keys, payments and the network, and a report is committed with its SHA-256 hash. "Why this score?" shows every point deducted.
 3. **Issue the credential.** If the audit passes, a validator writes the report hash and score to the registry on Stellar testnet, a Soroban contract issues a credential bound to them, and the page reads it back from the ledger.
-   - **To your account:** add `touchmark.json` with `{"stellar_owner": "G…"}` to your repository. You then sign the registration in Freighter, and the credential is issued to your account.
-   - **Declare your agent** in the same file (`purpose`, `tools` with `spend_limit_usdc`, `forbidden_goals`). The audit checks the code against what you declare; a limit the code does not enforce is reported, not credited.
+   - **Declare your agent in a `.tmark` file** at the repository root: its purpose, network, the authority it holds, its limits and its tools. There is one strict structure ([docs/TMARK.md](docs/TMARK.md), [schema](https://touchmark-stellar.vercel.app/schemas/tmark-v1.json)), and `python scripts/tmark.py init` pre-fills it from the code. The audit checks the code against every claim; a limit the code does not enforce is reported, not credited.
+   - **To your account:** put your `G…` account in `owner.stellar_account`. You then sign the registration in Freighter, and the credential is issued to your account.
 4. **Fix and re-audit.** Paste the fixed commit; the page shows which risks were closed and how the score changed.
 
 | An unsafe agent: not yet | The same agent, fixed: touchmarked on Stellar |

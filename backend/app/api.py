@@ -863,6 +863,25 @@ async def demo_audit(req: "DemoAuditRequestModel", request: Request) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+class TmarkCheckRequest(BaseModel):
+    text: str = Field(min_length=2, max_length=64_000)
+
+
+@app.post("/api/v1/tmark/check")
+async def tmark_check(req: TmarkCheckRequest) -> dict:
+    """Validate a .tmark file: every error, by field. Nothing is stored."""
+    from .services import tmark
+    parsed, errors = tmark.parse(req.text)
+    return {"valid": parsed is not None, "errors": errors,
+            **({"agent": parsed.agent.name, "network": parsed.agent.network} if parsed else {})}
+
+
+@app.get("/api/v1/tmark/template")
+async def tmark_template() -> dict:
+    from .services import tmark
+    return tmark.template({"payment", "stellar_signing"})
+
+
 class DemoCompareRequest(BaseModel):
     before: str = Field(min_length=3, max_length=300)
     after: str = Field(min_length=3, max_length=300)
@@ -1283,3 +1302,6 @@ if FRONTEND_DIR.exists():
     MEDIA_DIR = FRONTEND_DIR.parent / "public" / "media"
     if MEDIA_DIR.is_dir():
         app.mount("/media", StaticFiles(directory=str(MEDIA_DIR)), name="media")
+    SCHEMA_DIR = FRONTEND_DIR.parent / "public" / "schemas"
+    if SCHEMA_DIR.is_dir():
+        app.mount("/schemas", StaticFiles(directory=str(SCHEMA_DIR)), name="schemas")

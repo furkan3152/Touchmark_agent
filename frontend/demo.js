@@ -54,7 +54,13 @@
       f.remediation ? el("p", { class: "fix", text: "Fix: " + f.remediation }) : null);
   }
 
-  function aiLine(ai) {
+  function tmarkLine(t) {
+  if (t.status === "valid") return ".tmark declared, checked against the code";
+  if (t.status === "invalid") return `.tmark invalid (${(t.errors || []).length} ${(t.errors || []).length === 1 ? "error" : "errors"}), not used`;
+  return "no .tmark declaration";
+}
+
+function aiLine(ai) {
     if (ai.review === "no_source") return "AI review: not applicable; no source code is linked to this reference.";
     if (ai.review === "off") return "AI review: not enabled on this deployment; rules only.";
     if (ai.review === "rate_limited") return "AI review: hourly allowance used; this audit used the rules only.";
@@ -97,7 +103,7 @@
       source.textContent = "No source bound: " + (data.steps || []).map((s) => `${s.check}: ${s.result}`).join(" · ");
     }
     const c = data.counts || {};
-    $("counts").textContent = `${data.files || 0} ${data.files === 1 ? "file" : "files"} analysed · ${c.risks || 0} risks (${c.critical || 0} critical, ${c.high || 0} high) · ${c.gaps || 0} evidence gaps`;
+    $("counts").textContent = `${data.files || 0} ${data.files === 1 ? "file" : "files"} analysed · ${c.risks || 0} risks (${c.critical || 0} critical, ${c.high || 0} high) · ${c.gaps || 0} evidence gaps · ${tmarkLine(data.tmark || {})}`;
 
     $("ai").textContent = aiLine(data.ai || {});
     const risks = $("risks"); risks.textContent = "";
@@ -131,7 +137,7 @@
       ? ` The repository names ${issuance.owner.slice(0, 6)}…${issuance.owner.slice(-4)} as owner: sign the registration with that account in Freighter and the credential is issued to it.`
       : (data.ownership && data.ownership.error)
         ? ` The ownership file was found but ${data.ownership.error}; the credential would go to the demo operator.`
-        : " No owner is named, so it is issued to the demo operator (ownership not verified). Add touchmark.json with {\"stellar_owner\": \"G…\"} to your repository to receive it yourself.";
+        : " No owner is named, so it is issued to the demo operator (ownership not verified). Add a .tmark file with owner.stellar_account to your repository to receive it yourself (see /schemas/tmark-v1.json).";
     $("cred-note").textContent = issuance.ticket
       ? "This report passed. The validator writes its hash and score to the Touchmark registry, and the credential contract issues a non-transferable token bound to it: the touchmark." + ownerNote
       : issuance.reason || (issuance.enabled ? "" : "Credential issuance is not configured on this deployment.");
