@@ -102,6 +102,12 @@ _DEFAULT_SECRET = re.compile(
     r"\$\{(?P<a>" + _SECRET_VAR + r"):-(?P<av>[^}\s]+)\}"
     r"|process\.env\.(?P<b>" + _SECRET_VAR + r")\s*(?:\|\||\?\?)\s*[\"'`](?P<bv>[^\"'`]+)[\"'`]"
     r"|os\.(?:getenv|environ\.get)\(\s*[\"'](?P<c>" + _SECRET_VAR + r")[\"']\s*,\s*[\"'](?P<cv>[^\"']+)[\"']")
+_HTML_SINK = re.compile(r"\.(?:innerHTML|outerHTML)\s*\+?=\s*(?P<rhs>[^;\n]+)|\.insertAdjacentHTML\([^,]+,\s*(?P<arg>[^)\n]+)"
+                        r"|dangerouslySetInnerHTML=\{\{\s*__html:\s*(?P<react>[^}\n]+)")
+_DYNAMIC = re.compile(r"\$\{|[\"'`]\s*\+\s*[A-Za-z_$]|\+\s*[A-Za-z_$]")
+_FUNCTION_HEAD = re.compile(r"(?:function\s+(?P<a>[\w$]+)\s*\((?P<ap>[^)]*)\)|(?:const|let|var)\s+(?P<b>[\w$]+)\s*=\s*"
+                            r"(?:async\s*)?\((?P<bp>[^)]*)\)\s*=>)")
+_ESCAPED = re.compile(r"escape|sanitiz|DOMPurify|purify|encode|marked\.parse|textContent", re.I)
 _RECEIPT_CONTEXT = re.compile(r"payment|paid|deposit|incoming|receiv|operations|x402|verify|settle", re.I)
 
 
@@ -133,6 +139,22 @@ def _finding(fid: str, severity: Severity, title: str, detail: str, evidence: li
     return Finding(id=fid, dimension=Dimension.SECURITY, severity=severity, title=title, detail=detail,
                    evidence="; ".join(evidence[:6]), evidence_grade=grade, remediation=remediation,
                    references=refs, auditor=auditor, confidence=confidence)
+
+
+def _wrapped_sink(text: str, pos: int, value: str) -> bool:
+    """`function add(html) { el.innerHTML = html }` called as add(`...${input}`): the sink
+    takes its parameter, and a caller in the same file builds it from a dynamic value."""
+    if not re.fullmatch(r"[A-Za-z_$][\w$]*", value):
+        return False
+    heads = [h for h in _FUNCTION_HEAD.finditer(text, max(0, pos - 3000), pos)]
+    if not heads:
+        return False
+    head = heads[-1]
+    fn, params = head.group("a") or head.group("b"), head.group("ap") or head.group("bp") or ""
+    if value not in re.findall(r"[A-Za-z_$][\w$]*", params):
+        return False
+    return any(_DYNAMIC.search(call.group(1)) and not _ESCAPED.search(call.group(1))
+               for call in re.finditer(r"\b" + re.escape(fn) + r"\(([^\n]*)", text))
 
 
 def _tool_descriptions(name: str, text: str) -> list[tuple[int, str]]:
@@ -340,6 +362,27 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             "come out as small or negative numbers.",
             soroban, "Add overflow-checks = true under [profile.release] in the workspace Cargo.toml, or use checked arithmetic.",
             ["Soroban contract build profile", "CWE-190"], auditor, grade=EvidenceGrade.INFERRED, confidence=0.75))
+    # Text written into the page as HTML: model output, a fetched reply or user input becomes
+    # markup, so a crafted reply runs script in the page (and in a wallet page, reaches keys).
+    sinks = []
+    for name, text in files.items():
+        if not name.lower().endswith((".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".vue", ".svelte")) or _TESTLIKE.search(name):
+            continue
+        for m in _HTML_SINK.finditer(text):
+            value = (m.group("rhs") or m.group("arg") or m.group("react") or "").strip()
+            if _ESCAPED.search(value) or _commented(text, m.start()):
+                continue
+            if _DYNAMIC.search(value) or _wrapped_sink(text, m.start(), value):
+                sinks.append(f"{name}:{_line(text, m.start())}")
+    if sinks:
+        findings.append(_finding(
+            "security-html-injection", Severity.LOW,
+            "Dynamic text is written into the page as HTML",
+            "A value built at run time is assigned to innerHTML (or an equivalent) without escaping. If it carries "
+            "model output, a fetched reply or user input, markup in it runs as script in the page.",
+            sinks, "Use textContent, or escape or sanitize (DOMPurify) the value before inserting it as HTML.",
+            ["CWE-79", "OWASP LLM05 Improper Output Handling"], auditor, grade=EvidenceGrade.INFERRED, confidence=0.7))
+
     # A secret that falls back to a fixed value: unset in production, the shipped default is the key.
     defaults = []
     for name, text in files.items():

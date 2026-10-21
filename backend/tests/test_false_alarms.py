@@ -142,3 +142,27 @@ def test_only_soroban_crate_sources_are_judged_as_contracts(tmp_path):
     crate = audit(tmp_path / "c", {"vault/Cargo.toml": '[package]\nname = "vault"\n[dependencies]\nsoroban-sdk = "22"\n',
                                    "vault/src/lib.rs": CONTRACT})
     assert crate["stellar_native-soroban-auth-missing"]["severity"] == "high"
+
+
+def test_text_written_as_html_is_reported_and_escaped_or_constant_html_is_not(tmp_path):
+    chat = ('const box = document.getElementById("chat");\n'
+            'function addMessage(role, html) {\n  const div = document.createElement("div");\n  div.innerHTML = html;\n'
+            '  box.appendChild(div);\n}\n'
+            'document.getElementById("send").onclick = () => addMessage("user", `<b>You:</b> ${input.value}`);\n')
+    found = audit(tmp_path / "a", {"web/app.js": chat})
+    assert found["security-html-injection"]["evidence"] == "web/app.js:4"
+    safe = ('const THEME = "document.documentElement.dataset.theme = localStorage.theme";\n'
+            'export const Theme = () => <script dangerouslySetInnerHTML={{ __html: THEME }} />;\n'
+            'function show(el, text) { el.innerHTML = DOMPurify.sanitize(`<p>${text}</p>`); }\n'
+            'function render(el, html) { el.innerHTML = html; }\nrender(document.body, "<p>static</p>");\n')
+    assert "security-html-injection" not in audit(tmp_path / "b", {"web/theme.tsx": safe})
+
+
+def test_a_valid_seed_committed_in_example_tests_is_reported(tmp_path):
+    from stellar_sdk import Keypair
+    seed = Keypair.random().secret
+    found = audit(tmp_path, {"server.py": PY_MCP, "examples/rust-x402/tests/integration.rs":
+                             f'#[test]\nfn pays() {{ let s = "{seed}"; }}\n'})
+    finding = found["stellar_native-stellar-secret-seed"]
+    assert finding["severity"] == "medium" and "examples/rust-x402/tests/integration.rs:2" in finding["evidence"]
+    assert seed not in finding["evidence"]
