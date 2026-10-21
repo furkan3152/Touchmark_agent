@@ -71,10 +71,74 @@ def test_a_refuted_rule_finding_is_lowered_once_and_kept():
 def test_a_secret_with_a_shipped_default_is_reported(tmp_path):
     compose = "services:\n  router:\n    environment:\n      ADMIN_API_KEY: ${ADMIN_API_KEY:-change-me}\n"
     ts = ('export const token = process.env.API_TOKEN || "dev-token";\nexport const pub = process.env.PUBLIC_KEY || "G";\n'
-          'export const usdc = process.env.USDC_TOKEN || "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";\n'
+          'export const usdc = process.env.ORACLE_USDC_TOKEN || "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWUIE3USSTHZX5ACUSDC";\n'
           'export const tmpl = process.env.DEPLOYER_SECRET || "YOUR_DEPLOYER_SECRET";\n')
     py = 'import os\nSECRET = os.getenv("JWT_SECRET", "insecure")\nREQUIRED = os.environ["AGENT_SECRET"]\n'
     found = audit(tmp_path, {"docker-compose.yml": compose, "src/config.ts": ts, "app/settings.py": py})
     evidence = found["security-default-secret"]["evidence"]
     assert "ADMIN_API_KEY" in evidence and "API_TOKEN" in evidence and "JWT_SECRET" in evidence
     assert "PUBLIC_KEY" not in evidence and "AGENT_SECRET" not in evidence and "DEPLOYER_SECRET" not in evidence and "USDC_TOKEN" not in evidence
+
+
+KIT = '''import { z } from "zod";
+import { Horizon, TransactionBuilder, Operation, Asset } from "@stellar/stellar-sdk";
+export const payAction = {
+  name: "pay",
+  description: "Pay an address",
+  schema: z.object({ to: z.string(), amount: z.string() }),
+  handler: async (agent: any, input: { to: string; amount: string }) => {
+    const horizon = new Horizon.Server(agent.config.horizonUrl);
+    const account = await horizon.loadAccount(agent.wallet.publicKey);
+    const tx = new TransactionBuilder(account, { fee: "100", networkPassphrase: agent.config.networkPassphrase })
+      .addOperation(Operation.payment({ destination: input.to, asset: Asset.native(), amount: input.amount }))
+      .setTimeout(30).build();
+    tx.sign(agent.wallet.keypair);
+    return horizon.submitTransaction(tx);
+  },
+};
+'''
+
+
+def test_an_agent_kit_handler_takes_model_input_after_the_agent(tmp_path):
+    found = audit(tmp_path, {"src/pay.ts": KIT})
+    assert "security-path-untrusted-ledger-endpoint" not in found  # the kit's own config, not the model's
+    assert found["security-path-untrusted-to-financial-sink"]["severity"] == "critical"  # input.to still is
+
+
+def test_an_approval_flag_only_an_unseen_caller_sets_is_not_confirmed(tmp_path):
+    lib = TS_MCP + ('export async function applyEdit(dest: string, opts: { confirmed: boolean }) {\n'
+                    '  if (!opts.confirmed) { throw new Error("confirm first"); }\n'
+                    '  const account = await horizon.loadAccount(key.publicKey());\n'
+                    '  const tx = new TransactionBuilder(account, { fee: "100", networkPassphrase: Networks.TESTNET })\n'
+                    '    .addOperation(Operation.accountMerge({ destination: "GDM7FY4WBPRLTY4WYE7FKFHQVUI5FYE3WDLNHTDVNKMJ2VNTTQEPBYZV" })).setTimeout(30).build();\n'
+                    '  tx.sign(key);\n  return horizon.submitTransaction(tx);\n}\n')
+    finding = audit(tmp_path / "a", {"src/soul.ts": lib})["security-path-forgeable-approval"]
+    assert finding["severity"] == "medium" and finding["evidence_grade"] == "inferred"
+    tool = lib + ('server.tool("merge", { dest: z.string(), confirmed: z.boolean() },\n'
+                  '  async (args) => applyEdit(args.dest, { confirmed: args.confirmed }));\n')
+    assert audit(tmp_path / "b", {"src/soul.ts": tool})["security-path-forgeable-approval"]["severity"] == "critical"
+
+
+CONTRACT = '''#![no_std]
+use soroban_sdk::{contract, contractimpl, Address, Env};
+#[contract]
+pub struct Vault;
+#[contractimpl]
+impl Vault {
+    pub fn withdraw(env: Env, to: Address, amount: i128) {
+        env.storage().instance().set(&to, &amount);
+    }
+}
+'''
+
+
+def test_only_soroban_crate_sources_are_judged_as_contracts(tmp_path):
+    wallet = "pub fn set_submit_timeout(&mut self, secs: u64) { self.timeout = secs; }\n"
+    loose = audit(tmp_path / "a", {"contracts/vault.rs": CONTRACT, "README.md": "Sample contracts for testing."})
+    assert "stellar_native-soroban-auth-missing" not in loose
+    workspace = audit(tmp_path / "b", {"Cargo.toml": '[workspace]\nmembers = ["wallet"]\n', "wallet/src/lib.rs": wallet,
+                                       "wallet/Cargo.toml": '[package]\nname = "wallet"\n'})
+    assert "stellar_native-soroban-auth-missing" not in workspace
+    crate = audit(tmp_path / "c", {"vault/Cargo.toml": '[package]\nname = "vault"\n[dependencies]\nsoroban-sdk = "22"\n',
+                                   "vault/src/lib.rs": CONTRACT})
+    assert crate["stellar_native-soroban-auth-missing"]["severity"] == "high"

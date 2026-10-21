@@ -349,7 +349,7 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             var = m.group("a") or m.group("b") or m.group("c")
             value = m.group("av") or m.group("bv") or m.group("cv")
             # A public key, an asset contract or a YOUR_... template placeholder is not a usable secret.
-            if (re.search(r"PUBLIC|ADDRESS|CONTRACT|_ID$", var, re.I) or re.fullmatch(r"[GC][A-Z2-7]{55}", value)
+            if (re.search(r"PUBLIC|ADDRESS|CONTRACT|ASSET|USDC|EURC|XLM|_ID$", var, re.I) or re.fullmatch(r"[GC][A-Z2-7]{55}", value)
                     or re.match(r"(?i)your[_-]|<|x{4,}", value) or _commented(text, m.start())):
                 continue
             defaults.append(f"{name}:{_line(text, m.start())} {var}")

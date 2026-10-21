@@ -119,6 +119,9 @@ _NAME_SOURCES = {"userinput", "prompt", "payload", "command", "cmd", "code", "we
 _TOOL_REGISTER = re.compile(r"(?:^|\.)(?:tool|registerTool|addTool|defineTool|createTool)$")
 _HTTP_ROUTE = re.compile(r"(?:^|\.)(?:get|post|put|patch|delete|all|options|head)$")
 _BOT_HANDLER = re.compile(r"(?:^|\.)(?:on|command|hears|action|callbackQuery|onText|message)$")
+#: A first handler parameter with one of these names is the framework's object, not model input.
+_CONTEXT_PARAMS = {"agent", "kit", "agentKit", "runtime", "ctx", "context", "client", "wallet", "server", "deps",
+                   "env", "config", "app", "sdk", "stellar"}
 _HANDLER_KEYS = {"execute", "handler", "func", "run", "call", "invoke"}
 _SCHEMA_KEYS = {"inputSchema", "parameters", "schema", "argsSchema", "input_schema"}
 _NEXT_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
@@ -697,8 +700,14 @@ class JsProject:
             if schema_names:
                 self.tool_schemas.setdefault(key, set()).update(schema_names)
         # A tool handler's model input is its first parameter; later ones are the framework's
-        # context (MCP `extra`, AI-SDK options) or operator configuration (agent kits).
-        for params in (self.entry[key][:1] if label == "model" else self.entry[key]):
+        # context (MCP `extra`, AI-SDK options) or operator configuration (agent kits). Some kits
+        # pass the agent first, `(agent, input)`: then the input is the second parameter.
+        entry = self.entry[key]
+        if label == "model":
+            names = [name for name, _ in self.functions[key].params]
+            first = 1 if len(names) > 1 and names[0] in _CONTEXT_PARAMS and names[1] not in _CONTEXT_PARAMS else 0
+            entry = entry[first:first + 1]
+        for params in entry:
             params.add(label)
         if constraints:
             self.constraints.setdefault(key, {}).update(constraints)
@@ -1681,6 +1690,8 @@ class _JsInterp:
         if amount is not None and amount_tags & UNTRUSTED and "bounded" not in amount_tags:
             if self.record:
                 self.p.profile.unbounded_amounts.append(self.p.location(self.module, arg_nodes[0]))
+                if amount_tags & DIRECT:
+                    self.p.profile.unbounded_direct_amounts.append(self.p.location(self.module, arg_nodes[0]))
             out |= {"pay_amount_untrusted"} | (amount_tags & UNTRUSTED)
         return out
 
@@ -1792,7 +1803,9 @@ class _JsInterp:
                 if found & UNTRUSTED and not found & {"human_decision", "stored_record"}:
                     # `if (!args.approved) throw`: the requester supplies the approval itself.
                     if self.record:
-                        self.p.profile.forgeable_approvals.append(self.p.location(self.module, node))
+                        where = (self.p.profile.forgeable_approvals if found & DIRECT
+                                 else self.p.profile.unresolved_approvals)
+                        where.append(self.p.location(self.module, node))
                     return
                 self.approved = True
                 self._control("approval", node)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from ..models import FindingKind, AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioResult, Severity
+from ..models import FindingKind, AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioResult, Severity, SourceKind
 from .base import BaseAuditor
 
 
@@ -125,9 +125,13 @@ class StellarNativeAuditor(BaseAuditor):
         # auditor's test inputs, a stray draft). Only crate sources are judged as contracts.
         crates = {name.rsplit('/', 1)[0] if '/' in name else '' for name, text in artifact.code_files.items()
                   if name.endswith('Cargo.toml') and re.search(r'soroban-sdk|\[workspace\]', text)}
-        if crates:
+        if crates or artifact.source_kind == SourceKind.REPO:
+            # A repository with no Soroban crate builds no contract from its loose .rs files, and
+            # in a Rust workspace only the files that use soroban_sdk are contract code: a CLI or
+            # wallet crate next to the contracts is not.
             rust_files = {name: content for name, content in rust_files.items()
-                          if any(c == '' or name.startswith(c + '/') for c in crates)}
+                          if any(c == '' or name.startswith(c + '/') for c in crates)
+                          and re.search(r'\bsoroban_sdk\b|#\[contract', content)}
         rust = '\n'.join(_rust_code(content) for content in rust_files.values())
         functions = [{**fn, 'file': name} for name, content in rust_files.items() for fn in _rust_functions(content)]
         lower = surface.lower()

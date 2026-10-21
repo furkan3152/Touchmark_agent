@@ -129,9 +129,14 @@ class CodeProfile:
     #: Approval gates that test a value the model, the caller or fetched content supplies.
     #: Whoever can ask the agent can set it, so the gate approves nothing.
     forgeable_approvals: list[Location] = field(default_factory=list)
+    #: The same, where only a caller the source does not show supplies the flag.
+    unresolved_approvals: list[Location] = field(default_factory=list)
     entrypoints: dict[str, str] = field(default_factory=dict)
     unparsed: list[str] = field(default_factory=list)
     unbounded_amounts: list[Location] = field(default_factory=list)
+    #: The subset whose amount comes from the model, a request or chain data, not only from
+    #: a caller the source does not show.
+    unbounded_direct_amounts: list[Location] = field(default_factory=list)
     #: Files covered by data-flow analysis (Python or JS/TS). Authority found in any
     #: other file can only be judged by reading it.
     analysed_files: list[str] = field(default_factory=list)
@@ -150,6 +155,7 @@ class CodeProfile:
             "nonblocking_controls": [loc.render() for loc in self.nonblocking_controls[:5]],
             "forgeable_approvals": [loc.render() for loc in self.forgeable_approvals[:5]],
             "unbounded_amounts": [loc.render() for loc in self.unbounded_amounts[:5]],
+            "unbounded_direct_amounts": [loc.render() for loc in self.unbounded_direct_amounts[:5]],
             "unparsed_files": sorted(self.unparsed),
             "analysed_files": sorted(self.analysed_files),
             "error": self.error,
@@ -947,6 +953,8 @@ class _Interp:
         if amount is not None and amount_tags & UNTRUSTED and "bounded" not in amount_tags:
             if self.record:
                 self.p.profile.unbounded_amounts.append(self.p.location(self.module, node))
+                if amount_tags & DIRECT:
+                    self.p.profile.unbounded_direct_amounts.append(self.p.location(self.module, node))
             out |= {"pay_amount_untrusted"} | (amount_tags & UNTRUSTED)
         return out
 
@@ -982,7 +990,9 @@ class _Interp:
             if approval_name and not approval_call and self.forgeable(sub, state):
                 # `if not args.approved`: the requester supplies the approval itself.
                 if self.record:
-                    self.p.profile.forgeable_approvals.append(self.p.location(self.module, node))
+                    where = (self.p.profile.forgeable_approvals if self.tags(sub, state) & DIRECT
+                             else self.p.profile.unresolved_approvals)
+                    where.append(self.p.location(self.module, node))
                 break
             if approval_call or approval_name:
                 self.approved = True
