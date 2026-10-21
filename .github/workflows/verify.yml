@@ -38,3 +38,22 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --target wasm32v1-none --release --locked
+  action:
+    # The published GitHub Action, run from this checkout on the bundled examples.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: ./
+        with:
+          path: examples/demo/safe-treasury-agent
+      - id: unsafe
+        uses: ./
+        with:
+          path: examples/demo/unsafe-treasury-agent
+          fail-on: never
+      - name: The unsafe example must be caught
+        env:
+          DECISION: ${{ steps.unsafe.outputs.decision }}
+        run: test "$DECISION" = needs_fixes

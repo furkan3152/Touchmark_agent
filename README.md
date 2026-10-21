@@ -130,6 +130,29 @@ ENABLE_DEEP_REVIEW=1 ENABLE_FINDING_VERIFICATION=1 \
 To issue credentials from your own deployment, run `scripts/deploy_demo_testnet.py`, then
 set `DEMO_OPERATOR_SECRET`.
 
+### In CI
+
+Add Touchmark to an agent's repository so every push and pull request is checked. It validates the `.tmark`, runs the deterministic analysis (no API key, no network, the code is never run), annotates the cited lines and writes a job summary. The job fails on `needs_fixes`.
+
+```yaml
+# .github/workflows/touchmark.yml
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  touchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4
+      - uses: furkan3152/Touchmark_agent@main   # pin a commit SHA in production
+        with:
+          fail-on: needs_fixes   # or never, to only report
+          annotate: medium       # lowest severity shown on the code
+```
+
+Outputs: `decision`, `score`, `tmark` (valid, invalid or missing) and `report` (the full JSON).
+The same check runs locally with `python scripts/ci_audit.py path/to/repo`.
+
 ## Limits
 
 - The analysis is **static**. Logic flaws that are not a flow from input to a sink are

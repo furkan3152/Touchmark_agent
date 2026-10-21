@@ -20,7 +20,7 @@ python scripts/tmark.py init path/to/repo    # writes .tmark, pre-filled from wh
 python scripts/tmark.py check path/to/repo   # lists every error; Touchmark ignores an invalid file
 ```
 
-Commit `.tmark` at the root, next to `README.md`.
+Commit `.tmark` at the root, next to `README.md`. The [GitHub Action](../README.md#in-ci) checks it on every push and annotates each error on the file.
 
 ## Example
 

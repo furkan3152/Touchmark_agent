@@ -1,0 +1,8 @@
+# What a repository audit needs without the web service: used by the GitHub Action.
+pydantic==2.14.1
+pydantic-settings==2.7.0
+httpx[socks]==0.28.1
+stellar-sdk==16.0.0
+tree-sitter==0.26.0
+tree-sitter-javascript==0.25.0
+tree-sitter-typescript==0.23.2
