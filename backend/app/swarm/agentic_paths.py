@@ -260,7 +260,9 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             # outside reaches it; that case is confirmed above.
             # A library that exposes raw signing to its integrators is an API choice until
             # outside input is shown to reach it.
-            severity=severity if confirmed else severity.downgrade(2),
+            # Unresolved origins were false in 23 of 31 hand-checked cases on real agents: kept
+            # visible as an API to review, at low.
+            severity=severity if confirmed else Severity.LOW,
             title=title,
             detail=detail if confirmed else detail + " The value enters through a public function whose callers are not in the submitted source, so the input origin is unresolved.",
             evidence=_evidence(chosen),
@@ -290,7 +292,7 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
         resolved = bool(profile.forgeable_approvals)
         findings.append(Finding(
             id="security-path-forgeable-approval", dimension=Dimension.SECURITY,
-            severity=severity if resolved else severity.downgrade(2),
+            severity=severity if resolved else Severity.LOW,
             title="The approval gate checks a value the requester supplies",
             detail="The code refuses to act unless an approval flag is set, but that flag is a tool argument, request "
                    "field or fetched value. Whoever can talk to the agent can set it: a request the model refuses "

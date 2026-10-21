@@ -153,11 +153,13 @@ def classify_finding(finding: Finding) -> Finding:
     return finding if finding.kind is kind else finding.model_copy(update={"kind": kind})
 
 
-#: Model-review categories where a working exploit, not a defect of function or style, is
-#: claimed: a way around a payment or security control, or to funds, keys or other users.
+#: Model-review categories where a working way around a payment or security control, or to
+#: funds, accounts or other users' data, is claimed. Conditional exposures (an SSRF, a path,
+#: a value that may hold a key) are left to their severity: on agents judged safe by hand,
+#: confirmed medium findings of that kind were real but not disqualifying.
 BYPASS_CATEGORIES = re.compile(
     r"-ai-(?:control-bypass|unauthorized-payment|foreign-transaction-signing|economic-loss|replay-or-idempotency|"
-    r"secret-exposure|account-takeover|cross-user-access|code-execution|path-traversal|ssrf|prompt-injection)-\d+$")
+    r"account-takeover|cross-user-access|code-execution)-\d+$")
 
 
 def actionable_risks(findings: list[Finding]) -> list[Finding]:
