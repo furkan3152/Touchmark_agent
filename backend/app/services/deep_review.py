@@ -353,30 +353,42 @@ class DeepReviewer:
             if timeout < MIN_REVIEW_SECONDS:
                 result.status, result.note = "skipped", "No time was left for the review within the request limit."
                 return result
+        # The passes see the same time limit, so an extra pass starts only when it can finish.
+        self._review_ends = time.monotonic() + timeout
         try:
             await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=timeout)
             if result.status == "not_run":
                 result.status = "completed" if result.operating_model else "incomplete"
         except asyncio.TimeoutError:
-            result.status, result.note = "timeout", "The review stopped at its time limit; accepted findings are kept."
+            configured = result.passes[:self.passes]
+            if len(configured) == self.passes and all(p["status"] == "completed" for p in configured):
+                # Only an extra pass was cut short: the configured review is complete.
+                result.status = "completed"
+                result.note = "An extra challenge pass stopped at the time limit; its accepted findings are kept."
+            else:
+                result.status, result.note = "timeout", "The review stopped at its time limit; accepted findings are kept."
         except Exception as exc:  # provider errors must not fail the deterministic audit
             result.status, result.note = "unavailable", f"{type(exc).__name__}: provider call failed."
         return result
 
-    def _time_for_pass(self) -> bool:
-        deadline = getattr(self, "deadline", None)
-        return deadline is None or deadline - time.monotonic() > 3 * MIN_REVIEW_SECONDS
+    def _time_for_pass(self, durations: list[float] | None = None) -> bool:
+        """Enough time remains for one more pass as long as the ones so far took."""
+        ends = [t for t in (getattr(self, "deadline", None), getattr(self, "_review_ends", None)) if t is not None]
+        if not ends:
+            return True
+        need = max(3 * MIN_REVIEW_SECONDS, sum(durations) / len(durations) if durations else 0.0)
+        return min(ends) - time.monotonic() > need
 
     async def _passes(self, artifact, findings, chain, result: DeepReviewResult) -> None:
         """Pass 1 investigates; later passes challenge it, starting from what it did not cover."""
-        number, progressed = 0, True
+        number, progressed, durations = 0, True, []
         while True:
             number += 1
             unread_share = len(_reviewable(artifact) - result.files_read) / max(1, len(_reviewable(artifact)))
             # The configured passes always run; up to two more follow while over a fifth of the
             # source is still unread and time allows, because misses cluster in unread files.
             extra = number > self.passes
-            if extra and (number > self.passes + 2 or unread_share <= 0.2 or not self._time_for_pass()
+            if extra and (number > self.passes + 2 or unread_share <= 0.2 or not self._time_for_pass(durations)
                           or not progressed):
                 break
             before, read_before = len(result.findings), len(result.files_read)
@@ -392,7 +404,9 @@ class DeepReviewer:
                     "Prioritise files it never read: " + (", ".join(unread[:40]) or "none") + ". Look for "
                     "logic flaws, missing checks on alternative code paths, functional defects and Stellar "
                     "protocol misuse. Skip describe_operating_model. Record findings, then finish.")
+            started = time.monotonic()
             status = await self._loop(artifact, findings, chain, result, instruction)
+            durations.append(time.monotonic() - started)
             result.passes.append({"pass": number, "status": status, "new_findings": len(result.findings) - before})
             progressed = len(result.files_read) > read_before  # a pass that opened nothing new ends the extra ones
             if status in ("refused",):

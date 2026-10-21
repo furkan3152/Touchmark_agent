@@ -194,3 +194,20 @@ def test_a_missing_model_sdk_leaves_the_rules_running(monkeypatch):
     monkeypatch.setitem(sys.modules, "anthropic", None)  # import fails as on a deployment without it
     keyed = Settings(_env_file=None, enable_deep_review=True, enable_finding_verification=True, anthropic_ai_key="k")
     assert deep_review.reviewer_from_settings(keyed) is None and verifier_from_settings(keyed) is None
+
+
+def test_an_extra_pass_cut_short_by_the_time_limit_keeps_the_review_complete(monkeypatch):
+    class SlowAfterFirst(ScriptedClient):
+        async def create(self, **kwargs):
+            if len(self.requests) >= 2:  # the configured pass is done; the extra pass hangs
+                await asyncio.sleep(10)
+            return await super().create(**kwargs)
+
+    monkeypatch.setattr(deep_review, "MIN_REVIEW_SECONDS", 0.01)
+    files = {f"src/m{i}.py": f"x{i} = {i}\n" for i in range(10)}  # most of the source stays unread
+    read = call("read_source", path="src/m0.py", start_line=1, end_line=1)
+    client = SlowAfterFirst([reply(OPERATING, read), reply(SimpleNamespace(type="text", text="done"), stop="end_turn")])
+    reviewer = DeepReviewer(client, model="m", timeout_seconds=0.5)
+    result = asyncio.run(reviewer.review(AgentArtifact(source_kind=SourceKind.REPO, name="a", code_files=files), []))
+    assert result.passes[0]["status"] == "completed"
+    assert result.status == "completed" and "extra challenge pass" in result.note
