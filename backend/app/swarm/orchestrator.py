@@ -323,21 +323,23 @@ class AuditSwarm:
 
     @staticmethod
     def _apply_disputes(verdicts, verification: dict):
-        """A rule finding that independent verification refutes, quoting the code that
-        contradicts it, is lowered one level and marked as disputed. It is never removed,
+        """Record each verdict on its finding. A rule finding that independent verification
+        refutes, quoting the code that contradicts it, is lowered one level and marked as disputed. It is never removed,
         and model-review findings are not lowered: the verifier is a second opinion on the
         pattern rules, which cannot read intent, not a way to talk a risk away."""
-        disputed = {r["finding_id"]: r for r in verification.get("results", [])
-                    if r.get("verdict") == "refuted" and r.get("quote_verified")
-                    and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
-        if not disputed:
+        results = {r["finding_id"]: r for r in verification.get("results", []) if r.get("quote_verified")
+                   and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
+        if not results:
             return verdicts
         out = []
         for verdict in verdicts:
             findings = []
             for f in verdict.findings:
-                r = disputed.get(f.id)
-                if r is not None and "-ai-" not in f.id and f.is_risk:
+                r = results.get(f.id)
+                if r is not None and r.get("verdict") in {"confirmed", "partial", "refuted"}:
+                    # Recorded for the decision: a confirmed bypass blocks a pass (policy.actionable_risks).
+                    f = f.model_copy(update={"verified": r["verdict"]})
+                if r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk:
                     f = f.model_copy(update={
                         "severity": f.severity.downgrade(1),
                         "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"

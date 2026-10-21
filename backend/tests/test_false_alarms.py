@@ -166,3 +166,27 @@ def test_a_valid_seed_committed_in_example_tests_is_reported(tmp_path):
     finding = found["stellar_native-stellar-secret-seed"]
     assert finding["severity"] == "medium" and "examples/rust-x402/tests/integration.rs:2" in finding["evidence"]
     assert seed not in finding["evidence"]
+
+
+def test_a_confirmed_medium_bypass_rules_out_a_pass_but_a_functional_defect_does_not():
+    from backend.app.swarm.policy import actionable_risks, review_decision
+
+    def finding(fid: str, verified: str = "") -> Finding:
+        return Finding(id=fid, dimension=Dimension.SECURITY, severity=Severity.MEDIUM, title="t", detail="d.",
+                       auditor="deep", verified=verified)
+    complete = {"deep_core_complete": True}
+    bypass = finding("security-ai-control-bypass-1", "confirmed")
+    assert actionable_risks([bypass]) == [bypass]
+    assert review_decision([bypass], complete, 85.0) == "needs_fixes"
+    for other in (finding("security-ai-control-bypass-1", "partial"), finding("security-ai-control-bypass-1"),
+                  finding("reliability-ai-functional-defect-2", "confirmed")):
+        assert review_decision([other], complete, 85.0) == "pass"
+    assert "verified" not in bypass.model_dump()  # not part of the serialized finding or its hash
+
+
+def test_verification_verdicts_are_recorded_on_findings():
+    results = {"results": [{"finding_id": "security-ai-y", "verdict": "confirmed", "quote_verified": True, "quote": "pay(x)"},
+                           {"finding_id": "security-x", "verdict": "confirmed", "quote_verified": False, "quote": "pay(x)"}]}
+    out = AuditSwarm._apply_disputes([_verdict("security-ai-y"), _verdict("security-x")], results)
+    assert out[0].findings[0].verified == "confirmed"
+    assert out[1].findings[0].verified == ""  # an unverifiable quote confirms nothing
