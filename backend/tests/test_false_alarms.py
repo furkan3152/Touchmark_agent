@@ -217,3 +217,10 @@ def test_per_record_state_in_instance_storage_is_reported(tmp_path):
     found = audit(tmp_path / "a", {"vault/Cargo.toml": manifest, "vault/src/lib.rs": channel})
     assert found["stellar_native-instance-storage-records"]["evidence"] == "vault/src/lib.rs:9"
     assert "stellar_native-instance-storage-records" not in audit(tmp_path / "b", {"vault/Cargo.toml": manifest, "vault/src/lib.rs": config})
+
+
+def test_the_model_review_is_told_which_contract_files_no_crate_builds():
+    from backend.app.services.deep_review import _unbuilt_contracts
+    files = {"contracts/sample.rs": "", "vault/Cargo.toml": "", "vault/src/lib.rs": "", "README.md": ""}
+    assert _unbuilt_contracts(files) == ["contracts/sample.rs"]
+    assert _unbuilt_contracts({"Cargo.toml": "", "src/lib.rs": ""}) == []

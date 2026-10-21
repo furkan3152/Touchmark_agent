@@ -109,7 +109,7 @@ Severity, judged on the code as shipped, not on what it might become:
 - critical: an outside party can take funds or keys through a reachable path in the shipped code.
 - high: a privileged or paid action is reachable without an enforced control, or the agent's core function does not work as shipped (a buyer could not use it for its stated purpose, or it loses money or access).
 - medium: exploitable only under realistic extra conditions, or limited impact.
-- low: latent (the path is not wired up, the function has no caller, settlement is mocked), demo/mock code, test-only code, hardening, or documentation.
+- low: latent (the path is not wired up, the function has no caller, settlement is mocked), demo/mock code, test-only code, hardening, or documentation. Files in unbuilt_contract_sources are not compiled into the agent (samples, fixtures, inputs it audits or deploys): a defect in them is at most low, and a deliberately vulnerable sample is not a finding.
 Before recording, check that the path is reached: who calls this code, is the dangerous call actually wired, does a control elsewhere (a helper, a caller, the platform) already stop it. If you rely on how an SDK or service behaves, say so in the scenario; prefer stellar_reference over memory.
 
 Stellar checklist (call stellar_reference for details):
@@ -192,6 +192,13 @@ class DeepReviewResult:
                 "can_remove_findings": False}
 
 
+def _unbuilt_contracts(files: dict[str, str]) -> list[str]:
+    """Rust files outside every Cargo crate: no build includes them."""
+    crates = {path.rsplit("/", 1)[0] if "/" in path else "" for path in files if path.endswith("Cargo.toml")}
+    return sorted(path for path in files if path.endswith(".rs")
+                  and not any(c == "" or path.startswith(c + "/") for c in crates))[:100]
+
+
 def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict | None) -> tuple[str, dict]:
     """The grounded context. Returns the JSON text and flow-id -> flow map."""
     profile = artifact.code_profile or {}
@@ -222,6 +229,8 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
         # large repository. Their absence from "files" is not absence from the repository.
         "lockfiles_in_repository": sorted(artifact.lockfiles),
         "source_files_not_reviewed": list(artifact.raw_metadata.get("source_not_selected") or [])[:200],
+        # Contract sources that no crate builds: samples, fixtures or inputs the agent processes.
+        "unbuilt_contract_sources": _unbuilt_contracts(artifact.code_files),
         "observed_capabilities": profile.get("capabilities", {}),
         "entrypoints": profile.get("entrypoints", {}),
         "enforced_controls": profile.get("controls", {}),
