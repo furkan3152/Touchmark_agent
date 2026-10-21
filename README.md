@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://touchmark-stellar.vercel.app"><img src="https://img.shields.io/badge/Live_demo-touchmark--stellar.vercel.app-1d2b4f?style=for-the-badge" alt="Live demo"></a>
   <img src="https://img.shields.io/badge/Stellar-Testnet-e2432a?style=for-the-badge&logo=stellar&logoColor=white" alt="Stellar testnet">
-  <a href="https://github.com/furkan3152/agentveritas-stellar/actions/workflows/verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/agentveritas-stellar/verify.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
+  <a href="https://github.com/furkan3152/Touchmark_agent/actions/workflows/verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/Touchmark_agent/verify.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
   <img src="https://img.shields.io/badge/External_audit-not_yet-b97c0b?style=for-the-badge" alt="External audit: not yet">
   <img src="https://img.shields.io/badge/License-Apache_2.0-1f7a5a?style=for-the-badge" alt="License">
 </p>
