@@ -104,7 +104,7 @@ Nothing submitted is imported or executed.
      findings (see [EVIDENCE.md](EVIDENCE.md)).
 6. **Decision and score** (`swarm/policy.py`, `swarm/judge.py`).
    - **Decision:**
-     - `needs_fixes`: an actionable risk: high or critical, or a medium bypass of a payment or security control that the independent verifier confirmed at the quoted line.
+     - `needs_fixes`: an actionable risk: high or critical, or a medium way around a payment or security control (or to funds, accounts or other users' data) that the independent verifier confirmed at the quoted line.
      - `needs_evidence`: no risk, but code, tools and instructions were not all reviewed.
      - `pass`: neither of the above.
    - **Score:** each finding costs severity × evidence grade × confidence × spread;
