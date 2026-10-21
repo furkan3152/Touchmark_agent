@@ -1,0 +1,53 @@
+name: Touchmark agent audit
+description: Check a Stellar agent's .tmark and audit its code for unsafe payments, signing and key handling.
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  path:
+    description: Repository folder to audit, relative to the workspace.
+    default: "."
+  fail-on:
+    description: "needs_fixes fails the job when an actionable risk is found; never only reports."
+    default: needs_fixes
+  annotate:
+    description: Lowest severity annotated on the code (critical, high, medium or low).
+    default: medium
+
+outputs:
+  decision:
+    description: pass, needs_fixes or needs_evidence.
+    value: ${{ steps.audit.outputs.decision }}
+  score:
+    description: Overall score, 0 to 100.
+    value: ${{ steps.audit.outputs.score }}
+  tmark:
+    description: valid, invalid or missing.
+    value: ${{ steps.audit.outputs.tmark }}
+  report:
+    description: Path of the full report JSON.
+    value: ${{ steps.audit.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      with:
+        python-version: "3.12"
+    - name: Install Touchmark
+      shell: bash
+      run: |
+        python -m venv "$RUNNER_TEMP/touchmark-venv"
+        "$RUNNER_TEMP/touchmark-venv/bin/pip" install --quiet --disable-pip-version-check \
+          -r "$GITHUB_ACTION_PATH/backend/requirements-audit.txt"
+    - name: Audit
+      id: audit
+      shell: bash
+      env:
+        TM_PATH: ${{ inputs.path }}
+        TM_FAIL_ON: ${{ inputs.fail-on }}
+        TM_ANNOTATE: ${{ inputs.annotate }}
+      run: |
+        "$RUNNER_TEMP/touchmark-venv/bin/python" "$GITHUB_ACTION_PATH/scripts/ci_audit.py" \
+          "$GITHUB_WORKSPACE/$TM_PATH" --fail-on "$TM_FAIL_ON" --annotate "$TM_ANNOTATE"
