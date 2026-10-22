@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentVeritas development server — UI + API + /docs
+# Touchmark development server — UI + API + /docs
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -22,5 +22,5 @@ fi
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8000}"
 
-echo "→ AgentVeritas http://${HOST}:${PORT}  (UI: /  · API: /api/v1  · Docs: /docs)"
+echo "→ Touchmark http://${HOST}:${PORT}  (UI: /  · API: /api/v1  · Docs: /docs)"
 exec "${PY}" -m uvicorn backend.app.api:app --host "${HOST}" --port "${PORT}" --reload

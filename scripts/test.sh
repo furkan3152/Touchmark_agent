@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentVeritas Stellar — verification run with no external writes
+# Touchmark — verification run with no external writes
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

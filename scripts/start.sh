@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentVeritas — install, verify, start with a single command.
+# Touchmark — install, verify, start with a single command.
 #
 # After installation, this is the only answer to the "is it working?" question:
 #   1) virtual environment + dependencies
