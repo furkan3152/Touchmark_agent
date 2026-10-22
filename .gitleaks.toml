@@ -1,0 +1,23 @@
+# gitleaks configuration: the default rules plus a narrow allowlist for known false positives.
+# Every entry below is public data or an intentional test fixture, never a credential.
+title = "touchmark gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public Stellar identifiers, credential token ids and deliberate test fixtures"
+regexTarget = "match"
+regexes = [
+  # Stellar contract (C...) and account (G...) ids are public addresses, not secrets.
+  '''\b[CG][A-Z2-7]{55}\b''',
+  # Credential token ids recorded in deployment and research proofs (public, on-ledger).
+  '''token_id"?\s*[:=]\s*"?[0-9a-f]{64}''',
+  # Dummy PEM used to test that the AI provider refuses key material.
+  '''not-a-real-key''',
+]
+paths = [
+  # Deliberately vulnerable example agents: their fake keys are what the auditor must detect.
+  '''^examples/vulnerable_agent/''',
+  '''^examples/corpus/mev_sniper/''',
+]
