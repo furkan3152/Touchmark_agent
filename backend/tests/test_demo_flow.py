@@ -15,7 +15,7 @@ from backend.app.services.agent_resolver import github_subpath, parse_github
 
 @pytest.fixture(autouse=True)
 def operator(monkeypatch):
-    monkeypatch.setenv("DEMO_OPERATOR_SECRET", "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4")
+    monkeypatch.setenv("DEMO_OPERATOR_SECRET", Keypair.random().secret)
     monkeypatch.setattr(demo_flow, "manifest", lambda: {"contracts": {"credential": {"id": "C" + "A" * 55}}})
 
 
