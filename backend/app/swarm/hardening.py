@@ -15,6 +15,7 @@ import re
 from collections import Counter
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
+from .consolidate import stable_id
 
 _CODE = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", ".go", ".sol")
 _TESTLIKE = re.compile(r"(^|/)(tests?|spec|fixtures?|examples?|mocks?|__tests__)/|(test|spec|mock|fixture|example)", re.I)
@@ -60,6 +61,13 @@ _CREDENTIALS = (
     ("EVM private key", re.compile(rb"(?i)(?:private[_-]?key|priv[_-]?key|PK)\s*[:=]\s*[\"']?(?:0x)?[0-9a-f]{64}\b")),
 )
 _PLACEHOLDER = re.compile(rb"(?i)x{6,}|your[_-]|example|dummy|placeholder|redacted|changeme|<|0{16,}|1234567890")
+#: Where the Stellar CLI keeps identities: `<config>/identity/<name>.toml`, with the config
+#: directory `.stellar` in a project or `~/.config/stellar` (stellar-cli config/locator.rs).
+#: A `secret_key` there is an S... seed, which the committed-seed check already reports.
+_CLI_IDENTITY = re.compile(r"(?:^|/)(?:\.stellar|\.config/stellar)/identity/[^/]+\.toml$")
+_SEED_PHRASE = re.compile(rb"""^\s*seed_phrase\s*=\s*["']([a-z ]{20,})["']""", re.M)
+#: A credential kind whose account and network are not known from the file alone.
+CLI_SEED_PHRASE = "Stellar CLI identity seed phrase"
 
 
 def _entropy(token: bytes) -> float:
@@ -77,6 +85,14 @@ def find_credentials(name: str, data: bytes) -> list[str]:
                 continue
             line = data[:match.start()].count(b"\n") + 1
             found.append(f"{name}:{line} ({kind}, redacted)")
+    if _CLI_IDENTITY.search(name):
+        from stellar_sdk.sep.mnemonic import Language, StellarMnemonic
+        for match in _SEED_PHRASE.finditer(data):
+            words = match.group(1).decode().split()
+            # Placeholders fail the checksum, or repeat one word (which passes it 1 time in 16).
+            if len(set(words)) > len(words) // 2 and StellarMnemonic(Language.ENGLISH).check(" ".join(words)):
+                line = data[:match.start()].count(b"\n") + 1
+                found.append(f"{name}:{line} ({CLI_SEED_PHRASE}, redacted)")
     return found
 
 
@@ -102,6 +118,12 @@ _DEFAULT_SECRET = re.compile(
     r"\$\{(?P<a>" + _SECRET_VAR + r"):-(?P<av>[^}\s]+)\}"
     r"|process\.env\.(?P<b>" + _SECRET_VAR + r")\s*(?:\|\||\?\?)\s*[\"'`](?P<bv>[^\"'`]+)[\"'`]"
     r"|os\.(?:getenv|environ\.get)\(\s*[\"'](?P<c>" + _SECRET_VAR + r")[\"']\s*,\s*[\"'](?P<cv>[^\"']+)[\"']")
+#: mppx binds its payment challenges with an HMAC under `secretKey`; whoever knows the key
+#: can mint challenges the server accepts (mppx server/Mppx.js).
+_MPPX_SERVER_IMPORT = re.compile(r"""["'](?:mppx/(?:server|express|hono|nextjs|elysia)|@stellar/mpp/(?:charge|channel)/server)["']""")
+_MPPX_CREATE = re.compile(r"\bMppx\.create\s*\(")
+_SECRET_KEY_OPTION = re.compile(r"\bsecretKey\s*:\s*(?P<expr>[^,\n}]+)")
+_FALLBACK_LITERAL = re.compile(r"""(?:^|\?\?|\|\|)\s*(?P<q>["'`])(?P<value>[^"'`$]*)(?P=q)\s*$""")
 _HTML_SINK = re.compile(r"\.(?:innerHTML|outerHTML)\s*\+?=\s*(?P<rhs>[^;\n]+)|\.insertAdjacentHTML\([^,]+,\s*(?P<arg>[^)\n]+)"
                         r"|dangerouslySetInnerHTML=\{\{\s*__html:\s*(?P<react>[^}\n]+)")
 _DYNAMIC = re.compile(r"\$\{|[\"'`]\s*\+\s*[A-Za-z_$]|\+\s*[A-Za-z_$]")
@@ -155,6 +177,40 @@ def _wrapped_sink(text: str, pos: int, value: str) -> bool:
         return False
     return any(_DYNAMIC.search(call.group(1)) and not _ESCAPED.search(call.group(1))
                for call in re.finditer(r"\b" + re.escape(fn) + r"\(([^\n]*)", text))
+
+
+def _mppx_secrets(name: str, text: str) -> tuple[list[str], list[tuple[int, str]]]:
+    """In an MPP server, the `secretKey` options that fall back to a value written in the
+    repository (as default-secret evidence), and those that are also the Stellar seed
+    passed to Keypair.fromSecret (line, code)."""
+    defaults: list[str] = []
+    reuse: list[tuple[int, str]] = []
+    if not _MPPX_SERVER_IMPORT.search(text):
+        return defaults, reuse
+    lines = text.splitlines()
+    for call in _MPPX_CREATE.finditer(text):
+        open_at = call.end() + len(text[call.end():]) - len(text[call.end():].lstrip())
+        if text[open_at:open_at + 1] != "{":
+            continue  # options passed by name: not read here
+        block = _block(text, open_at)
+        for option in _SECRET_KEY_OPTION.finditer(block):
+            expr = option.group("expr").strip()
+            at = open_at + option.start("expr")
+            if _commented(text, at):
+                continue
+            target, target_at = expr, at
+            named = re.fullmatch(r"[A-Za-z_$][\w$]*", expr)
+            if named:
+                declared = re.search(r"\b(?:const|let|var)\s+" + re.escape(expr) + r"\s*(?::[^=\n]+)?=\s*([^;\n]+)", text)
+                if declared:
+                    target, target_at = declared.group(1).strip(), declared.start(1)
+            if _FALLBACK_LITERAL.search(target):
+                defaults.append(f"{name}:{_line(text, target_at)} secretKey")
+            key = expr if named or re.fullmatch(r"process\.env\.\w+", expr) else ""
+            if key and re.search(r"\bfromSecret\(\s*" + re.escape(key) + r"\s*[,)]", text):
+                line = _line(text, at)
+                reuse.append((line, lines[line - 1] if line <= len(lines) else expr))
+    return defaults, reuse
 
 
 def _tool_descriptions(name: str, text: str) -> list[tuple[int, str]]:
@@ -247,8 +303,11 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     leaked = list(dict.fromkeys(leaked))
     if leaked:
         test_only = all(_TESTLIKE.search(item.split(":", 1)[0]) for item in leaked)
+        # A CLI identity's account and network are unknown here (ledger triage raises it);
+        # on its own it is reported at medium.
+        cli_only = all(CLI_SEED_PHRASE in item for item in leaked)
         findings.append(_finding(
-            "security-committed-credential", Severity.MEDIUM if test_only else Severity.HIGH,
+            "security-committed-credential", Severity.MEDIUM if test_only or cli_only else Severity.HIGH,
             "A live-looking credential is committed to the repository",
             "An API key, token or private key is in the repository. Anyone with read access, and every fork and "
             "clone, has it; an AI provider key lets others run up the bill or read the agent's traffic."
@@ -396,6 +455,14 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
                     or re.match(r"(?i)your[_-]|<|x{4,}", value) or _commented(text, m.start())):
                 continue
             defaults.append(f"{name}:{_line(text, m.start())} {var}")
+    # An MPP server's challenge key with a fallback value: the same defect, one finding.
+    reused = []
+    for name, text in code.items():
+        if _TESTLIKE.search(name):
+            continue
+        mpp_defaults, mpp_reuse = _mppx_secrets(name, text)
+        defaults += [d for d in mpp_defaults if not any(e.split(" ", 1)[0] == d.split(" ", 1)[0] for e in defaults)]
+        reused += [(name, line, snippet) for line, snippet in mpp_reuse]
     if defaults:
         findings.append(_finding(
             "security-default-secret", Severity.MEDIUM,
@@ -405,4 +472,14 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             "that forgot to set it.",
             defaults, "Fail at startup when the secret is unset instead of falling back to a default.",
             ["CWE-1188 Insecure Default Initialization of Resource", "CWE-798"], auditor, confidence=0.85))
+    for name, line, snippet in reused:
+        findings.append(_finding(
+            stable_id("security-mpp-secret-reuses-stellar-seed", name, snippet), Severity.LOW,
+            "The MPP challenge key is the agent's Stellar seed",
+            "The value that signs MPP payment challenges is also the secret seed of a Stellar account. The seed then "
+            "sits in a second subsystem (HMAC keys are logged, rotated and shared differently from signing keys), and "
+            "rotating one forces rotating the other.",
+            [f"{name}:{line} `{' '.join(snippet.split())[:160]}`"],
+            "Give the MPP server its own random secret of at least 32 bytes.",
+            ["CWE-323 Reusing a Nonce, Key Pair in Encryption", "MPP challenge binding"], auditor, confidence=0.85))
     return findings

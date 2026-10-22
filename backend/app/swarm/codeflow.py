@@ -78,6 +78,9 @@ _FOREIGN_TX = re.compile(r"(?:TransactionEnvelope\.from_xdr|from_xdr_object|pars
                          r"FeeBumpTransactionEnvelope\.from_xdr)$")
 _SUBMIT = re.compile(r"\.(?:submit_transaction|send_transaction)$")
 _SOROBAN_SINK = re.compile(r"\.(?:invoke|invoke_contract|authorize_entry|sign_auth_entries?)$|^token\.transfer$")
+#: `stellar contract invoke ... --auto-sign`: the CLI signs non-root Soroban authorization
+#: entries without asking (stellar-cli FULL_HELP_DOCS.md).
+CLI_AUTO_SIGN = re.compile(r"\bcontract\b[\s\S]{0,80}\binvoke\b[\s\S]{0,400}--auto-sign\b")
 #: Calls that ask a person and return their decision (an operator console, a wallet prompt).
 #: A decision they return is not something the requester can set.
 _HUMAN_DECISION = re.compile(r"approv|confirm|consent|prompt_?(?:user|human|operator)|ask_?(?:user|human|operator|owner)|"
@@ -125,6 +128,21 @@ class Flow:
         return bool(self.labels & DIRECT)
 
 
+@dataclass(frozen=True)
+class Fact:
+    """Something the code configures or does at one place whose risk depends on more than
+    the code: a payment SDK option (its meaning depends on the installed version), a
+    settlement call, a sponsored rebuild. agentic_paths turns facts into findings once the
+    lockfile and network are known. ``attrs`` holds sorted (key, value) pairs."""
+    kind: str
+    location: Location
+    detail: str = ""
+    attrs: tuple = ()
+
+    def get(self, key: str, default=None):
+        return dict(self.attrs).get(key, default)
+
+
 @dataclass
 class CodeProfile:
     capabilities: dict[str, list[Location]] = field(default_factory=dict)
@@ -145,10 +163,20 @@ class CodeProfile:
     #: Files covered by data-flow analysis (Python or JS/TS). Authority found in any
     #: other file can only be judged by reading it.
     analysed_files: list[str] = field(default_factory=list)
+    #: Version-, network- or path-dependent facts for the rules in agentic_paths.
+    facts: list[Fact] = field(default_factory=list)
     error: str = ""
 
     def has(self, capability: str) -> bool:
         return bool(self.capabilities.get(capability))
+
+    def add_fact(self, kind: str, location: Location, detail: str = "", **attrs) -> None:
+        fact = Fact(kind, location, detail, tuple(sorted(attrs.items())))
+        if not any(f.kind == kind and f.location == location for f in self.facts):
+            self.facts.append(fact)
+
+    def facts_of(self, kind: str) -> list[Fact]:
+        return [f for f in self.facts if f.kind == kind]
 
     def summary(self) -> dict:
         return {
@@ -163,6 +191,7 @@ class CodeProfile:
             "unbounded_direct_amounts": [loc.render() for loc in self.unbounded_direct_amounts[:5]],
             "unparsed_files": sorted(self.unparsed),
             "analysed_files": sorted(self.analysed_files),
+            "facts": [{"kind": f.kind, "location": f.location.render(), "detail": f.detail} for f in self.facts[:40]],
             "error": self.error,
         }
 
@@ -841,6 +870,9 @@ class _Interp:
             self._cap("process_spawn" if fixed else "code_execution", node)
             if every & UNTRUSTED and not fixed:
                 self._flow("command", node, every, "shell=True" if shell else "")
+            if self.record and CLI_AUTO_SIGN.search(" ".join(ast.unparse(a) for a in node.args)):
+                self.p.profile.add_fact("cli_auto_sign", self.p.location(self.module, node),
+                                        "stellar contract invoke --auto-sign", direct=bool(every & DIRECT))
             return set()
         if _FILE_SINK.search(label) or (short in _PATH_METHODS and isinstance(node.func, ast.Attribute)):
             self._cap("file_access", node)
@@ -854,6 +886,17 @@ class _Interp:
             elif "secret_possible" in every:
                 self._flow("secret_possible", node, every, "return value of a secret-bearing object is written to output")
             return set()
+        if short == "build_fee_bump_transaction":
+            # The outer envelope is the server's own and its signature covers only the fee; the
+            # fee is the exposure when the inner transaction is someone else's.
+            fee = kwargs.get("base_fee", args[1] if len(args) > 1 else set())
+            inner = kwargs.get("inner_transaction_envelope", args[2] if len(args) > 2 else set())
+            # A transaction the server built and stored itself (looked up by id) is not foreign.
+            foreign = "foreign_tx" in inner or bool(inner & UNTRUSTED and not inner & {"stored_record", "tx_built"})
+            if self.record and foreign and fee & DIRECT and "bounded" not in fee and not self.approved:
+                self.p.profile.add_fact("fee_bump_unbounded", self.p.location(self.module, node),
+                                        "the fee of a foreign inner transaction comes from input")
+            return {"tx_built"}
         if short in {"TransactionBuilder", "build_transaction"}:
             return every | {"tx_built"}
         if short in _PAYMENT_OPS:
