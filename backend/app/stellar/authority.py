@@ -78,6 +78,7 @@ def _account_view(account: dict, agent_key: str = "") -> dict:
         "multisig_required_for_payments": not any(s["weight"] >= need_pay for s in signers),
         "flags": {k: bool(flags.get(k)) for k in ("auth_required", "auth_revocable", "auth_immutable", "auth_clawback_enabled")},
         "home_domain": account.get("home_domain") or "",
+        "last_modified_ledger": account.get("last_modified_ledger"),
         "memo_required": data.get("config.memo_required") == base64.b64encode(b"1").decode(),
         "trustlines": [{"asset": f"{b.get('asset_code')}:{b.get('asset_issuer')}", "limit": b.get("limit"),
                         "unlimited": b.get("limit") == MAX_LIMIT, "authorized": b.get("is_authorized", True)}

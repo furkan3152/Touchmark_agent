@@ -7,6 +7,7 @@ import json
 import re
 
 from ..models import AgentArtifact, AssuranceLevel, EvidenceGrade, Finding, FindingKind, Severity
+from ..stellar.chain_identity import chain_identity
 
 AUDIT_SCHEMA_VERSION = "agentveritas.audit.v2"
 AUDIT_POLICY_VERSION = "agentveritas.stellar.policy.2026-10-16.3"
@@ -57,6 +58,10 @@ def artifact_commitment(artifact: AgentArtifact) -> str:
         mode="json", exclude={"id", "created_at", "raw_metadata", "code_profile", "chain_authority"}
     )
     payload = {"policy": AUDIT_POLICY_VERSION, "artifact": artifact_payload}
+    # The deployed code and authority that were read (not balances or TTLs) bind the credential too.
+    identity = chain_identity(artifact.chain_authority)
+    if identity:
+        payload["chain_identity"] = "sha256:" + hashlib.sha256(_canonical(identity)).hexdigest()
     return "sha256:" + hashlib.sha256(_canonical(payload)).hexdigest()
 
 
@@ -114,7 +119,7 @@ EVIDENCE_GAP_RULES = frozenset({
     "security-source-analysis-incomplete", "compliance-pii-without-safeguards",
     "stellar_native-onchain-account-missing", "stellar_native-onchain-agent-key-undeclared",
     "stellar_native-onchain-identity-unbound", "stellar_native-onchain-source-unbound",
-    "stellar_native-onchain-contract-code-unavailable",
+    "stellar_native-onchain-contract-code-unavailable", "stellar_native-onchain-contract-code-unresolved",
 })
 #: Autonomy without a human approval step. Operators may run agents unattended on
 #: purpose, so these are warnings: a small score penalty, never a failing decision.
@@ -122,7 +127,8 @@ EVIDENCE_GAP_RULES = frozenset({
 WARNING_RULES = frozenset({"compliance-no-human-oversight", "intent-full-autonomy-over-funds"})
 #: Gaps that make a pass impossible: the reviewed scope itself is incomplete.
 BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface",
-                           "security-controls-unverifiable", "stellar_native-onchain-source-unbound"})
+                           "security-controls-unverifiable", "stellar_native-onchain-source-unbound",
+                           "stellar_native-onchain-contract-code-unresolved"})
 
 #: Rules that assert a control is absent. They are only evidence when the analyser can
 #: see controls in the language that holds the capability (Python data flow today).

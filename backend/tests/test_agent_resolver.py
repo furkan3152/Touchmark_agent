@@ -17,6 +17,7 @@ from backend.app.config import Settings
 from backend.app.services import agent_resolver
 from backend.app.services.agent_resolver import AgentResolver, audit_reference, classify
 from backend.app.stellar.soroban_reader import parse_meta, parse_spec, wasm_custom_sections
+from backend.tests.wasm_builder import contract_wasm
 
 REGISTRY = "CBBBUECSLXGXVXYMRYK3BCTL3YYBRWDZGW3RNCH5CWKY6KU6UGE576KT"
 CONTRACT = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
@@ -26,29 +27,10 @@ COMMIT = "a" * 40
 ENDPOINT = "https://agent.example.com/mcp"
 
 
-def _leb(n: int) -> bytes:
-    out = bytearray()
-    while True:
-        byte = n & 0x7F
-        n >>= 7
-        out.append(byte | (0x80 if n else 0))
-        if not n:
-            return bytes(out)
-
-
-def custom_section(name: str, payload: bytes) -> bytes:
-    body = _leb(len(name)) + name.encode() + payload
-    return b"\x00" + _leb(len(body)) + body
-
-
-def build_wasm(meta: dict[str, str], functions: list[str]) -> bytes:
-    spec = b"".join(xdr.SCSpecEntry(kind=xdr.SCSpecEntryKind.SC_SPEC_ENTRY_FUNCTION_V0, function_v0=xdr.SCSpecFunctionV0(
-        doc=b"", name=xdr.SCSymbol(name.encode()),
-        inputs=[xdr.SCSpecFunctionInputV0(doc=b"", name=b"to", type=xdr.SCSpecTypeDef(xdr.SCSpecType.SC_SPEC_TYPE_ADDRESS))],
-        outputs=[])).to_xdr_bytes() for name in functions)
-    metas = b"".join(xdr.SCMetaEntry(kind=xdr.SCMetaKind.SC_META_V0, v0=xdr.SCMetaV0(key=k.encode(), val=v.encode())).to_xdr_bytes()
-                     for k, v in meta.items())
-    return b"\0asm\x01\0\0\0" + custom_section("contractspecv0", spec) + custom_section("contractmetav0", metas)
+def build_wasm(meta: dict[str, str], functions: list[str], calls: dict[str, list[str]] | None = None) -> bytes:
+    """A module exporting ``functions``, each calling the host functions in ``calls``."""
+    return contract_wasm({name: (calls or {}).get(name, []) for name in functions},
+                         spec={name: [("to", "address")] for name in functions}, meta=meta)
 
 
 def entry_xdr(data: xdr.LedgerEntryData) -> str:
@@ -194,7 +176,7 @@ def test_contract_source_is_verified_only_by_a_build_attestation_for_the_same_wa
 
 
 def test_onchain_only_agent_cannot_pass_and_says_why():
-    wasm = build_wasm({}, ["pay", "upgrade"])
+    wasm = build_wasm({}, ["pay", "upgrade"], {"pay": ["a.0", "d._"], "upgrade": ["l.1", "a.0", "l.6"]})
     transport = network([instance_entry(CONTRACT, wasm), code_entry(wasm)], {})
     result = asyncio.run(audit_reference(CONTRACT, settings(), transport=transport, deep=False))
     findings = {f["id"]: f for f in result["report"]["findings"]}
