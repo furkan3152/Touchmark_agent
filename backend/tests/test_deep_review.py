@@ -236,3 +236,23 @@ def test_the_review_reads_the_files_holding_authority_first():
     order = _priority(artifact)
     assert order[:2] == ["src/b_core.py", "src/z_payments.py"]  # observed authority, then a risk name
     assert set(order[-2:]) == {"src/tests.rs", "docs/guide.py"}  # tests and docs last
+
+
+def test_the_severity_of_a_model_finding_comes_from_its_stated_impact():
+    # The reviewer says "critical", but the facts it states (operator-only, optional setting)
+    # support medium: the facts decide, and the report says why.
+    client = ScriptedClient([
+        reply(OPERATING),
+        reply(call("record_finding", category="replay_or_idempotency", severity="critical",
+                   triggered_by="agent_user", at_risk="funds_or_keys", preconditions="realistic", reached_in="optional",
+                   title="Daily cap resets on restart", file="payroll.py", line=12,
+                   evidence_quote='_spent_today = Decimal("0")',
+                   attack_scenario="Restart the worker to reset the cap and pay the daily cap again.",
+                   stellar_impact="Repeated payroll payments from the treasury.",
+                   remediation="Persist spent totals with the ledger sequence.")),
+        reply(call("finish", summary="One replay issue.")),
+    ])
+    result = review("C2-guarded-payments", client)
+    finding = next(f for f in result["report"]["findings"] if "-ai-replay" in f["id"])
+    assert finding["severity"] == "medium"
+    assert "Severity from impact: triggered by agent user, puts funds or keys at risk" in finding["detail"]

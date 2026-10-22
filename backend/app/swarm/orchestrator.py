@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 
 from ..config import Settings
@@ -34,6 +35,14 @@ from .policy import (
     finding_set_commitment,
     review_decision,
 )
+
+
+#: Findings about funds, keys or code execution: the verifier may dispute them, but not
+#: lower their severity (on hand-audited agents it under-rated real ones when it did).
+_KEEPS_SEVERITY = re.compile(
+    r"-ai-(?:unauthorized-payment|foreign-transaction-signing|account-takeover|control-bypass|economic-loss|"
+    r"code-execution|secret-exposure)-\d+$|^security-path-(?:untrusted-to-financial-sink|external-transaction-signed|"
+    r"key-signs-arbitrary-bytes|untrusted-account-control|untrusted-to-command|secret)")
 
 
 class AuditSwarm:
@@ -177,6 +186,7 @@ class AuditSwarm:
             from ..services.finding_verifier import verify_artifact
             verification = await verify_artifact(finding_verifier, artifact, [f for v in verdicts for f in v.findings])
             verdicts = self._apply_disputes(verdicts, verification)
+        verdicts = self._consolidate(verdicts)
 
         score, badge, dim_scores, findings, notes, disagreement, breakdown, assurance = (
             self.judge.synthesise(artifact, verdicts, tier=tier)
@@ -339,6 +349,17 @@ class AuditSwarm:
                 if r is not None and r.get("verdict") in {"confirmed", "partial", "refuted"}:
                     # Recorded for the decision: a confirmed bypass blocks a pass (policy.actionable_risks).
                     f = f.model_copy(update={"verified": r["verdict"]})
+                reviewed = Severity.__members__.get(str((r or {}).get("reviewed_severity", "")).upper())
+                if (r is not None and r.get("verdict") in {"confirmed", "partial"} and reviewed is not None
+                        and reviewed.rank < f.severity.rank and f.is_risk
+                        and f.severity is not Severity.CRITICAL and not _KEEPS_SEVERITY.search(f.id)):
+                    # The verifier re-reads the cited code for this one claim. Against hand audits it
+                    # corrected the reviewer's habit of rating a level high, but it also lowered real
+                    # critical and fund-control findings, so those keep the severity they were given.
+                    f = f.model_copy(update={
+                        "severity": reviewed,
+                        "detail": f.detail + f" Independent verification rates this {reviewed.value}: "
+                                  f"{str(r.get('reason', ''))[:240]}"})
                 if r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk:
                     f = f.model_copy(update={
                         "severity": f.severity.downgrade(1),
@@ -347,6 +368,16 @@ class AuditSwarm:
                         "confidence": min(f.confidence, 0.5)})
                 findings.append(f)
             out.append(verdict.model_copy(update={"findings": findings}))
+        return out
+
+    def _consolidate(self, verdicts):
+        """One finding per defect: see swarm/consolidate.py."""
+        from .consolidate import consolidate
+        merged = {f.id: f for f in consolidate([f for v in verdicts for f in v.findings])}
+        out = []
+        for verdict in verdicts:
+            findings = [merged[f.id] for f in verdict.findings if f.id in merged]
+            out.append(self._rescore(verdict, findings) if findings != verdict.findings else verdict)
         return out
 
     async def _deep_review(self, reviewer, artifact, verdicts, chain_facts):
