@@ -6,21 +6,17 @@ Thanks for taking a look. Bug reports, fixes and new checks are all welcome.
 
 You need:
 
-To contribute to Touchmark Stellar, you will need the following tools installed:
-
-- **Python 3.10+**: Used for the backend and API services.
-- **Rust (latest stable)**: Required for writing and compiling Soroban smart contracts.
-- **Soroban CLI**: Essential for deploying and interacting with contracts on the Stellar network.
-- **Docker**: For running local test environments and databases.
-
-Clone the repository and set up your virtual environment:
+- Python 3.12 for the backend and API.
+- Rust for the Soroban contracts. The toolchain and the `wasm32v1-none` target are pinned in `rust-toolchain.toml`.
+- Soroban CLI if you want to deploy or call contracts on testnet.
+- Docker if you want to run the service in a container (`compose.yaml`).
 
 ```bash
-git clone https://github.com/your-org/agentveritas-stellar.git
-cd agentveritas-stellar
+git clone https://github.com/furkan3152/Touchmark_agent.git
+cd Touchmark_agent
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r backend/requirements-dev.txt
 ```
 
 ### Code Style
