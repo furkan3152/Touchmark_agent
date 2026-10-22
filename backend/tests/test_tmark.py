@@ -110,3 +110,111 @@ def test_template_is_prefilled_from_what_the_code_can_do():
     assert t["authority"] == {"holds_keys": True, "key_source": "env", "signs": ["payments"]}
     assert t["limits"]["recipients"] == "allowlist"
     assert "limits" not in tmark.template(set())
+
+
+# ----------------------------------------------------------------- caps in any asset, C agents, networks
+def documented_tmark() -> dict:
+    text = (ROOT / "docs/TMARK.md").read_text()
+    return json.loads(text.split("## Example", 1)[1].split("```json", 1)[1].split("```", 1)[0])
+
+
+def test_the_documented_xlm_cap_is_kept_in_its_asset():
+    parsed, errors = tmark.parse(json.dumps(documented_tmark()))
+    assert errors == []
+    tool = next(t for t in tmark.to_declaration(parsed)["tools"] if t["name"] == "send_payment")
+    assert tool["spend_limit"] == {"amount": "500.0000000", "asset": "XLM"} and tool["spend_limit_usdc"] is None
+    assert tmark.stroops("0.5") == 5_000_000 and tmark.stroops("500") == 5_000_000_000
+
+
+def test_a_usdc_cap_also_fills_the_older_field():
+    usdc = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+    doc = documented_tmark()
+    doc["tools"][0]["max_amount"] = {"amount": "25", "asset": usdc}
+    tool = tmark.to_declaration(tmark.parse(json.dumps(doc))[0])["tools"][0]
+    assert tool["spend_limit"] == {"amount": "25.0000000", "asset": usdc} and tool["spend_limit_usdc"] == 25.0
+
+
+def test_a_declared_cap_in_any_asset_counts_as_a_cap(settings, run):
+    from backend.app.models import AgentArtifact, SourceKind, ToolSpec
+    from backend.app.swarm.economic import EconomicAuditor
+    from backend.app.swarm.security import SecurityAuditor
+
+    def findings(cap):
+        tool = ToolSpec(name="send_payment", requires_signature=True, scopes=["payments", "sign"], spend_limit=cap)
+        artifact = AgentArtifact(name="a", source_kind=SourceKind.UPLOAD, source_ref="t", tools=[tool],
+                                 system_prompt="You pay listed suppliers.")
+        security = run(SecurityAuditor(settings).run(artifact, deep=True))
+        economic = run(EconomicAuditor(settings).run(artifact, deep=True))
+        e01 = next(s for s in economic.scenarios if s.scenario_id == "E-01")
+        return {f.id for f in security.findings + economic.findings}, e01.passed
+
+    ids, passed = findings({"amount": "500.0000000", "asset": "XLM"})
+    assert "security-unbounded-spend" not in ids and "economic-no-spend-policy" not in ids and passed
+    ids, passed = findings(None)  # near miss: no cap at all
+    assert "security-unbounded-spend" in ids and not passed
+
+
+def test_the_documented_example_with_its_code_enforced_cap_has_no_unbounded_spend(tmp_path):
+    out, found = audit(tmp_path, "safe-treasury-agent", documented_tmark())
+    assert "security-unbounded-spend" not in found and "economic-no-spend-policy" not in found
+
+
+def test_a_c_account_agent_is_read_as_a_contract(tmp_path, monkeypatch):
+    from backend.app.stellar.soroban_reader import SorobanReader
+    agent = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+    doc = example_tmark()
+    doc["authority"]["agent_account"] = agent
+    declaration = tmark.to_declaration(tmark.parse(json.dumps(doc))[0])
+    assert declaration["agent_contract_id"] == agent and declaration["agent_wallet"] == ""
+
+    read: list[str] = []
+
+    async def contract(self, contract_id, **_):
+        read.append(contract_id)
+        return {"status": "found", "contract_id": contract_id, "network": self.network, "executable": "wasm",
+                "wasm_hash": "00" * 32, "functions": []}
+    monkeypatch.setattr(SorobanReader, "contract", contract)
+    out, _ = audit(tmp_path / "off", "safe-treasury-agent", doc)
+    assert out["report"]["agent"]["agent_contract_id"] == agent and read == []  # ledger reads are off
+    root = tmp_path / "on" / "safe-treasury-agent"
+    shutil.copytree(ROOT / "examples/demo/safe-treasury-agent", root)
+    (root / ".tmark").write_text(json.dumps(doc))
+    settings = Settings(_env_file=None, enable_onchain_verification=True)
+    monkeypatch.setattr("backend.app.services.repo_audit._chain_facts", _no_account)
+    out = asyncio.run(audit_repository(root, name="a", purpose="", settings=settings, deep=False))
+    assert read == [agent] and out["report"]["agent"]["agent_contract_id"] == agent
+    assert out["report"]["agent"]["wallet"] == ""
+
+
+async def _no_account(*_args, **_kwargs):
+    return {}
+
+
+def network_findings(tmp_path, network: str, code: str):
+    doc = example_tmark()
+    doc["agent"]["network"] = network
+    _, found = audit(tmp_path, "safe-treasury-agent", doc, {"src/net.ts": code})
+    return found.get("intent-tmark-network-mismatch")
+
+
+def test_a_pubnet_caip2_id_breaks_a_testnet_declaration(tmp_path):
+    finding = network_findings(tmp_path / "a", "testnet", "export const cfg = { network: 'stellar:pubnet' };\n")
+    assert finding["severity"] == "high" and "src/net.ts:1" in finding["evidence"]
+    # A switch that can pick the public network is not a map that merely lists it.
+    ternary = "export const passphrase = (n: string) => n === 'pubnet' ? Networks.PUBLIC : Networks.TESTNET;\n"
+    assert network_findings(tmp_path / "b", "testnet", ternary)["severity"] == "high"
+
+
+def test_a_network_keyed_map_does_not_break_a_testnet_declaration(tmp_path):
+    usdc = ("export const USDC = {'stellar:pubnet': 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',\n"
+            "  'stellar:testnet': 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'}[NET];\n"
+            "// mainnet: https://horizon.stellar.org\n")
+    assert network_findings(tmp_path, "testnet", usdc) is None
+
+
+def test_mainnet_declared_with_only_testnet_code_is_low(tmp_path):
+    finding = network_findings(tmp_path / "a", "mainnet", "export const NET = 'stellar:testnet';\n")
+    assert finding["severity"] == "low" and "src/index.ts" in finding["evidence"]
+    # Near misses: the code can still select mainnet.
+    assert network_findings(tmp_path / "b", "mainnet", "export const NET = process.env.STELLAR_NETWORK;\n") is None
+    assert network_findings(tmp_path / "c", "mainnet", "export const NET = isProd ? 'mainnet' : 'testnet';\n") is None

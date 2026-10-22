@@ -188,3 +188,42 @@ class AuthorityReader:
         for item in await asyncio.gather(*(check(a, w) for a, w in list(found.items())[:10])):
             results.append(item)
         return results
+
+
+#: Committed seeds whose accounts are looked up, at most.
+MAX_SEED_KEYS = 20
+
+
+async def seed_exposure(public_keys: list[str], *, transport: httpx.AsyncBaseTransport | None = None,
+                        timeout: float = 8.0) -> dict:
+    """What a committed secret seed controls, by the public key derived from it in process.
+
+    For each key, on mainnet and on testnet: whether its account exists and holds a balance,
+    and how many other accounts list it as a signer (Horizon ``/accounts?signer=``). Only the
+    G... public key is sent. Testnet is reset from time to time, so a key absent there may
+    have held testnet funds before."""
+    from datetime import datetime, timezone
+    keys = [k for k in dict.fromkeys(public_keys) if StrKey.is_valid_ed25519_public_key(k)][:MAX_SEED_KEYS]
+    out: dict = {"checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "keys": {}}
+    for network in ("mainnet", "testnet"):
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, transport=transport,
+                                     headers={"Accept": "application/json"}) as client:
+            for key in keys:
+                out["keys"].setdefault(key, {})[network] = await _key_exposure(client, NETWORKS[network].horizon_url, key)
+    return out
+
+
+async def _key_exposure(client: httpx.AsyncClient, horizon: str, key: str) -> dict:
+    try:
+        response = await client.get(f"{horizon}/accounts/{key}")
+        own = None if response.status_code == 404 else response.raise_for_status().json()
+        response = await client.get(f"{horizon}/accounts", params={"signer": key, "limit": 200})
+        records = response.raise_for_status().json().get("_embedded", {}).get("records", [])
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return {"status": "unavailable"}
+    signs_for = [r.get("account_id") for r in records if r.get("account_id") != key]
+    return {"status": "found" if own is not None or signs_for else "not_found",
+            "exists": own is not None,
+            "balances": [{"asset": "XLM" if b.get("asset_type") == "native" else f"{b.get('asset_code')}:{b.get('asset_issuer')}",
+                          "balance": b.get("balance")} for b in (own or {}).get("balances", [])][:10],
+            "signs_for": len(signs_for)}

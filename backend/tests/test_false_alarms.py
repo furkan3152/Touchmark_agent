@@ -178,10 +178,12 @@ def test_a_confirmed_medium_bypass_rules_out_a_pass_but_a_functional_defect_does
     bypass = finding("security-ai-control-bypass-1", "confirmed")
     assert actionable_risks([bypass]) == [bypass]
     assert review_decision([bypass], complete, 85.0) == "needs_fixes"
-    for other in (finding("security-ai-control-bypass-1", "partial"), finding("security-ai-control-bypass-1"),
+    for other in (finding("security-ai-control-bypass-1", "partial"), finding("security-ai-control-bypass-1", "refuted"),
                   finding("reliability-ai-functional-defect-2", "confirmed"),
                   finding("security-ai-secret-exposure-14", "confirmed")):  # conditional exposure, not a bypass
         assert review_decision([other], complete, 85.0) == "pass"
+    # Never verified: neither credited nor dismissed (policy.unverified_bypasses).
+    assert review_decision([finding("security-ai-control-bypass-1")], complete, 85.0) == "needs_evidence"
     assert "verified" not in bypass.model_dump()  # not part of the serialized finding or its hash
 
 

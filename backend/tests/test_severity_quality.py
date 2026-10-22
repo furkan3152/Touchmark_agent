@@ -57,3 +57,45 @@ def test_the_verifier_lowers_an_overrated_finding_but_not_a_critical_or_fund_fin
     assert run("reliability-ai-functional-defect-2", Severity.CRITICAL).severity == Severity.CRITICAL
     assert run("security-ai-unauthorized-payment-3", Severity.HIGH).severity == Severity.HIGH
     assert run("security-path-untrusted-to-financial-sink", Severity.HIGH).severity == Severity.HIGH
+
+
+# ----------------------------------------------------------------- payment bypasses no verifier checked
+def test_an_unverified_medium_payment_bypass_holds_back_a_pass():
+    from backend.app.swarm.policy import review_decision
+    complete = {"deep_core_complete": True}
+    # Rule ids other tracks emit, with and without a stable-id suffix: matched by pattern.
+    for fid in ("security-ai-control-bypass-1", "security-x402-spend-controls-disabled",
+                "security-mpp-store-missing-1a2b3c4d", "security-x402-settle-unchecked-0f0e0d0c",
+                "x402-verify-without-settle-89abcdef", "security-x402-requirements-from-payer",
+                "stellar_native-tx-hash-proof-unbound-01234567", "security-path-sponsor-rebuild-unchecked"):
+        assert review_decision([_f(fid, Severity.MEDIUM)], complete, 90.0) == "needs_evidence", fid
+        assert review_decision([_f(fid, Severity.MEDIUM, verified="unverifiable")], complete, 90.0) == "needs_evidence"
+        assert review_decision([_f(fid, Severity.MEDIUM, verified="refuted")], complete, 90.0) == "pass"
+        assert review_decision([_f(fid, Severity.MEDIUM, verified="confirmed")], complete, 90.0) == "needs_fixes"
+        assert review_decision([_f(fid, Severity.LOW)], complete, 90.0) == "pass"
+    # Near misses: other rules, and a needs_fixes verdict that the gate never softens.
+    for fid in ("security-path-x402-payment-unbounded-test", "security-x402", "reliability-ai-functional-defect-2",
+                "security-path-untrusted-to-network", "x402-settle-unchecked-notahexid"):
+        assert review_decision([_f(fid, Severity.MEDIUM)], complete, 90.0) == "pass", fid
+    both = [_f("security-x402-settle-unchecked", Severity.MEDIUM), _f("security-path-untrusted-to-financial-sink")]
+    assert review_decision(both, complete, 50.0) == "needs_fixes"
+
+
+def test_a_deep_review_that_times_out_keeps_every_deterministic_finding():
+    import asyncio
+
+    from backend.app.config import Settings
+    from backend.app.models import AgentArtifact, AuditTier, SourceKind
+    from backend.app.services.deep_review import DeepReviewResult
+
+    class TimedOut:
+        async def review(self, artifact, existing, chain_facts):
+            return DeepReviewResult(status="timeout", note="stopped at its time limit")
+
+    artifact = AgentArtifact(source_kind=SourceKind.REPO, name="a", system_prompt="Pays vendors.",
+                             code_files={"src/pay.py": "def pay(to, amount):\n    tx.sign(key)\n"})
+    swarm = lambda: AuditSwarm(Settings(_env_file=None, stellar_network="offline"))  # noqa: E731
+    plain = asyncio.run(swarm().run(artifact, "a", AuditTier.DEEP))
+    reviewed = asyncio.run(swarm().run(artifact, "b", AuditTier.DEEP, deep_reviewer=TimedOut()))
+    assert [(f.id, f.severity) for f in reviewed.findings] == [(f.id, f.severity) for f in plain.findings]
+    assert reviewed.deep_review["status"] == "timeout"

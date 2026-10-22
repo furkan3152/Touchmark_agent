@@ -102,7 +102,7 @@ class EconomicAuditor(BaseAuditor):
         )
         has_chain_data = act.data_source == "indexer"
 
-        if not artifact.agent_wallet:
+        if not artifact.agent_wallet and not artifact.agent_contract_id:
             findings.append(
                 self.finding(
                     "no-wallet",
@@ -121,7 +121,7 @@ class EconomicAuditor(BaseAuditor):
         # ---------------------------------------------------------- spend policy
         has_funds = any(t.requires_signature for t in artifact.tools)
         if has_funds:
-            tool_limits = [t for t in artifact.tools if t.spend_limit_usdc]
+            tool_limits = [t for t in artifact.tools if t.spend_limit_usdc or t.spend_limit]
             policy = scan(prompt_l, POLICY_SIGNALS)
             # Araç tavanı somut kanıttır; prompt sinyali ise ancak açık bir
             # olumsuzlama ("unlimited", "no spending limits") yoksa sayılır.
