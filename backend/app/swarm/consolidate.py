@@ -11,6 +11,7 @@ handled where verification is applied (orchestrator._apply_verification).
 from __future__ import annotations
 
 import re
+from hashlib import sha1
 
 from ..models import Finding, FindingKind, Severity
 
@@ -39,6 +40,14 @@ _RULE_TWINS = {
     "security-path-secret-to-exfiltration": {"secret-exposure"},
     "security-path-untrusted-account-control": {"account-takeover", "control-bypass"},
 }
+
+
+def stable_id(rule: str, place: str, snippet: str = "") -> str:
+    """``{rule}-{8 hex}`` from the file (or address) and the matched code, never from a line
+    number or a list position, so a re-audit and the verifier see the same id for the same
+    defect even when code above it moves."""
+    normalized = re.sub(r"\s+", " ", snippet).strip()
+    return f"{rule}-{sha1(f'{place}\n{normalized}'.encode()).hexdigest()[:8]}"
 
 
 def _category(fid: str) -> str:

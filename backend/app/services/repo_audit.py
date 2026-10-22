@@ -29,6 +29,7 @@ from ..config import Settings
 from ..models import AgentArtifact, AuditTier, SourceKind, ToolSpec
 from ..reporting.generator import canonical_json, report_to_dict
 from ..swarm.provenance import _is_manifest
+from .lockfiles import Lockset
 
 SOURCE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", ".go", ".sol")
 #: Code generators ship the agent as templates (server.py.hbs, tools.ts.tmpl). A template
@@ -344,20 +345,14 @@ def registered_tools(files: dict[str, str]) -> list[ToolSpec]:
             for name, where in list(found.items())[:60]]
 
 
-def _dependencies(root: Path) -> list[str]:
+def _dependencies(root: Path, lockset: Lockset | None = None) -> list[str]:
     """Direct dependencies, at the exact version the lockfile resolves when there is one."""
+    lockset = lockset or Lockset.read(root)
     deps: list[str] = []
     package = root / "package.json"
     if package.is_file():
-        locked: dict[str, str] = {}
-        lock = root / "package-lock.json"
-        if lock.is_file():
-            try:
-                for key, meta in (json.loads(lock.read_text()).get("packages") or {}).items():
-                    if key.startswith("node_modules/") and key.count("node_modules/") == 1 and isinstance(meta, dict):
-                        locked[key[len("node_modules/"):]] = str(meta.get("version", ""))
-            except (ValueError, OSError):
-                locked = {}
+        locked = {name: dep["version"] for name, dep in
+                  ((lockset.importers.get("") or {}).get("deps") or {}).items() if dep.get("version")}
         try:
             data = json.loads(package.read_text())
             for section in ("dependencies", "peerDependencies"):
@@ -442,6 +437,7 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     if not stellar_address and StrKey.is_valid_ed25519_public_key(decl.agent_wallet):
         stellar_address = decl.agent_wallet
     chain = await _chain_facts(settings, network, stellar_address, agent_signing_key, files)
+    lockset = Lockset.read(root)
     if contract_facts:
         chain["contract"] = contract_facts
     if source_binding:
@@ -450,14 +446,16 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         source_kind=SourceKind.REPO,
         source_ref=f"repo:{source_reference or root.name}@{revision}",
         name=name, description=description, system_prompt=instructions[:12_000],
-        code_files=files, tools=_tools(decl, files), dependencies=_dependencies(root), chain_authority=chain, lockfiles=_lockfiles(root),
+        code_files=files, tools=_tools(decl, files), dependencies=_dependencies(root, lockset), chain_authority=chain,
+        lockfiles=_lockfiles(root),
         declared_capabilities=decl.capabilities, human_oversight=decl.human_oversight,
         discloses_ai=decl.discloses_ai, domain=decl.domain or "general",
         raw_metadata={"source_not_selected": (selection["manifest"]["source_files_not_selected"]
                                               + selection["manifest"]["files_too_large"]),
                       "committed_seeds": selection.get("committed_seeds", []),
                       "committed_credentials": selection.get("committed_credentials", []),
-                      "tmark": _tmark_metadata(declared, selection)},
+                      "tmark": _tmark_metadata(declared, selection),
+                      "resolved_versions": lockset.to_json()},
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
         agent_contract_id=(contract_facts or {}).get("contract_id", ""),
         owner_verification_note="Not checked during repository review.",
