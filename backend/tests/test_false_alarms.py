@@ -102,7 +102,7 @@ export const payAction = {
 def test_an_agent_kit_handler_takes_model_input_after_the_agent(tmp_path):
     found = audit(tmp_path, {"src/pay.ts": KIT})
     assert "security-path-untrusted-ledger-endpoint" not in found  # the kit's own config, not the model's
-    assert found["security-path-untrusted-to-financial-sink"]["severity"] == "critical"  # input.to still is
+    assert found["security-path-untrusted-to-financial-sink"]["severity"] == "high"  # input.to still is
 
 
 def test_an_approval_flag_only_an_unseen_caller_sets_is_not_confirmed(tmp_path):
@@ -141,7 +141,7 @@ def test_only_soroban_crate_sources_are_judged_as_contracts(tmp_path):
     assert "stellar_native-soroban-auth-missing" not in workspace
     crate = audit(tmp_path / "c", {"vault/Cargo.toml": '[package]\nname = "vault"\n[dependencies]\nsoroban-sdk = "22"\n',
                                    "vault/src/lib.rs": CONTRACT})
-    assert crate["stellar_native-soroban-auth-missing"]["severity"] == "high"
+    assert crate["stellar_native-soroban-auth-missing"]["severity"] == "medium"
 
 
 def test_text_written_as_html_is_reported_and_escaped_or_constant_html_is_not(tmp_path):

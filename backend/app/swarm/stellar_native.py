@@ -194,7 +194,8 @@ class StellarNativeAuditor(BaseAuditor):
         if auth_gaps:
             finding = self.finding(
                 "soroban-auth-missing",
-                Severity.HIGH if auth_hard else Severity.MEDIUM,
+                # Hand audits rated these medium or low: a lexical gap, not a shown bypass.
+                Severity.MEDIUM if auth_hard else Severity.LOW,
                 "Soroban authorization paths require review",
                 "Potentially mutating public functions lack a direct require_auth call in their own body. Authorization may exist in a helper or caller; this lexical review does not establish an exploitable authorization bypass.",
                 evidence=locations(auth_hard + [fn for fn in auth_gaps if fn not in auth_hard]),

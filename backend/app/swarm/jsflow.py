@@ -117,7 +117,7 @@ _X402_SIGNER = re.compile(r"(?:^|\.)(?:createPaymentPayload|createPaymentHeader|
 _X402_LIMITS = {"maxValue", "maxAmount", "maxPaymentAmount", "maxAmountRequired", "policy", "policies",
                 "paymentRequirementsSelector", "selector", "budget", "maxPrice", "spendLimit"}
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s$]+(?:/|$)")
-from .codeflow import AMOUNT_NAME, RECEIVED_NAME  # noqa: E402
+from .codeflow import AMOUNT_NAME, HANDLER_NAME, RECEIVED_NAME  # noqa: E402
 _NAME_SOURCES = {"userinput", "prompt", "payload", "command", "cmd", "code", "webhook", "query", "message", "body",
                  "request", "req", "event", "ctx"}
 _TOOL_REGISTER = re.compile(r"(?:^|\.)(?:tool|registerTool|addTool|defineTool|createTool)$")
@@ -942,7 +942,8 @@ class JsProject:
             public = fn.parent is None and (key in exported or fn.cls is not None) and not fn.name.startswith(("_", "#"))
             if key not in self.called and public and not any(self.entry[key]) and fn.name != "constructor":
                 for i, (pname, pattern) in enumerate(fn.params):
-                    label = "external" if (pname or "").lower().replace("_", "") in _NAME_SOURCES else "caller"
+                    named = (pname or "").lower().replace("_", "") in _NAME_SOURCES
+                    label = "external" if named and HANDLER_NAME.search(fn.name or "") else "caller"
                     self.entry[key][i].add(label)
                 if fn.params:
                     self.profile.entrypoints.setdefault(f"{fn.module}:{fn.name}", "public function with no caller in project")

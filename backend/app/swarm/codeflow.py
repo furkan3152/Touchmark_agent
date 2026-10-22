@@ -90,6 +90,11 @@ _HANDLER_DECORATOR = re.compile(r"(?:^|\.)(?:tool|function_tool|mcp_tool)$|(?:^|
 _ROUTE_DECORATOR = re.compile(r"\.(?:get|post|put|patch|delete|route|websocket|api_route)$")
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s]+(?:/|$)")
 _NAME_SOURCES = {"user_input", "prompt", "payload", "command", "cmd", "code", "webhook", "query", "message"}
+#: Only a function that looks like a handler takes its input from outside by parameter name:
+#: `on_message(message)` does, a wallet's own `sign_message(message)` primitive does not.
+HANDLER_NAME = re.compile(r"^(?:on|handle|handler|process|dispatch|receive|route|webhook|listen|callback|controller|"
+                          r"endpoint|serve|run|execute|invoke|call|main|chat|ask|reply|respond)(?:[_A-Z]|$)|"
+                          r"(?:handler|hook|route|controller|endpoint|listener|callback)$", re.I)
 #: Names of values a spending cap compares: money, not counters, ratings or lengths.
 AMOUNT_NAME = re.compile(r"amount|value|price|cost|units|spend|spent|total|budget|sum|fee|usdc|xlm|stroop|balance|"
                          r"limit|qty|quantity|max|cap\b|pay|charge|\bsize", re.I)
@@ -514,7 +519,8 @@ class _Project:
             if key not in self.called and public and not any(self.entry[key]):
                 for i, params in enumerate(self.entry[key]):
                     # Conventional input names on an uncalled function are treated as direct input.
-                    params.add("external" if fn.params[i].lstrip("*").lower() in _NAME_SOURCES | {"request", "req", "event"} else "caller")
+                    named = fn.params[i].lstrip("*").lower() in _NAME_SOURCES | {"request", "req", "event"}
+                    params.add("external" if named and HANDLER_NAME.search(fn.node.name) else "caller")
                 if fn.params:
                     self.profile.entrypoints.setdefault(
                         f"{self.module_of[fn.module]}:{fn.node.name}", "public function with no caller in project")
