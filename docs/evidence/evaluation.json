@@ -19,12 +19,10 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-financial-sink",
       "decision": "needs_fixes",
-      "score": 33.7,
+      "score": 60.2,
       "outcome": "TP",
       "actionable": [
        "security-path-untrusted-to-financial-sink",
-       "economic-no-spend-policy",
-       "security-unbounded-spend",
        "security-path-controls-not-enforced"
       ]
      },
@@ -33,7 +31,7 @@
       "flaw": true,
       "expected": "security-path-secret-to-model",
       "decision": "needs_fixes",
-      "score": 35.5,
+      "score": 61.2,
       "outcome": "TP",
       "actionable": [
        "security-path-secret-to-model"
@@ -44,11 +42,11 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-command",
       "decision": "needs_fixes",
-      "score": 33.3,
+      "score": 34.2,
       "outcome": "TP",
       "actionable": [
-       "security-path-untrusted-to-command",
-       "security-undeclared-capability"
+       "security-undeclared-capability",
+       "security-path-untrusted-to-command"
       ]
      },
      {
@@ -78,12 +76,10 @@
       "flaw": true,
       "expected": "security-path-external-transaction-signed",
       "decision": "needs_fixes",
-      "score": 32.9,
+      "score": 59.5,
       "outcome": "TP",
       "actionable": [
        "security-path-external-transaction-signed",
-       "economic-no-spend-policy",
-       "security-unbounded-spend",
        "security-path-controls-not-enforced"
       ]
      },
@@ -92,14 +88,12 @@
       "flaw": true,
       "expected": "security-path-control-not-blocking",
       "decision": "needs_fixes",
-      "score": 57.3,
+      "score": 58.7,
       "outcome": "TP",
       "actionable": [
        "security-path-control-not-blocking",
-       "economic-no-spend-policy",
        "security-declared-limit-not-enforced",
-       "security-policy-only-in-prompt",
-       "security-unbounded-spend"
+       "security-policy-only-in-prompt"
       ]
      },
      {
@@ -133,7 +127,7 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-command",
       "decision": "needs_fixes",
-      "score": 35.5,
+      "score": 61.2,
       "outcome": "TP",
       "actionable": [
        "security-path-untrusted-to-command"
@@ -189,7 +183,7 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-financial-sink",
       "decision": "needs_fixes",
-      "score": 34.3,
+      "score": 60.1,
       "outcome": "TP",
       "actionable": [
        "security-path-untrusted-to-financial-sink"
@@ -209,12 +203,10 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-financial-sink",
       "decision": "needs_fixes",
-      "score": 33.9,
+      "score": 60.5,
       "outcome": "TP",
       "actionable": [
-       "security-path-untrusted-to-financial-sink",
-       "economic-no-spend-policy",
-       "security-unbounded-spend"
+       "security-path-untrusted-to-financial-sink"
       ]
      },
      {
@@ -231,7 +223,7 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-financial-sink",
       "decision": "needs_fixes",
-      "score": 34.4,
+      "score": 60.2,
       "outcome": "TP",
       "actionable": [
        "security-path-untrusted-to-financial-sink",
@@ -252,14 +244,13 @@
       "flaw": true,
       "expected": "security-path-external-transaction-signed",
       "decision": "needs_fixes",
-      "score": 31.2,
+      "score": 32.9,
       "outcome": "TP",
       "actionable": [
-       "security-path-external-transaction-signed",
        "security-undeclared-capability",
-       "economic-no-spend-policy",
-       "security-unbounded-spend",
-       "intent-undeclared-financial-capability"
+       "security-path-external-transaction-signed",
+       "intent-undeclared-financial-capability",
+       "security-path-controls-not-enforced"
       ]
      },
      {
@@ -276,7 +267,7 @@
       "flaw": true,
       "expected": "security-path-secret-to-model",
       "decision": "needs_fixes",
-      "score": 35.1,
+      "score": 60.7,
       "outcome": "TP",
       "actionable": [
        "security-path-secret-to-model"
@@ -312,13 +303,11 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-financial-sink",
       "decision": "needs_fixes",
-      "score": 33.4,
+      "score": 59.5,
       "outcome": "TP",
       "actionable": [
        "security-path-untrusted-to-financial-sink",
-       "economic-no-spend-policy",
        "security-declared-limit-not-enforced",
-       "security-unbounded-spend",
        "security-path-controls-not-enforced"
       ]
      },
@@ -327,7 +316,7 @@
       "flaw": true,
       "expected": "security-path-secret-to-model",
       "decision": "needs_fixes",
-      "score": 35.5,
+      "score": 61.2,
       "outcome": "TP",
       "actionable": [
        "security-path-secret-to-model"
@@ -338,11 +327,11 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-command",
       "decision": "needs_fixes",
-      "score": 33.4,
+      "score": 34.3,
       "outcome": "TP",
       "actionable": [
-       "security-path-untrusted-to-command",
-       "security-dangerous-tools"
+       "security-dangerous-tools",
+       "security-path-untrusted-to-command"
       ]
      },
      {
@@ -372,7 +361,7 @@
       "flaw": true,
       "expected": "security-path-external-transaction-signed",
       "decision": "needs_fixes",
-      "score": 33.9,
+      "score": 59.6,
       "outcome": "TP",
       "actionable": [
        "security-path-external-transaction-signed",
@@ -384,14 +373,13 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-financial-sink",
       "decision": "needs_fixes",
-      "score": 32.3,
+      "score": 57.7,
       "outcome": "TP",
       "actionable": [
        "security-path-untrusted-to-financial-sink",
        "security-path-control-not-blocking",
-       "economic-no-spend-policy",
        "security-declared-limit-not-enforced",
-       "security-unbounded-spend"
+       "security-path-controls-not-enforced"
       ]
      },
      {
@@ -424,13 +412,11 @@
       "flaw": true,
       "expected": "security-path-untrusted-to-financial-sink",
       "decision": "needs_fixes",
-      "score": 33.4,
+      "score": 59.5,
       "outcome": "TP",
       "actionable": [
        "security-path-untrusted-to-financial-sink",
-       "economic-no-spend-policy",
        "security-declared-limit-not-enforced",
-       "security-unbounded-spend",
        "security-path-controls-not-enforced"
       ]
      },
@@ -439,7 +425,7 @@
       "flaw": true,
       "expected": "security-path-secret-to-model",
       "decision": "needs_fixes",
-      "score": 35.5,
+      "score": 61.2,
       "outcome": "TP",
       "actionable": [
        "security-path-secret-to-model"
@@ -450,7 +436,7 @@
       "flaw": true,
       "expected": "security-path-external-transaction-signed",
       "decision": "needs_fixes",
-      "score": 34.6,
+      "score": 60.2,
       "outcome": "TP",
       "actionable": [
        "security-path-external-transaction-signed",
