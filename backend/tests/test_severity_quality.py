@@ -6,33 +6,9 @@ often reported twice. Each test pins one of those behaviours."""
 
 from __future__ import annotations
 
-import pytest
-
 from backend.app.models import AuditorVerdict, Dimension, Finding, FindingKind, Severity
-from backend.app.services import impact
 from backend.app.swarm.consolidate import consolidate, fold_absence_notes, merge_duplicates
 from backend.app.swarm.orchestrator import AuditSwarm
-
-
-@pytest.mark.parametrize("facts, expected", [
-    (("anyone", "funds_or_keys", "none", "default"), Severity.CRITICAL),       # open endpoint signs anything
-    (("agent_user", "funds_or_keys", "realistic", "default"), Severity.HIGH),  # budget bypass with a crafted amount
-    (("no_attacker", "funds_or_keys", "realistic", "default"), Severity.HIGH), # pays twice on a retry
-    (("anyone", "paid_service", "none", "default"), Severity.HIGH),            # paywall served without settling
-    (("operator", "funds_or_keys", "none", "default"), Severity.MEDIUM),       # operator's own flag
-    (("anyone", "correctness", "unlikely", "default"), Severity.LOW),
-    (("anyone", "funds_or_keys", "none", "example_or_test"), Severity.LOW),    # example code
-    (("anyone", "funds_or_keys", "none", "not_wired"), Severity.LOW),
-    (("anyone", "funds_or_keys", "none", "optional"), Severity.HIGH),
-])
-def test_severity_follows_the_stated_facts(facts, expected):
-    assert impact.severity(*facts) == expected
-    assert "triggered by" in impact.explain(*facts)
-
-
-def test_unknown_facts_are_rejected():
-    with pytest.raises(KeyError):
-        impact.severity("everyone", "funds_or_keys", "none", "default")
 
 
 def _f(fid: str, sev: Severity = Severity.HIGH, evidence: str = "src/a.ts:10 `x`", **kw) -> Finding:
@@ -64,8 +40,10 @@ def test_absence_notes_become_warnings_only_when_a_concrete_payment_finding_exis
     note = _f("economic-no-spend-policy", evidence="")
     alone = fold_absence_notes([note])
     assert alone[0].kind is FindingKind.RISK
-    out = consolidate([note, _f("security-ai-unauthorized-payment-1")])
-    assert out[0].kind is FindingKind.WARNING and "security-ai-unauthorized-payment-1" in out[0].detail
+    oversight = _f("compliance-no-human-oversight", evidence="", kind=FindingKind.WARNING)
+    out = consolidate([note, oversight, _f("security-ai-unauthorized-payment-1")])
+    assert all(f.kind is FindingKind.WARNING and f.severity is Severity.LOW for f in out[:2])
+    assert "security-ai-unauthorized-payment-1" in out[0].detail
 
 
 def test_the_verifier_lowers_an_overrated_finding_but_not_a_critical_or_fund_finding():

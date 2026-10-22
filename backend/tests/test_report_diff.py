@@ -23,7 +23,7 @@ def test_fixing_the_treasury_agent_closes_its_risks():
     assert {"security-path-untrusted-to-financial-sink", "security-path-untrusted-to-network"} <= closed
     assert not [f for f in diff["introduced"] if f["severity"] in ("critical", "high")]
     assert diff["before"]["decision"] == "needs_fixes" and diff["after"]["decision"] == "pass"
-    assert diff["score_change"] > 50
+    assert diff["score_change"] > 30  # payment paths are high, not critical: hand audits rated them so
 
 
 def test_model_findings_match_by_title_not_running_number():

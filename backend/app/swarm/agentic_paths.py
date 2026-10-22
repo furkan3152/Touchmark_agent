@@ -135,19 +135,25 @@ def _scan_file(filename: str, content: str, external_entrypoints: set[str] | Non
     return commands[:5], financial[:5], exfil[:5]
 
 
+# Severities follow hand audits of 23 Stellar agents: where a rule's real findings were rated
+# a level lower by hand in both comparison rounds (payment, signing, command and secret paths:
+# high), the rule says so. Request URLs stay high: hand audits rated them lower on local
+# desktop tools, but a server-side fetch tool reaches internal and cloud-metadata hosts, and
+# the verifier may lower it where the context is local. The model review and the
+# confirmed-bypass rule still raise a finding that is critical in context.
 _PATH_RULES = {
     # category: (finding id, severity for direct input, title, detail, remediation, references)
-    "command": ("security-path-untrusted-to-command", Severity.CRITICAL,
+    "command": ("security-path-untrusted-to-command", Severity.HIGH,
         "External input reaches a process or code-execution boundary",
         "Input-derived data appears in an eval, exec or process call. Inspect whether an attacker controls executable content or arguments. A static path alone does not prove arbitrary code execution.",
         "Remove dynamic execution. Otherwise use an isolated worker without network access or Stellar signing keys, with allowlisted commands and arguments.",
         ["OWASP LLM05 Improper Output Handling", "CWE-78"]),
-    "financial": ("security-path-untrusted-to-financial-sink", Severity.CRITICAL,
+    "financial": ("security-path-untrusted-to-financial-sink", Severity.HIGH,
         "External input reaches a Stellar transaction boundary",
         "A static input-to-transaction path is visible: the recipient or an unbounded amount of a signed Stellar operation comes from untrusted input. Authorization names and comments do not prove enforcement. This is not proof of a successful exploit.",
         "Enforce typed inputs, recipient allowlists, fail-closed spending limits, replay protection and explicit approval before signing. Test each boundary with rejected requests.",
         ["Soroban authorization", "OWASP LLM06 Excessive Agency"]),
-    "foreign_signing": ("security-path-external-transaction-signed", Severity.CRITICAL,
+    "foreign_signing": ("security-path-external-transaction-signed", Severity.HIGH,
         "An externally supplied transaction is signed with the agent key",
         "A transaction envelope parsed from request or model input is signed or submitted without inspecting its operations. Whoever supplies the envelope chooses what the agent key authorizes.",
         "Never sign arbitrary envelopes. Build transactions server-side, or decode and allowlist every operation, source, destination and amount before signing.",
@@ -197,7 +203,7 @@ _PATH_RULES = {
         "An x402/MPP client wrapper signs the payment a 402 response requests, with no maximum amount or requirement selector. A malicious or compromised paid endpoint chooses the recipient, asset and amount.",
         "Configure a maximum per payment and an allowlist of payees and assets in the wrapper (or a requirements selector that enforces them), and track spend across calls.",
         ["OWASP LLM06 Excessive Agency", "x402 client payment policy"]),
-    "secret_to_model": ("security-path-secret-to-model", Severity.CRITICAL,
+    "secret_to_model": ("security-path-secret-to-model", Severity.HIGH,
         "Secret material is sent to the language model",
         "A secret value is placed into a model request. It leaves the trust boundary to the model provider and can be extracted from the conversation by prompt injection.",
         "Keep keys out of prompts and tool results. Sign in a separate component the model cannot read, and rotate any key that was sent.",

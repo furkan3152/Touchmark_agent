@@ -21,7 +21,10 @@ _CONCRETE_SPEND = re.compile(
     r"^security-path-(?:untrusted-to-financial-sink|x402-payment-unbounded|external-transaction-signed|"
     r"control-not-blocking)$|^security-declared-limit-not-enforced$|^intent-tmark-limit-not-enforced$|"
     r"-ai-(?:unauthorized-payment|control-bypass|economic-loss|foreign-transaction-signing)-\d+$")
-_ABSENCE = {"economic-no-spend-policy", "security-unbounded-spend"}
+#: Checklist notes that restate a missing spend control. In two hand-checked rounds over 23
+#: agents, 102 of them were labelled: 66 generic, 23 duplicate, 10 false, 1 overstated, 2 true.
+_ABSENCE = {"economic-no-spend-policy", "security-unbounded-spend", "compliance-no-human-oversight",
+            "intent-full-autonomy-over-funds"}
 #: The model-review categories that describe the same defect as a data-flow rule.
 _RULE_TWINS = {
     "security-path-untrusted-to-financial-sink": {"unauthorized-payment", "control-bypass", "economic-loss"},
@@ -82,17 +85,18 @@ def merge_duplicates(findings: list[Finding]) -> list[Finding]:
 
 
 def fold_absence_notes(findings: list[Finding]) -> list[Finding]:
-    """'No spend policy' and 'no declared limit' restate a concrete payment finding when
-    one exists: they become warnings that point to it, so the concrete defect carries
-    the severity. Without a concrete finding they stay risks."""
+    """'No spend policy', 'no declared limit', 'no human oversight' and 'full autonomy'
+    restate a concrete payment finding when one exists: they become low checklist warnings
+    that point to it, so the concrete defect carries the severity. Without a concrete
+    finding they stay as they are."""
     concrete = [f for f in findings if f.is_risk and _CONCRETE_SPEND.search(f.id)
                 and f.severity.rank >= Severity.MEDIUM.rank]
     if not concrete:
         return findings
     lead = max(concrete, key=lambda f: f.severity.rank)
-    return [f.model_copy(update={"kind": FindingKind.WARNING,
+    return [f.model_copy(update={"kind": FindingKind.WARNING, "severity": Severity.LOW,
                                  "detail": f.detail + f" The concrete defect is reported as {lead.id}."})
-            if f.is_risk and f.id in _ABSENCE else f for f in findings]
+            if f.id in _ABSENCE and f.kind is not FindingKind.EVIDENCE_GAP else f for f in findings]
 
 
 def consolidate(findings: list[Finding]) -> list[Finding]:

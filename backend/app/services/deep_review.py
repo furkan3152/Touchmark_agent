@@ -28,7 +28,6 @@ from dataclasses import dataclass, field
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar import knowledge
-from . import impact
 from .ai_review import redact
 
 #: A review given less time than this would read a file or two and stop; it is skipped instead.
@@ -106,8 +105,7 @@ Work in this order:
 
 Be precise and concrete. A finding without a verifiable line is discarded. Never report that a file, module or function is missing because you could not open it: the submitted set can leave files out of a large repository, so say "not reviewed" instead. When you find a defect in one tool or route, search the sibling tools for the same pattern and cite each location.
 
-For each finding, state its impact facts as the code ships: who can trigger it (triggered_by), what is at risk (at_risk), what must already be true (preconditions) and where it applies (reached_in). The final severity is computed from these facts, so state them precisely: an attack that works whenever the agent visits a URL or answers a request has no preconditions; code only an example or test calls is example_or_test.
-Your own severity estimate, judged on the code as shipped, not on what it might become:
+Severity, judged on the code as shipped, not on what it might become:
 - critical: an outside party can take funds or keys through a reachable path in the shipped code.
 - high: a privileged or paid action is reachable without an enforced control, or the agent's core function does not work as shipped (a buyer could not use it for its stated purpose, or it loses money or access).
 - medium: exploitable only under realistic extra conditions, or limited impact.
@@ -143,15 +141,13 @@ TOOLS = [
             {"flow_id": _STR, "verdict": {"type": "string", "enum": ["exploitable", "mitigated", "unreachable"]},
              "reason": _STR, "file": _STR, "line": {"type": "integer"}, "evidence_quote": _STR},
             ["flow_id", "verdict", "reason", "file", "line", "evidence_quote"]),
-    _strict("record_finding", "Record one verified defect. The severity is computed from the four impact "
-            "facts (triggered_by, at_risk, preconditions, reached_in); state them as the code ships.",
+    _strict("record_finding", "Record one verified defect.",
             {"category": {"type": "string", "enum": sorted(CATEGORIES)},
              "severity": {"type": "string", "enum": SEVERITIES},
-             **impact.schema_properties(),
              "title": _STR, "file": _STR, "line": {"type": "integer"}, "evidence_quote": _STR,
              "attack_scenario": _STR, "stellar_impact": _STR, "remediation": _STR},
-            ["category", "severity", "triggered_by", "at_risk", "preconditions", "reached_in", "title", "file",
-             "line", "evidence_quote", "attack_scenario", "stellar_impact", "remediation"]),
+            ["category", "severity", "title", "file", "line", "evidence_quote", "attack_scenario",
+             "stellar_impact", "remediation"]),
     _strict("finish", "End the review.", {"summary": _STR}, ["summary"]),
 ]
 
@@ -358,19 +354,13 @@ class DeepReviewer:
                 return f"Rejected: {problem}. Cite an exact line and quote it verbatim."
             dimension, label = CATEGORIES[category]
             index = len(result.findings) + 1
-            facts = [args.get(k) for k in ("triggered_by", "at_risk", "preconditions", "reached_in")]
-            try:
-                # The stated facts decide the severity; the reviewer's own estimate is the fallback.
-                level, why = impact.severity(*facts), "\n" + impact.explain(*facts)
-            except (KeyError, TypeError):
-                level, why = Severity(args["severity"]), ""
             result.findings.append(Finding(
                 id=f"{dimension.value}-ai-{category.replace('_', '-')}-{index}",
-                dimension=dimension, severity=level,
+                dimension=dimension, severity=Severity(args["severity"]),
                 title=redact(str(args.get("title") or label)[:200]),
                 detail=redact(str(args.get("attack_scenario", ""))[:1500]
                               + ("\nStellar impact: " + str(args.get("stellar_impact", ""))[:600]
-                                 if args.get("stellar_impact") else "") + why),
+                                 if args.get("stellar_impact") else "")),
                 # Quotes are verified against source first, then secrets are masked for the report.
                 evidence=redact(f"{args['file']}:{args['line']} `{' '.join(args['evidence_quote'].split())[:240]}`"),
                 evidence_grade=EvidenceGrade.INFERRED,
