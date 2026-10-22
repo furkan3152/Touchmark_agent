@@ -115,7 +115,33 @@ The components, the score formula, the contract state machine, the self-assessed
 contract security review and the trust boundaries are described in
 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Analysis engine | Python 3.12, tree-sitter (Python, JavaScript, TypeScript), data-flow tracing from model input to keys, payments and the network, seven rule-based auditors |
+| AI review | Anthropic Claude (deep review and an independent second-opinion verifier); optional, the rules run without any API key |
+| API and UI | FastAPI + Uvicorn, SQLAlchemy, a static HTML/CSS/JS front end (demo at `/`, Studio at `/studio`) |
+| On-chain | Rust Soroban contracts (soroban-sdk 25.3.0) on Stellar testnet: `agent-registry`, `audit-credential`, `audit-escrow`, `agent-account`; `stellar-sdk` for Python, Freighter for owner signatures |
+| Delivery | Vercel (FastAPI function), Docker / Compose, a composite GitHub Action (`action.yml`) |
+
+## Project structure
+
+| Path | Contents |
+|---|---|
+| `backend/app/` | Resolver, ingestion, auditors, reporting, Stellar and chain clients, API (`app.py` is the entry point) |
+| `backend/tests/` | Pytest suite (992 tests) |
+| `contracts/` | Soroban contracts: registry, credential, escrow, spend-limited agent account |
+| `frontend/` | Demo page and Studio |
+| `scripts/` | CLI audit, CI audit, evaluation, `.tmark` tooling, testnet deployment and verification scripts |
+| `examples/` | Safe and unsafe demo agents and the labelled evaluation corpus |
+| `schemas/` | JSON schemas (including the `.tmark` v1 schema) |
+| `deployments/`, `research/` | Testnet deployment records and trial results |
+| `docs/` | [Architecture](docs/ARCHITECTURE.md), [Evidence](docs/EVIDENCE.md), [`.tmark` format](docs/TMARK.md) |
+
 ## Run it
+
+Prerequisites: Python 3.12, and for the contracts Rust 1.91 with the `wasm32v1-none` target (pinned in `rust-toolchain.toml`).
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
@@ -129,6 +155,13 @@ ENABLE_DEEP_REVIEW=1 ENABLE_FINDING_VERIFICATION=1 \
 
 To issue credentials from your own deployment, run `scripts/deploy_demo_testnet.py`, then
 set `DEMO_OPERATOR_SECRET`.
+
+### Configuration
+
+Copy `.env.example` to `.env`. Everything is optional for a local run: with no keys the analysis is rules-only and
+nothing is signed on-chain. The main switches are `STELLAR_NETWORK` (`testnet`, `offline` or `mainnet`), `ALLOW_MAINNET`
+(required for mainnet, off by default), `ENABLE_DEEP_REVIEW` with `ANTHROPIC_API_KEY` for the AI review, `ENABLE_ONCHAIN_VERIFICATION`,
+and the contract ids written by the deploy scripts. Never commit `.env` files or Stellar secret seeds.
 
 ### In CI
 
@@ -153,6 +186,15 @@ jobs:
 Outputs: `decision` (`needs_fixes`, or `needs_evidence` when the rules find no actionable risk: the rules alone never give a pass, which needs the full review), `score`, `tmark` (valid, invalid or missing) and `report` (the full JSON).
 The same check runs locally with `python scripts/ci_audit.py path/to/repo`.
 
+## Security
+
+- **The audited code is never executed** by the deterministic analysis; the optional runtime sandbox is off by default.
+- **Non-custodial credentials:** when a repository names its owner, the owner signs the registration in their own
+  wallet; the server cannot register an agent in their name.
+- **Mainnet is opt-in** (`ALLOW_MAINNET=false` by default) and the demo runs on testnet only.
+- The contracts have a self-assessed security review in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and have **not
+  been externally audited**. Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+
 ## Limits
 
 - The analysis is **static**. Logic flaws that are not a flow from input to a sink are
@@ -164,3 +206,7 @@ The same check runs locally with `python scripts/ci_audit.py path/to/repo`.
   certificate of safety.**
 
 [Architecture](docs/ARCHITECTURE.md) · [Evidence](docs/EVIDENCE.md) · [Deployments](deployments/README.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Apache 2.0](LICENSE)
+
+---
+
+Built by Furkan Akdogan ([@furkan3152](https://github.com/furkan3152)).
