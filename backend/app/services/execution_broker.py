@@ -5,7 +5,7 @@ All side effects are journaled outside the untrusted VM and counted before use.
 """
 from __future__ import annotations
 import asyncio,json,re
-from decimal import Decimal,InvalidOperation
+from decimal import Decimal
 from hashlib import sha256
 import httpx
 from stellar_sdk import Asset,Keypair,Network,Server,TransactionBuilder

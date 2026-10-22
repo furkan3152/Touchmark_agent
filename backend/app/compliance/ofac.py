@@ -160,8 +160,3 @@ class OfacSanctionsList:
             "stale": not self.is_fresh(cache),
             "publisher": cache.get("publisher", "US Treasury OFAC (SDN)"),
         }
-
-    async def lookup(self, address: str) -> dict:
-        """Gerekirse indirip arar. Yalnızca açık komutlarda (CLI/warm-up) kullanılır."""
-        await self.refresh()
-        return self.lookup_cached(address)
