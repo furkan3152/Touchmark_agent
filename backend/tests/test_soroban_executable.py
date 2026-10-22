@@ -1,5 +1,6 @@
 """Every ContractExecutable arm, CAP-85 executable references, and the bytecode findings
-(Soroban RPC is mocked; WASM modules are synthetic)."""
+(Soroban RPC is mocked; WASM modules are synthetic, or the real SDK builds in
+fixtures/wasm_sdk25 described in test_wasm_profile)."""
 
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from backend.app.stellar.soroban_reader import SorobanReader
 from backend.app.swarm.orchestrator import _KEEPS_SEVERITY, AuditSwarm
 from backend.app.swarm.policy import BLOCKING_GAPS, artifact_commitment
 from backend.app.swarm.stellar_native import StellarNativeAuditor
+from backend.tests.test_wasm_profile import SDK25
 from backend.tests.wasm_builder import contract_wasm
 
 
@@ -33,14 +35,17 @@ LATEST = 5000
 #: The agent's code: a payment entry point and a renamed, authenticated upgrader.
 AGENT_WASM = contract_wasm({"pay": ["a.0", "d._"], "migrate": ["l.1", "a.0", "l.6"]},
                            spec={"pay": [("to", "address")], "migrate": [("new_wasm_hash", "bytes32")]})
+#: The SDK's storage read: has_contract_data, then get_contract_data.
+ADMIN = {"admin": ["l.0(c,c)", "a.0(l.1(c,c))"]}
 #: A contract that owns executable entries: every write needs its admin.
 REGISTRY_SPEC = {"__constructor": [("admin", "address")], "publish": [("tag", "string"), ("wasm_hash", "bytes32")],
                  "lookup": [("tag", "string")], "deploy_from_tag": [("tag", "string"), ("salt", "bytes32")]}
-REGISTRY = contract_wasm({"__constructor": ["l._"], "publish": ["h:admin", "l.h", "l._"], "lookup": ["l.h", "l.1"],
-                          "deploy_from_tag": ["h:admin", "l.h", "l.i"]}, helpers={"admin": ["l.1", "a.0"]},
-                         spec=REGISTRY_SPEC)
+REGISTRY_BODIES = {"__constructor": ["l._(c,p0,c)"], "publish": ["h:admin", "l._(l.h(p0),p1,c)"],
+                   "lookup": ["l.0(l.h(p0),c)", "l.1(l.h(p0),c)"], "deploy_from_tag": ["h:admin", "l.i(c,c,l.h(p0),p1,c)"]}
+REGISTRY = contract_wasm(REGISTRY_BODIES, helpers=ADMIN, spec=REGISTRY_SPEC)
 #: The same owner with the admin check removed from publish: no a.* import left.
-REGISTRY_OPEN = contract_wasm({"__constructor": ["l._"], "publish": ["l.h", "l._"], "lookup": ["l.h", "l.1"]},
+REGISTRY_OPEN = contract_wasm({"__constructor": ["l._(c,p0,c)"], "publish": ["l._(l.h(p0),p1,c)"],
+                               "lookup": REGISTRY_BODIES["lookup"]},
                               spec={k: v for k, v in REGISTRY_SPEC.items() if k != "deploy_from_tag"})
 
 
@@ -223,6 +228,29 @@ def test_owner_that_can_repoint_without_authentication_is_high_inferred():
     finding = found["onchain-contract-code-externally-controlled"]
     assert finding.severity is Severity.HIGH and finding.evidence_grade is EvidenceGrade.INFERRED
     assert "export publish -> " in finding.detail and "import l.h (create_executable_tag)" in finding.detail
+    assert "refuses to overwrite a published tag" in finding.detail
+
+
+@pytest.mark.parametrize("bodies, spec", [
+    # promote copies a hash the admin staged: the caller picks no code
+    ({"stage": ["h:admin", "l._(c,p0,c)"], "promote": ["l._(l.h(p0),l.1(c,c),c)"]},
+     {"stage": [("wasm_hash", "bytes32")], "promote": [("tag", "string")]}),
+    # an old-style initialiser publishes the first tag once
+    ({"initialize": ["l.0(c,c)", "l._(l.h(p0),p1,c)"], "publish": ["h:admin", "l._(l.h(p0),p1,c)"]},
+     {"initialize": [("tag", "string"), ("wasm_hash", "bytes32")], "publish": [("tag", "string"), ("wasm_hash", "bytes32")]}),
+])
+def test_owner_writes_that_take_no_code_from_the_caller_stay_a_medium_disclosure(bodies, spec):
+    owner = contract_wasm(bodies, helpers=ADMIN, spec=spec)
+    finding = findings(read(external_ref_agent(owner)))["onchain-contract-code-externally-controlled"]
+    assert finding.severity is Severity.MEDIUM and finding.evidence_grade is EvidenceGrade.CONFIRMED
+
+
+def test_owner_whose_own_upgrade_is_open_lets_anyone_repoint_the_agent():
+    owner = contract_wasm({**REGISTRY_BODIES, "upgrade": ["l.6(p0)"]}, helpers=ADMIN,
+                          spec={**REGISTRY_SPEC, "upgrade": [("new_wasm_hash", "bytes32")]})
+    finding = findings(read(external_ref_agent(owner)))["onchain-contract-code-externally-controlled"]
+    assert finding.severity is Severity.HIGH and finding.evidence_grade is EvidenceGrade.INFERRED
+    assert "owner's own upgrade needs no authentication" in finding.detail and "export upgrade -> " in finding.detail
 
 
 def test_owner_whose_writes_need_the_admin_is_a_medium_disclosure():
@@ -235,7 +263,7 @@ def test_owner_whose_writes_need_the_admin_is_a_medium_disclosure():
 
 def test_owner_without_a_call_graph_falls_back_to_its_imports():
     simd = b"\xfd\x0c" + b"\x00" * 16 + b"\x1a"
-    undecodable = contract_wasm({"publish": ["l.h", "l._"]}, raw_body={"publish": simd + b"\x10\x00\x10\x01"},
+    undecodable = contract_wasm({"publish": ["l.h", "l._"]}, raw_body={"publish": simd + b"\x10\x00\x10\x01\x1a\x1a"},
                                 spec={"publish": [("tag", "string")]})
     finding = findings(read(external_ref_agent(undecodable)))["onchain-contract-code-externally-controlled"]
     assert finding.severity is Severity.HIGH and "imports create_executable_tag" in finding.detail
@@ -260,8 +288,10 @@ def test_the_contract_that_publishes_references_is_disclosed_as_info():
 
 
 # --------------------------------------------------------------------------- upgrades from bytecode
-UPGRADEABLE = {"__constructor": ["l._"], "version": [], "upgrade": ["h:admin", "l.6"]}
+UPGRADEABLE = {"__constructor": ["l._(c,p0,c)"], "version": [], "upgrade": ["h:admin", "l.6(p0)"]}
 UPGRADE_SPEC = {"__constructor": [("admin", "address")], "version": [], "upgrade": [("new_wasm_hash", "bytes32")]}
+#: The admin is read the way the SDK reads it, and nothing is done with it.
+UNCHECKED = {"admin": ["l.0(c,c)", "l.1(c,c)"]}
 
 
 def contract_findings(wasm: bytes) -> dict:
@@ -269,46 +299,101 @@ def contract_findings(wasm: bytes) -> dict:
 
 
 def test_upgradeable_contract_with_require_auth_is_a_low_disclosure():
-    found = contract_findings(contract_wasm(UPGRADEABLE, helpers={"admin": ["l.1", "a.0"]}, spec=UPGRADE_SPEC))
+    found = contract_findings(contract_wasm(UPGRADEABLE, helpers=ADMIN, spec=UPGRADE_SPEC))
     assert found["onchain-contract-upgradeable"].severity is Severity.LOW
     assert "export upgrade -> " in found["onchain-contract-upgradeable"].evidence
     assert not [k for k in found if k != "onchain-contract-upgradeable"]
 
 
 def test_upgrade_without_require_auth_that_takes_the_hash_is_critical():
-    found = contract_findings(contract_wasm(UPGRADEABLE, helpers={"admin": ["l.1"]}, spec=UPGRADE_SPEC))
+    found = contract_findings(contract_wasm(UPGRADEABLE, helpers=UNCHECKED, spec=UPGRADE_SPEC))
     finding = found["onchain-contract-upgrade-unauthenticated"]
     assert finding.severity is Severity.CRITICAL and finding.evidence_grade is EvidenceGrade.CONFIRMED
     assert "export upgrade -> " in finding.evidence and "import l.6 (update_current_contract_wasm)" in finding.evidence
+    assert "argument new_wasm_hash (bytes32) its caller passes" in finding.evidence
     assert "onchain-contract-upgradeable" not in found  # one finding for the one upgrade path
 
 
-def test_upgrade_that_can_compare_the_supplied_hash_is_high_inferred():
-    found = contract_findings(contract_wasm({"upgrade": ["l.0", "x.0", "l.6"]}, spec={"upgrade": [("hash", "bytes32")]}))
-    finding = found["onchain-contract-upgrade-unauthenticated"]
+def test_a_supplied_hash_checked_against_storage_is_gated_unless_anyone_can_write_the_approval():
+    upgrade = {"upgrade": ["x.0(p0,l.1(c,c))", "l.6(p0)"], "approve": ["h:admin", "l._(c,p0,c)"]}
+    spec = {"upgrade": [("hash", "bytes32")], "approve": [("hash", "bytes32")]}
+    gated = contract_findings(contract_wasm(upgrade, helpers=ADMIN, spec=spec))
+    assert "onchain-contract-upgrade-unauthenticated" not in gated
+    assert "passing it to a host function that can check it" in gated["onchain-contract-upgradeable"].detail
+    open_approve = contract_findings(contract_wasm({**upgrade, "approve": ["l._(c,p0,c)"]}, spec=spec))
+    finding = open_approve["onchain-contract-upgrade-unauthenticated"]
     assert finding.severity is Severity.HIGH and finding.evidence_grade is EvidenceGrade.INFERRED
+    assert "approve stores its argument hash (bytes32)" in finding.evidence
 
 
-def test_timelock_execute_whose_schedule_is_authenticated_is_not_a_risk():
-    timelock = {"schedule_upgrade": ["a.0", "l._"], "execute_upgrade": ["l.1", "l.6"]}
-    spec = {"schedule_upgrade": [("hash", "bytes32")], "execute_upgrade": []}
-    found = contract_findings(contract_wasm(timelock, spec=spec))
+TIMELOCK_SPEC = {"schedule": [("hash", "bytes32")], "execute": []}
+#: execute installs the hash schedule stored, whoever calls it.
+TIMELOCK = {"schedule": ["h:admin", "l._(c,p0,c)"], "execute": ["l.0(c,c)", "l.6(l.1(c,c))"]}
+
+
+@pytest.mark.parametrize("bodies, spec", [
+    (TIMELOCK, TIMELOCK_SPEC),
+    # execute marks the operation done before installing: a write, but of nothing the caller chose
+    ({**TIMELOCK, "execute": ["l.0(c,c)", "l._(c,c,c)", "l.6(l.1(c,c))"]}, TIMELOCK_SPEC),
+    # an old-style initialiser stores the admin once, unauthenticated
+    ({**TIMELOCK, "initialize": ["l.0(c,c)", "l._(c,p0,c)"]}, {**TIMELOCK_SPEC, "initialize": [("admin", "address")]}),
+    # the same initialiser shape storing a hash is still an initialiser
+    ({**TIMELOCK, "init": ["l.0(c,c)", "l._(c,p0,c)"]}, {**TIMELOCK_SPEC, "init": [("hash", "bytes32")]}),
+    # execute(id) reads the scheduled operation by its id: the argument is a key, not the code
+    ({"schedule": ["h:admin", "l._(p0,p1,c)"], "execute": ["l.0(p0,c)", "l.1(p0,c)", "l.6(m)"]},
+     {"schedule": [("id", "bytes32"), ("hash", "bytes32")], "execute": [("id", "bytes32")]}),
+    # an unauthenticated setter that stores a number is not a way to choose code
+    ({**TIMELOCK, "poke": ["l._(c,p0,c)"]}, {**TIMELOCK_SPEC, "poke": [("n", "u32")]}),
+])
+def test_timelock_execute_whose_schedule_is_authenticated_is_a_low_disclosure(bodies, spec):
+    found = contract_findings(contract_wasm(bodies, helpers=ADMIN, spec=spec))
     assert "onchain-contract-upgrade-unauthenticated" not in found
-    assert found["onchain-contract-upgradeable"].severity is Severity.LOW
-    exposed = contract_findings(contract_wasm({**timelock, "poke": ["l._"]}, spec={**spec, "poke": []}))
-    finding = exposed["onchain-contract-upgrade-unauthenticated"]
+    upgradeable = found["onchain-contract-upgradeable"]
+    assert upgradeable.severity is Severity.LOW and "execute needs no authentication" in upgradeable.detail
+
+
+@pytest.mark.parametrize("bodies, spec, writer", [
+    ({**TIMELOCK, "schedule": ["l._(c,p0,c)"]}, TIMELOCK_SPEC, "schedule stores its argument hash (bytes32)"),
+    ({"execute": ["l._(c,p0,c)", "l.6(l.1(c,c))"]}, {"execute": [("hash", "bytes32")]},
+     "execute stores its argument hash (bytes32)"),
+])
+def test_a_stored_hash_anyone_can_write_makes_the_open_execute_high_inferred(bodies, spec, writer):
+    finding = contract_findings(contract_wasm(bodies, helpers=ADMIN, spec=spec))["onchain-contract-upgrade-unauthenticated"]
     assert finding.severity is Severity.HIGH and finding.evidence_grade is EvidenceGrade.INFERRED
-    assert "poke write storage without authentication" in finding.evidence
+    assert writer in finding.evidence and "installs code read from storage" in finding.evidence
 
 
 @pytest.mark.parametrize("module", [
-    contract_wasm({"upgrade": ["d._", "l.6"]}, spec={"upgrade": [("hash", "bytes32")]}),          # another contract decides
-    contract_wasm({"upgrade": ["h:go"]}, helpers={"go": ["l.6"]}, indirect={"go"}, spec={"upgrade": [("hash", "bytes32")]}),
+    contract_wasm({"upgrade": ["d._", "l.6(p0)"]}, spec={"upgrade": [("hash", "bytes32")]}),  # another contract decides
+    contract_wasm({"upgrade": ["h:go(p0)"]}, helpers={"go": ["l.6(p0)"]}, indirect={"go"}, spec={"upgrade": [("hash", "bytes32")]}),
 ])
 def test_an_upgrade_that_another_contract_or_an_indirect_call_may_gate_is_unproven(module):
-    found = contract_findings(module)
+    facts = read(rpc(instance(AGENT, wasm_exec(module)), code(module)))
+    assert facts["profile"]["upgrade_auth_unproven"] == ["upgrade"]
+    found = findings(facts)
     assert "onchain-contract-upgrade-unauthenticated" not in found
     assert found["onchain-contract-upgradeable"].severity is Severity.LOW
+
+
+#: Real SDK builds: (fixture, upgrade-unauthenticated severity or None for the LOW disclosure).
+SDK25_FINDINGS = [
+    ("up_auth", None), ("up_noauth", Severity.CRITICAL), ("up_multi", Severity.CRITICAL),
+    ("up_ref", Severity.CRITICAL), ("up_event", Severity.CRITICAL), ("up_approved", None), ("up_cmp", None),
+    ("timelock_slot", None), ("timelock_done", None), ("timelock_init", None), ("timelock_opid", None),
+    ("timelock_open", Severity.HIGH),
+]
+
+
+@pytest.mark.parametrize("fixture, severity", SDK25_FINDINGS)
+def test_sdk_builds_are_rated_as_their_source_warrants(fixture, severity):
+    found = contract_findings((SDK25 / f"{fixture}.wasm").read_bytes())
+    risks = {k: f.severity for k, f in found.items() if f.is_risk}
+    if severity is None:
+        assert risks == {"onchain-contract-upgradeable": Severity.LOW}
+    else:
+        assert risks == {"onchain-contract-upgrade-unauthenticated": severity}
+        grade = found["onchain-contract-upgrade-unauthenticated"].evidence_grade
+        assert grade is (EvidenceGrade.CONFIRMED if severity is Severity.CRITICAL else EvidenceGrade.INFERRED)
 
 
 def test_a_renamed_upgrader_is_found_and_a_name_alone_is_not():
@@ -318,7 +403,7 @@ def test_a_renamed_upgrader_is_found_and_a_name_alone_is_not():
 
 
 def test_name_fallback_only_when_the_imports_cannot_be_read():
-    broken = contract_wasm({"upgrade": ["a.0"]}, spec={"upgrade": []}).replace(b"\x01a\x010\x00\x00", b"\x01a\x010\x09\x00")
+    broken = contract_wasm({"upgrade": ["a.0"]}, spec={"upgrade": []}).replace(b"\x01a\x010\x00", b"\x01a\x010\x09")
     facts = read(rpc(instance(AGENT, wasm_exec(broken)), code(broken)))
     assert "profile_error" in facts and facts["upgradeable"] is True
 
@@ -331,15 +416,19 @@ def test_an_export_missing_from_the_spec_that_moves_funds_is_high():
     assert finding.severity is Severity.HIGH and "sweep_all" in finding.evidence and "import d._ (call)" in finding.evidence
     reader = contract_wasm({"transfer": ["a.0", "l._"], "peek": ["l.1"], "_": []}, spec={"transfer": []})
     assert contract_findings(reader)["onchain-contract-hidden-export"].severity is Severity.MEDIUM
+    admin_only = contract_wasm({"transfer": ["a.0", "l._"], "set_fee": ["h:admin", "l._(c,p0,c)"]},
+                               helpers=ADMIN, spec={"transfer": []})
+    assert contract_findings(admin_only)["onchain-contract-hidden-export"].severity is Severity.MEDIUM
     sdk = contract_findings(contract_wasm({"transfer": ["a.0", "l._"], "_": []}, spec={"transfer": [], "allowance": []}))
     assert "onchain-contract-hidden-export" not in sdk and sdk["onchain-contract-spec-only"].severity is Severity.INFO
 
 
-def test_an_unlisted_upgrader_without_authentication_is_high_on_both_counts():
-    found = contract_findings(contract_wasm({"transfer": ["a.0", "l._"], "reset_code": ["l.6"]}, spec={"transfer": []}))
-    assert found["onchain-contract-hidden-export"].severity is Severity.HIGH
+def test_an_unlisted_upgrader_without_authentication_is_rated_once_by_its_upgrade():
+    found = contract_findings(contract_wasm({"transfer": ["a.0", "l._"], "reset_code": ["l.6(p0)"]}, spec={"transfer": []}))
     upgrade = found["onchain-contract-upgrade-unauthenticated"]
-    assert upgrade.severity is Severity.HIGH and "not in the spec" in upgrade.evidence
+    assert upgrade.severity is Severity.CRITICAL and "argument 0 its caller passes" in upgrade.evidence
+    hidden = found["onchain-contract-hidden-export"]
+    assert hidden.severity is Severity.MEDIUM and "reset_code is reported separately" in hidden.detail
 
 
 def test_a_module_without_a_spec_is_a_low_gap():
@@ -359,7 +448,7 @@ def test_check_auth_that_reads_delegated_signers_must_authenticate_them():
 
 def test_an_undecodable_body_is_a_resolution_step_not_a_finding():
     simd = b"\xfd\x0c" + b"\x00" * 16 + b"\x1a"
-    module = contract_wasm({"upgrade": ["l.6"]}, raw_body={"upgrade": simd + b"\x10\x00"}, spec={"upgrade": [("h", "bytes32")]})
+    module = contract_wasm({"upgrade": ["l.6"]}, raw_body={"upgrade": simd + b"\x10\x00\x1a"}, spec={"upgrade": [("h", "bytes32")]})
     transport = rpc(instance(AGENT, wasm_exec(module)), code(module))
     res = asyncio.run(AgentResolver(Settings(_env_file=None), transport=transport).resolve(AGENT))
     assert {s["check"]: s["result"] for s in res["steps"]}["contract_callgraph"] == "undecoded"
@@ -373,7 +462,7 @@ def test_ledger_and_bytecode_findings_keep_their_severity_under_verification():
                  "delegates-unauthenticated", "code-unresolved", "manages-external-refs"):
         assert _KEEPS_SEVERITY.search(f"stellar_native-onchain-contract-{rule}")
     assert not _KEEPS_SEVERITY.search("stellar_native-onchain-identity-unbound")
-    critical = contract_findings(contract_wasm(UPGRADEABLE, helpers={"admin": ["l.1"]}, spec=UPGRADE_SPEC))
+    critical = contract_findings(contract_wasm(UPGRADEABLE, helpers=UNCHECKED, spec=UPGRADE_SPEC))
     high = findings(read(external_ref_agent(REGISTRY_OPEN)))
     for finding in (critical["onchain-contract-upgrade-unauthenticated"], high["onchain-contract-code-externally-controlled"]):
         verdict = AuditorVerdict(auditor="stellar_native", dimension=Dimension.STELLAR_NATIVE, score=50.0, findings=[finding])
@@ -407,7 +496,7 @@ ACCOUNT = {"status": "found", "address": "G" + "B" * 55, "thresholds": {"low": 1
            "trustlines": [{"asset": "USDC:G", "limit": "10", "unlimited": False}]}
 
 
-def test_commitment_binds_the_resolved_code_and_signers_but_not_balances_or_ttls():
+def test_commitment_binds_the_resolved_code_and_signers_but_not_balances_ttls_or_the_read():
     facts = read(external_ref_agent(REGISTRY))
     base = _commitment(facts, ACCOUNT)
     repointed = json.loads(json.dumps(facts))
@@ -415,10 +504,16 @@ def test_commitment_binds_the_resolved_code_and_signers_but_not_balances_or_ttls
     reweighted = json.loads(json.dumps(ACCOUNT))
     reweighted["signers"][0]["weight"] = 3
     assert _commitment(repointed, ACCOUNT) != base and _commitment(facts, reweighted) != base
-    richer = {**ACCOUNT, "native_balance": "5000.0"}
-    longer = json.loads(json.dumps(facts))
-    longer["external_ref"]["tag_live_until_ledger"] += 50_000
-    assert _commitment(facts, richer) == base and _commitment(longer, ACCOUNT) == base
+    assert _commitment(facts, {**ACCOUNT, "flags": {"auth_required": True}}) != base
+    # A payment bumps the account's last-modified ledger with its balance; a counter write bumps
+    # the instance's; a later audit reads at a later ledger. None of that is a different agent.
+    paid = {**ACCOUNT, "native_balance": "5000.0", "last_modified_ledger": ACCOUNT["last_modified_ledger"] + 70}
+    later = json.loads(json.dumps(facts))
+    later["read_at_ledger"] += 900
+    later["instance_last_modified_ledger"] += 400
+    later["external_ref"]["tag_live_until_ledger"] += 50_000
+    later["external_ref"]["tag_last_modified_ledger"] += 30  # rewritten with the same hash
+    assert _commitment(facts, paid) == base and _commitment(later, ACCOUNT) == base
     plain = AgentArtifact(name="agent", source_kind=SourceKind.ONCHAIN_ADDRESS, source_ref=AGENT)
     assert artifact_commitment(plain) == artifact_commitment(plain.model_copy(update={"chain_authority": {"network": "testnet"}}))
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 
 from ..models import FindingKind, AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioResult, Severity, SourceKind
-from ..stellar.wasm_profile import (AUTH, AUTH_CALLS, CALL, DELEGATED_SIGNERS, EXTERNAL_REF, HOST_ENTRY_POINTS, PUT_DATA,
-                                    SDK_EXPORTS, UPGRADE, VALUE_CHECKS)
+from ..stellar.wasm_profile import (AUTH, AUTH_CALLS, CALL, DELEGATED_SIGNERS, EXECUTABLE_TAG, EXTERNAL_REF,
+                                    HOST_ENTRY_POINTS, PUT_DATA, SDK_EXPORTS, UPGRADE)
 from .base import BaseAuditor
 
 
@@ -515,9 +515,10 @@ class StellarNativeAuditor(BaseAuditor):
         profile = contract.get("profile") or {}
         exports: dict = profile.get("exports") or {}
         where = f"{cid}: wasm {contract.get('wasm_hash')}"
-        unauthenticated = self._unauthenticated_upgrade(contract, exports, where)
-        out += unauthenticated
-        if contract.get("upgradeable") and not unauthenticated:
+        risks, notes = _upgrade_risks(profile, contract.get("functions"))
+        if risks:
+            out.append(self._unauthenticated_upgrade(risks, where))
+        elif contract.get("upgradeable"):
             paths = [p for r in exports.values() for c, p in sorted(r["paths"].items()) if c in UPGRADE]
             if paths:
                 how = "; ".join(paths[:4])
@@ -529,7 +530,8 @@ class StellarNativeAuditor(BaseAuditor):
                 "The deployed contract can replace its own code",
                 "The contract can call update_current_contract_wasm or update_current_contract_executable_ref, so "
                 "whoever controls its upgrade path can swap the WASM after this review. The review applies to the "
-                "WASM hash recorded below only.",
+                "WASM hash recorded below only."
+                + (" Not proven from the bytecode: " + "; ".join(notes[:3]) + "." if notes else ""),
                 evidence=f"{where}; {how}",
                 remediation="Bind credentials to the WASM hash, gate upgrade behind a timelock or multisig, "
                             "and re-review after every upgrade."))
@@ -548,10 +550,10 @@ class StellarNativeAuditor(BaseAuditor):
                 "this contract names, and it can deploy contracts whose code it controls.",
                 evidence=f"{where}; imports " + ", ".join(i for i in profile.get("imports", []) if i in EXTERNAL_REF),
                 remediation="Declare which contracts run code from this contract's entries and who may change them."))
-        out += self._interface_findings(contract, profile, exports, where)
+        out += self._interface_findings(profile, exports, where, {name for _, name, _ in risks})
         check = exports.get("__check_auth")
-        if (check and DELEGATED_SIGNERS in check["reaches"] and not set(check["reaches"]) & AUTH_CALLS
-                and not check["indirect"]):
+        if (check and profile.get("delegates_read", DELEGATED_SIGNERS in check["reaches"])
+                and not set(check["reaches"]) & AUTH_CALLS and not check["indirect"]):
             out.append(self.finding("onchain-contract-delegates-unauthenticated", Severity.HIGH,
                 "The custom account reads delegated signers but never authenticates them",
                 "__check_auth calls get_delegated_signers_for_current_auth_check, whose addresses come from whoever "
@@ -595,7 +597,13 @@ class StellarNativeAuditor(BaseAuditor):
         if writer:
             severity, grade = Severity.HIGH, EvidenceGrade.INFERRED
             notes.append("an owner entry point can write executable entries with no authentication on its call "
-                         f"paths, so anyone may be able to repoint this contract: {writer}")
+                         f"paths, so anyone may be able to repoint this contract: {writer} (an owner that refuses to "
+                         "overwrite a published tag would be safe; the bytecode does not show that)")
+        owner_risks = _upgrade_risks(owner_profile, owner_facts.get("functions"))[0] if owner != cid else []
+        if owner_risks:
+            severity, grade = Severity.HIGH, EvidenceGrade.INFERRED
+            notes.append("the owner's own upgrade needs no authentication, so anyone may be able to replace the "
+                         f"owner's code and then rewrite its entries: {owner_risks[0][2]}")
         who = ("the contract itself" if owner == cid else "the declared authority" if declared
                else "a contract the .tmark does not declare")
         out.append(self.finding("onchain-contract-code-externally-controlled", severity,
@@ -612,50 +620,25 @@ class StellarNativeAuditor(BaseAuditor):
             grade=grade))
         return out
 
-    def _unauthenticated_upgrade(self, contract: dict, exports: dict, where: str) -> list[Finding]:
-        """Exports that reach an upgrade host function with no authentication on any call path."""
-        inputs = {f["name"]: [i["type"] for i in f.get("inputs", [])] for f in contract.get("functions") or []}
-        writers = [name for name, r in exports.items() if name not in HOST_ENTRY_POINTS and PUT_DATA in r["reaches"]
-                   and not set(r["reaches"]) & (AUTH | CALL) and not r["indirect"]]
-        items: list[tuple[Severity, str]] = []
-        for name, r in exports.items():
-            reached = set(r["reaches"])
-            upgrades = reached & UPGRADE
-            if name in HOST_ENTRY_POINTS or not upgrades or reached & (AUTH | CALL) or r["indirect"]:
-                continue  # authenticated, or another contract / an indirect call may decide (unproven)
-            args = inputs.get(name)
-            supplied = args is not None and (("l.6" in upgrades and "bytes32" in args)
-                                             or ("l.j" in upgrades and {"address", "string"} <= set(args)))
-            path = "; ".join(r["paths"][c] for c in sorted(upgrades))
-            if supplied and not reached & VALUE_CHECKS:
-                items.append((Severity.CRITICAL, f"{path} (the caller passes the new code and nothing compares it "
-                                                 "with stored state)"))
-            elif supplied:
-                items.append((Severity.HIGH, f"{path} (the caller can pass the new code; it may be compared with "
-                                             "a stored approval)"))
-            elif args is None:
-                items.append((Severity.HIGH, f"{path} (not in the spec, so what the caller passes is unknown)"))
-            elif writers:
-                items.append((Severity.HIGH, f"{path} (installs code read from storage; "
-                                             f"{', '.join(writers[:3])} write storage without authentication)"))
-        if not items:
-            return []
-        severity = max((s for s, _ in items), key=lambda s: s.rank)
+    def _unauthenticated_upgrade(self, risks: list[tuple[Severity, str, str]], where: str) -> Finding:
+        severity = max((s for s, _, _ in risks), key=lambda s: s.rank)
         critical = severity is Severity.CRITICAL
-        return [self.finding("onchain-contract-upgrade-unauthenticated", severity,
+        return self.finding("onchain-contract-upgrade-unauthenticated", severity,
             "Anyone can replace the deployed contract's code" if critical
-            else "The contract's upgrade can be triggered without authentication",
+            else "The contract's upgrade can be steered without authentication",
             "An exported function reaches update_current_contract_wasm or update_current_contract_executable_ref, and "
             "none of its call paths reaches require_auth, a signature check, another contract or an indirect call. "
-            + ("It takes the new WASM hash from the caller, so anyone can install their own code and take whatever "
-               "the contract holds or controls." if critical else
-               "Check whether the code it installs can be chosen or set by someone other than the administrator."),
-            evidence=f"{where}; " + "; ".join(text for _, text in items[:4]),
+            + ("It installs the WASM hash its caller passes and nothing checks that hash, so anyone can install "
+               "their own code and take whatever the contract holds or controls." if critical else
+               "The code it installs is read from storage or checked against a stored value, and an export with no "
+               "authentication either stores a caller-supplied value of that kind, so anyone may be able to choose "
+               "the code. Check whether that export writes the entry the upgrade reads."),
+            evidence=f"{where}; " + "; ".join(text for _, _, text in risks[:4]),
             remediation="Require the administrator's authorization (require_auth) in every upgrade path, or a "
                         "timelock whose schedule step is authenticated.",
-            grade=EvidenceGrade.CONFIRMED if critical else EvidenceGrade.INFERRED)]
+            grade=EvidenceGrade.CONFIRMED if critical else EvidenceGrade.INFERRED)
 
-    def _interface_findings(self, contract: dict, profile: dict, exports: dict, where: str) -> list[Finding]:
+    def _interface_findings(self, profile: dict, exports: dict, where: str, upgrade_reported: set[str]) -> list[Finding]:
         """The exports compared with the contract spec (contractspecv0) the WASM publishes."""
         out: list[Finding] = []
         hidden = profile.get("hidden_exports") or []
@@ -668,13 +651,19 @@ class StellarNativeAuditor(BaseAuditor):
                 evidence=f"{where}; exports " + ", ".join(callable_exports[:10]),
                 remediation="Build with the Soroban SDK so the spec is embedded, and keep it in the deployed WASM.")))
         if hidden:
-            risky = {n: p for n in hidden for c, p in sorted((exports.get(n) or {}).get("paths", {}).items())
-                     if c in UPGRADE | CALL | {PUT_DATA}}
+            # An unlisted export that writes storage, calls out or upgrades with no authentication on its
+            # paths is HIGH; one whose upgrade is already reported, or that authenticates, is MEDIUM.
+            risky = {n: p for n in hidden if n not in upgrade_reported
+                     and not set((exports.get(n) or {}).get("reaches", [])) & AUTH
+                     for c, p in sorted((exports.get(n) or {}).get("paths", {}).items()) if c in UPGRADE | CALL | {PUT_DATA}}
+            reported = [n for n in hidden if n in upgrade_reported]
             out.append(self.finding("onchain-contract-hidden-export", Severity.HIGH if risky else Severity.MEDIUM,
                 "The deployed contract exports functions its published interface does not list",
                 "Wallets, clients and reviewers see the contractspecv0 interface; these exports are not in it but "
                 "anyone can still invoke them by name."
-                + (" They can write storage, call other contracts or replace the code." if risky else ""),
+                + (" With no authentication on their call paths, they can write storage, call other contracts or "
+                   "replace the code." if risky else "")
+                + (f" The unauthenticated upgrade in {', '.join(reported)} is reported separately." if reported else ""),
                 evidence=f"{where}; hidden: {', '.join(hidden[:10])}"
                          + (f"; {'; '.join(list(risky.values())[:3])}" if risky else ""),
                 remediation="Remove the unlisted exports or publish them in the spec, and explain why they exist."))
@@ -698,22 +687,106 @@ def _declared_addresses(artifact: AgentArtifact) -> set[str]:
                         (declared.get("authority") or {}).get("agent_account"), artifact.agent_contract_id) if a}
 
 
+#: Exports that write their arguments once before the contract is used (old-style initialisers).
+_INITIALIZER = re.compile(r"^_*init(?:iali[sz]e)?(?:_|$)", re.IGNORECASE)
+#: Spec input types the code an upgrade installs can be stored as: the WASM hash for
+#: update_current_contract_wasm, the owner or tag for update_current_contract_executable_ref.
+_CODE_TYPES = {"l.6": frozenset({"bytes32", "bytes"}), "l.j": frozenset({"address", "string"})}
+
+
+def _open(reach: dict) -> bool:
+    """No authentication, signature check, contract call or indirect call on any call path."""
+    return not set(reach["reaches"]) & (AUTH | CALL) and not reach["indirect"]
+
+
+def _upgrade_risks(profile: dict | None, functions: list[dict] | None) -> tuple[list[tuple[Severity, str, str]], list[str]]:
+    """Upgrade exports the bytecode shows anyone can steer, as (severity, export, evidence),
+    and notes on unauthenticated upgrade exports it cannot decide (those raise no risk).
+
+    CRITICAL: the WASM hash (or executable owner) comes from the caller's argument and no host
+    function that could check it sees that argument. HIGH: the code comes from storage, or
+    the argument is checked against something, and another unauthenticated export stores a
+    caller-supplied value of a type the code is stored as. Anything else is a note."""
+    exports = (profile or {}).get("exports") or {}
+    inputs = {f["name"]: f.get("inputs", []) for f in functions or []}
+    risks: list[tuple[Severity, str, str]] = []
+    notes: list[str] = []
+    for name, reach in sorted(exports.items()):
+        upgrades = set(reach["reaches"]) & UPGRADE
+        if name in HOST_ENTRY_POINTS or not upgrades or set(reach["reaches"]) & AUTH:
+            continue
+        if not _open(reach):
+            notes.append(f"{name} has no authentication of its own, and another contract or an indirect call "
+                         "may hold the check")
+            continue
+        flows = reach.get("flows")
+        if flows is None:
+            notes.append(f"{name} needs no authentication, and where the code it installs comes from was not traced")
+            continue
+        path = "; ".join(reach["paths"][c] for c in sorted(upgrades))
+        args = inputs.get(name)
+        named = ", ".join(_argument(args, i) for i in flows["upgrade_code"])
+        if flows["upgrade_code"] and not flows.get("upgrade_code_checked"):
+            risks.append((Severity.CRITICAL, name, f"{path} (installs the {named} its caller passes, unchecked)"))
+            continue
+        writers = _code_writers(exports, inputs, upgrades)
+        if flows["upgrade_code"]:
+            how = f"installs the {named} its caller passes after passing it to a host function that can check it"
+        elif flows["upgrade_tag"]:
+            how = "installs the owner's tag its caller names"
+        elif flows["upgrade_from_storage"]:
+            how = "installs code read from storage"
+        else:
+            how = "installs code that does not come from its arguments"
+        if writers and (flows["upgrade_code"] or flows["upgrade_from_storage"]):
+            risks.append((Severity.HIGH, name, f"{path} ({how}; {', '.join(writers[:3])} without authentication)"))
+        else:
+            notes.append(f"{name} needs no authentication and {how}; no unauthenticated export stores a value it "
+                         "could install")
+    return risks, notes
+
+
+def _argument(args: list[dict] | None, index: int) -> str:
+    if args and index < len(args):
+        return f"argument {args[index]['name']} ({args[index]['type']})"
+    return f"argument {index}"
+
+
+def _code_writers(exports: dict, inputs: dict, upgrades: set[str]) -> list[str]:
+    """Unauthenticated exports (not initialisers) that store one of their own arguments, of a
+    type the upgrade's code can be stored as (any type when the export is not in the spec).
+    The upgrade export itself counts only this way: writing a constant (an operation marked
+    done) is not choosing code."""
+    kinds = frozenset().union(*(_CODE_TYPES[c] for c in upgrades))
+    out = []
+    for name, reach in sorted(exports.items()):
+        if name in HOST_ENTRY_POINTS or _INITIALIZER.match(name) or not _open(reach):
+            continue
+        args = inputs.get(name)
+        stored = [i for i in (reach.get("flows") or {}).get("stores", [])
+                  if args is None or (i < len(args) and args[i]["type"] in kinds)]
+        if stored:
+            out.append(f"{name} stores its {', '.join(_argument(args, i) for i in stored)}")
+    return out
+
+
 def _unauthenticated_tag_writer(profile: dict | None) -> str:
-    """An owner entry point that reaches create_executable_tag and put_contract_data with no
-    authentication, contract call or indirect call on its paths (per export when the call graph
-    decoded, otherwise from the module's imports)."""
+    """An owner entry point (not an initialiser) that writes a caller-supplied value under a
+    create_executable_tag key, with no authentication, contract call or indirect call on its
+    paths. Without a data flow the reach alone counts; without a call graph, the imports."""
     if not profile:
         return ""
     exports = profile.get("exports")
     if exports is not None:
         for name, reach in exports.items():
-            reached = set(reach["reaches"])
-            if (name not in HOST_ENTRY_POINTS and {"l.h", PUT_DATA} <= reached and not reached & (AUTH | CALL)
-                    and not reach["indirect"]):
-                return f"{reach['paths']['l.h']}; {reach['paths'][PUT_DATA]}"
+            flows = reach.get("flows")
+            if (name not in HOST_ENTRY_POINTS and not _INITIALIZER.match(name)
+                    and {EXECUTABLE_TAG, PUT_DATA} <= set(reach["reaches"]) and _open(reach)
+                    and (flows is None or flows["tag_writes"])):
+                return f"{reach['paths'][EXECUTABLE_TAG]}; {reach['paths'][PUT_DATA]}"
         return ""
     imports = set(profile.get("imports", []))
-    if {"l.h", PUT_DATA} <= imports and not imports & (AUTH | CALL):
+    if {EXECUTABLE_TAG, PUT_DATA} <= imports and not imports & (AUTH | CALL):
         return ("the owner imports create_executable_tag and put_contract_data and no authentication, signature "
                 "check or contract call")
     return ""

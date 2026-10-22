@@ -58,7 +58,8 @@ def artifact_commitment(artifact: AgentArtifact) -> str:
         mode="json", exclude={"id", "created_at", "raw_metadata", "code_profile", "chain_authority"}
     )
     payload = {"policy": AUDIT_POLICY_VERSION, "artifact": artifact_payload}
-    # The deployed code and authority that were read (not balances or TTLs) bind the credential too.
+    # The deployed code and authority that were read bind the credential too (not the read
+    # ledger, balances or TTLs: an unchanged agent keeps its commitment).
     identity = chain_identity(artifact.chain_authority)
     if identity:
         payload["chain_identity"] = "sha256:" + hashlib.sha256(_canonical(identity)).hexdigest()
