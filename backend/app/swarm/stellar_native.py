@@ -124,6 +124,71 @@ def _calls_any(body: str, names: set[str]) -> bool:
     return any(re.search(r'(?:\bSelf::|\bself\.|(?<![\w.:]))' + re.escape(n) + r'\s*\(', body) for n in names)
 
 
+def contract_sources(artifact: AgentArtifact) -> dict[str, str]:
+    """The .rs files judged as Soroban contract code, plus rendered contract templates."""
+    from .soroban_rules import render_template  # builds on this module
+    rust_files = {name: content for name, content in artifact.code_files.items() if name.endswith('.rs')}
+    # A .rs file outside every crate is not built or deployed: a sample or fixture (an
+    # auditor's test inputs, a stray draft). Only crate sources are judged as contracts.
+    crates = {name.rsplit('/', 1)[0] if '/' in name else '' for name, text in artifact.code_files.items()
+              if name.endswith(('Cargo.toml', 'Cargo.toml.hbs')) and re.search(r'soroban-sdk|\[workspace\]', text)}
+    if crates or artifact.source_kind == SourceKind.REPO:
+        # A repository with no Soroban crate builds no contract from its loose .rs files, and
+        # in a Rust workspace only the files that use soroban_sdk are contract code: a CLI or
+        # wallet crate next to the contracts is not.
+        rust_files = {name: content for name, content in rust_files.items()
+                      if any(c == '' or name.startswith(c + '/') for c in crates)
+                      and re.search(r'\bsoroban_sdk\b|#\[contract', content)}
+    # A generator's contract template (lib.rs.hbs) is every contract it generates, wherever its
+    # Cargo template lives. It is rendered with every {{#if}} branch kept.
+    templates = {name: render_template(content) for name, content in artifact.code_files.items()
+                 if name.endswith('.rs.hbs')}
+    rust_files.update({name: text for name, text in templates.items()
+                       if re.search(r'\bsoroban_sdk\b', text) and '#[contractimpl' in text})
+    return rust_files
+
+
+#: Test, example and script paths: a seed there is presumed a throwaway key.
+_TEST_PATH = re.compile(r"(^|/)(tests?|spec|fixtures?|examples?|scripts)/|test|spec|smoke|example|fixture", re.I)
+
+
+def _seed_severity(exposure: dict | None, places: list[str]) -> tuple[Severity, list[str]]:
+    """Severity of committed seeds, from what their accounts hold (repo_audit seed triage).
+
+    A seed whose key is a declared agent or owner key, or that controls an account on mainnet
+    (its own or one it signs for), is critical wherever it sits. One found only on testnet, or
+    nowhere, is medium, or low in test paths. Without a ledger answer for mainnet a seed keeps
+    the path-based severity: critical outside test paths, medium inside them."""
+    by_place = {where: item for item in (exposure or {}).get("keys", []) for where in item.get("locations", [])}
+    worst, notes = Severity.INFO, []
+    for place in places:
+        test = bool(_TEST_PATH.search(place.rsplit(":", 1)[0]))
+        item = by_place.get(place) or {}
+        main, testnet = item.get("mainnet") or {}, item.get("testnet") or {}
+        key = f"{item.get('public_key', '')[:8]}…"
+        if item.get("declared"):
+            severity, note = Severity.CRITICAL, f"{place}: its public key {key} is the declared {item['declared']} key"
+        elif exposure and exposure.get("status") == "checked" and main.get("status") in {"found", "not_found"}:
+            if main["status"] == "found":
+                held = ", ".join(f"{b['balance']} {b['asset'].split(':')[0]}" for b in main.get("balances", [])[:3])
+                severity, note = Severity.CRITICAL, (f"{place}: {key} controls mainnet funds"
+                                                     + (f" ({held})" if held else "")
+                                                     + (f", signer on {main['signs_for']} other account(s)" if main.get("signs_for") else ""))
+            else:
+                severity = Severity.LOW if test else Severity.MEDIUM
+                note = (f"{place}: {key} exists on testnet only" if testnet.get("status") == "found"
+                        else f"{place}: {key} has no account on mainnet or testnet (testnet resets erase accounts)")
+        else:
+            severity, note = (Severity.MEDIUM if test else Severity.CRITICAL), ""
+            if exposure and exposure.get("status") in {"checked", "unavailable"}:
+                note = f"{place}: ledger lookup unavailable; severity from the file path"
+        worst = max(worst, severity, key=lambda s: s.rank)
+        if note:
+            notes.append(note)
+    checked = (exposure or {}).get("checked_at")
+    return worst, notes[:5] + ([f"ledger checked {checked} (mainnet and testnet Horizon)"] if checked and notes else [])
+
+
 class StellarNativeAuditor(BaseAuditor):
     name = "stellar-native-auditor"
     dimension = Dimension.STELLAR_NATIVE
@@ -133,26 +198,9 @@ class StellarNativeAuditor(BaseAuditor):
     ) -> tuple[list[Finding], list[ScenarioResult], str]:
         findings: list[Finding] = []
         surface = artifact.text_surface()
-        from .soroban_rules import _STRONG_ATTR, SorobanRules, placed_in_package, render_template  # builds on this module
-        rust_files = {name: content for name, content in artifact.code_files.items() if name.endswith('.rs')}
-        # A .rs file outside every crate is not built or deployed: a sample or fixture (an
-        # auditor's test inputs, a stray draft). Only crate sources are judged as contracts.
-        crates = {name.rsplit('/', 1)[0] if '/' in name else '' for name, text in artifact.code_files.items()
-                  if name.endswith(('Cargo.toml', 'Cargo.toml.hbs')) and re.search(r'soroban-sdk|\[workspace\]', text)}
-        if crates or artifact.source_kind == SourceKind.REPO:
-            # A repository with no Soroban crate builds no contract from its loose .rs files, and
-            # in a Rust workspace only the files that use soroban_sdk are contract code: a CLI or
-            # wallet crate next to the contracts is not.
-            rust_files = {name: content for name, content in rust_files.items()
-                          if any(c == '' or name.startswith(c + '/') for c in crates)
-                          and re.search(r'\bsoroban_sdk\b|#\[contract', content)}
-        # A generator's contract template (lib.rs.hbs) is every contract it generates, wherever its
-        # Cargo template lives. It is rendered with every {{#if}} branch kept.
-        templates = {name: render_template(content) for name, content in artifact.code_files.items()
-                     if name.endswith('.rs.hbs')}
-        templates = {name: text for name, text in templates.items()
-                     if re.search(r'\bsoroban_sdk\b', text) and '#[contractimpl' in text}
-        rust_files.update(templates)
+        from .soroban_rules import _STRONG_ATTR, SorobanRules, placed_in_package  # builds on this module
+        rust_files = contract_sources(artifact)
+        templates = [name for name in rust_files if name.endswith('.rs.hbs')]
         # Each file is masked once; every rule below reads the masked text.
         masked = {name: _rust_code(content) for name, content in rust_files.items()}
         rust = '\n'.join(masked.values())
@@ -175,19 +223,20 @@ class StellarNativeAuditor(BaseAuditor):
         # during repository selection; only their redacted locations are passed on.
         committed = list(artifact.raw_metadata.get("committed_seeds") or [])
         seed_locations = ([f"{n}:{line} (S{s[1:5]}…redacted)" for n, line, s in seeds] + committed)[:5]
-        test_only = bool(seeds or committed) and all(
-            re.search(r"(^|/)(tests?|spec|fixtures?|examples?|scripts)/|test|spec|smoke|example|fixture", n, re.I)
-            for n in [n for n, _, _ in seeds] + [c.split(":", 1)[0] for c in committed])
+        # Committed entries read 'path:line (S…redacted)'; a path may contain spaces.
+        places = [f"{n}:{line}" for n, line, _ in seeds] + [c.rsplit(" (S", 1)[0] for c in committed]
+        test_only = bool(places) and all(_TEST_PATH.search(p.rsplit(":", 1)[0]) for p in places)
         seeds = seeds or committed
         if seeds:
+            severity, notes = _seed_severity(artifact.raw_metadata.get("seed_exposure"), places)
             findings.append(
                 self.finding(
                     "stellar-secret-seed",
-                    Severity.MEDIUM if test_only else Severity.CRITICAL,
+                    severity,
                     "Stellar secret seed kaynakta görünüyor",
                     "S... secret seed doğrudan kod/manifest yüzeyinde bulundu."
                     + (" Yalnızca test/örnek dosyalarında; yine de commit edilmiş anahtarlar döndürülmelidir." if test_only else ""),
-                    evidence="; ".join(seed_locations) or "secret seed pattern in submitted manifest text",
+                    evidence="; ".join(seed_locations + notes) or "secret seed pattern in submitted manifest text",
                     remediation="Seed'i derhal döndürün; haricî signer/HSM kullanın ve geçmişten temizleyin.",
                     confidence=0.99,
                 )
@@ -473,6 +522,8 @@ class StellarNativeAuditor(BaseAuditor):
         union = (" Code-generator templates are judged with every {{#if}} branch kept, so a check that only one "
                  "branch contains counts as always present, and a defect of a single configuration can be missed."
                  if templates else "")
+        from .advisory_check import advisory_findings  # it reuses this module's Rust helpers
+        findings += _one_per_id(advisory_findings(artifact, self, masked=masked))
         return findings, scenarios, f"Stellar/Soroban source review; onchain source={source}. Rust checks are bounded lexical evidence, not a compiler, call graph, authorization proof or runtime test. Constructor and custom-account authorization need separate verification.{delegated}{union}"
 
     # ------------------------------------------------------------ ledger authority
@@ -522,7 +573,8 @@ class StellarNativeAuditor(BaseAuditor):
                     remediation="Keep the co-signer independent of the agent's runtime."))
             for line in account.get("trustlines", []):
                 if line.get("unlimited"):
-                    out.append(self.finding(f"onchain-unlimited-trustline-{len(out)}", Severity.LOW,
+                    code, _, issuer = line["asset"].partition(":")
+                    out.append(self.finding(f"onchain-unlimited-trustline-{code}-{issuer[:8]}", Severity.LOW,
                         "A trustline has no holding limit",
                         "The account will accept any amount of this asset, including spam or assets the issuer can freeze.",
                         evidence=f"{address}: {line['asset']} limit {line['limit']}",
@@ -537,7 +589,7 @@ class StellarNativeAuditor(BaseAuditor):
                     remediation="Set home_domain and list the account in https://<domain>/.well-known/stellar.toml."))
         for dest in facts.get("destinations", []):
             if dest.get("status") == "found" and dest.get("memo_required") and not dest.get("code_attaches_memo"):
-                out.append(self.finding(f"onchain-memo-required-{len(out)}", Severity.HIGH,
+                out.append(self.finding(f"onchain-memo-required-{dest['address'][:8]}", Severity.HIGH,
                     "Payments go to an account that requires a memo, but the code never sets one",
                     "The destination publishes SEP-29 config.memo_required (typical for exchanges and custodians). "
                     "Payments without a memo are not credited to any customer and are usually unrecoverable.",
@@ -559,7 +611,7 @@ class StellarNativeAuditor(BaseAuditor):
                 remediation="Publish a GitHub build attestation for the WASM hash (SEP-55 style), or register the agent "
                             "with a card that pins the commit and whose hash the registry records."
                 ).model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
-        return out
+        return _one_per_id(out)
 
     # ------------------------------------------------------------ deployed contract code
     def _contract_findings(self, artifact: AgentArtifact, contract: dict) -> list[Finding]:
@@ -857,3 +909,13 @@ def _unauthenticated_tag_writer(profile: dict | None) -> str:
         return ("the owner imports create_executable_tag and put_contract_data and no authentication, signature "
                 "check or contract call")
     return ""
+
+
+def _one_per_id(findings: list[Finding]) -> list[Finding]:
+    """Ids carry an address prefix; two addresses that share it are reported as one finding."""
+    merged: dict[str, Finding] = {}
+    for f in findings:
+        first = merged.setdefault(f.id, f)
+        if first is not f:
+            merged[f.id] = first.model_copy(update={"evidence": (first.evidence + "; " + f.evidence)[:2000]})
+    return list(merged.values())

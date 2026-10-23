@@ -1,8 +1,17 @@
 """Stellar lexical evidence must not turn declarations into enforcement proof."""
-import pytest
+import asyncio
+import json
+import time
 
-from backend.app.models import AgentArtifact, EvidenceGrade, SourceKind
-from backend.app.swarm.stellar_native import StellarNativeAuditor
+import httpx
+import pytest
+from stellar_sdk import Keypair
+
+from backend.app.config import Settings
+from backend.app.models import AgentArtifact, EvidenceGrade, Severity, SourceKind
+from backend.app.services.repo_audit import audit_repository
+from backend.app.stellar.authority import seed_exposure
+from backend.app.swarm.stellar_native import StellarNativeAuditor, _seed_severity
 
 
 def check(settings, run, source):
@@ -182,3 +191,128 @@ pub fn upgrade(env: Env, hash: BytesN<32>) { env.deployer().update_current_contr
 ''')
     assert [f.severity.value for f in verdict.findings if f.id.startswith('stellar_native-soroban-upgrade-unguarded')] == ['critical']
     assert not any(f.id == 'stellar_native-soroban-auth-missing' for f in verdict.findings)
+
+
+# ----------------------------------------------------------------- seed triage from the ledger
+def _exposure(place, mainnet="not_found", testnet="not_found", declared="", status="checked", balances=()):
+    key = Keypair.random().public_key
+    return {"status": status, "checked_at": "2026-10-22T00:00:00+00:00", "keys": [
+        {"public_key": key, "locations": [place], "declared": declared,
+         "mainnet": {"status": mainnet, "exists": mainnet == "found", "signs_for": 0,
+                     "balances": [{"asset": "XLM", "balance": b} for b in balances]},
+         "testnet": {"status": testnet, "exists": testnet == "found", "signs_for": 0, "balances": []}}]}
+
+
+@pytest.mark.parametrize("place,ledger,expected", [
+    ("tests/fixtures/keys.ts:3", dict(mainnet="found", balances=("500.0000000",)), Severity.CRITICAL),
+    ("tests/fixtures/keys.ts:3", {}, Severity.LOW),
+    ("tests/fixtures/keys.ts:3", dict(testnet="found"), Severity.LOW),
+    ("keys/agent-wallet.key:2", {}, Severity.MEDIUM),
+    ("src/agent.ts:9", dict(testnet="found"), Severity.MEDIUM),
+    ("src/test.ts:23", dict(declared="owner", status="not_checked"), Severity.CRITICAL),
+])
+def test_seed_severity_follows_what_the_key_controls(place, ledger, expected):
+    severity, notes = _seed_severity(_exposure(place, **ledger), [place])
+    assert severity is expected and notes and notes[0].startswith(place)
+
+
+def test_seed_severity_falls_back_to_the_path_when_the_ledger_was_not_read():
+    for status, note in (("not_checked", False), ("unavailable", True)):
+        exposure = _exposure("src/agent.ts:9", mainnet="unavailable", status=status)
+        assert _seed_severity(exposure, ["src/agent.ts:9"])[0] is Severity.CRITICAL
+        assert bool(_seed_severity(exposure, ["src/agent.ts:9"])[1]) is note
+        exposure = _exposure("tests/keys.ts:1", mainnet="unavailable", status=status)
+        assert _seed_severity(exposure, ["tests/keys.ts:1"])[0] is Severity.MEDIUM
+    assert _seed_severity(None, ["tests/keys.ts:1", "src/agent.ts:9"]) == (Severity.CRITICAL, [])
+
+
+def test_seed_exposure_sends_public_keys_only():
+    seed = Keypair.random()
+    asked: list[str] = []
+
+    def horizon(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        if request.url.host == "horizon.stellar.org" and request.url.path.endswith(seed.public_key):
+            return httpx.Response(200, json={"account_id": seed.public_key,
+                                             "balances": [{"asset_type": "native", "balance": "500.0000000"}]})
+        if request.url.path == "/accounts":
+            return httpx.Response(200, json={"_embedded": {"records": []}})
+        return httpx.Response(404, json={})
+    out = asyncio.run(seed_exposure([seed.public_key], transport=httpx.MockTransport(horizon)))
+    record = out["keys"][seed.public_key]
+    assert record["mainnet"] == {"status": "found", "exists": True, "signs_for": 0,
+                                 "balances": [{"asset": "XLM", "balance": "500.0000000"}]}
+    assert record["testnet"]["status"] == "not_found"
+    assert asked and not any(seed.secret in url for url in asked)
+    assert {httpx.URL(u).host for u in asked} == {"horizon.stellar.org", "horizon-testnet.stellar.org"}
+
+
+def test_seed_lookup_stops_a_failing_network_and_keeps_to_its_budget():
+    keys = [Keypair.random().public_key for _ in range(12)]
+    asked: list[str] = []
+
+    async def horizon(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.host)
+        if request.url.host == "horizon.stellar.org":
+            raise httpx.ConnectError("unreachable", request=request)
+        await asyncio.sleep(10 if request.url.path.endswith(keys[-1]) else 0)
+        return httpx.Response(404, json={}) if request.url.path != "/accounts" else \
+            httpx.Response(200, json={"_embedded": {"records": []}})
+    started = time.monotonic()
+    out = asyncio.run(seed_exposure(keys, transport=httpx.MockTransport(horizon), budget=0.5))
+    assert time.monotonic() - started < 2
+    assert all(out["keys"][k]["mainnet"] == {"status": "unavailable"} for k in keys)
+    assert asked.count("horizon.stellar.org") <= 6  # the reads already in flight, then none
+    assert out["keys"][keys[0]]["testnet"]["status"] == "not_found"
+    assert out["keys"][keys[-1]]["testnet"] == {"status": "unavailable"}  # still waiting at the budget
+
+
+def test_a_committed_seed_path_with_a_space_keeps_its_test_severity(settings, run):
+    verdict = run(StellarNativeAuditor(settings).run(AgentArtifact(
+        name="a", source_kind=SourceKind.REPO, source_ref="r", code_files={"src/a.py": "x = 1\n"},
+        raw_metadata={"committed_seeds": ["my tests/keys.txt:2 (SABC…redacted)"]}), deep=False))
+    finding = next(f for f in verdict.findings if f.id == "stellar_native-stellar-secret-seed")
+    assert finding.severity is Severity.MEDIUM
+
+
+def test_a_fixture_seed_funded_on_mainnet_is_critical(tmp_path, monkeypatch):
+    seed = Keypair.random()
+    root = tmp_path / "agent"
+    (root / "tests/fixtures").mkdir(parents=True)
+    (root / "server.py").write_text("import os\nKEY = os.environ['AGENT_SECRET']\n")
+    (root / "tests/fixtures/keys.ts").write_text(f'export const PAYER = "{seed.secret}";\n')
+    sent: list[list[str]] = []
+
+    async def ledger(public_keys, **_):
+        sent.append(public_keys)
+        return {"checked_at": "2026-10-22T00:00:00+00:00", "keys": {seed.public_key: {
+            "mainnet": {"status": "found", "exists": True, "signs_for": 0,
+                        "balances": [{"asset": "XLM", "balance": "500.0000000"}]},
+            "testnet": {"status": "not_found", "exists": False, "signs_for": 0, "balances": []}}}}
+    monkeypatch.setattr("backend.app.stellar.authority.seed_exposure", ledger)
+
+    def seed_finding(**settings):
+        out = asyncio.run(audit_repository(root, name="a", purpose="", deep=False,
+                                           settings=Settings(_env_file=None, **settings)))
+        return next(f for f in out["report"]["findings"] if f["id"] == "stellar_native-stellar-secret-seed")
+    assert seed_finding()["severity"] == "medium" and sent == []  # reads off: today's path-based severity
+    finding = seed_finding(enable_onchain_verification=True)
+    assert finding["severity"] == "critical" and "controls mainnet funds" in finding["evidence"]
+    assert sent == [[seed.public_key]] and seed.secret not in json.dumps(finding)
+
+
+def test_on_chain_finding_ids_do_not_depend_on_order(settings):
+    a, b = Keypair.random().public_key, Keypair.random().public_key
+    issuer = Keypair.random().public_key
+
+    def ids(destinations):
+        facts = {"network": "testnet", "account": {"status": "found", "address": a, "thresholds": {"high": 1},
+                                                    "trustlines": [{"asset": f"USDC:{issuer}", "limit": "x", "unlimited": True}],
+                                                    "home_domain": "x.org"},
+                 "destinations": [{"address": d, "location": "src/a.ts:1", "status": "found", "memo_required": True,
+                                   "code_attaches_memo": False} for d in destinations]}
+        artifact = AgentArtifact(name="a", source_kind=SourceKind.REPO, source_ref="r", chain_authority=facts)
+        return sorted(f.id for f in StellarNativeAuditor(settings)._authority_findings(artifact))
+    assert ids([a, b]) == ids([b, a])
+    assert f"stellar_native-onchain-memo-required-{b[:8]}" in ids([a, b])
+    assert f"stellar_native-onchain-unlimited-trustline-USDC-{issuer[:8]}" in ids([a])

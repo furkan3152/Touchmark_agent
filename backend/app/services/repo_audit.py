@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from stellar_sdk import StrKey
 
@@ -98,6 +99,17 @@ class _DeclaredTool(BaseModel):
     requires_signature: bool = False
     network_access: bool = False
     spend_limit_usdc: float | None = Field(default=None, ge=0)
+    spend_limit: dict[str, str] | None = None
+
+    @field_validator("spend_limit", mode="before")
+    @classmethod
+    def _cap(cls, value):
+        """A cap in any asset, in the .tmark Money shape; anything else is not a cap."""
+        from .tmark import Money, cap
+        try:
+            return cap(Money.model_validate(value)) if value is not None else None
+        except ValidationError:
+            return None
 
 
 class _Declaration(BaseModel):
@@ -118,6 +130,7 @@ class _Declaration(BaseModel):
     human_oversight: bool = False
     discloses_ai: bool = False
     agent_wallet: str = Field(default="", max_length=56)
+    agent_contract_id: str = Field(default="", max_length=56)
 
 
 def declarations(selection: dict) -> dict:
@@ -166,10 +179,11 @@ _SEED = re.compile(rb"\bS[A-Z2-7]{55}\b")
 _COMMITTED_SKIP = SKIP_DIRS - {"test", "tests", "__tests__", "spec", "e2e", "examples", "example", "fixtures", "docs"}
 
 
-def committed_seeds(root: Path, selected: set[str], limit: int = 20) -> list[str]:
+def committed_seeds(root: Path, selected: set[str], limit: int = 20, keys: dict[str, str] | None = None) -> list[str]:
     """Valid Stellar secret seeds in committed files the source selection leaves out
-    (key files, notes, .env copies). Locations only; the seed itself never leaves here."""
-    from stellar_sdk import StrKey
+    (key files, notes, .env copies). Locations only; the seed itself never leaves here.
+    ``keys`` collects the public key derived from each, by location, for seed triage."""
+    from stellar_sdk import Keypair, StrKey
     found: list[str] = []
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
@@ -184,6 +198,8 @@ def committed_seeds(root: Path, selected: set[str], limit: int = 20) -> list[str
             if StrKey.is_valid_ed25519_secret_seed(seed):  # placeholders fail the checksum
                 line = data[:match.start()].count(b"\n") + 1
                 found.append(f"{rel.as_posix()}:{line} (S{seed[1:5]}…redacted)")
+                if keys is not None:
+                    keys[f"{rel.as_posix()}:{line}"] = Keypair.from_secret(seed).public_key
                 if len(found) >= limit:
                     return found
     return found
@@ -320,9 +336,11 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
+    seed_keys: dict[str, str] = {}
     return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint,
                    "tmark": tmark_record,
-                   "committed_seeds": committed_seeds(root, set(files)),
+                   "committed_seeds": committed_seeds(root, set(files), keys=seed_keys),
+                   "committed_seed_keys": seed_keys,
                    "committed_credentials": committed_credentials(root, set(files))}
 
 
@@ -436,10 +454,19 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     description = purpose + ("\nForbidden goals: " + "; ".join(goals) if goals else "")
     if not stellar_address and StrKey.is_valid_ed25519_public_key(decl.agent_wallet):
         stellar_address = decl.agent_wallet
+    declared_contract = decl.agent_contract_id if StrKey.is_valid_contract(decl.agent_contract_id) else ""
+    if declared_contract and not contract_facts:
+        contract_facts = await _contract_facts(settings, network, declared_contract)
     chain = await _chain_facts(settings, network, stellar_address, agent_signing_key, files)
     lockset = Lockset.read(root)
     if contract_facts:
         chain["contract"] = contract_facts
+    tm = (declared.get("tmark") or {}).get("parsed")
+    owner = (tm.owner.stellar_account if tm is not None and tm.owner else
+             "" if declared.get("tmark") else ownership_claim(selection.get("ownership") or {}).get("stellar_owner", ""))
+    exposure = await _seed_exposure(
+        settings, seed_public_keys({**files, "<system prompt>": instructions[:12_000]}, selection.get("committed_seed_keys") or {}),
+        {"agent": {stellar_address, agent_signing_key}, "owner": {owner}}, deadline)
     if source_binding:
         chain["source_binding"] = source_binding
     artifact = AgentArtifact(
@@ -455,16 +482,16 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
                       "committed_seeds": selection.get("committed_seeds", []),
                       "committed_credentials": selection.get("committed_credentials", []),
                       "tmark": _tmark_metadata(declared, selection),
-                      "resolved_versions": lockset.to_json()},
+                      "resolved_versions": lockset.to_json(),
+                      **({"seed_exposure": exposure} if exposure else {})},
         agent_wallet=stellar_address if stellar_address.startswith("G") else "",
-        agent_contract_id=(contract_facts or {}).get("contract_id", ""),
+        agent_contract_id=(contract_facts or {}).get("contract_id", "") or declared_contract,
         owner_verification_note="Not checked during repository review.",
     )
     reviewer = reviewer_from_settings(settings) if deep else None
     if reviewer is not None:
         reviewer.max_turns = max(reviewer.max_turns, 40)
         reviewer.timeout_seconds = max(reviewer.timeout_seconds, 900.0)
-    tm = (declared.get("tmark") or {}).get("parsed")
     if (declared.get("tmark") or {}).get("status"):
         claim = ({"path": TMARK_FILE, "stellar_owner": tm.owner.stellar_account} if tm is not None and tm.owner
                  else {"path": TMARK_FILE, "error": "the .tmark is invalid" if tm is None else "the .tmark names no owner"})
@@ -516,6 +543,61 @@ async def audit_onchain(resolution: dict, *, name: str, purpose: str, settings: 
     )
     return await _run_and_package(artifact, settings, None, name, purpose, [], {}, [
         "No source code is bound to this agent; only on-chain evidence was reviewed. See resolution.steps."])
+
+
+async def _contract_facts(settings: Settings, network: str, contract_id: str) -> dict | None:
+    """The declared C... agent account, read as agent_resolver reads a contract reference."""
+    if not settings.enable_onchain_verification:
+        return None
+    from ..stellar.soroban_reader import SorobanReader
+    try:
+        return await SorobanReader(network).contract(contract_id)
+    except Exception:  # an unreadable ledger entry must not fail the source review
+        return {"status": "unavailable", "contract_id": contract_id, "network": network}
+
+
+_SEED_TEXT = re.compile(r"\bS[A-Z2-7]{55}\b")
+
+
+def seed_public_keys(sources: dict[str, str], committed: dict[str, str]) -> dict[str, list[str]]:
+    """{G...: [path:line, ...]} for every valid secret seed in the reviewed text and in the
+    committed files outside it. The public key is derived here; the seed goes nowhere."""
+    from stellar_sdk import Keypair
+    keys: dict[str, list[str]] = {}
+    for name, text in sources.items():
+        for m in _SEED_TEXT.finditer(text):
+            if StrKey.is_valid_ed25519_secret_seed(m.group(0)):
+                where = f"{name}:{text.count(chr(10), 0, m.start()) + 1}"
+                keys.setdefault(Keypair.from_secret(m.group(0)).public_key, []).append(where)
+    for where, public_key in committed.items():
+        keys.setdefault(public_key, []).append(where)
+    return keys
+
+
+async def _seed_exposure(settings: Settings, keys: dict[str, list[str]], declared: dict[str, set[str]],
+                        deadline: float | None = None) -> dict | None:
+    """Seed triage input for stellar_native: which declared key each seed is, and, when ledger
+    reads are enabled, what its account holds on mainnet and testnet. With reads disabled or
+    Horizon unavailable the seed keeps its path-based severity, so a rules-only run is stable.
+    Under a request ``deadline`` the lookup takes at most a quarter of the time left."""
+    if not keys:
+        return None
+    record: dict = {"status": "not_checked", "keys": [
+        {"public_key": key, "locations": where,
+         "declared": next((role for role, values in declared.items() if key in values), "")}
+        for key, where in keys.items()]}
+    if settings.enable_onchain_verification:
+        from ..stellar.authority import SEED_LOOKUP_SECONDS, seed_exposure
+        budget = SEED_LOOKUP_SECONDS if deadline is None else min(SEED_LOOKUP_SECONDS, (deadline - time.monotonic()) / 4)
+        try:
+            looked = await seed_exposure(list(keys), budget=budget)
+        except Exception:  # the lookup is evidence, never a reason to fail the review
+            record["status"] = "unavailable"
+        else:
+            record.update(status="checked", checked_at=looked["checked_at"])
+            for item in record["keys"]:
+                item.update(looked["keys"].get(item["public_key"]) or {})
+    return record
 
 
 async def _chain_facts(settings: Settings, network: str, stellar_address: str, agent_signing_key: str,

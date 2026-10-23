@@ -410,7 +410,8 @@ class SecurityAuditor(BaseAuditor):
             for t in artifact.tools
             if t.requires_signature or any(s in SIGNING_SCOPES for s in t.scopes)
         ]
-        unlimited = [t.name for t in signing_tools if t.spend_limit_usdc is None]
+        # A declared cap in any asset counts; it is still checked against the code (capabilities.py).
+        unlimited = [t.name for t in signing_tools if t.spend_limit_usdc is None and t.spend_limit is None]
         if unlimited and code_enforced_spend_limit(artifact):
             unlimited = []  # the source caps every untrusted payment; see capabilities.py
         if unlimited:

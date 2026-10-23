@@ -121,6 +121,7 @@ EVIDENCE_GAP_RULES = frozenset({
     "stellar_native-onchain-account-missing", "stellar_native-onchain-agent-key-undeclared",
     "stellar_native-onchain-identity-unbound", "stellar_native-onchain-source-unbound",
     "stellar_native-onchain-contract-code-unavailable", "stellar_native-onchain-contract-code-unresolved",
+    "stellar_native-dep-advisory-table-stale",
 })
 #: Autonomy without a human approval step. Operators may run agents unattended on
 #: purpose, so these are warnings: a small score penalty, never a failing decision.
@@ -169,6 +170,19 @@ BYPASS_CATEGORIES = re.compile(
     r"account-takeover|cross-user-access|code-execution)-\d+$")
 
 
+#: Rule findings that show a payment accepted, settled or sponsored without the check that
+#: makes it a payment: x402 and MPP server rules, settlement and hash-proof binding, and fee
+#: sponsorship paths. Matched by pattern, so each rule's stable-id suffix is covered.
+PAYMENT_BYPASS_RULES = re.compile(
+    r"^security-(?:x402|mpp|path-sponsor)-|"
+    r"(?:^|-)(?:x402-settle-unchecked|x402-verify-without-settle|x402-requirements-from-payer|tx-hash-proof-unbound)"
+    r"(?:-[0-9a-f]{8})?$")
+
+
+def payment_bypass(finding: Finding) -> bool:
+    return bool(BYPASS_CATEGORIES.search(finding.id) or PAYMENT_BYPASS_RULES.search(finding.id))
+
+
 def actionable_risks(findings: list[Finding]) -> list[Finding]:
     """High or critical risks backed by source, configuration or live evidence, and medium
     bypasses the independent verifier confirmed at the quoted line: a confirmed way around a
@@ -177,8 +191,16 @@ def actionable_risks(findings: list[Finding]) -> list[Finding]:
         f for f in findings
         if f.is_risk and f.evidence_grade is not EvidenceGrade.SIMULATED
         and (f.severity.rank >= Severity.HIGH.rank
-             or (f.severity is Severity.MEDIUM and f.verified == "confirmed" and BYPASS_CATEGORIES.search(f.id)))
+             or (f.severity is Severity.MEDIUM and f.verified == "confirmed" and payment_bypass(f)))
     ]
+
+
+def unverified_bypasses(findings: list[Finding]) -> list[Finding]:
+    """Medium payment bypasses that no verifier checked (it did not run, or could not decide).
+    Unchecked, they can be neither credited nor dismissed, so they hold a pass back."""
+    return [f for f in findings if f.is_risk and f.severity is Severity.MEDIUM
+            and f.evidence_grade is not EvidenceGrade.SIMULATED
+            and f.verified in {"", "unverifiable"} and payment_bypass(f)]
 
 
 def warnings(findings: list[Finding]) -> list[Finding]:
@@ -189,11 +211,13 @@ def review_decision(findings: list[Finding], coverage: dict, score: float) -> st
     """One decision rule shared by the Studio, official audits and credentials.
 
     needs_fixes    an actionable risk exists, or accumulated risks pushed the score below a pass
-    needs_evidence no actionable risk, but prompt, tools and implementation were not all reviewed
+    needs_evidence no actionable risk, but prompt, tools and implementation were not all reviewed,
+                   or a medium payment bypass was never verified
     pass           no actionable risk with the full core surface reviewed
     """
     if actionable_risks(findings) or score < PASS_SCORE:
         return "needs_fixes" if any(f.is_risk for f in findings) else "needs_evidence"
-    if not coverage.get("deep_core_complete") or any(f.id in BLOCKING_GAPS for f in findings):
+    if (not coverage.get("deep_core_complete") or any(f.id in BLOCKING_GAPS for f in findings)
+            or unverified_bypasses(findings)):
         return "needs_evidence"
     return "pass"
