@@ -110,6 +110,12 @@ _SECRET_ARG = re.compile(r"secret|^seed$|seed_?phrase|mnemonic|private_?key|priv
 #: x402 / MPP client wrappers that pay whatever a 402 response asks unless given a ceiling.
 _X402_PAYER = re.compile(r"(?:^|\.)(?:wrapFetchWithPayment\w*|withPaymentInterceptor|wrapAxiosWithPayment\w*|"
                          r"createPayingFetch|createPaymentFetch)$")
+#: The v1 x402 client wrappers whose third argument `maxValue` refuses a requirement above it
+#: (0.1 USDC by default), and the first release that has it. Checked in every published
+#: tarball: wrapFetchWithPayment has it from x402-fetch 0.1.0 (0.0.0 is an empty placeholder),
+#: withPaymentInterceptor only from x402-axios 1.2.1 (before, it pays any amount and its third
+#: argument is the requirement selector).
+X402_V1_CAPS = {"x402-fetch": "0.1.0", "x402-axios": "1.2.1"}
 #: Lower-level x402 / MPP client calls that sign a payment payload with the agent's key. The
 #: code around them decides what is paid, so they record the capability, not a flow.
 _X402_SIGNER = re.compile(r"(?:^|\.)(?:createPaymentPayload|createPaymentHeader|createEd25519Signer|"
@@ -155,6 +161,13 @@ _UI_PACKAGES = ("react", "react-dom", "preact", "vue", "svelte", "solid-js")
 #: (Freighter, Stellar Wallets Kit and xBull, Albedo, LOBSTR, WalletConnect).
 _WALLET_PACKAGES = re.compile(r"^(?:@stellar/freighter-api|@creit\.tech/(?:stellar-wallets-kit|xbull-wallet-connect)|"
                               r"@albedo-link/intent|@lobstrco/signer-extension-api|@walletconnect/)")
+#: Packages that run only in Node: a module importing one is a server, a CLI or an agent's
+#: headless browser (tools/browser/ driving Playwright), not a page in front of a person.
+_NODE_PACKAGES = re.compile(r"^(?:node:|(?:fs|child_process|net|http|https|worker_threads|readline|express|fastify|koa|hono)"
+                            r"(?:$|[./])|playwright|@playwright/|puppeteer|selenium-webdriver)")
+#: A key the code holds itself: whoever runs it signs, not a wallet's owner.
+_HELD_KEY = re.compile(r"\bKeypair\.(?:fromSecret|fromRawEd25519Seed)\s*\(|\bprivateKeyToAccount\s*\(|"
+                       r"\bcreateEd25519Signer\s*\(|\bmnemonicToSeed\w{0,16}\s*\(")
 #: Verification of a client-signed envelope (not of a transaction hash, which S4 covers).
 _ENVELOPE_VERIFY = re.compile(r"^verify(?:Envelope\w*|SignedXdr|TransactionXdr|Xdr)$")
 #: Receivers of a generic `verify` that is a payment verification, not a JWT or signature one.
@@ -347,24 +360,76 @@ def _returns_abort(node) -> bool:
         node = _unwrap(node.named_children[0]) if node.named_children else None
     elif node is not None and node.type == "throw_statement":
         return True
+    return _abort_value(node)
+
+
+def _abort_value(node) -> bool:
+    """`{ abort: true }`: the value a payment-creation hook returns to refuse."""
+    node = _unwrap(node)
     value = _unwrap(_props(node).get("abort")) if node is not None and node.type == "object" else None
     return value is not None and value.type == "true"
+
+
+def _may_abort(value) -> bool:
+    """A returned value that is `{ abort: true }` on some path: itself, a ternary branch, or
+    the right side of `&&`."""
+    stack = [value]
+    while stack:
+        value = _unwrap(stack.pop())
+        if value is not None and value.type == "ternary_expression":
+            stack += [value.child_by_field_name("consequence"), value.child_by_field_name("alternative")]
+        elif value is not None and value.type == "binary_expression" and _txt(value.child_by_field_name("operator")) == "&&":
+            stack.append(value.child_by_field_name("right"))
+        elif _abort_value(value):
+            return True
+    return False
+
+
+def _refuses_all(node) -> bool:
+    """A policy branch that leaves nothing to pay: it throws, or returns an empty list."""
+    node = _unwrap(node)
+    if node is not None and node.type == "statement_block":
+        stmts = [c for c in node.named_children if c.type != "comment"]
+        node = stmts[-1] if stmts else None
+    if node is not None and node.type == "throw_statement":
+        return True
+    value = _unwrap(node.named_children[0]) if node is not None and node.type == "return_statement" and node.named_children else None
+    return value is not None and value.type == "array" and not [c for c in value.named_children if c.type != "comment"]
+
+
+def _passes(node) -> bool:
+    """A hook branch that lets the payment go on: it returns without `{ abort: true }`."""
+    node = _unwrap(node)
+    if node is not None and node.type == "statement_block":
+        stmts = [c for c in node.named_children if c.type != "comment"]
+        node = stmts[-1] if stmts else None
+    return node is not None and node.type == "return_statement" and not _returns_abort(node)
 
 
 def _amount_ceiling(fn_node, hook: bool, resolve=None) -> bool:
     """An x402 policy, selector or hook that refuses requirements above a ceiling. A policy
     or selector keeps requirements through a predicate (filter, find, every) whose truth puts
-    the requirement's `.amount` (or `.maxAmountRequired`) at or below a bound; a hook refuses
-    (`return { abort: true }` or throw) where the amount exceeds one. Sorting by price,
+    the requirement's `.amount` (or `.maxAmountRequired`) at or below a bound, or refuses them
+    all (throws, returns `[]`) where one exceeds it; a hook refuses (`return { abort: true }`,
+    a ternary to it, or throw) where the amount exceeds one, or lets the payment on only where
+    it is within one (`if (amount <= MAX) return; return { abort: true }`). Sorting by price,
     dropping zero amounts, filtering networks, or logging a large payment caps nothing.
-    ``resolve`` maps a named callback (`reqs.filter(isCheap)`) to its function node."""
+    ``resolve`` maps a named predicate (`reqs.filter(isCheap)`, `(r) => isCheap(r)`) to its
+    function node; that function's parameters are requirements too."""
     params: set[str] = set()
     stack = [fn_node]
     while stack:
         n = stack.pop()
         if _is_function(n):
             params |= _param_names(n)
+        elif n.type == "for_in_statement":
+            left = _unwrap(n.child_by_field_name("left"))  # for (const r of reqs)
+            if left is not None and left.type == "identifier":
+                params.add(_txt(left))
+            elif left is not None and left.type == "object_pattern":
+                params |= {_txt(c) for c in left.named_children if c.type == "shorthand_property_identifier_pattern"}
         stack.extend(n.named_children)
+    resolving: set[tuple[int, int]] = set()
 
     def reads(side) -> bool:
         todo = [side]
@@ -390,6 +455,16 @@ def _amount_ceiling(fn_node, hook: bool, resolve=None) -> bool:
             return False
         if expr.type == "unary_expression" and _txt(expr.child_by_field_name("operator")) == "!":
             return bounds(expr.child_by_field_name("argument"), not holds)
+        if expr.type == "call_expression":
+            fn = _unwrap(expr.child_by_field_name("function"))
+            method = _txt(fn.child_by_field_name("property")) if fn is not None and fn.type == "member_expression" else ""
+            if method in {"some", "every"}:
+                # every(p) holds, or some(p) fails: p holds, or fails, for each requirement.
+                if (method == "every") == holds and _args(expr):
+                    return verdict(_args(expr)[0], holds)
+                return False
+            # `(r) => isAffordable(r)`: a named predicate given the requirement.
+            return bool(_args(expr)) and verdict(fn, holds)
         if expr.type != "binary_expression":
             return False
         op = _txt(expr.child_by_field_name("operator"))
@@ -403,38 +478,73 @@ def _amount_ceiling(fn_node, hook: bool, resolve=None) -> bool:
         low, high = (left, right) if (op in {"<", "<="}) == holds else (right, left)
         return reads(low) and not reads(high)
 
-    def verdict(callback) -> bool:
-        """A predicate callback whose truth bounds the amount."""
+    def verdict(callback, holds: bool = True) -> bool:
+        """A predicate callback whose truth (holds) or falsity bounds the amount."""
         callback = _unwrap(callback)
-        if callback is not None and not _is_function(callback) and resolve is not None:
-            callback = resolve(callback)
+        if callback is not None and not _is_function(callback):
+            callback = resolve(callback) if resolve is not None else None
+            if not _is_function(callback) or (callback.start_byte, callback.end_byte) in resolving:
+                return False
+            resolving.add((callback.start_byte, callback.end_byte))  # a predicate calling itself
+            params.update(_param_names(callback))
         if not _is_function(callback):
             return False
         body = callback.child_by_field_name("body")
         if body is not None and body.type != "statement_block":
-            return bounds(body, True)
+            return bounds(body, holds)
         returns = [r for r in _own_nodes(body) if r.type == "return_statement" and r.named_children]
-        return bool(returns) and all(bounds(r.named_children[0], True) for r in returns)
+        return bool(returns) and all(bounds(r.named_children[0], holds) for r in returns)
 
-    nodes = list(_own_nodes(fn_node.child_by_field_name("body")))
-    if not hook:
-        for n in nodes:
-            fn = _unwrap(n.child_by_field_name("function")) if n.type == "call_expression" else None
-            if fn is not None and fn.type == "member_expression" and _args(n) \
-                    and _txt(fn.child_by_field_name("property")) in {"filter", "find", "findLast", "every"} and verdict(_args(n)[0]):
-                return True
+    def refusal(value, refuses) -> bool:
+        """`C ? { abort: true } : undefined` (or `C && { abort: true }`) refuses above a bound."""
+        value = _unwrap(value)
+        if value is None:
+            return False
+        if value.type == "ternary_expression":
+            cond = value.child_by_field_name("condition")
+            return refuses(value.child_by_field_name("consequence")) and bounds(cond, False) \
+                or refuses(value.child_by_field_name("alternative")) and bounds(cond, True)
+        if value.type == "binary_expression" and _txt(value.child_by_field_name("operator")) == "&&":
+            return refuses(value.child_by_field_name("right")) and bounds(value.child_by_field_name("left"), False)
         return False
+
+    body = fn_node.child_by_field_name("body")
+    if hook and body is not None and body.type != "statement_block":
+        return refusal(body, _abort_value)  # async (ctx) => (over(ctx) ? { abort: true } : undefined)
+    nodes = list(_own_nodes(body))
+    refuses = _returns_abort if hook else _refuses_all
     for n in nodes:
-        if n.type != "if_statement":
-            continue
-        cond = n.child_by_field_name("condition")
-        alternative = n.child_by_field_name("alternative")
-        alt = alternative.named_children[0] if alternative is not None and alternative.named_children else None
-        if _returns_abort(n.child_by_field_name("consequence")) and bounds(cond, False):
-            return True  # if (amount > MAX) return { abort: true }
-        if alt is not None and _returns_abort(alt) and bounds(cond, True):
-            return True  # if (amount <= MAX) { ... } else throw
+        if not hook and n.type == "call_expression":
+            fn = _unwrap(n.child_by_field_name("function"))
+            method = _txt(fn.child_by_field_name("property")) if fn is not None and fn.type == "member_expression" else ""
+            if method in {"filter", "find", "findLast", "every"} and _args(n) and not _with_fallback(n) and verdict(_args(n)[0]):
+                return True
+        elif hook and n.type == "return_statement" and n.named_children and refusal(n.named_children[0], _abort_value):
+            return True
+        elif n.type == "if_statement":
+            cond = n.child_by_field_name("condition")
+            consequence = n.child_by_field_name("consequence")
+            alternative = n.child_by_field_name("alternative")
+            alt = alternative.named_children[0] if alternative is not None and alternative.named_children else None
+            if refuses(consequence) and bounds(cond, False):
+                return True  # if (amount > MAX) return { abort: true }
+            if alt is not None and refuses(alt) and bounds(cond, True):
+                return True  # if (amount <= MAX) { ... } else throw
+            if hook and alt is None and _passes(consequence) and n.parent is not None and n.parent.type == "statement_block":
+                # if (amount <= MAX) return; ...; return { abort: true }
+                after = [c for c in n.parent.named_children if c.type != "comment" and c.start_byte > n.start_byte]
+                if after and _returns_abort(after[-1]) and bounds(cond, True):
+                    return True
     return False
+
+
+def _with_fallback(call) -> bool:
+    """`reqs.find(isCheap) ?? reqs[0]`: when no requirement passes, another is paid anyway."""
+    node, parent = call, call.parent
+    while parent is not None and parent.type in {"parenthesized_expression", "non_null_expression"}:
+        node, parent = parent, parent.parent
+    return parent is not None and parent.type == "binary_expression" \
+        and _txt(parent.child_by_field_name("operator")) in {"??", "||"} and parent.child_by_field_name("left") == node
 
 
 def _own_nodes(node):
@@ -586,9 +696,11 @@ class JsProject:
         self._settle_text: dict = {}
         self._proof_text: dict[str, tuple[bool, bool]] = {}
         self._field_settled: dict[tuple[str, str], bool] = {}
+        self._module_functions: dict[str, list[str]] | None = None
         self._declared: dict[tuple, dict[str, str]] = {}
         self._validators: dict[str, set[int]] = {}
         self._seller_scope: dict[str, bool] = {}
+        self._browser: dict[str, bool] = {}
         self._owners: dict[str, list[str]] | None = None
         self.declared_entry = entrypoints or {}
         self._propagated = False
@@ -1296,19 +1408,23 @@ class JsProject:
         """Code that runs in the user's browser or pays through the user's wallet: a
         `"use client"` module, one under a browser/ directory, a UI component module (React,
         Preact, Vue, Svelte), or one that imports a wallet (Freighter, Stellar Wallets Kit).
-        The person holding the wallet sees the amount and approves each payment."""
+        The person holding the wallet sees the amount and approves each payment. A module
+        that holds a key itself, or imports a Node-only package (a server framework, the file
+        system, a headless browser an agent drives), is not one, whatever its path or imports."""
+        if module.path in self._browser:
+            return self._browser[module.path]
+        packages = [target[4:] for target in module.imports.values() if target.startswith("lib:")]
+        if _HELD_KEY.search(module.text) or any(_NODE_PACKAGES.match(p) for p in packages):
+            self._browser[module.path] = False
+            return False
         first = next((c for c in module.root.named_children if c.type != "comment"), None)
-        if first is not None and first.type == "expression_statement" and _string_value(
-                first.named_children[0] if first.named_children else None) == "use client":
-            return True
-        if re.search(r"(?:^|/)browser/", module.path):
-            return True
-        for target in module.imports.values():
-            package = target[4:] if target.startswith("lib:") else ""
-            if any(package == ui or package.startswith((ui + ".", ui + "/")) for ui in _UI_PACKAGES) \
-                    or _WALLET_PACKAGES.match(package):
-                return True
-        return False
+        found = bool(first is not None and first.type == "expression_statement" and _string_value(
+            first.named_children[0] if first.named_children else None) == "use client") \
+            or bool(re.search(r"(?:^|/)browser/", module.path)) \
+            or any(any(p == ui or p.startswith((ui + ".", ui + "/")) for ui in _UI_PACKAGES) or _WALLET_PACKAGES.match(p)
+                   for p in packages)
+        self._browser[module.path] = found
+        return found
 
     def seller_scope(self, module: _Module) -> bool:
         """The module takes x402 or MPP payments: it imports a payment SDK or reads a payment header."""
@@ -1439,8 +1555,11 @@ class JsProject:
     # ----------------------------------------------------------------- sellers
     #: Settlement in a module or function. Name suffixes are bounded (\w{0,64}): an unbounded
     #: \w* after a short literal backtracks quadratically on one long word that repeats it.
-    _SETTLES = re.compile(r"(?i:settle)\w{0,64}\s*\(|\.(?:submitTransaction|sendTransaction|submitAsyncTransaction)\s*\(|"
-                          r"\.on\(\s*[\"'](?:finish|close)[\"']")
+    #: `Promise.allSettled(` and `isSettled(` settle nothing. In the verifier's own module a
+    #: finish hook may hand the payment on to a deferred settlement; in another step of the
+    #: route (`_SETTLE_CALL`) only a settle or submit call counts, not a logging hook.
+    _SETTLE_CALL = re.compile(r"(?i:settle)(?!d)\w{0,64}\s*\(|\.(?:submitTransaction|sendTransaction|submitAsyncTransaction)\s*\(")
+    _SETTLES = re.compile(_SETTLE_CALL.pattern + r"|\.on\(\s*[\"'](?:finish|close)[\"']")
     _MOVES_FUNDS = re.compile(r"Operation\.(?:payment|pathPayment\w{0,64}|createAccount)\s*\(|\.transfer\s*\(|"
                               r"invokeContract\w{0,64}\s*\(")
 
@@ -1488,19 +1607,47 @@ class JsProject:
             return all(self._route_settles(i) for i in routes) and all(self._receiver_settles(r) for r in receivers)
         for field_name in interp.request_fields:
             if (field_name, fn.module) not in self._field_settled:
-                needle = re.compile(r"\." + re.escape(field_name) + r"\b")
-                self._field_settled[(field_name, fn.module)] = any(
-                    path != fn.module and self._settles("module:" + path, other.text) and needle.search(other.text)
-                    for path, other in self.modules.items())
+                self._field_settled[(field_name, fn.module)] = self._field_submitted(field_name, fn.module)
             if self._field_settled[(field_name, fn.module)]:
                 return True
+        return False
+
+    def _field_submitted(self, field_name: str, verifier: str) -> bool:
+        """A function in another module passes the request field to a settle or submit call:
+        `sendTransaction(TransactionBuilder.fromXDR(req.paymentXdr, NET))`, or through a
+        variable it declares from the field. Reading the field and submitting something else
+        (a refund it builds) settles nothing."""
+        needle = re.compile(r"\." + re.escape(field_name) + r"\b")
+        if self._module_functions is None:
+            self._module_functions = {}
+            for key, f in self.functions.items():
+                self._module_functions.setdefault(f.module, []).append(key)
+        for path, other in self.modules.items():
+            if path == verifier or not needle.search(other.text) or not self._SETTLE_CALL.search(other.text):
+                continue
+            for key in self._module_functions.get(path, []):
+                fn = self.functions[key]
+                text = _txt(fn.node)
+                if not needle.search(text) or not self._SETTLE_CALL.search(text):
+                    continue
+                declared = self.declarations(other, fn.node)
+                for n in _own_nodes(fn.node.child_by_field_name("body")):
+                    if n.type != "call_expression":
+                        continue
+                    callee = n.child_by_field_name("function")
+                    if not self._SETTLE_CALL.search(_txt(callee) + "("):
+                        continue
+                    for a in map(_unwrap, _args(n)):
+                        if a is not None and (needle.search(_txt(a)) or a.type == "identifier"
+                                              and needle.search(declared.get(_txt(a), ""))):
+                            return True
         return False
 
     def _step_settles(self, keys) -> bool:
         """A project function among ``keys`` settles or submits (its text searched once)."""
         for k in keys:
             if k in self.functions and k not in self._settle_text:
-                self._settle_text[k] = bool(self._SETTLES.search(_txt(self.functions[k].node)))
+                self._settle_text[k] = bool(self._SETTLE_CALL.search(_txt(self.functions[k].node)))
             if self._settle_text.get(k):
                 return True
         return False
@@ -1621,19 +1768,35 @@ class JsProject:
                       if pattern is not None and pattern.type == "object_pattern"
                       for c in pattern.named_children if c.type == "shorthand_property_identifier_pattern"}
 
-            def reads(node) -> set[int]:
-                out, stack = set(), [node]
+            def reads(node, sign: bool) -> set[int]:
+                """Parameters whose failed settlement makes the throw happen: `sign` is True
+                where `node` being true throws (`if (C) throw`), False where its being false
+                does (`assert(C)`). `if (s.success) throw` throws on success: no check."""
+                out, stack = set(), [(node, sign)]
                 while stack:
-                    n = stack.pop()
+                    n, sign = stack.pop()
+                    n = _unwrap(n)
                     if n is None or _is_function(n):
                         continue
-                    if n.type == "member_expression" and _txt(n.child_by_field_name("property")) in _SETTLE_SUCCESS:
+                    if n.type == "unary_expression" and _txt(n.child_by_field_name("operator")) == "!":
+                        stack.append((n.child_by_field_name("argument"), not sign))
+                    elif n.type == "binary_expression" and _txt(n.child_by_field_name("operator")) in {"&&", "||"}:
+                        stack += [(n.child_by_field_name("left"), sign), (n.child_by_field_name("right"), sign)]
+                    elif n.type == "binary_expression" and _txt(n.child_by_field_name("operator")) in {"===", "==", "!==", "!="}:
+                        # `s.success === false`, `s.success !== true`: a read compared to a literal.
+                        op = _txt(n.child_by_field_name("operator"))
+                        for side, other in ((n.child_by_field_name("left"), n.child_by_field_name("right")),
+                                            (n.child_by_field_name("right"), n.child_by_field_name("left"))):
+                            other_u = _unwrap(other)
+                            if other_u is not None and other_u.type in {"true", "false"}:
+                                same = (other_u.type == "true") == (op in {"===", "=="})
+                                stack.append((side, sign if same else not sign))
+                    elif not sign and n.type == "member_expression" and _txt(n.child_by_field_name("property")) in _SETTLE_SUCCESS:
                         root = _unwrap(n.child_by_field_name("object"))
                         if root is not None and root.type == "identifier" and _txt(root) in index:
                             out.add(index[_txt(root)])
-                    elif n.type == "identifier" and _txt(n) in _SETTLE_SUCCESS and _txt(n) in fields:
+                    elif not sign and n.type == "identifier" and _txt(n) in _SETTLE_SUCCESS and _txt(n) in fields:
                         out.add(fields[_txt(n)])
-                    stack.extend(n.named_children)
                 return out
 
             def throws(node) -> bool:
@@ -1650,10 +1813,16 @@ class JsProject:
                 n = stack.pop()
                 if n is None or _is_function(n):
                     continue
-                if n.type == "if_statement" and throws(n.child_by_field_name("consequence")):
-                    found |= reads(n.child_by_field_name("condition"))
+                if n.type == "if_statement":
+                    alternative = n.child_by_field_name("alternative")
+                    alt = alternative.named_children[0] if alternative is not None and alternative.named_children else None
+                    if throws(n.child_by_field_name("consequence")):
+                        found |= reads(n.child_by_field_name("condition"), True)
+                    elif alt is not None and throws(alt):
+                        found |= reads(n.child_by_field_name("condition"), False)  # if (s.success) {...} else throw
                 elif n.type == "call_expression" and _ASSERTION.match(_dotted(n.child_by_field_name("function")).rsplit(".", 1)[-1]):
-                    found |= reads(n.child_by_field_name("arguments"))
+                    for a in _args(n)[:1]:
+                        found |= reads(a, False)
                 stack.extend(n.named_children)
             self._validators[key] = found
         return self._validators[key]
@@ -1742,6 +1911,55 @@ class JsProject:
         self.profile.add_flow(Flow(category, loc, frozenset(labels & (UNTRUSTED | {"secret"})), fn.name if fn else "<module>", detail))
 
 
+class _Branch(dict):
+    """One branch's view of the interpreter state: the names it assigns, over the state
+    before the branch, which it reads through without copying. Tag sets are never changed in
+    place (every update assigns a new set), so nothing written here reaches the state below
+    until the branches are joined, and joining costs what the branches assigned, not the
+    whole state: a file of thousands of sequential ifs stays linear. Nested branches read
+    through at most ``_DEPTH`` views; a deeper one starts from a copy of what it sees."""
+
+    __slots__ = ("base", "depth", "written")
+    _DEPTH = 8
+
+    def __init__(self, base: dict) -> None:
+        super().__init__()
+        depth = base.depth + 1 if isinstance(base, _Branch) else 1
+        if depth > self._DEPTH:
+            base, depth = dict(base.items()), 1
+        self.base, self.depth = base, depth
+        self.written: set[str] = set()
+
+    def __setitem__(self, key: str, value: set[str]) -> None:
+        self.written.add(key)
+        dict.__setitem__(self, key, value)
+
+    def __getitem__(self, key: str) -> set[str]:
+        return dict.__getitem__(self, key) if dict.__contains__(self, key) else self.base[key]
+
+    def get(self, key: str, default=None):
+        return dict.__getitem__(self, key) if dict.__contains__(self, key) else self.base.get(key, default)
+
+    def __contains__(self, key) -> bool:
+        return dict.__contains__(self, key) or key in self.base
+
+    def keys(self):
+        return list(self)
+
+    def __iter__(self):
+        yield from dict.__iter__(self)
+        yield from (k for k in self.base if not dict.__contains__(self, k))
+
+    def items(self):
+        return [(k, self[k]) for k in self]
+
+    def values(self):
+        return [self[k] for k in self]
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
 class _JsInterp:
     def __init__(self, project: JsProject, module: _Module, fn: _JsFunction | None, *, record: bool):
         self.p, self.module, self.fn, self.record = project, module, fn, record
@@ -1773,6 +1991,7 @@ class _JsInterp:
         self.proof_throws: set[str] = set()
         #: How the branch whose condition is being assumed refuses: "throw", "return" or "".
         self._rejecting = ""
+        self._sponsor_condition = False
         #: Checks made on a client's envelope so far (fee sponsors, R1/R2/R4): see
         #: JsProject.sponsor_checks. ``_enclosing`` holds the checks of the conditions around
         #: the statement being read, and ``_verdicts`` the variables holding a validator's result.
@@ -1781,6 +2000,12 @@ class _JsInterp:
         self.sponsor_returns: set[str] = set()
         self._enclosing: list[set[str]] = []
         self._verdicts: dict[str, str] = {}
+        #: Project functions called in the try bodies being read whose catch carries on (a
+        #: throwing helper there stops the rest of that body only), those called in such
+        #: bodies already left, and those called anywhere else.
+        self._try_calls: list[set[str]] = []
+        self._caught_calls: set[str] = set()
+        self._plain_calls: set[str] = set()
         #: Outbound requests after an unchecked settlement: a delivery only if the settlement
         #: is still unchecked when the handler ends (an audit hook before the check is not).
         self._pending_upstream: set[tuple[int, int]] = set()
@@ -1917,12 +2142,19 @@ class _JsInterp:
             outcomes = (self._names_in(node.child_by_field_name("consequence"))
                         | self._names_in(node.child_by_field_name("alternative")))
             self._choosing = not (self._names_in(cond) & outcomes)
+            # A requirements match binds the payer's requirements only inside its own branch.
+            bound = self.requirements_bound
             self.assume(cond, True, when_true, node=node)
+            bound_true, self.requirements_bound = self.requirements_bound, bound
             when_false = {k: set(v) for k, v in state.items()}
             self.assume(cond, False, when_false, node=node)
+            bound_false, self.requirements_bound = self.requirements_bound, bound_true
             self._choosing = False
-            return (self.tags(node.child_by_field_name("consequence"), when_true)
-                    | self.tags(node.child_by_field_name("alternative"), when_false))
+            out = self.tags(node.child_by_field_name("consequence"), when_true)
+            self.requirements_bound = bound_false
+            out |= self.tags(node.child_by_field_name("alternative"), when_false)
+            self.requirements_bound = bound
+            return out
         if t in {"binary_expression"}:
             op = _txt(node.child_by_field_name("operator"))
             left = self.tags(node.child_by_field_name("left"), state)
@@ -2060,6 +2292,7 @@ class _JsInterp:
             self.p.callers.setdefault(key, set()).add(self.fn.key if self.fn else f"module:{self.module.path}")
             if self.fn is not None:
                 self.p.callees.setdefault(self.fn.key, set()).add(key)
+            (self._try_calls[-1] if self._try_calls else self._plain_calls).add(key)
             if self._enclosing:
                 self.p.sponsor_enclosed.setdefault(key, set()).update(*self._enclosing)
         if key and _SIGN_FOREIGN.search(label) and not _WALLET_PROMPT.search(label):
@@ -2130,7 +2363,8 @@ class _JsInterp:
             return {"model"}
         if _X402_SIGNER.search(label):
             self._cap("payment", node)
-            self._cap("stellar_signing", node)
+            # In a browser client the user's wallet signs, after showing the amount.
+            self._cap("delegated_signing" if self.p.browser_client(self.module) else "stellar_signing", node)
             return every | receiver
         if self.p.imports_package(self.module, "@x402/") and (
                 (short in _X402_DECIDERS | {"setSpendControls"} and receiver_node is not None)
@@ -2159,8 +2393,12 @@ class _JsInterp:
             # The wrapped fetch signs whatever payment a 402 response requests. Without a
             # ceiling or selector, the paid server chooses recipient, asset and amount.
             self._cap("payment", node)
-            self._cap("stellar_signing", node)
+            self._cap("delegated_signing" if self.p.browser_client(self.module) else "stellar_signing", node)
             capped = any(self._config_caps(a) or any(self._config_caps(v) for v in _props(a).values()) for a in arg_nodes)
+            v1 = label.split(".", 1)[0] if label.split(".", 1)[0] in X402_V1_CAPS else ""
+            third = _unwrap(arg_nodes[2]) if len(arg_nodes) > 2 else None
+            if v1 == "x402-fetch" or (v1 and third is not None and not _is_function(third) and third.type != "object"):
+                capped = True  # its default maxValue, or one passed (on an older x402-axios the call fails)
             # A client configured in another module (`import { client } from "./client"`).
             client = every | set().union(*(self.p.imported_value(self.module, _txt(a)) for a in map(_unwrap, arg_nodes)
                                            if a is not None and a.type == "identifier" and _txt(a) not in state))
@@ -2168,7 +2406,7 @@ class _JsInterp:
                 self._flow("x402_unbounded", node, {"external"}, "402 responses decide the payment; no maximum or selector is set")
                 if self.record and not label.startswith("@x402/"):
                     # Another x402 client library: the @x402/core release logic does not apply.
-                    self.p.profile.add_fact("x402_other_client", self.p.location(self.module, node), label)
+                    self.p.profile.add_fact("x402_other_client", self.p.location(self.module, node), label, package=v1)
             if self.record and ("x402_off" in client or any(_controls_off(_props(a)) for a in arg_nodes)):
                 # The client (from any module) or this wrap's own config switches spend controls off.
                 self.p.profile.add_fact("x402_controls_off", self.p.location(self.module, node), "spend controls switched off")
@@ -2407,8 +2645,9 @@ class _JsInterp:
             return False
         body = fn.child_by_field_name("body")
         if body is not None and body.type != "statement_block":
-            return _returns_abort(body)
-        return any(n.type in {"return_statement", "throw_statement"} and _returns_abort(n) for n in _own_nodes(body))
+            return _may_abort(body)  # async (ctx) => (over(ctx) ? { abort: true } : undefined)
+        return any(n.type == "throw_statement" or n.type == "return_statement" and n.named_children
+                   and _may_abort(n.named_children[0]) for n in _own_nodes(body))
 
     def _config_caps(self, config) -> bool:
         """x402 client options with a ceiling: a numeric limit, or a policy or selector that
@@ -2531,28 +2770,65 @@ class _JsInterp:
         the result (`res.json(s)`), the facilitator's own reply (`res.json(await r.json())`),
         its encoding, or an object of its fields (`{ success: s.success, transaction:
         s.transaction }`, with booleans or null beside them). A body with anything else in it
-        (`{ quote: 42, tx: s.transaction }`) serves a resource."""
+        (`{ quote: 42, tx: s.transaction }`) serves a resource. Walked once, without recursion:
+        every object in the body holds the result somewhere and nothing but literals beside it."""
         result = {"settle_result", "verify_result"}
-        node = _unwrap(body)
-        while node is not None and node.type == "call_expression":
-            fn = _unwrap(node.child_by_field_name("function"))
-            if _dotted(fn) == "JSON.stringify" and _args(node):
-                node = _unwrap(_args(node)[0])
-            elif fn is not None and fn.type == "member_expression" and not _args(node) \
-                    and _txt(fn.child_by_field_name("property")) in {"json", "text"}:
-                node = _unwrap(fn.child_by_field_name("object"))  # the facilitator reply's body
-            else:
+        stack = [body]
+        while stack:
+            node = _unwrap(stack.pop())
+            while node is not None and node.type == "call_expression":
+                fn = _unwrap(node.child_by_field_name("function"))
+                if _dotted(fn) == "JSON.stringify" and _args(node):
+                    node = _unwrap(_args(node)[0])
+                elif fn is not None and fn.type == "member_expression" and not _args(node) \
+                        and _txt(fn.child_by_field_name("property")) in {"json", "text"}:
+                    node = _unwrap(fn.child_by_field_name("object"))  # the facilitator reply's body
+                else:
+                    return False
+            if node is None:
                 return False
-        if node is None:
-            return False
-        if node.type in {"identifier", "member_expression", "shorthand_property_identifier"}:
-            return bool(self.tags(node, state) & result)
-        if node.type == "object":
+            if node.type in {"identifier", "member_expression", "shorthand_property_identifier"}:
+                if not self.tags(node, state) & result:
+                    return False
+                continue
+            if node.type != "object":
+                return False
             values = [v for v in _props(node).values() if v is not None]
             values += [c.named_children[0] for c in node.named_children if c.type == "spread_element" and c.named_children]
-            return bool(values) and any(self._reports_result(v, state) for v in values) and all(
-                _unwrap(v) is not None and (_unwrap(v).type in {"true", "false", "null", "undefined"}
-                                            or self._reports_result(v, state)) for v in values)
+            # Literals may stand beside the result; the object must hold something else.
+            fields = [v for v in values if _unwrap(v) is None or _unwrap(v).type not in {"true", "false", "null", "undefined"}]
+            if not fields:
+                return False
+            stack.extend(fields)
+        return True
+
+    def _matches_requirements(self, cond, state, truth: bool) -> bool:
+        """`cond` holding (``truth``) or failing binds the payer's requirements to the
+        server's: a matcher call or an equality of a payer-chosen value with a server value
+        (through !, && and ||), as assume() reads them."""
+        stack = [(cond, truth)]
+        while stack:
+            node, holds = stack.pop()
+            node = _unwrap(node)
+            if node is None:
+                continue
+            if node.type == "unary_expression" and _txt(node.child_by_field_name("operator")) == "!":
+                stack.append((node.child_by_field_name("argument"), not holds))
+            elif node.type == "binary_expression":
+                op = _txt(node.child_by_field_name("operator"))
+                left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+                if (op == "&&" and holds) or (op == "||" and not holds):
+                    stack += [(left, holds), (right, holds)]  # both sides hold (or both fail)
+                elif ((op in {"===", "=="} and holds) or (op in {"!==", "!="} and not holds)) \
+                        and self._binds_payer([self.tags(left, state), self.tags(right, state)]):
+                    return True
+            elif node.type == "call_expression" and holds:
+                short = _dotted(node.child_by_field_name("function")).rsplit(".", 1)[-1]
+                if _REQUIREMENT_MATCHERS.match(short) and self._binds_payer([self.tags(a, state) for a in _args(node)]):
+                    return True
+            elif node.type in {"identifier", "member_expression"} and holds \
+                    and "requirements_match" in self.tags(node, state):
+                return True
         return False
 
     @staticmethod
@@ -2620,6 +2896,14 @@ class _JsInterp:
             body = _unwrap(_args(body)[0]) if _args(body) else None
         return _props(body) if body is not None and body.type == "object" else {}
 
+    def _imported_object(self, node, state) -> set[str]:
+        """Labels of a module value another project module exports (`import { facilitator }
+        from "./fac"`), for a name this function does not bind itself."""
+        node = _unwrap(node)
+        if node is None or node.type != "identifier" or _txt(node) in state:
+            return set()
+        return self.p.imported_value(self.module, _txt(node))
+
     def _seller(self, node, label, short, callee_u, receiver_node, receiver, arg_nodes, args, state, is_new) -> None:
         """x402 / MPP seller sources, sinks and deliveries at one call (spec item 08)."""
         add: set[str] = set()
@@ -2647,7 +2931,8 @@ class _JsInterp:
                 payload = self.tags(body.get("paymentPayload"), state) if body.get("paymentPayload") is not None else set()
                 requirements = self.tags(body.get("paymentRequirements"), state) if body.get("paymentRequirements") is not None else set()
         elif scope and len(arg_nodes) >= 2 and short in _SETTLE_SINK and (_X402_LIB.match(label) or (
-                receiver_node is not None and ("payment_header" in args[0] or "x402_lib" in receiver))):
+                receiver_node is not None and ("payment_header" in args[0] or "x402_lib" in receiver
+                                               or "x402_lib" in self._imported_object(receiver_node, state)))):
             # A facilitator or resource server settles a payer's payload: the payload came from
             # the payment header, or the settle belongs to an x402 library object. A receiver's
             # name says nothing (`paymentChannel.settle(id, amount)` closes the project's channel).
@@ -2764,7 +3049,11 @@ class _JsInterp:
             up, down = self.p.guard_scope(key)
             for k in up:
                 checks |= self.p.sponsor_checks.get(k, set()) | self.p.sponsor_enclosed.get(k, set())
-            for k in down:
+            # A helper this function called only inside a try whose catch carried on throws
+            # into that catch, not past it (callers' calls of it still count).
+            caught = self._caught_calls - self._plain_calls - set().union(*self._try_calls) \
+                - {n for k in up for n in self.p.callees.get(k, ())}
+            for k in down - caught:
                 checks |= self.p.sponsor_throws.get(k, set())
             credential = "credential_type" in checks
             # R2: the envelope's source is pinned, and the operation's source is too unless the
@@ -2874,16 +3163,15 @@ class _JsInterp:
         found: set[str] = set()
         # (node, scope, sign): sign is True or False while the node's truthiness decides the
         # expression's (through !, &&, || and parentheses), None elsewhere.
-        stack = [(_unwrap(node), state, True)]
+        stack = [(node, state, True)]
         while stack:
             sub, scope, sign = stack.pop()
+            sub = _unwrap(sub)  # parentheses and `await` pass the sign through: `if (!(await v(tx)))`
             if sub is None or _is_function(sub):
                 continue
             child_sign = None
             children = None
-            if sub.type == "parenthesized_expression":
-                child_sign = sign
-            elif sub.type == "unary_expression" and _txt(sub.child_by_field_name("operator")) == "!":
+            if sub.type == "unary_expression" and _txt(sub.child_by_field_name("operator")) == "!":
                 child_sign = None if sign is None else not sign
             elif sub.type == "binary_expression":
                 op = _txt(sub.child_by_field_name("operator"))
@@ -2919,7 +3207,8 @@ class _JsInterp:
                     found.add("credential_type")
                 elif sign is not None:
                     # `if (!isSponsorable(tx)) throw`: the validator's checks hold here.
-                    found |= self._verdict(self.p.resolve(self.module, fn, self.fn, self.local_types))
+                    key = self.p.resolve(self.module, fn, self.fn, self.local_types)
+                    found |= self._verdict(key) if self._gates(key, sub) else set()
             elif sub.type == "identifier" and sign is not None and _txt(sub) in self._verdicts:
                 found |= self._verdict(self._verdicts[_txt(sub)])  # const ok = validate(tx); if (!ok) throw
             elif sub.type == "member_expression" and _txt(sub.child_by_field_name("property")) == "source" \
@@ -2930,6 +3219,18 @@ class _JsInterp:
                 found.add("op_source")
             stack.extend(children if children is not None else ((c, scope, child_sign) for c in sub.named_children))
         return found
+
+    def _gates(self, key: str | None, call) -> bool:
+        """A call of a project function whose result can gate the path: the function is
+        synchronous, or the call is awaited (an async validator's un-awaited Promise is always
+        truthy, so `if (!isSponsorable(tx)) throw` never throws)."""
+        fn = self.p.functions.get(key) if key else None
+        if fn is None or not any(c.type == "async" for c in fn.node.children):
+            return True
+        parent = call.parent
+        while parent is not None and parent.type == "parenthesized_expression":
+            parent = parent.parent
+        return parent is not None and parent.type == "await_expression"
 
     def _verdict(self, key: str | None) -> set[str]:
         """What a project validator checked, where its result gates the path: the boolean it
@@ -3046,12 +3347,14 @@ class _JsInterp:
                 branches = []
                 self._conditional += 1
                 for side in (left, right):
-                    copy = {k: set(v) for k, v in state.items()}
+                    copy = _Branch(state)
                     self.assume(side, truth, copy, node=node)
                     branches.append(copy)
                 self._conditional -= 1
-                for name in set(branches[0]) | set(branches[1]):
-                    state[name] = branches[0].get(name, set()) | branches[1].get(name, set())
+                joined = {name: branches[0].get(name, set()) | branches[1].get(name, set())
+                          for name in branches[0].written | branches[1].written}
+                for name, value in joined.items():
+                    state[name] = value
                 return
             if op in {"<", "<=", ">", ">="}:
                 self._proof_check(_txt(cond), [])
@@ -3149,7 +3452,8 @@ class _JsInterp:
                         state[name] = state.get(name, set()) | {"bounded"}
                     if any(AMOUNT_NAME.search(n) for n in compared):
                         self._control("amount_cap", node)
-            elif sub.type == "member_expression" and _txt(sub.child_by_field_name("property")) == "operations":
+            elif sub.type == "member_expression" and _txt(sub.child_by_field_name("property")) == "operations" \
+                    and not self._sponsor_condition:
                 for name in self._names_in(sub):
                     state[name] = state.get(name, set()) - {"foreign_tx"}
                 self._control("transaction_inspection", node)
@@ -3346,7 +3650,7 @@ class _JsInterp:
                 else:
                     if name is not None and name.type == "identifier" and v is not None and v.type == "call_expression":
                         verdict = self.p.resolve(self.module, v.child_by_field_name("function"), self.fn, self.local_types)
-                        if verdict in self.p.functions:
+                        if verdict in self.p.functions and self._gates(verdict, v):
                             self._verdicts[_txt(name)] = verdict
                         else:
                             self._verdicts.pop(_txt(name), None)
@@ -3373,6 +3677,7 @@ class _JsInterp:
                 and alternative.named_children else alternative
             stops = _rejects(consequence)
             inside: set[str] = set()
+            guards = set()
             if stops:
                 guards = self._sponsor_guards(cond, state, rejects=True)
                 self.sponsor_checks |= guards
@@ -3383,33 +3688,50 @@ class _JsInterp:
                 self.sponsor_throws |= guards if _rejects(alt_body) == "throw" else set()
             else:
                 inside = self._sponsor_guards(cond, state, rejects=False)
+            # A fee sponsor's check of the client's envelope leaves it the client's: the sponsor
+            # rule judges the checks where the rebuild is signed (an inspected relay does not).
+            sponsor_condition = bool(guards or inside)
             if self._nonblocking(stmt) and self.record:
                 self.p.profile.nonblocking_controls.append(self.p.location(self.module, stmt))
             if _terminates(consequence) and alternative is None:
-                self.statement(consequence, {k: set(v) for k, v in state.items()})
-                self._rejecting = _rejects(consequence)
+                # `if (matches(p.accepted, ROUTE)) { settle(p, p.accepted); return ... }`: inside,
+                # the payer's requirements are the server's.
+                bound = self.requirements_bound
+                self.requirements_bound = bound or self._matches_requirements(cond, state, True)
+                self.statement(consequence, _Branch(state))
+                self.requirements_bound = bound
+                self._rejecting, self._sponsor_condition = _rejects(consequence), sponsor_condition
                 self.assume(cond, False, state, node=stmt)
-                self._rejecting = ""
+                self._rejecting, self._sponsor_condition = "", False
                 return
             branches = []
             optional = self._optional_guard(cond)
             for i, body in enumerate((consequence, alternative)):
-                branch = {k: set(v) for k, v in state.items()}
-                saved = self.approved
+                if body is None:
+                    branches.append(_Branch(state))  # no else: the state before the if, unchanged
+                    continue
+                branch = _Branch(state)
+                # An approval or a requirements match holds inside the branch it guards, not
+                # after an if that rejects nothing (`if (match) log("ok")`).
+                saved, bound = self.approved, self.requirements_bound
                 if i == 0:
+                    self._sponsor_condition = sponsor_condition
                     self.assume(cond, True, branch, node=stmt)
+                    self._sponsor_condition = False
                     self._conditional += optional
                     self._enclosing.append(inside)
-                if body is not None:
-                    inner = body.named_children[0] if body.type == "else_clause" and body.named_children else body
-                    self.statement(inner, branch)
+                inner = body.named_children[0] if body.type == "else_clause" and body.named_children else body
+                self.statement(inner, branch)
                 if i == 0:
-                    self.approved = saved
+                    self.approved, self.requirements_bound = saved, bound
                     self._conditional -= optional
                     self._enclosing.pop()
                 branches.append(branch)
-            for key in set(branches[0]) | set(branches[1]):
-                state[key] = branches[0].get(key, set()) | branches[1].get(key, set())
+            # Only the names a branch assigned can differ from the state before the if.
+            joined = {key: branches[0].get(key, set()) | branches[1].get(key, set())
+                      for key in branches[0].written | branches[1].written}
+            for key, value in joined.items():
+                state[key] = value
             return
         if t == "statement_block":
             self.block(stmt.named_children, state)
@@ -3441,13 +3763,24 @@ class _JsInterp:
             return
         if t == "try_statement":
             body = stmt.child_by_field_name("body")
+            handler = stmt.child_by_field_name("handler")
+            hbody = handler.child_by_field_name("body") if handler is not None else None
+            # A catch that neither rethrows nor returns carries on after the try: a check in
+            # the body that throws stops the rest of the body, not what follows the try, and
+            # not the callers. One that returns still ends the function.
+            carries_on = hbody is not None and not _rejects(hbody)
+            checks, throws = set(self.sponsor_checks), set(self.sponsor_throws)
+            if carries_on:
+                self._try_calls.append(set())
             if body is not None:
                 self.statement(body, state)
-            handler = stmt.child_by_field_name("handler")
-            if handler is not None:
-                hbody = handler.child_by_field_name("body")
-                if hbody is not None:
-                    self.statement(hbody, state)
+            if carries_on:
+                self._caught_calls |= self._try_calls.pop()
+                thrown = self.sponsor_throws - throws
+                self.sponsor_checks = checks | (self.sponsor_checks - checks - thrown)
+                self.sponsor_throws = throws
+            if hbody is not None:
+                self.statement(hbody, state)
             final = stmt.child_by_field_name("finalizer")
             if final is not None:
                 fbody = final.child_by_field_name("body") or (final.named_children[0] if final.named_children else None)

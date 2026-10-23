@@ -121,3 +121,41 @@ def test_a_deep_argument_expression_keeps_the_auto_sign_check():
               f"    return subprocess.run(['stellar', 'contract', 'invoke', '--id', CID, '--auto-sign', '--', 'note', {expr}])\n")
     profile, seconds = timed(code, {"a.py": source})
     assert seconds < 2.0 and profile.facts_of("cli_auto_sign")
+
+
+def test_a_nested_settlement_report_is_walked_once():
+    # Each nesting level judged every value twice: depth 22 took 43 s (hours at 30).
+    body = "s"
+    for _ in range(30):
+        body = "{ a: " + body + " }"
+    source = ('import { decodePaymentSignatureHeader } from "@x402/core/http";\n'
+              "app.post('/q', async (req, res) => {\n"
+              "  const s = await facilitator.settle(decodePaymentSignatureHeader(req.header('x-payment')), R);\n"
+              f"  res.json({body});\n}});\n")
+    found, seconds = timed(paths, {"src/server.ts": source})
+    assert seconds < 1.0 and not [f for f in found if "x402" in f.id]  # a report of the settlement, nested
+
+
+def test_mpp_facts_scan_their_package_once():
+    # 100 testnet servers beside 1 MB of code: was 25 s (the package was scanned per fact).
+    servers = "".join(f"export const m{i} = Mppx.create({{ methods: [stellar.charge({{ recipient: R, currency: USDC_SAC_TESTNET, "
+                      f"network: STELLAR_TESTNET }})], secretKey: process.env.K }});\n" for i in range(100))
+    head = ('import { Mppx } from "mppx/server";\nimport { stellar } from "@stellar/mpp/charge/server";\n'
+            'import { USDC_SAC_TESTNET, STELLAR_TESTNET } from "@stellar/mpp";\n')
+    filler = {f"src/f{j}.ts": "// stellar testnet notes\nexport const x = 1;\n" * 2560 for j in range(10)}
+    found, seconds = timed(paths, {"src/server.ts": head + servers, **filler}, lock(**{"@stellar/mpp": "0.4.0"}))
+    assert seconds < 5.0 and any("replay-store" in f.id and f.severity.value == "medium" for f in found)
+
+
+def test_sequential_ifs_stay_linear():
+    # 3000 ifs that reject nothing: was 30 s (each if copied and merged the whole state).
+    for line in ("  if (a{i} === X{i}) metrics.c += 1;\n", "  if (a{i} === X{i} || b{i} === Y) metrics.c += 1;\n",
+                 "  if (a{i} === X{i}) metrics.c += 1; else metrics.d += 1;\n"):
+        source = "export function check(tx, e) {\n" + "".join(line.format(i=i) for i in range(3000)) + "}\n"
+        _, seconds = timed(code, {"src/c.ts": source})
+        assert seconds < 2.0, line
+    # Nested branches read through a bounded chain of views: 280 nested ifs still analyse.
+    nested = ("export function f(a, b) {\n" + "".join(f"if (a{i} === X{i}) {{\n" for i in range(280)) + "  pay(b);\n"
+              + "}\n" * 280 + "}\n")
+    _, seconds = timed(code, {"src/n.ts": nested})
+    assert seconds < 1.0
