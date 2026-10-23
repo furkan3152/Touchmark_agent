@@ -25,6 +25,7 @@ from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar.canonical import MAINNET_PASSPHRASE, NETWORK_MARKERS, TESTNET_PASSPHRASE, USDC_ISSUER, USDC_SAC
 from .consolidate import stable_id
 from .codeflow import unparse
+from .source_index import PARSE_ERRORS
 
 _JS = (".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts")
 #: Example, test and development code: findings there drop one level.
@@ -167,6 +168,7 @@ _MANIFESTS = ("package.json", "pyproject.toml", "setup.py", "Cargo.toml")
 
 
 _PY_BREAK, _JS_BREAK = re.compile(r"\r\n|\r|\n"), re.compile(r"\n")
+_BRACKET = re.compile(r"[(\[{)\]}]")
 #: A brace that opens a function body: after `=>`, or after the `)` of a parameter list (with
 #: an optional return type).
 _FUNCTION_HEAD = re.compile(r"(?:=>|\)(?:\s*:\s*[^{};=()]{1,160})?)\s*$")
@@ -186,7 +188,7 @@ class _Source:
     _lines: list | None = None
     _heads: list | None = None
     _pairs: dict | None = None
-    _owner: list | None = None
+    _owner: tuple | None = None
     _bodies: dict = field(default_factory=dict)
     memo: dict = field(default_factory=dict)  # per-file results the rules share
 
@@ -227,29 +229,41 @@ class _Source:
     def pairs(self) -> dict[int, int]:
         """Each bracket's partner, both ways, matched with one stack over (, [ and { alike (as
         the depth counters of the scans here count them); an unclosed bracket has none. The
-        innermost bracket open at each offset is kept for function_at."""
+        innermost open bracket at and after each bracket is kept for _owner."""
         if self._pairs is None:
-            pairs, stack, owner = {}, [], []
-            for i, ch in enumerate(self.skel):
-                if ch in "([{":
-                    owner.append(stack[-1] if stack else -1)
+            pairs: dict[int, int] = {}
+            stack: list[int] = []
+            at, inside, after = [], [], []  # bracket offset, innermost open at it, and after it
+            for m in _BRACKET.finditer(self.skel):
+                i = m.start()
+                at.append(i)
+                if m.group() in "([{":
+                    inside.append(stack[-1] if stack else -1)
                     stack.append(i)
-                    continue
-                if ch in ")]}" and stack:
-                    start = stack.pop()
-                    pairs[start], pairs[i] = i, start
-                owner.append(stack[-1] if stack else -1)
-            self._pairs, self._owner = pairs, owner
+                else:
+                    if stack:
+                        start = stack.pop()
+                        pairs[start], pairs[i] = i, start
+                    inside.append(stack[-1] if stack else -1)
+                after.append(stack[-1] if stack else -1)
+            self._pairs, self._owner = pairs, (at, inside, after)
         return self._pairs
+
+    def _owner_of(self, pos: int) -> int:
+        """The innermost open bracket that holds ``pos`` (-1 at top level)."""
+        self.pairs()
+        at, inside, after = self._owner
+        i = bisect_right(at, pos) - 1
+        return -1 if i < 0 else inside[i] if at[i] == pos else after[i]
 
     def function_at(self, pos: int) -> tuple[int, int] | None:
         """The body `{...}` of the innermost function holding ``pos``, or None at top level."""
         pairs = self.pairs()
-        node = self._owner[pos] if pos < len(self._owner) else -1
+        node = self._owner_of(pos)
         path = []
         while node >= 0 and node not in self._bodies:
             path.append(node)
-            node = self._owner[node]
+            node = self._owner_of(node)
         found = self._bodies.get(node) if node >= 0 else None
         for opening in reversed(path):  # outermost first: an inner function wins over its parent
             if self.skel[opening] == "{" and opening in pairs and self._function_body(opening):
@@ -516,7 +530,7 @@ def _js_ternaries(src: _Source) -> list[Selector]:
 def _py_selectors(src: _Source) -> list[Selector]:
     try:
         tree = ast.parse(src.text)
-    except (SyntaxError, ValueError, RecursionError):
+    except PARSE_ERRORS:
         return []
     out = []
     aliases = {t.id: n.value for n in ast.walk(tree) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Compare)
@@ -773,7 +787,7 @@ def selectors(src: _Source, group: list[_Source]) -> list[Selector]:
             found = _py_selectors(src)
             try:
                 found += _py_chains(ast.parse(src.text), src)
-            except (SyntaxError, ValueError, RecursionError):
+            except PARSE_ERRORS:
                 pass
         else:
             found = _js_switches(src) + _js_ternaries(src) + _js_if_chains(src) + _js_map_fallbacks(src, group)
@@ -1176,7 +1190,7 @@ def per_call_hits(sources: list[_Source]) -> list[Hit]:
 def _py_per_call(src: _Source) -> list[Hit]:
     try:
         tree = ast.parse(src.text)
-    except (SyntaxError, ValueError, RecursionError):
+    except PARSE_ERRORS:
         return []
     hits = []
     for fn in ast.walk(tree):
@@ -1394,7 +1408,7 @@ def _fixed_pairs(group: list[_Source], text: str) -> list[Hit]:
 def _py_fixed_pairs(src: _Source, group: list[_Source], selected: bool, package_text: str) -> list[Hit]:
     try:
         tree = ast.parse(src.text)
-    except (SyntaxError, ValueError, RecursionError):
+    except PARSE_ERRORS:
         return []
     hits = []
     # (b) a module-level fixed passphrase reaches a builder; the URL comes from the environment.
@@ -1529,7 +1543,7 @@ def cross_constant_hits(sources: list[_Source]) -> list[Hit]:
             continue
         try:
             tree = ast.parse(src.text)
-        except (SyntaxError, ValueError, RecursionError):
+        except PARSE_ERRORS:
             continue
         nets = _PyNets(tree)
         builders = {id(n) for n in ast.walk(tree) if isinstance(n, ast.Call) and unparse(n.func).endswith("TransactionBuilder")}

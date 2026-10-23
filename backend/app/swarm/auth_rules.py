@@ -16,12 +16,16 @@ ids; only the expiration and the web-auth challenges have ids of their own.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from dataclasses import dataclass
 
 from ..models import Severity
 from .codeflow import DIRECT, UNTRUSTED, unparse
 
+#: What ast.parse raises on source it cannot read (MemoryError: "parser stack overflowed" for
+#: `a{{{...`). source_index has the same tuple; jsflow imports this module, so it is not imported.
+_PARSE_ERRORS = (SyntaxError, ValueError, RecursionError, MemoryError)
 #: The SDK default validity of a signed authorization entry: signAuthEntries signs until the
 #: latest ledger + 100 (js-stellar-sdk contract/assembled_transaction.js).
 DEFAULT_OFFSET = 100
@@ -126,7 +130,7 @@ def _constant(text: str) -> int | None:
         return None
     try:
         tree = ast.parse(text.replace("_", ""), mode="eval")
-    except (SyntaxError, ValueError, RecursionError):
+    except _PARSE_ERRORS:
         return None
 
     def value(node):
@@ -861,22 +865,25 @@ def rust_expiration_hits(files: dict[str, str]) -> list[tuple[str, int, str, Exp
 
 # --------------------------------------------------------------------------- SEP-10 / SEP-45
 _JS_PY = (".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts", ".py")
-#: A request for a SEP-10 challenge: the stellar.toml WEB_AUTH_ENDPOINT, or the `account` query.
-_SEP10_REQUEST = re.compile(r"WEB_AUTH_ENDPOINT|webAuthEndpoint|web_auth_endpoint|[?&]account=|"
-                            r"""searchParams\.(?:set|append)\(\s*["']account["']|params\s*=\s*\{[^}]*["']account["']""")
+#: Where a SEP-10 challenge comes from: the stellar.toml WEB_AUTH_ENDPOINT (a name or the key),
+#: or a literal `/auth?account=` URL. An `account` query on any other URL is not one.
+_SEP10_SOURCE = re.compile(r"WEB_AUTH_ENDPOINT|[Ww]eb_?[Aa]uth_?[Ee]ndpoint|/auth\b[^\s\"'`]{0,80}[?&]account=")
 _PARSE_TX = re.compile(r"\bnew\s+(?:[\w$]+\.)?Transaction\s*\(|\bTransactionBuilder\.fromXDR\s*\(|\bTransaction\.fromXDR\s*\(|"
-                       r"\bTransactionEnvelope\.from_xdr\s*\(|\bparse_transaction_envelope_from_xdr\s*\(")
-_KEY_SIGN = re.compile(r"\.\s*sign\s*\(")
+                       r"\bTransactionEnvelope\.from_xdr\s*\(|\bparse_transaction_envelope_from_xdr\s*\(|"
+                       r"\bTransactionBuilder\.from_xdr\s*\(")
 #: The SDK readers that check a challenge, or the checks themselves (sequence 0 and the
 #: `<home domain> auth` ManageData operation).
 _SEP10_READ = re.compile(r"readChallengeTx|read_challenge_transaction|verifyChallengeTx|verify_challenge_transaction")
 _SEP10_SEQUENCE = re.compile(r"""sequence\s*(?:!==?|===?|!=|==)\s*["']?0\b|\bsequence\b[^\n]{0,40}\bnot\s+0\b""")
 _SEP10_OPERATION = re.compile(r"""manageData|manage_data|MANAGE_DATA""")
-#: SEP-45: authorization entries from a contract web-auth server.
-_SEP45_REQUEST = re.compile(r"WEB_AUTH_FOR_CONTRACTS_ENDPOINT|webAuthForContracts|web_auth_for_contracts|authorization_entries")
+#: SEP-45: the contract web-auth endpoint, and the response field that carries the entries.
+_SEP45_SOURCE = re.compile(r"WEB_AUTH_FOR_CONTRACTS_ENDPOINT|webAuthForContracts\w*|web_auth_for_contracts\w*", re.I)
+_SEP45_FIELD = re.compile(r"authorization_?[Ee]ntries")
 _SEP45_SIGN = re.compile(r"\bauthorizeEntry\s*\(|\bauthorize_entry\s*\(|\bsignAuthEntry\s*\(")
 _SEP45_CHECKS = (re.compile(r"web_auth_verify"), re.compile(r"WEB_AUTH_CONTRACT_ID|webAuthContractId|web_auth_contract_id", re.I),
                  re.compile(r"subInvocations|sub_invocations"))
+#: An HTTP request: its response can carry SEP-45 entries.
+_HTTP = re.compile(r"\b(?:fetch\w*|axios|got|ky|request|httpx|requests|aiohttp|session|client)\b\s*(?:\.\s*(?:get|post|request)\b)?\s*\(")
 #: A file about web authentication at all (SEP-10 or SEP-45).
 _WEB_AUTH_FILE = re.compile(r"WEB_AUTH|web_?auth|webAuth|\bsep-?(?:10|45)\b|\bSEP(?:10|45)\b", re.I)
 #: Interop, round-trip and smoke harnesses: a level lower.
@@ -885,31 +892,229 @@ _HARNESS = re.compile(r"(?:^|/)(?:interop|tests?|__tests__|e2e)/|roundtrip|round
 
 def web_auth_hits(files: dict[str, str]) -> list[tuple[str, str, int, str, Severity, str]]:
     """(kind, file, line, text, severity, note) for SEP-10 challenges and SEP-45 entries signed
-    without the checks the SEPs require of the client."""
-    from .network_rules import _region, _sources
+    without the checks the SEPs require of the client. The signed value must come from the
+    web-auth response by data flow inside the signing function (through locals, loops and
+    callbacks); SEP-45 entries also count when that function itself makes the request."""
+    from .network_rules import _sources
     hits = []
     for src in _sources({n: t for n, t in files.items() if n.endswith(_JS_PY)}):
         code = src.code
         if not _WEB_AUTH_FILE.search(code):
             continue
-        if _SEP10_REQUEST.search(code) and not _SEP10_READ.search(code) \
-                and not (_SEP10_SEQUENCE.search(code) and _SEP10_OPERATION.search(code) and re.search(r"""\bauth["'`]""", code)):
-            for request in _SEP10_REQUEST.finditer(code):
-                start, end = _region(src, request.start())
-                parsed = _PARSE_TX.search(code, request.end(), end)
-                signed = _KEY_SIGN.search(code, parsed.end(), end) if parsed else None
-                if signed:
-                    line = src.text.count("\n", 0, signed.start()) + 1
-                    severity = Severity.HIGH.downgrade(1) if _HARNESS.search(src.name) else Severity.HIGH
-                    hits.append(("sep10", src.name, line, src.text.splitlines()[line - 1].strip(), severity,
-                                 "the challenge is parsed and signed without checking its sequence number and operations"))
-                    break
-        if _SEP45_REQUEST.search(code) and _SEP45_SIGN.search(code):
-            missing = [p.pattern.split("|")[0] for p in _SEP45_CHECKS if not p.search(code)]
-            if missing:
-                sign = _SEP45_SIGN.search(code)
-                line = src.text.count("\n", 0, sign.start()) + 1
-                severity = Severity.HIGH.downgrade(1) if _HARNESS.search(src.name) else Severity.HIGH
-                hits.append(("sep45", src.name, line, src.text.splitlines()[line - 1].strip(), severity,
-                             "nothing checks " + ", ".join(missing)))
+        severity = Severity.HIGH.downgrade(1) if _HARNESS.search(src.name) else Severity.HIGH
+        sep10 = _SEP10_SOURCE.search(code) and not _SEP10_READ.search(code) \
+            and not (_SEP10_SEQUENCE.search(code) and _SEP10_OPERATION.search(code) and re.search(r"""\bauth["'`]""", code))
+        sep45 = _SEP45_SOURCE.search(code) or (_SEP45_FIELD.search(code) and _HTTP.search(code))
+        if not (sep10 or sep45):
+            continue
+        flows = _py_web_auth(src) if src.python else _js_web_auth(src)
+        if sep10 and flows["sep10"] is not None:
+            line = src.line(flows["sep10"])
+            hits.append(("sep10", src.name, line, src.line_text(line).strip(), severity,
+                         "the challenge is parsed and signed without checking its sequence number and operations"))
+        missing = [p.pattern.split("|")[0] for p in _SEP45_CHECKS if not p.search(code)]
+        if sep45 and missing and flows["sep45"] is not None:
+            line = src.line(flows["sep45"])
+            hits.append(("sep45", src.name, line, src.line_text(line).strip(), severity, "nothing checks " + ", ".join(missing)))
     return hits
+
+
+def _mentions(text: str, names: set[str]) -> bool:
+    return bool(names) and bool(_names_pattern(frozenset(names)).search(text))
+
+
+@functools.lru_cache(maxsize=1024)
+def _names_pattern(names: frozenset[str]) -> re.Pattern:
+    return re.compile(r"(?<![\w$.])(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")(?![\w$])")
+
+
+#: JS bindings: `const x =`, `const { a, b } =`, `x =`; `for (const x of ...)`; `xs.map((x) =>`.
+_JS_BIND = re.compile(r"(?:\b(?:const|let|var)\s+(?P<pat>[\w$]+|\{[^}]{0,400}\}|\[[^\]]{0,400}\])|(?<![\w$.])(?P<bare>[\w$]+))"
+                      r"\s*(?::[^=;\n]{0,200})?=(?![=>])\s*")
+_JS_LOOP = re.compile(r"\bfor\s*\(\s*(?:const|let|var)\s+(?P<pat>[\w$]+|\{[^}]{0,400}\}|\[[^\]]{0,400}\])\s+of\b")
+_JS_EACH = re.compile(r"(?P<iter>[\w$.]+)\s*\.\s*(?:map|forEach|flatMap|filter|some|every|reduce|find)\s*\(\s*(?:async\s*)?\(?\s*"
+                      r"(?P<pat>[\w$]+)")
+_ITERATING = re.compile(r"\.\s*(?:map|forEach|flatMap|filter|some|every|reduce|find|then)\s*\(\s*(?:async\s*)?$|"
+                        r"\bPromise\.all\w*\s*\(\s*$")
+
+
+def _flow_scope(src, pos: int) -> tuple[int, int]:
+    """The function whose locals a value at ``pos`` can come from: the innermost function, or
+    the one that holds it when it is a callback of map, forEach, then and the like."""
+    scope = src.function_at(pos)
+    while scope is not None:
+        start = _function_start(src, scope[0])
+        if start is None or not _ITERATING.search(src.skel, max(0, start - 80), start):
+            break
+        outer = src.function_at(start)
+        if outer is None:
+            break
+        scope = outer
+    return scope if scope is not None else (0, len(src.code))
+
+
+def _function_start(src, brace: int) -> int | None:
+    """Where the function whose body opens at ``brace`` starts: its parameter list (or single
+    parameter) for an arrow, its `function` keyword otherwise."""
+    base = max(0, brace - 300)
+    head = src.skel[base:brace].rstrip()
+    if head.endswith("=>"):
+        before = head[:-2].rstrip()
+        if before.endswith(")"):
+            return src.pairs().get(base + len(before) - 1)
+        name = re.search(r"[\w$]+$", before)
+        return base + name.start() if name else None
+    if head.endswith(")"):
+        opening = src.pairs().get(base + len(head) - 1)
+        keyword = re.search(r"\bfunction\b\s*\*?\s*[\w$]*\s*$", src.skel[max(0, opening - 60):opening]) if opening else None
+        return max(0, opening - 60) + keyword.start() if keyword else None
+    return None
+
+
+def _js_bound(pattern: str) -> set[str]:
+    return set(re.findall(r"[A-Za-z_$][\w$]*", re.sub(r"\s*:\s*[\w$]+(?=\s*[,}])", "", pattern))) if pattern[:1] in "{[" \
+        else {pattern}
+
+
+def _js_taint(src, start: int, end: int, seeds: set[str], source: re.Pattern,
+              module: bool = False) -> tuple[set[str], set[str]]:
+    """(names derived from the seeds or from text ``source`` matches, those of them bound to a
+    parsed transaction) in code[start:end], in source order (two passes for loops). With
+    ``module``, only bindings outside every function count: one function's locals never seed
+    another's."""
+    from .network_rules import _statement
+    code = src.code
+    events = [(m.start(), "bind", m) for m in _JS_BIND.finditer(code, start, end)]
+    events += [(m.start(), "loop", m) for m in _JS_LOOP.finditer(code, start, end)]
+    events += [(m.start(), "each", m) for m in _JS_EACH.finditer(code, start, end)]
+    if module:
+        events = [e for e in events if src.function_at(e[0]) is None]
+    events.sort(key=lambda e: e[0])
+    tainted, parsed = set(seeds), set()
+    for _ in range(2):
+        for _pos, kind, m in events[:2000]:
+            if kind == "bind":
+                stop, _marks = _statement(src, m.end())
+                expr = code[m.end():stop]
+                names = _js_bound(m.group("pat") or m.group("bare"))
+            elif kind == "loop":
+                close = src.pairs().get(code.find("(", m.start()), m.end())
+                expr = code[m.end():close]
+                names = _js_bound(m.group("pat"))
+            else:
+                expr, names = m.group("iter"), {m.group("pat")}
+            if source.search(expr) or _mentions(expr, tainted):
+                tainted |= names
+                if kind == "bind" and _PARSE_TX.search(expr):
+                    parsed |= names
+    return tainted, parsed
+
+
+def _js_web_auth(src) -> dict[str, int | None]:
+    """Offsets of a SEP-10 challenge signed from the web-auth response, and of SEP-45 entries
+    signed from the contract web-auth response, in a JS or TS file."""
+    found: dict[str, int | None] = {"sep10": None, "sep45": None}
+    code, cache = src.code, {}
+    # Module-level values first: `const ENDPOINT = toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT`.
+    top10, _ = _js_taint(src, 0, len(code), set(), _SEP10_SOURCE, module=True) if _SEP10_SOURCE.search(code) else (set(), set())
+    top45, _ = _js_taint(src, 0, len(code), set(), _SEP45_SOURCE, module=True) if _SEP45_SOURCE.search(code) else (set(), set())
+
+    def flow(scope, kind):
+        key = (scope, kind)
+        if key not in cache:
+            head = code[max(0, scope[0] - 300):scope[0]]
+            if kind == "sep10":
+                cache[key] = _js_taint(src, scope[0], scope[1], top10, _SEP10_SOURCE)
+            else:
+                params = set(re.findall(r"[\w$]*" + _SEP45_FIELD.pattern + r"[\w$]*", head))
+                cache[key] = _js_taint(src, scope[0], scope[1], top45 | params, _SEP45_SOURCE)
+        return cache[key]
+    for m in re.finditer(r"(?<![\w$.])(?P<recv>[\w$]+)\s*\.\s*sign\s*\(", code):
+        _, parsed = flow(_flow_scope(src, m.start()), "sep10")
+        if m.group("recv") in parsed:
+            found["sep10"] = m.start()
+            break
+    for m in _SEP45_SIGN.finditer(code):
+        scope = _flow_scope(src, m.start())
+        tainted, _ = flow(scope, "sep45")
+        close = src.pairs().get(m.end() - 1, m.end())
+        region = code[scope[0]:scope[1]]
+        requested = _SEP45_SOURCE.search(region) or _mentions(region, top45)
+        if _mentions(code[m.end():close], tainted) or (requested and _SEP45_FIELD.search(region)):
+            found["sep45"] = m.start()
+            break
+    return found
+
+
+def _py_web_auth(src) -> dict[str, int | None]:
+    """The same for a Python file, on its syntax tree: functions in source order, bindings by
+    assignment, `for` targets and comprehension targets."""
+    found: dict[str, int | None] = {"sep10": None, "sep45": None}
+    try:
+        tree = ast.parse(src.text)
+    except _PARSE_ERRORS:
+        return found
+
+    def text_of(node) -> str:
+        return " ".join(n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)) + " " + \
+            " ".join(n.id if isinstance(n, ast.Name) else n.attr for n in ast.walk(node) if isinstance(n, (ast.Name, ast.Attribute)))
+
+    def names_in(node) -> set[str]:
+        return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+    def bindings(scope):
+        """(targets, value) in source order, not inside nested functions."""
+        out = []
+        stack = list(ast.iter_child_nodes(scope))
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and n.value is not None:
+                targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                out.append((n, {x.id for t in targets for x in ast.walk(t) if isinstance(x, ast.Name)}, n.value))
+            elif isinstance(n, (ast.For, ast.AsyncFor)):
+                out.append((n, {x.id for x in ast.walk(n.target) if isinstance(x, ast.Name)}, n.iter))
+            elif isinstance(n, ast.comprehension):
+                out.append((n.iter, {x.id for x in ast.walk(n.target) if isinstance(x, ast.Name)}, n.iter))
+            if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                stack.extend(ast.iter_child_nodes(n))
+        return sorted(out, key=lambda b: (getattr(b[0], "lineno", 0), getattr(b[0], "col_offset", 0)))
+
+    def taint(scope, seeds: set[str], source: re.Pattern) -> tuple[set[str], set[str]]:
+        tainted, parsed = set(seeds), set()
+        steps = bindings(scope)[:2000]
+        for _ in range(2):
+            for _node, targets, value in steps:
+                if source.search(text_of(value)) or names_in(value) & tainted:
+                    tainted |= targets
+                    if any(isinstance(c, ast.Call) and _PARSE_TX.search(unparse(c.func) + "(") for c in ast.walk(value)):
+                        parsed |= targets
+        return tainted, parsed
+    top10, _ = taint(tree, set(), _SEP10_SOURCE)
+    top45, _ = taint(tree, set(), _SEP45_SOURCE)
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        params = {a.arg for a in [*fn.args.args, *fn.args.kwonlyargs] if _SEP45_FIELD.search(a.arg)}
+        t10, parsed = taint(fn, top10, _SEP10_SOURCE)
+        t45, _ = taint(fn, top45 | params, _SEP45_SOURCE)
+        requested = any(_SEP45_SOURCE.search(text_of(n)) or names_in(n) & top45 for n in fn.body)
+        for call in _py_own_calls(fn):
+            name = unparse(call.func)
+            if found["sep10"] is None and isinstance(call.func, ast.Attribute) and call.func.attr == "sign" and \
+                    isinstance(call.func.value, ast.Name) and call.func.value.id in parsed:
+                found["sep10"] = src.line_start(call.lineno)
+            if found["sep45"] is None and name.rsplit(".", 1)[-1] in {"authorize_entry", "sign_auth_entry"} and (
+                    any(names_in(a) & t45 for a in [*call.args, *(k.value for k in call.keywords)])
+                    or (requested and any(_SEP45_FIELD.search(text_of(n)) for n in fn.body))):
+                found["sep45"] = src.line_start(call.lineno)
+    return found
+
+
+def _py_own_calls(fn):
+    stack = list(ast.iter_child_nodes(fn))
+    while stack:
+        n = stack.pop()
+        if isinstance(n, ast.Call):
+            yield n
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            stack.extend(ast.iter_child_nodes(n))

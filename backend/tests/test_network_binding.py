@@ -429,3 +429,17 @@ def test_a_fixed_passphrase_message_names_the_network_of_its_value():
               "def build(source):\n    return TransactionBuilder(source, network_passphrase=TESTNET_PASSPHRASE, base_fee=100)\n")
     detail = found({"server.py": server})["security-network-endpoint-mismatch"]["detail"]
     assert "fixed to testnet constants" in detail  # the constant that reaches the builder, whatever the set order
+
+
+def test_network_evidence_quotes_the_line_it_numbers():
+    tool = _PER_CALL.replace("import { z } from 'zod';\n", "import { z } from 'zod';\nconst LABEL = 'a b\x0cc';\n")
+    finding = found({"src/pay.ts": tool})["security-network-chosen-per-call"]
+    assert "src/pay.ts:10 `const network = args.network ?? config.network;`" in finding["evidence"]
+
+
+def test_python_too_complex_to_parse_is_skipped():
+    # CPython raises MemoryError ("parser stack overflowed") for `a{{{...`, not SyntaxError.
+    files = {"src/a.py": "x = a" + "{" * 3000 + "\nPASSPHRASE = Network.PUBLIC_NETWORK_PASSPHRASE\n",
+             "src/b.py": "def f(n):\n    return Network.TESTNET_NETWORK_PASSPHRASE if n == 'testnet' else " + "(" * 50 + ")" * 50}
+    _CACHE.clear()
+    network_hits(files)

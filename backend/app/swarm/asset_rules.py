@@ -21,7 +21,7 @@ from ..stellar.canonical import strkey_valid
 from .consolidate import stable_id
 from .jsflow import _args, _param_names, _props, _string_value, _txt, _unwrap
 from .source_index import (TEST_PATH, JsFile, PyFile, SourceIndex, callee_name, drop, index_for,
-                           js_functions_type, receiver, unparse)
+                           js_function_name, js_functions_type, receiver, unparse)
 
 #: The all-zero ed25519 key: nobody holds its secret, so a payment to it is lost.
 NULL_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
@@ -88,6 +88,120 @@ def _names(node) -> set[str]:
         if node is not None else set()
 
 
+#: Benchmark, suite and developer-experience trees: their addresses are stub payloads.
+_PLACEHOLDER_PATH = re.compile(r"(^|/)(?:bench(?:mark)?s?|suites?|devx|perf)(/|$)", re.I)
+_BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+
+def _placeholder(value: str) -> bool:
+    """A made-up address: it spells six or more letters of the base32 alphabet in order
+    (`GABCDEFGHIJ...`), which a real key does about once in a million."""
+    return any(value[i:i + 6] in _BASE32 for i in range(1, len(value) - 5))
+
+
+#: Where a Rust comment or literal can start: line or block comment, raw string, string, char.
+_RUST_LEXEME = re.compile(r'//|/\*|(?:br|r)(#{0,255})"|"|\'')
+
+
+def _rust_strings(text: str) -> list[tuple[int, int]]:
+    """(start, end) of each plain string literal, quotes included: comments, raw strings and
+    char literals are skipped as Rust's lexer skips them."""
+    out, i, n = [], 0, len(text)
+    while True:
+        m = _RUST_LEXEME.search(text, i)
+        if not m:
+            return out
+        i, token = m.start(), m.group()
+        if token == "//":
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+        elif token == "/*":
+            depth, end = 1, i + 2
+            while end < n and depth:
+                if text.startswith("/*", end):
+                    depth, end = depth + 1, end + 2
+                elif text.startswith("*/", end):
+                    depth, end = depth - 1, end + 2
+                else:
+                    end += 1
+        elif token == '"':
+            end = i + 1
+            while end < n and text[end] != '"':
+                end += 2 if text[end] == "\\" else 1
+            end = min(n, end + 1)
+            out.append((i, end))
+        elif token == "'":
+            char = re.match(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'", text[i:i + 16])
+            end = i + (char.end() if char else 1)
+        else:  # a raw string r#"..."#
+            closing = '"' + m.group(1)
+            found = text.find(closing, m.end())
+            end = n if found < 0 else found + len(closing)
+        i = max(end, i + 1)
+
+
+#: An item compiled only for tests: #[cfg(test)], #[cfg(any(test, feature = "testutils"))].
+_CFG_ATTR = re.compile(r"#\s*\[\s*cfg\s*\((?P<cfg>[^\]]*)\)\s*\]")
+
+
+def _cfg_test_items(text: str) -> list[tuple[int, int]]:
+    """Spans of the items a test-only cfg attribute covers (the item's block or statement)."""
+    from .network_rules import _closing
+    from .stellar_native import _rust_code
+    from .soroban_rules import _cfg_test
+    if "cfg" not in text:
+        return []
+    code = _rust_code(text)
+    spans = []
+    for m in _CFG_ATTR.finditer(code):
+        if not _cfg_test(m.group("cfg")):
+            continue
+        brace, semi = code.find("{", m.end()), code.find(";", m.end())
+        if brace >= 0 and (semi < 0 or brace < semi):
+            spans.append((m.start(), _closing(code, brace, limit=len(code)) + 1))
+        elif semi >= 0:
+            spans.append((m.start(), semi + 1))
+    return spans
+
+
+#: Classic operations that take an Asset (A4): what a native fallback pays or trades in.
+_ASSET_OPS = frozenset({"payment", "pathPaymentStrictSend", "pathPaymentStrictReceive", "changeTrust", "manageSellOffer",
+                        "manageBuyOffer", "createPassiveSellOffer", "createClaimableBalance", "clawback", "setTrustLineFlags"})
+_PY_ASSET_OPS = re.compile(r"^append_(?:payment|path_payment_strict_(?:send|receive)|change_trust|manage_(?:sell|buy)_offer|"
+                           r"create_passive_sell_offer|create_claimable_balance|clawback|set_trust_line_flags)_op$|"
+                           r"^(?:Payment|PathPaymentStrict(?:Send|Receive)|ChangeTrust|ManageSellOffer|ManageBuyOffer|"
+                           r"CreatePassiveSellOffer|CreateClaimableBalance|Clawback|SetTrustLineFlags|LiquidityPoolAsset)$")
+#: Expressions a value passes through on its way to where it is used.
+_JS_CARRIERS = frozenset({"parenthesized_expression", "ternary_expression", "binary_expression", "await_expression",
+                          "as_expression", "non_null_expression", "satisfies_expression", "pair", "object", "array",
+                          "spread_element", "shorthand_property_identifier"})
+
+
+def _js_asset_op(call) -> bool:
+    """Operation.payment(...) and the other Asset-taking operations, or a liquidity pool asset."""
+    if call.type == "new_expression":
+        return _txt(call.child_by_field_name("constructor")).endswith("LiquidityPoolAsset")
+    recv = receiver(call)
+    return (callee_name(call) in _ASSET_OPS and recv is not None and _txt(recv).endswith("Operation")) or \
+        callee_name(call) in {"getLiquidityPoolId", "LiquidityPoolAsset"}
+
+
+def _imports_name(text: str, name: str) -> bool:
+    """The file imports ``name`` (ES import, require, or Python from-import)."""
+    n = re.escape(name)
+    return bool(re.search(r"\bimport\s*(?:type\s+)?\{[^}]*\b" + n + r"\b[^}]*\}|\bimport\s+" + n + r"\b|"
+                          r"\{[^}]*\b" + n + r"\b[^}]*\}\s*=\s*require\s*\(|\bfrom\s+[\w.]+\s+import\s+[^\n]*\b" + n + r"\b", text))
+
+
+def _py_call_name(call: ast.Call) -> str:
+    func = call.func
+    return func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+
+
+def _py_asset_op(call: ast.Call) -> bool:
+    return bool(_PY_ASSET_OPS.match(_py_call_name(call)))
+
+
 #: At most this many amount values are judged per function (A5).
 _SEEDS = 32
 
@@ -131,43 +245,21 @@ class AssetRules:
         self._fn_parts: dict[tuple, dict[str, list]] = {}
         self._derived_memo: dict[tuple, set[str]] = {}
         self._side_memo: dict[tuple, list[tuple[str, str]]] = {}
-        self._used: dict[str, int] | None = None
-
-    def _uses(self, name: str) -> int:
-        """How often a name occurs as code across the project (declaration included)."""
-        if self._used is None:
-            counts: dict[str, int] = {}
-            for js in self.index.js.values():
-                if TEST_PATH.search(js.path):
-                    continue
-                for node in SourceIndex.walk(js.root):
-                    if node.type in {"identifier", "property_identifier", "shorthand_property_identifier"}:
-                        counts[_txt(node)] = counts.get(_txt(node), 0) + 1
-            for py in self.index.py.values():
-                if TEST_PATH.search(py.path):
-                    continue
-                for node in ast.walk(py.tree):
-                    key = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
-                    if key:
-                        counts[key] = counts.get(key, 0) + 1
-            for path, text in self.index.rust.items():
-                if not TEST_PATH.search(path):
-                    for word in re.findall(r"\b[A-Za-z_]\w*\b", text.split("#[cfg(test)]", 1)[0]):
-                        counts[word] = counts.get(word, 0) + 1
-            self._used = counts
-        return self._used.get(name, 0)
+        self._callers: dict[tuple[str, str], list] = {}
 
     # ================================================================= A1: invalid StrKey literals
     def bad_strkeys(self) -> list[tuple[str, int, str, str, Severity]]:
         out = []
         for js in self.index.js.values():
-            if TEST_PATH.search(js.path) or _SEED_DATA.search(js.path) or not _STRKEY_LIKE.search(js.text):
+            if TEST_PATH.search(js.path) or _SEED_DATA.search(js.path) or _PLACEHOLDER_PATH.search(js.path) or \
+                    not _STRKEY_LIKE.search(js.text):
                 continue
             for node in SourceIndex.walk(js.root):
                 if node.type not in {"string", "template_string"}:
                     continue
                 value = _string_value(node)
-                if not value or not _STRKEY_LIKE.fullmatch(value) or _RUN.search(value) or strkey_valid(value):
+                if not value or not _STRKEY_LIKE.fullmatch(value) or _RUN.search(value) or strkey_valid(value) or \
+                        _placeholder(value):
                     continue
                 binder = _js_binder(node)
                 if _js_exempt(node) or _EXEMPT_KEY.search(binder):
@@ -177,7 +269,7 @@ class AssetRules:
                 if place:
                     out.append(place)
         for py in self.index.py.values():
-            if TEST_PATH.search(py.path) or _SEED_DATA.search(py.path):
+            if TEST_PATH.search(py.path) or _SEED_DATA.search(py.path) or _PLACEHOLDER_PATH.search(py.path):
                 continue
             docstrings = {id(n.body[0].value) for n in ast.walk(py.tree)
                           if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
@@ -186,7 +278,7 @@ class AssetRules:
                 if not (isinstance(node, ast.Constant) and isinstance(node.value, str)) or id(node) in docstrings:
                     continue
                 value = node.value
-                if not _STRKEY_LIKE.fullmatch(value) or _RUN.search(value) or strkey_valid(value):
+                if not _STRKEY_LIKE.fullmatch(value) or _RUN.search(value) or strkey_valid(value) or _placeholder(value):
                     continue
                 binder = _py_binder(node, py)
                 if _EXEMPT_KEY.search(binder) or _py_exempt(node, py):
@@ -195,19 +287,24 @@ class AssetRules:
                                            bool(_STELLAR_TEXT.search(py.text)))
                 if place:
                     out.append(place)
+        from .soroban_rules import cfg_test_files
+        tests = cfg_test_files(self.index.rust) if self.index.rust else set()
         for path, text in self.index.rust.items():
-            if TEST_PATH.search(path):
+            if TEST_PATH.search(path) or path in tests or _PLACEHOLDER_PATH.search(path):
                 continue
-            code = text.split("#[cfg(test)]", 1)[0]
-            for m in re.finditer(r'"([GCM][A-Z2-7]{53,69})"', code):
-                value = m.group(1)
-                start = code.rfind("\n", 0, m.start()) + 1
-                prefix = code[start:m.start()].lstrip()
-                if prefix.startswith(("//", "*", "/*")) or _RUN.search(value) or strkey_valid(value):
+            skipped = _cfg_test_items(text)
+            # String literals as the lexer sees them: never inside a comment, a raw string or a
+            # #[cfg(test)] item.
+            for start, end in _rust_strings(text):
+                value = text[start + 1:end - 1]
+                if not _STRKEY_LIKE.fullmatch(value) or _RUN.search(value) or strkey_valid(value) or \
+                        _placeholder(value) or any(a <= start < b for a, b in skipped):
                     continue
-                binder = re.search(r"(?:const|static|let)\s+(?:mut\s+)?(\w+)", prefix)
-                line = code.count("\n", 0, m.start()) + 1
-                place = self._strkey_place(path, line, " ".join(code[start:code.find("\n", m.end())].split())[:160],
+                begin = text.rfind("\n", 0, start) + 1
+                stop = text.find("\n", end)
+                binder = re.search(r"(?:const|static|let)\s+(?:mut\s+)?(\w+)", text[begin:start])
+                place = self._strkey_place(path, text.count("\n", 0, start) + 1,
+                                           " ".join(text[begin:stop if stop >= 0 else len(text)].split())[:160],
                                            value, binder.group(1) if binder else "", True)
                 if place:
                     out.append(place)
@@ -216,16 +313,15 @@ class AssetRules:
     def _strkey_place(self, path: str, line: int, snippet: str, value: str, binder: str, stellar: bool):
         """The finding place for an invalid literal, or None when nothing makes it a Stellar
         value (no payment name and no Stellar code in the file: a base32 id or secret)."""
-        name = binder.rsplit(".", 1)[-1]
         words = {m.group(0).lower() for m in _PAYMENT_NAME.finditer(binder or "")}
         if words == {"token"} and (not stellar or _CREDENTIAL_NAME.search(binder)):
             words = set()  # SESSION_TOKEN, AUTH_TOKEN: a credential, not a token contract
         if not words and not stellar:
             return None
-        used = bool(name) and self._uses(name) > 1
-        severity = Severity.MEDIUM if words and used else Severity.LOW
+        # Low however it is used: an invalid StrKey fails closed (the SDK rejects it, so nothing
+        # can be paid to it or accepted as it).
         why = f"{len(value)} characters" if len(value) not in (56, 69) else "bad checksum"
-        return path, line, snippet, why, drop(severity, path)
+        return path, line, snippet, why, drop(Severity.LOW, path)
 
     def mpp_constants(self) -> list[tuple[str, int, str, str]]:
         out = []
@@ -316,7 +412,7 @@ class AssetRules:
                 fn = SourceIndex.enclosing_function(call) or js.root
                 if cond is None or not re.search(r"new\s+(?:[\w$]+\.)?Asset\s*\(", _txt(fn)):
                     continue
-                if _falls_back(cond, taken, _js_guards(call), _js_condition):
+                if _falls_back(cond, taken, _js_guards(call), _js_condition) and self._js_reaches_op(js, call, 0):
                     out.append((js.path, js.line(call), js.snippet(cond)))
         for py in self.index.py.values():
             if TEST_PATH.search(py.path):
@@ -329,9 +425,82 @@ class AssetRules:
                 fn = _py_function(node, py)
                 if cond is None or not re.search(r"\bAsset\s*\(", py.source(fn)):
                     continue
-                if _falls_back(cond, taken, _py_guards(node, py), _py_condition):
+                if _falls_back(cond, taken, _py_guards(node, py), _py_condition) and self._py_reaches_op(py, node, 0):
                     out.append((py.path, node.lineno, py.snippet(cond)))
         return out
+
+    def _js_reaches_op(self, js: JsFile, node, depth: int) -> bool:
+        """The value of ``node`` reaches a classic operation that takes an Asset: as its
+        argument, through a local of the function, or returned to a caller that passes it on
+        (two calls deep). Contract arguments (invokeContractFunction takes ScVal, so the build
+        throws) and logging are not operations that pay in it."""
+        expr = node
+        while expr.parent is not None and expr.parent.type in _JS_CARRIERS:
+            expr = expr.parent
+        parent = expr.parent
+        if parent is None:
+            return False
+        if parent.type == "arguments":
+            host = parent.parent
+            return host is not None and _js_asset_op(host)
+        fn = SourceIndex.enclosing_function(expr) or js.root
+        held = None
+        if parent.type == "variable_declarator" and parent.child_by_field_name("value") == expr:
+            held = _txt(parent.child_by_field_name("name"))
+        elif parent.type == "assignment_expression" and parent.child_by_field_name("right") == expr:
+            held = _txt(parent.child_by_field_name("left"))
+        returned = parent.type == "return_statement" or (parent.type == "arrow_function" and parent == fn)
+        if held:
+            calls = [n for n in SourceIndex.walk(fn) if n.type in {"call_expression", "new_expression"}]
+            if any(_js_asset_op(c) and self._mentions(_txt(c.child_by_field_name("arguments")), {held}) for c in calls):
+                return True
+            own = None if fn is js.root else fn
+            returned = any(r.type == "return_statement" and r.named_children and self._mentions(_txt(r), {held})
+                           and SourceIndex.enclosing_function(r) == own for r in SourceIndex.walk(fn))
+        name = js_function_name(fn) if fn is not js.root else None
+        if not returned or not name or depth >= 2:
+            return False
+        return any(self._js_reaches_op(other, call, depth + 1) for other, call in self._js_callers(js, name))
+
+    def _js_callers(self, home: JsFile, name: str) -> list:
+        """Calls of the function ``name`` defined in ``home``: in that file, or in a file that
+        imports the name and defines no function of its own by it."""
+        key = (home.path, name)
+        if key not in self._callers:
+            self._callers[key] = [
+                (js, call) for js in self.index.js.values() if not TEST_PATH.search(js.path) and name in js.text and (
+                    js is home or (not js.functions().get(name) and _imports_name(js.text, name)))
+                for call in SourceIndex.calls(js.root) if callee_name(call) == name]
+        return self._callers[key]
+
+    def _py_reaches_op(self, py: PyFile, node, depth: int) -> bool:
+        """The same for Python: an argument of append_payment_op and the like (or of the operation
+        classes), a local passed to one, or a return value a caller passes to one."""
+        expr, parent = node, py.parents.get(node)
+        while isinstance(parent, (ast.IfExp, ast.BoolOp, ast.Tuple, ast.List, ast.Dict, ast.keyword, ast.Starred)):
+            expr, parent = parent, py.parents.get(parent)
+        if isinstance(parent, ast.Call) and expr is not parent.func:
+            return _py_asset_op(parent)
+        fn = _py_function(node, py)
+        returned = isinstance(parent, ast.Return)
+        held = None
+        if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is expr:
+            targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+            held = {t.id for t in targets if isinstance(t, ast.Name)}
+        if held:
+            calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call) and _py_asset_op(c)]
+            if any({n.id for a in [*c.args, *(k.value for k in c.keywords)] for n in ast.walk(a)
+                    if isinstance(n, ast.Name)} & held for c in calls):
+                return True
+            returned = any(isinstance(r, ast.Return) and r.value is not None and
+                           {n.id for n in ast.walk(r.value) if isinstance(n, ast.Name)} & held for r in ast.walk(fn))
+        if not returned or not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or depth >= 2:
+            return False
+        callers = [other for other in self.index.py.values() if not TEST_PATH.search(other.path) and fn.name in other.text and (
+            other is py or (not any(isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef)) and d.name == fn.name
+                                    for d in other.tree.body) and _imports_name(other.text, fn.name)))]
+        return any(self._py_reaches_op(other, call, depth + 1) for other in callers
+                   for call in ast.walk(other.tree) if isinstance(call, ast.Call) and _py_call_name(call) == fn.name)
 
     # ================================================================= A5: amount parsed two ways
     def dual_parse(self) -> list[tuple[str, int, str]]:

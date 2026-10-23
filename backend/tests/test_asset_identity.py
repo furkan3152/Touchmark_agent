@@ -45,11 +45,12 @@ LOOKALIKE = USDC_SAC["testnet"][:-4] + "USDC" + "A"  # 57 characters, ends in US
 
 
 # ----------------------------------------------------------------------------- A1
-def test_a_look_alike_asset_default_used_in_requirements_is_medium():
+def test_a_look_alike_asset_default_used_in_requirements_is_low():
+    # Low wherever it is used: the SDK rejects an invalid StrKey, so nothing is paid to it.
     config = f"export const config = {{\n  usdcToken:\n    process.env.USDC_TOKEN ||\n    '{LOOKALIKE}',\n}};\n"
     route = 'import { config } from "./config";\nexport const accepts = { scheme: "exact", asset: config.usdcToken, payTo: "x" };\n'
     found = hardening({"src/config.ts": config, "src/route.ts": route})
-    assert found[STRKEY].severity.value == "medium" and "57 characters" in found[STRKEY].evidence
+    assert found[STRKEY].severity.value == "low" and "57 characters" in found[STRKEY].evidence
 
 
 def test_an_unused_exported_constant_with_a_bad_checksum_is_low():
@@ -72,7 +73,32 @@ def test_rust_doc_comments_and_test_modules_are_not_reported():
               f"#[cfg(test)]\nmod tests {{\n    const ADDR: &str = \"{bad}\";\n}}\n")
     assert STRKEY not in hardening({"crates/wallet/src/lib.rs": source})
     live = f"pub const TREASURY: &str = \"{bad}\";\npub fn pay() -> &'static str {{ TREASURY }}\n"
-    assert hardening({"crates/wallet/src/lib.rs": live})[STRKEY].severity.value == "medium"
+    assert hardening({"crates/wallet/src/lib.rs": live})[STRKEY].severity.value == "low"
+
+
+def test_rust_literals_in_comments_raw_strings_and_test_items_are_not_reported():
+    good, bad = Keypair.random().public_key, broken(Keypair.random().public_key)
+    trailing = f"pub const TREASURY: &str = \"{good}\"; // rotated from \"{bad}\" in May\npub fn t() -> &'static str {{ TREASURY }}\n"
+    block = f"/*\n   old treasury:\n   \"{bad}\"\n*/\npub const T: &str = \"{good}\";\n"
+    raw = f"pub const HELP: &str = r#\"usage: pay --to \"{bad}\"\"#;\n"
+    cfg = (f"#[cfg(any(test, feature = \"testutils\"))]\npub mod fixtures {{\n    pub const ADDR: &str = \"{bad}\";\n}}\n"
+           f"pub const T: &str = \"{good}\";\n")
+    for name, source in (("trailing", trailing), ("block", block), ("raw", raw), ("cfg", cfg)):
+        assert STRKEY not in hardening({"crates/wallet/src/lib.rs": source}), name
+    # Code after a test module is still read.
+    after = cfg + f"pub const PAYEE: &str = \"{bad}\";\n"
+    assert "lib.rs:6" in hardening({"crates/wallet/src/lib.rs": after})[STRKEY].evidence
+
+
+def test_placeholder_addresses_and_benchmark_suites_are_not_reported():
+    stub = "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVWXYZ234"
+    assert not strkey_valid(stub)
+    payload = f'export const payload = {{ destination: "{stub}", amount: "1" }};\nimport {{ Asset }} from "@stellar/stellar-sdk";\n'
+    assert STRKEY not in hardening({"src/client.ts": payload})
+    bad = broken(Keypair.random().public_key)
+    suite = f'import {{ Asset }} from "@stellar/stellar-sdk";\nexport const payload = {{ destination: "{bad}" }};\n'
+    assert STRKEY not in hardening({"web/src/area/devx/suites/sdk-client.ts": suite, "bench/pay.ts": suite})
+    assert STRKEY in hardening({"src/client.ts": suite})
 
 
 def test_python_docstrings_are_not_reported_and_constants_are():
@@ -122,19 +148,48 @@ def test_a_null_account_simulation_source_is_not_reported():
 FALLBACK = "security-missing-issuer-pays-xlm"
 
 
+PAY_WITH = ('export function pay(code: string, issuer: string | undefined, to: string, amount: string) {\n'
+            '  return Operation.payment({ destination: to, asset: ASSET(code, issuer), amount });\n}\n')
+
+
 def test_a_credit_code_without_issuer_becoming_xlm_is_reported():
-    ts = ('import { Asset } from "@stellar/stellar-sdk";\n'
+    ts = ('import { Asset, Operation } from "@stellar/stellar-sdk";\n'
           'export function parseAsset(code: string, issuer?: string): Asset {\n'
           '  if (code === "XLM" || !issuer) {\n    return Asset.native();\n  }\n  return new Asset(code, issuer);\n}\n')
-    assert hardening({"src/amm.ts": ts})[FALLBACK].severity.value == "medium"
+    assert hardening({"src/amm.ts": ts + PAY_WITH.replace("ASSET", "parseAsset")})[FALLBACK].severity.value == "medium"
     py = ('from stellar_sdk import Asset\n'
           'def to_asset(asset_code, asset_issuer=None):\n'
           '    if asset_code.upper() == "XLM" or asset_issuer is None:\n        return Asset.native()\n'
-          '    return Asset(asset_code, asset_issuer)\n')
+          '    return Asset(asset_code, asset_issuer)\n'
+          'def sell(builder, code, issuer, amount, price):\n'
+          '    selling = to_asset(code, issuer)\n'
+          '    builder.append_manage_sell_offer_op(selling=selling, buying=Asset.native(), amount=amount, price=price)\n')
     assert FALLBACK in hardening({"tools.py": py})
-    ternary = ('import { Asset } from "@stellar/stellar-sdk";\n'
-               'export const toAsset = (p: any) => (p.asset_code && p.asset_issuer ? new Asset(p.asset_code, p.asset_issuer) : Asset.native());\n')
+    ternary = ('import { Asset, Operation } from "@stellar/stellar-sdk";\n'
+               'export const toAsset = (p: any) => (p.asset_code && p.asset_issuer ? new Asset(p.asset_code, p.asset_issuer) : Asset.native());\n'
+               'export const op = (p: any) => Operation.changeTrust({ asset: toAsset(p) });\n')
     assert FALLBACK in hardening({"src/build.ts": ternary})
+    local = ('import { Asset, Operation } from "@stellar/stellar-sdk";\nfunction paymentOp(p: any) {\n  let asset: Asset;\n'
+             '  if (p.asset_code && p.asset_issuer) {\n    asset = new Asset(p.asset_code, p.asset_issuer);\n  } else {\n'
+             '    asset = Asset.native();\n  }\n  return Operation.payment({ destination: p.to, asset, amount: p.amount });\n}\n')
+    assert FALLBACK in hardening({"src/build_transaction.ts": local})
+
+
+def test_a_native_fallback_that_reaches_no_classic_operation_is_not_reported():
+    # Contract arguments must be ScVal (an Asset makes the build throw) and a log pays nothing.
+    ts = ('import { Asset, Operation } from "@stellar/stellar-sdk";\n'
+          'function parseAsset(code: string, issuer?: string): Asset {\n'
+          '  if (code === "XLM" || !issuer) return Asset.native();\n  return new Asset(code, issuer);\n}\n'
+          'export function swap(input: any) {\n'
+          '  return Operation.invokeContractFunction({ contract: input.pool, function: "swap",\n'
+          '    args: [parseAsset(input.offer, input.offerIssuer), parseAsset(input.want, input.wantIssuer)] });\n}\n'
+          'export function reserves(code: string, issuer?: string) {\n'
+          '  const asset = parseAsset(code, issuer);\n  logger.debug({ asset: asset.getCode() }, "reading reserves");\n}\n')
+    assert FALLBACK not in hardening({"src/amm.ts": ts})
+    assert FALLBACK in hardening({"src/amm.ts": ts + PAY_WITH.replace("ASSET", "parseAsset")})
+    unused = ('from stellar_sdk import Asset\ndef to_asset(code, issuer=None):\n'
+              '    if issuer is None:\n        return Asset.native()\n    return Asset(code, issuer)\n')
+    assert FALLBACK not in hardening({"assets.py": unused})
 
 
 def test_native_only_for_xlm_with_a_missing_issuer_rejected_is_not_reported():
@@ -294,7 +349,7 @@ def test_native_after_a_guard_that_rejects_credit_codes_without_issuer_is_not_re
     assert FALLBACK not in hardening({"src/a.ts": nested, "src/b.ts": early, "assets.py": py})
     # A guard that does not cover a credit code without issuer leaves the fallback reported.
     weak = early.replace('if (code !== "XLM" && !issuer)', 'if (code === "")')
-    assert FALLBACK in hardening({"src/b.ts": weak})
+    assert FALLBACK in hardening({"src/b.ts": weak + PAY_WITH.replace("ASSET", "toAsset")})
 
 
 def test_an_issuer_compared_in_a_helper_counts_and_get_code_fallbacks_are_reported():
@@ -365,3 +420,29 @@ def test_many_amount_arguments_in_one_function_cost_little():
         started = time.perf_counter()
         hardening({name: text})
         assert time.perf_counter() - started < 5, name
+
+
+def test_evidence_quotes_the_line_the_parser_numbered():
+    """tree-sitter counts rows at \\n only; splitting on U+2028, \\f or a bare \\r quoted another line."""
+    bad = broken(Keypair.random().public_key)
+    for sep in (" ", "\x0c", "\r", "\x85"):
+        source = (f'import {{ Asset }} from "@stellar/stellar-sdk";\nconst LABEL = "a{sep}b";\nconst other = 1;\n'
+                  f'export const PAY_TO = "{bad}";\n')
+        evidence = hardening({"src/config.js": source})[STRKEY].evidence
+        assert "src/config.js:4" in evidence and "PAY_TO" in evidence, repr(sep)
+
+
+def test_a_helper_of_the_same_name_in_another_file_is_not_its_caller():
+    amm = ('import { Asset, Operation } from "@stellar/stellar-sdk";\n'
+           'function parseAsset(code: string, issuer?: string): Asset {\n'
+           '  if (code === "XLM" || !issuer) return Asset.native();\n  return new Asset(code, issuer);\n}\n'
+           'export function swap(input: any) {\n'
+           '  return Operation.invokeContractFunction({ contract: input.pool, function: "swap", args: [parseAsset(input.a, input.b)] });\n}\n')
+    claim = ('import { Asset, Operation } from "@stellar/stellar-sdk";\n'
+             'function parseAsset(s: string): Asset { const [code, issuer] = s.split(":"); return new Asset(code, issuer); }\n'
+             'export function claim(p: any) {\n  return Operation.createClaimableBalance({ asset: parseAsset(p.asset), amount: p.amount, claimants: [] });\n}\n')
+    assert FALLBACK not in hardening({"src/amm.ts": amm, "src/claim.ts": claim})
+    exported = amm.replace("function parseAsset", "export function parseAsset")
+    user = ('import { Operation } from "@stellar/stellar-sdk";\nimport { parseAsset } from "./amm";\n'
+            'export const pay = (p: any) => Operation.payment({ destination: p.to, asset: parseAsset(p.code, p.issuer), amount: p.amount });\n')
+    assert FALLBACK in hardening({"src/amm.ts": exported, "src/pay.ts": user})

@@ -202,15 +202,45 @@ export async function POST(req: any) {
     assert found[FINAL].severity.value == "low"
 
 
-def test_a_tool_that_reports_the_send_status_is_low_and_one_that_says_pending_is_not_reported():
+def test_a_tool_that_hands_back_only_the_hash_is_low_and_one_that_reports_the_status_or_pending_is_not():
     tool = TS_HEAD + '''server2.registerTool("invoke", {}, async (args: any) => {
   const submission = await server.sendTransaction(args.tx);
-  return { content: [{ type: "text", text: JSON.stringify({ status: submission.status, hash: submission.hash }) }] };
+  return { content: [{ type: "text", text: JSON.stringify({ hash: submission.hash }) }] };
 });
 '''
     assert native({"src/tools.ts": tool}, npm())[FINAL].severity.value == "low"
-    honest = tool.replace("status: submission.status", 'note: "submitted, still pending"')
+    # The RPC's own status (PENDING, DUPLICATE, TRY_AGAIN_LATER, ERROR) tells the caller it is not final.
+    status = tool.replace("{ hash: submission.hash }", "{ status: submission.status, hash: submission.hash }")
+    assert FINAL not in native({"src/tools.ts": status}, npm())
+    logged = tool.replace("  return {", '  console.log("sent", submission.status);\n  return {')
+    assert FINAL not in native({"src/tools.ts": logged}, npm())
+    honest = tool.replace("hash: submission.hash", 'note: "submitted, still pending", hash: submission.hash')
     assert FINAL not in native({"src/tools.ts": honest}, npm())
+
+
+def test_only_a_stellar_rpc_client_is_an_rpc_send():
+    evm = '''import { JsonRpcProvider } from "ethers";
+import { markPaid } from "./orders";
+const rpcClient = new JsonRpcClient(process.env.EVM_URL);
+export async function payOrder(order: any, signedTx: string) {
+  const r = await rpcClient.sendTransaction(signedTx);
+  await markPaid(order, r.hash);
+}
+'''
+    assert FINAL not in native({"src/evm.ts": evm}, npm())
+    # A name alone does not make a Stellar RPC client, even in a Stellar file.
+    named = 'import { Keypair } from "@stellar/stellar-sdk";\n' + evm
+    assert FINAL not in native({"src/evm.ts": named}, npm())
+    # A client built in the project's clients module is one.
+    clients = 'import { rpc } from "@stellar/stellar-sdk";\nexport const stellar = { rpc: new rpc.Server(process.env.RPC_URL!) };\n'
+    pay = '''import { TransactionBuilder } from "@stellar/stellar-sdk";
+import { stellar } from "./clients";
+export async function payOrder(order: any, tx: any) {
+  const r = await stellar.rpc.sendTransaction(tx);
+  await markPaid(order, r.hash);
+}
+'''
+    assert native({"src/clients.ts": clients, "src/pay.ts": pay}, npm())[FINAL].severity.value == "medium"
 
 
 def test_an_evm_wallet_send_transaction_is_not_an_rpc_send():
@@ -310,7 +340,9 @@ def build_cmd(fn, args, send=None):
 
 
 def test_a_claim_released_after_a_cli_submission_fails_is_reported():
-    flow = '''def execute(repo, client, intent_id, amount):
+    flow = '''from escrow.chain import Client
+
+def execute(repo, client: Client, intent_id, amount):
     if not repo.claim_escrow(intent_id):
         return None
     try:
@@ -321,7 +353,67 @@ def test_a_claim_released_after_a_cli_submission_fails_is_reported():
     return result
 '''
     found = hardening({"escrow/chain.py": PY_CLI, "escrow/flow.py": flow})
-    assert found[RETRY].severity.value == "medium" and "escrow/flow.py:6" in found[RETRY].evidence
+    assert found[RETRY].severity.value == "medium" and "escrow/flow.py:8" in found[RETRY].evidence
+    # Typed as a Protocol: its stub stands for the classes that implement the method.
+    protocol = "from typing import Protocol\n\nclass Chain(Protocol):\n    def create(self, amount): ...\n"
+    typed = flow.replace("from escrow.chain import Client", "from escrow.port import Chain").replace("client: Client", "client: Chain")
+    assert RETRY in hardening({"escrow/chain.py": PY_CLI, "escrow/port.py": protocol, "escrow/flow.py": typed})
+    # An unknown receiver is not resolved by method name: `client.create` could be anything.
+    untyped = flow.replace("client: Client", "client")
+    assert RETRY not in hardening({"escrow/chain.py": PY_CLI, "escrow/flow.py": untyped})
+
+
+def test_a_method_name_shared_with_a_submitting_class_is_not_a_submission():
+    limits = '''import sqlite3
+
+class SpendLimits:
+    def __init__(self, path):
+        self.conn = sqlite3.connect(path)
+
+    def reserve(self, amount):
+        cur = self.conn.cursor()
+        try:
+            cur.execute("UPDATE budget SET reserved = reserved + ?", (amount,))
+            self.conn.commit()
+        except Exception:
+            self.release_budget(amount)
+            raise
+
+    def release_budget(self, amount):
+        self.conn.execute("UPDATE budget SET reserved = reserved - ?", (amount,))
+'''
+    submitter = '''from stellar_sdk import Server
+
+class Submitter:
+    def __init__(self, url):
+        self.server = Server(url)
+
+    def execute(self, envelope):
+        return self.server.submit_transaction(envelope)
+'''
+    assert RETRY not in hardening({"agent/limits.py": limits, "agent/submitter.py": submitter})
+    # The same release around a call that does reach the submitting class is reported.
+    owned = limits.replace("import sqlite3\n", "import sqlite3\nfrom agent.submitter import Submitter\n") \
+        .replace("        self.conn = sqlite3.connect(path)\n", "        self.conn = sqlite3.connect(path)\n        self.chain = Submitter(URL)\n") \
+        .replace("            cur.execute(\"UPDATE budget SET reserved = reserved + ?\", (amount,))\n",
+                 "            self.chain.execute(envelope)\n")
+    assert RETRY in hardening({"agent/limits.py": owned, "agent/submitter.py": submitter})
+    ts_limits = TS_HEAD + '''export class Limits {
+  async reserve(db: any, amount: string) {
+    try {
+      await db.execute("UPDATE budget SET reserved = reserved + ?", [amount]);
+    } catch (e) {
+      await this.releaseBudget(amount);
+      throw e;
+    }
+  }
+  async releaseBudget(amount: string) {}
+}
+'''
+    ts_submitter = TS_HEAD + "export class Submitter {\n  async execute(tx: any) { return server.sendTransaction(tx); }\n}\n"
+    assert RETRY not in hardening({"src/limits.ts": ts_limits, "src/submitter.ts": ts_submitter})
+    ts_owned = ts_limits.replace("async reserve(db: any, amount: string)", "async reserve(db: Submitter, amount: string)")
+    assert RETRY in hardening({"src/limits.ts": ts_owned, "src/submitter.ts": ts_submitter})
 
 
 def test_a_release_only_for_errors_raised_before_the_send_is_not_reported():
@@ -575,3 +667,9 @@ def test_the_source_index_is_shared_by_copies_of_the_same_files():
     files = {"src/a.ts": TS_HEAD}
     assert index_for(files) is index_for(dict(files))
     assert index_for({"src/a.ts": TS_HEAD + "\n"}) is not index_for(files)
+
+
+def test_sdk_rules_skip_python_too_complex_to_parse():
+    # CPython raises MemoryError ("parser stack overflowed") for `a{{{...`, not SyntaxError.
+    deep = "x = a" + "{" * 3000 + "\n"
+    assert native({"agent.py": deep, "src/a.ts": TS_HEAD}, npm()) == {}

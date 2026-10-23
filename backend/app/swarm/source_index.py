@@ -17,6 +17,9 @@ from ..models import Severity
 from .codeflow import unparse  # noqa: F401  (re-exported for the rule modules)
 from .jsflow import _dotted, _parsers, _txt, _unwrap, is_js
 
+#: What ast.parse raises on source it cannot read: bad syntax, null bytes, or nesting too deep
+#: (RecursionError, or MemoryError "parser stack overflowed" for `a{{{...`).
+PARSE_ERRORS = (SyntaxError, ValueError, RecursionError, MemoryError)
 #: Paths whose code is not the agent: tests, fixtures, mocks, smoke tests and benches.
 TEST_PATH = re.compile(r"(^|/)(tests?|spec|__tests__|fixtures?|mocks?|e2e|benches)/|(^|/|[._-])(test|spec|smoke|mock|fixture)s?([._-]|$)",
                        re.I)
@@ -124,11 +127,12 @@ class SourceIndex:
                 if not parsers:
                     continue
                 parser = parsers["tsx" if lower.endswith(".tsx") else "ts" if lower.endswith((".ts", ".mts", ".cts")) else "js"]
-                self.js[path] = JsFile(path, text, parser, bool(_STELLAR_JS.search(text)), text.splitlines())
+                # tree-sitter numbers rows at \n only (str.splitlines also splits on \r, \f, U+2028, ...).
+                self.js[path] = JsFile(path, text, parser, bool(_STELLAR_JS.search(text)), text.split("\n"))
             elif lower.endswith(".py"):
                 try:
                     tree = ast.parse(text)
-                except (SyntaxError, ValueError, RecursionError):
+                except PARSE_ERRORS:
                     continue
                 # ast numbers lines by \n, \r\n and \r only (str.splitlines also splits on \f, \x85, ...).
                 py = PyFile(path, text, tree, "stellar_sdk" in text, re.split(r"\r\n|\r|\n", text))

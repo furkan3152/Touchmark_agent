@@ -413,3 +413,114 @@ def test_python_expressions_too_deep_to_unparse_keep_the_flow_analysis():
     # The expiration, too deep to unparse, is read from the source: 450 ledgers.
     assert [f.detail for f in profile.facts if f.kind == "auth_expiration"] == \
         ["signatures stay valid for 450 ledgers, against 100 by default"]
+
+
+_PY_LOGIN_AND_DEPOSIT = '''import os
+import httpx
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder
+from stellar_sdk.auth import authorize_entry
+from stellar_sdk.sep.stellar_web_authentication import read_challenge_transaction
+
+KP = Keypair.from_secret(os.environ["AGENT_SECRET"])
+RPC = SorobanServer(os.environ["RPC_URL"])
+
+
+def anchor_login(web_auth_endpoint, home_domain, server_key):
+    challenge = httpx.get(web_auth_endpoint, params={"account": KP.public_key}).json()["transaction"]
+    read_challenge_transaction(challenge, server_key, home_domain, home_domain, Network.TESTNET_NETWORK_PASSPHRASE)
+
+
+def deposit(vault, amount):
+    tx = TransactionBuilder(RPC.load_account(KP.public_key), Network.TESTNET_NETWORK_PASSPHRASE, 100) \\
+        .append_invoke_contract_function_op(vault, "deposit", []).set_timeout(30).build()
+    authorization_entries = RPC.simulate_transaction(tx).results[0].auth
+    latest = RPC.get_latest_ledger().sequence
+    return [authorize_entry(e, KP, latest + 60, Network.TESTNET_NETWORK_PASSPHRASE) for e in authorization_entries]
+'''
+
+
+def test_entries_from_the_agents_own_simulation_are_not_sep45():
+    # A checked SEP-10 login and a deposit that signs its own simulation's entries: no SEP-45 flow.
+    assert "security-sep45-entries-unchecked" not in paths({"stellar_tools.py": _PY_LOGIN_AND_DEPOSIT})
+    # Entries that come from a contract web-auth server's response are.
+    sep45 = _PY_LOGIN_AND_DEPOSIT + '''
+
+def contract_login(toml, contract_account):
+    endpoint = toml["WEB_AUTH_FOR_CONTRACTS_ENDPOINT"]
+    entries = httpx.get(endpoint, params={"account": contract_account}).json()["authorization_entries"]
+    latest = RPC.get_latest_ledger().sequence
+    return [authorize_entry(e, KP, latest + 10, Network.TESTNET_NETWORK_PASSPHRASE) for e in entries]
+'''
+    assert paths({"stellar_tools.py": sep45})["security-sep45-entries-unchecked"].severity.value == "high"
+
+
+_TS_TOOLS = """
+import { Keypair, TransactionBuilder, Networks } from '@stellar/stellar-sdk';
+import { Wallet } from '@stellar/typescript-wallet-sdk';
+import { readFileSync } from 'node:fs';
+const kp = Keypair.fromSecret(process.env.AGENT_SECRET!);
+const wallet = Wallet.TestNet();
+export function registerTools(server: any) {
+  server.tool('login', { homeDomain: z.string() }, async (args: any) => {
+    // SEP-10 through the wallet SDK, which validates the challenge.
+    const auth = await wallet.anchor({ homeDomain: args.homeDomain }).sep10();
+    return { content: [{ type: 'text', text: (await auth.authenticate({ accountKp: wallet.signer })).token }] };
+  });
+  server.tool('history', {}, async () => {
+    const r = await fetch(`https://api.example.org/payments?account=${kp.publicKey()}`);
+    return { content: [{ type: 'text', text: await r.text() }] };
+  });
+  server.tool('sign_payout', {}, async () => {
+    const tx = TransactionBuilder.fromXDR(readFileSync('./queue/payout.xdr', 'utf8'), Networks.TESTNET);
+    tx.sign(kp);
+    return { content: [{ type: 'text', text: tx.toXDR() }] };
+  });
+}
+"""
+
+
+def test_an_account_query_and_a_later_signature_are_not_a_sep10_challenge():
+    assert "security-sep10-challenge-unchecked" not in paths({"src/tools.ts": _TS_TOOLS})
+    # The envelope that reaches the signature through helpers from WEB_AUTH_ENDPOINT is one.
+    flow = _TS_TOOLS.replace("    const tx = TransactionBuilder.fromXDR(readFileSync('./queue/payout.xdr', 'utf8'), Networks.TESTNET);\n",
+                             "    const toml = await fetchText(`https://${DOMAIN}/.well-known/stellar.toml`);\n"
+                             "    const webAuthEndpoint = parseToml(toml, 'WEB_AUTH_ENDPOINT');\n"
+                             "    const challenge = await fetchJson(challengeUrl(webAuthEndpoint, kp.publicKey()));\n"
+                             "    const payload = checkShape(challenge);\n"
+                             "    const tx = TransactionBuilder.fromXDR(payload.transaction, Networks.TESTNET);\n")
+    assert paths({"src/tools.ts": flow})["security-sep10-challenge-unchecked"].severity.value == "high"
+    py = ("import httpx\nfrom stellar_sdk import TransactionEnvelope\n"
+          "def login(web_auth_endpoint, kp, passphrase):\n"
+          "    challenge = httpx.get(web_auth_endpoint, params={'account': kp.public_key}).json()['transaction']\n"
+          "    envelope = TransactionEnvelope.from_xdr(challenge, passphrase)\n    envelope.sign(kp)\n"
+          "    return httpx.post(web_auth_endpoint, json={'transaction': envelope.to_xdr()}).json()['token']\n")
+    assert paths({"sep10.py": py})["security-sep10-challenge-unchecked"].severity.value == "high"
+
+
+def test_web_auth_evidence_quotes_the_line_it_numbers():
+    shifted = "const LABEL = 'a b\x0cc';" + _SEP10
+    finding = paths({"src/tools/seps.ts": shifted})["security-sep10-challenge-unchecked"]
+    assert "src/tools/seps.ts:9 `tx.sign(kp);`" in finding.evidence
+
+
+def test_one_tools_challenge_response_does_not_taint_anothers_signature():
+    tools = """
+server.tool('login', {}, async () => {
+  const webAuthEndpoint = parseToml(await fetchText(TOML_URL), 'WEB_AUTH_ENDPOINT');
+  const res = await fetchJson(`${webAuthEndpoint}?account=${kp.publicKey()}`);
+  return WebAuth.readChallengeTx(res.transaction, SERVER_KEY, PASS, DOMAIN, HOST);
+});
+server.tool('cosign', {}, async () => {
+  const res = await fetchJson(QUEUE_URL);
+  const tx = TransactionBuilder.fromXDR(res.xdr, PASS);
+  tx.sign(kp);
+  return tx.toXDR();
+});
+""".replace("WebAuth.readChallengeTx(res.transaction, SERVER_KEY, PASS, DOMAIN, HOST)", "res.transaction")
+    assert "security-sep10-challenge-unchecked" not in paths({"src/tools.ts": tools})
+
+
+def test_web_auth_skips_python_too_complex_to_parse():
+    # CPython raises MemoryError ("parser stack overflowed") for `a{{{...`, not SyntaxError.
+    from backend.app.swarm.auth_rules import web_auth_hits
+    assert web_auth_hits({"sep10.py": "WEB_AUTH_ENDPOINT = 1\nx = a" + "{" * 3000 + "\n"}) == []
