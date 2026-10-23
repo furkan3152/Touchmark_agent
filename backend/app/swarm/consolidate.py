@@ -21,6 +21,7 @@ _LOC = re.compile(r"([\w./@-]+\.[A-Za-z0-9]+):(\d+)")
 _CONCRETE_SPEND = re.compile(
     r"^security-path-(?:untrusted-to-financial-sink|x402-payment-unbounded|external-transaction-signed|"
     r"control-not-blocking)$|^security-declared-limit-not-enforced$|^intent-tmark-limit-not-enforced$|"
+    r"^security-x402-(?:spend-controls-disabled|any-asset-uncapped)-[0-9a-f]{8}$|"
     r"-ai-(?:unauthorized-payment|control-bypass|economic-loss|foreign-transaction-signing)-\d+$")
 #: Checklist notes that restate a missing spend control. In two hand-checked rounds over 23
 #: agents, 102 of them were labelled: 66 generic, 23 duplicate, 10 false, 1 overstated, 2 true.

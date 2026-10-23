@@ -78,3 +78,14 @@ def test_cargo_lock_gives_transitive_crates_and_survives_the_intake_record(tmp_p
     assert locks.resolve("soroban-sdk", "contracts/beacon/src/lib.rs").versions == ("28.0.0",)
     assert locks.resolve("soroban-sdk-macros", "contracts/beacon/src/lib.rs").versions == ("28.0.0",)
     assert "serde" not in record["locked"]["contracts/beacon/Cargo.lock"]   # only watched crates are kept
+
+
+def test_intake_records_where_the_server_is_deployed_as_several_instances(tmp_path):
+    from backend.app.services.repo_audit import select_repository
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "server.ts").write_text("export const app = 1;\n")
+    (tmp_path / "vercel.json").write_text("{}")
+    (tmp_path / "node_modules" / "x").mkdir(parents=True)
+    (tmp_path / "node_modules" / "x" / "wrangler.toml").write_text("")
+    assert select_repository(tmp_path)[1]["deployment_markers"] == ["vercel.json"]

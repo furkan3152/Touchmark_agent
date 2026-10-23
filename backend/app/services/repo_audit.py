@@ -38,6 +38,9 @@ SOURCE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", "
 TEMPLATE_SUFFIXES = (".hbs", ".handlebars", ".j2", ".jinja", ".jinja2", ".tmpl", ".mustache", ".ejs")
 LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "poetry.lock", "uv.lock",
              "Pipfile.lock", "go.sum", "bun.lock", "bun.lockb")
+#: Files that deploy a server as several instances (serverless functions, edge workers), where
+#: in-memory state such as an MPP replay store is not shared between requests.
+DEPLOYMENT_MARKERS = {"vercel.json", "wrangler.toml", "serverless.yml", "serverless.yaml", "netlify.toml"}
 INSTRUCTION_NAMES = {"skill.md", "agents.md", "claude.md", "system_prompt.md", "prompt.md", "instructions.md"}
 #: The root README states what the agent promises its users; deep review checks the code against it.
 README_NAMES = {"readme.md", "readme"}
@@ -272,10 +275,13 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     ownership: dict = {}
     blueprint: dict = {}
     tmark_record: dict = {}
+    markers: list[str] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
         rel = path.relative_to(root)
+        if path.name in DEPLOYMENT_MARKERS and not _skipped(rel):
+            markers.append(rel.as_posix())
         if rel.as_posix() in OWNERSHIP_FILES and path.stat().st_size <= DECLARATION_BYTES:
             # The first name in OWNERSHIP_FILES wins when a repository has both.
             rank = OWNERSHIP_FILES.index(rel.as_posix())
@@ -338,7 +344,7 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
     seed_keys: dict[str, str] = {}
     return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint,
-                   "tmark": tmark_record,
+                   "tmark": tmark_record, "deployment_markers": markers[:50],
                    "committed_seeds": committed_seeds(root, set(files), keys=seed_keys),
                    "committed_seed_keys": seed_keys,
                    "committed_credentials": committed_credentials(root, set(files))}
@@ -480,6 +486,7 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         raw_metadata={"source_not_selected": (selection["manifest"]["source_files_not_selected"]
                                               + selection["manifest"]["files_too_large"]),
                       "committed_seeds": selection.get("committed_seeds", []),
+                      "deployment_markers": selection.get("deployment_markers", []),
                       "committed_credentials": selection.get("committed_credentials", []),
                       "tmark": _tmark_metadata(declared, selection),
                       "resolved_versions": lockset.to_json(),

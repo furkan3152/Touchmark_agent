@@ -67,7 +67,8 @@ def test_an_unverified_medium_payment_bypass_holds_back_a_pass():
     for fid in ("security-ai-control-bypass-1", "security-x402-spend-controls-disabled",
                 "security-mpp-store-missing-1a2b3c4d", "security-x402-settle-unchecked-0f0e0d0c",
                 "x402-verify-without-settle-89abcdef", "security-x402-requirements-from-payer",
-                "stellar_native-tx-hash-proof-unbound-01234567", "security-path-sponsor-rebuild-unchecked"):
+                "stellar_native-tx-hash-proof-unbound-01234567", "security-path-sponsor-rebuild-unchecked",
+                "security-tx-hash-proof-unbound-76543210", "stellar_native-dep-mpp-unsigned-hash-push-stellar-mpp-5a6b7c8d"):
         assert review_decision([_f(fid, Severity.MEDIUM)], complete, 90.0) == "needs_evidence", fid
         assert review_decision([_f(fid, Severity.MEDIUM, verified="unverifiable")], complete, 90.0) == "needs_evidence"
         assert review_decision([_f(fid, Severity.MEDIUM, verified="refuted")], complete, 90.0) == "pass"
