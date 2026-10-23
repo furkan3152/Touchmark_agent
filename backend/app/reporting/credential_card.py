@@ -63,7 +63,7 @@ def card_svg(c: dict, *, now: float | None = None) -> str:
     expires = time.strftime("%Y-%m-%d", time.gmtime(float(c["expires_at"]))) if c.get("expires_at") else "—"
     # Score ring: circumference of r=150 is 942.48.
     dash = f"{942.48 * score / 100:.1f} 942.48"
-    head = {"preview": "REPORT PREVIEW · NOT YET STAMPED", "current": f"AUDIT CREDENTIAL · STELLAR {network}",
+    head = {"preview": "REPORT COPY · ORIGIN UNVERIFIED", "current": f"AUDIT CREDENTIAL · STELLAR {network}",
             "expired": "AUDIT CREDENTIAL · EXPIRED", "revoked": "AUDIT CREDENTIAL · REVOKED"}[status]
     rows = [("OWNER", _short(c.get("owner"), 8, 6) or "—"),
             ("TOKEN", _short(c.get("token_id"), 10, 6) or "—"),
