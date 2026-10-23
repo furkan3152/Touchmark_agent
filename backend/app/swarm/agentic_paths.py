@@ -379,6 +379,16 @@ _FACT_RULES = {
         "Cap the fee-bump fee with a constant (or derive it from the network's fee stats with a ceiling), and fee-bump "
         "only transactions whose operations the server checked.",
         ["Stellar fee-bump transactions", "CWE-770 Allocation of Resources Without Limits or Throttling"], False),
+    "auth_expiration": (
+        "security-auth-expiration-wide", Severity.LOW,
+        "Signed authorizations stay valid longer than needed",
+        "A signed Soroban authorization entry can be submitted by whoever holds it until its expiration ledger. "
+        "Here that ledger is far ahead, comes from the paying server's timeout with no ceiling, or is computed "
+        "from the clock instead of the ledger, so a held or leaked entry stays usable long after the agent "
+        "decided to pay.",
+        "Expire entries a few minutes ahead (latest ledger + 12 to 100), and cap any timeout the counterparty "
+        "names with Math.min against a constant.",
+        ["Soroban authorization", "x402 Stellar exact scheme"], False),
     "x402_stellar_not_default": (
         "security-x402-stellar-usdc-not-default", Severity.INFO,
         "x402 refuses Stellar USDC payments (fails closed)",
@@ -457,6 +467,101 @@ def _sponsor_hits(profile, by_category: dict) -> tuple[list[_FactHit], dict]:
         severity, extra = _adjusted("fee_bump_unbounded", Severity.MEDIUM, fact.location.file, False)
         hits.append(_FactHit("fee_bump_unbounded", fact.location, severity, "; ".join([fact.detail] + extra)))
     return hits, notes
+
+
+_WEB_AUTH = {
+    "sep10": ("security-sep10-challenge-unchecked", "A SEP-10 challenge is signed without being checked",
+              "The agent asks an anchor's WEB_AUTH_ENDPOINT for a challenge and signs the transaction it gets back "
+              "with its own key, but never checks that it is a challenge: sequence number 0 (so it can never be "
+              "submitted) and a first ManageData operation '<home domain> auth' sourced by the agent. A malicious or "
+              "compromised anchor can send a real payment or account change instead and submit the signature.",
+              "Read the challenge with WebAuth.readChallengeTx (stellar_sdk read_challenge_transaction), which checks "
+              "the sequence number, the server signature and every operation, before signing it.",
+              ["SEP-10 Stellar Web Authentication"]),
+    "sep45": ("security-sep45-entries-unchecked", "SEP-45 authorization entries are signed without the client checks",
+              "The agent signs the authorization entries a contract web-auth server returns without checking that each "
+              "calls web_auth_verify on the WEB_AUTH_CONTRACT_ID from stellar.toml and has no sub-invocations. A "
+              "server can return an entry that authorizes a transfer from the agent's account.",
+              "Before signing, check every entry: contract address equals WEB_AUTH_CONTRACT_ID, function name is "
+              "web_auth_verify, sub-invocations are empty, and the arguments name this client and home domain.",
+              ["SEP-45 Stellar Web Authentication for Contract Accounts"]),
+}
+
+
+def _web_auth_findings(artifact: AgentArtifact, findings: list[Finding], by_category: dict, auditor: str) -> list[Finding]:
+    """SEP-10 challenges and SEP-45 entries signed unchecked. Where the signing site is already
+    a foreign-signing flow, the check that is missing joins that finding instead."""
+    from .auth_rules import web_auth_hits
+    signed = {(f.location.file, f.location.line) for f in by_category.get("foreign_signing", [])}
+    out = list(findings)
+    existing = next((f for f in out if f.id == "security-path-external-transaction-signed"), None)
+    for kind, file, line, text, severity, note in web_auth_hits(artifact.code_files):
+        rule, title, detail, remediation, refs = _WEB_AUTH[kind]
+        # Folded only into a finding at least as severe (an unresolved caller origin is LOW).
+        if (file, line) in signed and existing is not None and existing.severity.rank >= severity.rank:
+            sep = {"sep10": "SEP-10 challenge", "sep45": "SEP-45 authorization entry"}[kind]
+            out = [f.model_copy(update={"detail": f.detail + f" At {file}:{line} it is a {sep}: {note}."})
+                   if f.id == "security-path-external-transaction-signed" else f for f in out]
+            continue
+        out.append(Finding(
+            id=stable_id(rule, file, text), dimension=Dimension.SECURITY, severity=severity, title=title,
+            detail=detail, evidence=f"{file}:{line} `{' '.join(text.split())[:160]}` ({note})",
+            evidence_grade=EvidenceGrade.CONFIRMED, remediation=remediation, references=refs, auditor=auditor,
+            confidence=0.85))
+    return out
+
+
+#: Interop, round-trip and smoke harnesses (item 13 drops them one level, like test code).
+_HARNESS = re.compile(r"(?:^|/)interop/|roundtrip|round_trip|smoke", re.I)
+
+
+def _auth_hits(profile) -> tuple[list[_FactHit], dict]:
+    """Expiration findings, and per blind-tree signing site the expiration note that joins its
+    signing finding instead (one finding per defect)."""
+    trees = {f.location for f in profile.facts_of("auth_tree_unchecked")}
+    notes = {loc: "" for loc in trees}
+    hits = []
+    for fact in profile.facts_of("auth_expiration"):
+        if fact.location in trees:
+            notes[fact.location] = fact.detail
+            continue
+        severity, extra = _adjusted("auth_expiration", Severity(fact.get("severity", "low")), fact.location.file, False)
+        if not extra and _HARNESS.search(fact.location.file):
+            severity, extra = severity.downgrade(1), ["interop or round-trip harness"]
+        hits.append(_FactHit("auth_expiration", fact.location, severity, "; ".join([fact.detail] + extra),
+                             grade=EvidenceGrade.INFERRED, confidence=0.8))
+    return hits, notes
+
+
+def _fold_scheme_trees(artifact: AgentArtifact, profile, by_category: dict, x402_flows: list, findings: list[Finding],
+                       tree_notes: dict) -> list[Finding]:
+    """An x402 client scheme (createPaymentPayload) that signs a blind tree, in a package whose
+    wrapper is already reported as paying whatever a 402 asks: the paid endpoint choosing the
+    asset contract is that finding's defect, so the tree and expiry notes join it and no
+    signing finding opens for the scheme (one finding per defect)."""
+    from .network_rules import _MANIFESTS, _package_of
+    x402 = next((f for f in findings if f.id == _PATH_RULES["x402_unbounded"][0]), None)
+    if x402 is None:
+        return findings
+    roots = {n.rpartition("/")[0] for n in artifact.code_files if n.rsplit("/", 1)[-1] in _MANIFESTS}
+    paid = {_package_of(f.location.file, roots) for f in x402_flows if f.location.render() in x402.evidence}
+    sites = [f.location for f in profile.facts_of("auth_tree_unchecked")
+             if f.get("scheme") == "x402" and _package_of(f.location.file, roots) in paid]
+    if not sites:
+        return findings
+    for category in ("foreign_signing", "financial"):
+        if category in by_category:
+            by_category[category] = [f for f in by_category[category] if f.location not in sites]
+    note = (" The registered x402 scheme also signs the authorization entries of the asset contract the 402 names "
+            "without comparing their root contract, function and sub-invocations, so that contract can add a transfer "
+            "from the payer to the tree (" + "; ".join(
+                f"{loc.file}:{loc.line}" + (f", and {tree_notes[loc]}" if tree_notes.get(loc) else "") for loc in sites[:3])
+            + ").")
+    for loc in sites:
+        tree_notes.pop(loc, None)
+    folded = x402.model_copy(update={"detail": x402.detail + note, "evidence": x402.evidence + "; " + "; ".join(
+        f"{loc.render()} [authorization tree unchecked]" for loc in sites[:3])})
+    return [folded if f is x402 else f for f in findings]
 
 
 def _grouped(facts) -> dict[str, list]:
@@ -715,9 +820,12 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     for flow in profile.flows:
         by_category.setdefault(flow.category, []).append(flow)
     lockset = Lockset(artifact.raw_metadata.get("resolved_versions"))
+    x402_flows = list(by_category.get("x402_unbounded", []))
     payment_findings, payment_hits, default_caps = _payment_sdk_findings(artifact, profile, lockset, by_category, auditor)
     sponsor_hits, sponsor_notes = _sponsor_hits(profile, by_category)
-    findings += payment_findings + _fact_findings(payment_hits + sponsor_hits, auditor) + _seller_findings(profile, auditor)
+    auth_hits, tree_notes = _auth_hits(profile)
+    payment_findings = _fold_scheme_trees(artifact, profile, by_category, x402_flows, payment_findings, tree_notes)
+    findings += payment_findings + _fact_findings(payment_hits + sponsor_hits + auth_hits, auditor) + _seller_findings(profile, auditor)
     amount_caps = list(profile.controls.get("amount_cap", [])) + default_caps
     # A sponsor that accepts only Address credentials and pins both sources inspected the
     # client's transaction (its signing flows were already dropped in jsflow).
@@ -758,6 +866,14 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             chosen = sorted(chosen, key=lambda f: f.location not in attached)
             detail = detail + " The signer is a fee sponsor that rebuilds the client's transaction: " + "; ".join(
                 f"{loc.file}:{loc.line} {note}" for loc, note in attached.items()) + "."
+        trees = [loc for loc in tree_notes if any(f.location == loc for f in flows)]
+        if trees and category in {"foreign_signing", "financial"}:
+            # One finding per defect: a blind authorization tree is evidence for the signing flow.
+            chosen = sorted(chosen, key=lambda f: f.location not in trees)
+            detail = detail + " The signed authorization entries come from simulating a contract that the request, the " \
+                "model or a 402 response names, and nothing compares their root contract, function and sub-invocations " \
+                "with what was meant: that contract can add a transfer from the signer to the tree (" + "; ".join(
+                    f"{loc.file}:{loc.line}" + (f", and {tree_notes[loc]}" if tree_notes[loc] else "") for loc in trees[:3]) + ")."
         findings.append(Finding(
             id=fid, dimension=Dimension.SECURITY,
             # A file path its caller chooses is the caller's own business unless input from
@@ -774,6 +890,8 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             remediation=remediation, references=refs, auditor=auditor,
             confidence=0.97 if confirmed else 0.75,
         ))
+
+    findings = _web_auth_findings(artifact, findings, by_category, auditor)
 
     if profile.nonblocking_controls:
         findings.append(Finding(

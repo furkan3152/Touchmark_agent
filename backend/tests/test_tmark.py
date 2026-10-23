@@ -247,3 +247,13 @@ def test_a_long_line_before_a_network_marker_costs_little():
         started = time.perf_counter()
         network_hits({"src/min.js": line + "\n"}, _MAINNET)
         assert time.perf_counter() - started < limit, line[:20]
+
+
+def test_a_network_the_paid_server_or_a_tool_picks_breaks_a_testnet_declaration(tmp_path):
+    mpp = ("import { stellar } from '@stellar/mpp/charge/client';\n"
+           "export const method = stellar.charge({ secretKey: process.env.STELLAR_SECRET });\n")
+    finding = network_findings(tmp_path / "a", "testnet", mpp)
+    assert finding["severity"] == "high" and "the paid server's challenge picks the network" in finding["evidence"]
+    # Near miss: the RPC is pinned, so a pubnet challenge fails instead of paying.
+    pinned = mpp.replace("process.env.STELLAR_SECRET", "process.env.STELLAR_SECRET, rpcUrl: process.env.RPC_URL")
+    assert network_findings(tmp_path / "b", "testnet", pinned) is None
