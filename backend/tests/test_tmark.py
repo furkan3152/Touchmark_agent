@@ -304,6 +304,18 @@ def test_many_refusal_guards_or_an_unclosed_guard_cost_linear_time():
         assert time.perf_counter() - started < 1.0, name
 
 
+def test_a_guard_branch_of_blanks_costs_one_look_per_blank():
+    # Branches whose first statement follows a long run of blanks: a Python block with a
+    # whitespace-only line, and a JS block `{<blanks>;throw ...}`. Both still refuse mainnet.
+    for name, text in (("a.py", ("if p == Network.PUBLIC_NETWORK_PASSPHRASE:\n" + " " * 1_190 + "\n    raise ValueError('x')\n") * 800),
+                       ("a.ts", ("if (p === Networks.PUBLIC) {" + " " * 1_150 + ";throw new Error('x') }\n") * 800)):
+        started = time.perf_counter()
+        assert network_hits({name: text}, _MAINNET) == [], name
+        assert time.perf_counter() - started < 1.5, name  # each blank run was re-read per start: 10 s
+    # Near miss: blanks, then a statement that does not fail, is use.
+    assert network_hits({"a.ts": "if (p === Networks.PUBLIC) {" + " " * 500 + "; submit() }\n"}, _MAINNET) == ["a.ts:1"]
+
+
 def test_one_python_guard_with_thousands_of_markers_is_read_once():
     # 4000 or-ed markers in one `if` (160 KB on one line), and a long inline branch.
     chained = "if " + " or ".join(["p == Network.PUBLIC_NETWORK_PASSPHRASE"] * 4_000) + ":\n    raise ValueError('no')\n"

@@ -222,6 +222,20 @@ def test_a_lockfile_above_a_directory_it_does_not_list_says_nothing_about_it(tmp
     assert locks.resolve("@stellar/stellar-sdk", "src/a.ts").versions == ("14.6.1",)
 
 
+def test_a_cargo_workspace_member_takes_every_copy_its_range_admits_from_the_workspace_lock(tmp_path):
+    (tmp_path / "Cargo.toml").write_text('[workspace]\nmembers = ["contracts/a"]\n')
+    (tmp_path / "contracts/a").mkdir(parents=True)
+    (tmp_path / "contracts/a/Cargo.toml").write_text('[dependencies]\nsoroban-sdk = ">=21"\n')
+    (tmp_path / "Cargo.lock").write_text('[[package]]\nname = "soroban-sdk"\nversion = "21.7.7"\n\n'
+                                         '[[package]]\nname = "soroban-sdk"\nversion = "22.0.8"\n')
+    locks = Lockset.read(tmp_path)
+    found = locks.resolve("soroban-sdk", "contracts/a/src/lib.rs")
+    assert found.versions == ("21.7.7", "22.0.8") and found.source == "Cargo.lock" and found.root == "contracts/a"
+    # One admitted copy resolves as before; an npm lockfile above still says nothing (above).
+    (tmp_path / "contracts/a/Cargo.toml").write_text('[dependencies]\nsoroban-sdk = "22"\n')
+    assert Lockset.read(tmp_path).resolve("soroban-sdk", "contracts/a/src/lib.rs").versions == ("22.0.8",)
+
+
 def test_long_ranges_are_unreadable_at_once():
     for spec in (">=0.1" + " " * 120_000 + "<1", " " * 20_000 + "x", "1" + " || 1" * 10_000):
         started = time.monotonic()

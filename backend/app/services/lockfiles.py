@@ -94,13 +94,15 @@ class Lockset:
                 return Resolution(package, (pinned,), spec, dep.get("source") or root, root)
             # The importer's own entry named no version (an older lockfile layout, two locked
             # copies): a lockfile in the root's own directory still says what is installed, but
-            # only versions the declared range admits stand for this root. A lockfile further up
-            # that names no version for it (a directory that is not a workspace member, such as
-            # a scaffold template) says nothing about it. An unreadable range admits nothing.
+            # only versions the declared range admits stand for this root. An npm lockfile further
+            # up that names no version for it (a directory that is not a workspace member, such as
+            # a scaffold template) says nothing about it. A Cargo or Python lockfile further up is
+            # the workspace's, which records no importers; it is read as for one admitted copy
+            # (_Lock.direct). An unreadable range admits nothing.
             for lock in self.importers[root].get("lockfiles") or []:
-                if _directory(lock) != root:
-                    continue
                 ecosystem = _ECOSYSTEM.get(PurePosixPath(lock).name, "npm")
+                if _directory(lock) != root and ecosystem == "npm":
+                    continue
                 fitting = [v for v in (self.locked.get(lock) or {}).get(package) or []
                            if spec_admits(spec or "", v, _next_patch(v), ecosystem) is True]
                 if fitting:

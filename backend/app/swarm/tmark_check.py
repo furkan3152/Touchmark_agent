@@ -55,8 +55,9 @@ _IF = re.compile(r"\bif\b")
 _EQUALS_BEFORE = re.compile(r"""(?<![!<>=])={2,3}\s*["'`]?[^"'`\s()!=]*$""")
 _EQUALS_AFTER = re.compile(r"""^[^"'`\s()!=]*["'`]?\s*={2,3}(?!=)""")
 #: One statement of the branch, a condition that makes the refusal conditional, logging, and
-#: the statements that fail.
-_STATEMENT = re.compile(r"[^;\n]*[^;\n\s][^;\n]*")
+#: the statements that fail. A statement is read from its first visible character, so a run of
+#: blanks with no statement in it costs one look per blank.
+_STATEMENT = re.compile(r"[^;\n\s][^;\n]*")
 _CONDITIONAL = re.compile(r"&&|!(?!=)|\band\b|\bnot\b")
 _LOGS = re.compile(r"^\s*(?:(?:console|logger|log|logging)\s*\.\s*\w+|print|e?println!|(?:log::)?(?:warn|error)!)\s*\(")
 _FAILS = re.compile(r"^\s*(?:throw\b|raise\b|panic!|panic_with_error!|bail!|return\s+(?:Err\s*\(|Promise\s*\.\s*reject\b|"

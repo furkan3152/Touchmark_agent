@@ -253,6 +253,26 @@ def test_mainnet_in_a_comment_or_a_test_does_not_raise_an_mpp_server_to_high(tmp
     assert finding["severity"] == "high"
 
 
+def test_mainnet_in_a_nested_app_that_installs_on_its_own_does_not_raise_the_root_server(tmp_path):
+    root = {"package.json": json.dumps({"dependencies": {"@stellar/mpp": "^0.4.0"}}),
+            "package-lock.json": package_lock(stellar__mpp="0.4.0"), "src/server.ts": MPP_SERVER}
+    example = {"apps/mainnet-demo/package.json": json.dumps({"dependencies": {"@stellar/stellar-sdk": "^14.0.0"}}),
+               "apps/mainnet-demo/package-lock.json": package_lock(stellar__stellar_sdk="14.0.0"),
+               "apps/mainnet-demo/src/index.ts": "import { Networks } from '@stellar/stellar-sdk';\n"
+                                                     "export const p = Networks.PUBLIC;\n"}
+    [finding] = dep_findings(audit(tmp_path / "a", {**root, **example}), "mpp-unsigned-hash-push-stellar-mpp")
+    assert finding["severity"] == "medium"
+    # Near miss: the same mainnet code in the server's own tree (a workspace member installed
+    # through the root's lockfile, or a script) can reach the server's package: high.
+    member = {k.replace("apps/mainnet-demo/", "packages/demo/"): v for k, v in example.items()
+              if not k.endswith("package-lock.json")}
+    [finding] = dep_findings(audit(tmp_path / "b", {**root, **member}), "mpp-unsigned-hash-push-stellar-mpp")
+    assert finding["severity"] == "high"
+    script = {"scripts/deploy.ts": "export const horizon = 'https://horizon.stellar.org';\n"}
+    [finding] = dep_findings(audit(tmp_path / "c", {**root, **example, **script}), "mpp-unsigned-hash-push-stellar-mpp")
+    assert finding["severity"] == "high"
+
+
 def test_a_commented_out_charge_call_or_a_brace_in_a_string_is_not_a_server_without_fee_payer(tmp_path):
     sponsored = ('import { stellar } from "@stellar/mpp/charge/server";\n'
                  '// Without a sponsor you could write: stellar.charge({ recipient, currency })\n'
@@ -351,6 +371,33 @@ def test_a_nested_package_that_installs_on_its_own_is_not_part_of_the_root_walle
               "packages/policies/src/policy.ts": policy.replace("passkey-kit", "./kit")}
     [note] = dep_findings(audit(tmp_path / "d", {**root, **member}), "passkey-kit-policy-signer")
     assert note["evidence"] == "package-lock.json: passkey-kit 0.12.0; policy signers: packages/policies/src/policy.ts"
+
+
+def test_a_rust_policy_contract_beside_npm_bindings_stays_in_the_root_wallet(tmp_path):
+    wallet = 'import { PasskeyKit } from "passkey-kit";\nexport const kit = (k: PasskeyKit) => k;\n'
+    root = {"package.json": json.dumps({"dependencies": {"passkey-kit": "^0.11.0"}}),
+            "package-lock.json": package_lock(passkey_kit="0.11.0"), "src/kit.ts": wallet,
+            "contracts/policy/Cargo.toml": '[package]\nname = "policy"\n',
+            "contracts/policy/src/lib.rs": "use soroban_sdk::Env;\npub fn policy__(e: Env) {}\n"}
+    bindings = {"contracts/package.json": json.dumps({"devDependencies": {"@stellar/stellar-sdk": "^14.0.0"}}),
+                "contracts/package-lock.json": package_lock(stellar__stellar_sdk="14.0.0")}
+    [note] = dep_findings(audit(tmp_path / "a", {**root, **bindings}), "passkey-kit-policy-signer")
+    assert note["evidence"] == "package-lock.json: passkey-kit 0.11.0; policy signers: contracts/policy/src/lib.rs"
+    # Near miss: when that directory is another wallet (it installs the kit), the contract is
+    # that wallet's, and its own copy is the one reported.
+    other = {"contracts/package.json": json.dumps({"dependencies": {"passkey-kit": "^0.12.0"}}),
+             "contracts/package-lock.json": package_lock(passkey_kit="0.12.0"), "contracts/src/w.ts": wallet}
+    found = dep_findings(audit(tmp_path / "b", {**root, **other}), "passkey-kit-policy-signer")
+    assert [f["evidence"].split(";")[0] for f in found] == ["contracts/package-lock.json: passkey-kit 0.12.0"]
+    # A lockfile that installs the kit without the manifest naming it (a wallet SDK brings it) counts too.
+    lockset = Lockset({"importers": {"": {"lockfiles": ["package-lock.json"], "deps": {"passkey-kit": {}}},
+                                     "contracts": {"lockfiles": ["contracts/package-lock.json"], "deps": {}},
+                                     "web": {"lockfiles": ["web/package-lock.json"], "deps": {}}},
+                       "locked": {"package-lock.json": {"passkey-kit": ["0.11.0"]},
+                                  "contracts/package-lock.json": {"@stellar/stellar-sdk": ["14.0.0"]},
+                                  "web/package-lock.json": {"passkey-kit": ["0.12.0"]}}})
+    assert advisory_check._separate_installs(lockset, "passkey-kit", installing=True) == {"", "web"}
+    assert advisory_check._separate_installs(lockset, "passkey-kit") == {"", "contracts", "web"}
 
 
 # ----------------------------------------------------------------- known-bad wallet WASM
@@ -481,6 +528,35 @@ def test_unclosed_calls_and_repeated_hashes_cost_one_pass(settings):
         assert time.perf_counter() - started < 1.5, label
         assert len({f.id for f in found}) == len(found), label  # duplicate ids fail the whole auditor
     assert [f.severity for f in found] == [Severity.CRITICAL]
+
+
+def test_many_aliases_of_the_charge_method_cost_one_read_of_the_file():
+    aliases = ", ".join(f"stellar as a{i}" for i in range(4_000))
+    body = "const x = foo(1, 2);\n" * 15_000
+    text = f"import {{ {aliases} }} from '@stellar/mpp/charge/server';\n" + body + "a3999.charge({ recipient });\n"
+    started = time.perf_counter()
+    assert advisory_check._mpp_servers_without_fee_payer("s.ts", text) == ["s.ts:15002"]
+    assert time.perf_counter() - started < 1.0  # one scan per alias took 30 s here
+    # The forms each alias is called in, and a near miss: `.charge` of another object is not the import.
+    head = "import { stellar as s, charge } from '@stellar/mpp/charge/server';\nimport * as m from '@stellar/mpp/charge/server';\n"
+    for call, hit in (("s({ a })", True), ("s . charge({ a })", True), ("charge({ a })", True), ("m.stellar.charge({ a })", True),
+                      ("m.charge({ a })", True), ("x. charge({ a })", False), ("x.s.charge({ a })", False), ("s({ feePayer })", False)):
+        assert bool(advisory_check._mpp_servers_without_fee_payer("s.ts", head + call + ";\n")) is hit, call
+
+
+def test_many_servers_in_one_package_read_the_package_once(settings):
+    lock = {"importers": {"": {"lockfiles": ["package-lock.json"], "deps": {
+        "@stellar/mpp": {"spec": "0.4.0", "version": "0.4.0", "source": "package-lock.json"}}}}}
+    server = ("import { stellar } from '@stellar/mpp/charge/server';\n"
+              "export const m = stellar({ recipient: R, network: 'stellar:testnet' });\n" + "const x = foo(1, 2);\n" * 25)
+    files = {f"src/s{i}.ts": server for i in range(800)}
+    artifact = AgentArtifact(name="a", source_kind=SourceKind.REPO, source_ref="r", code_files=files,
+                             raw_metadata={"resolved_versions": lock})
+    started = time.perf_counter()
+    [finding] = advisory_findings(artifact, StellarNativeAuditor(settings),
+                                  today=date.fromisoformat(advisories.ADVISORIES[0].reviewed_at))
+    assert time.perf_counter() - started < 2.0  # the package was read once per server: 25 s
+    assert finding.severity is Severity.MEDIUM
 
 
 def test_range_arguments_are_read_from_one_pass_over_the_file():

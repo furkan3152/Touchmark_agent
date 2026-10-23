@@ -70,6 +70,8 @@ _POLICY_SIGNER = re.compile(r"\baddPolicy\s*\(|\bSignerKey\s*\.\s*Policy\b|\bPol
 _MPP_SERVER_IMPORT = re.compile(
     r"""import\s*(?:\{(?P<names>[^}]*)\}|\*\s*as\s+(?P<ns>[\w$]+))\s*from\s*["']@stellar/mpp/charge/server["']|"""
     r"""(?:const|let|var)\s*\{(?P<req>[^}]*)\}\s*=\s*require\(\s*["']@stellar/mpp/charge/server["']\s*\)""")
+#: A call with an options object: `name({`, `ns.name({`, either followed by `.charge`.
+_OPTIONS_CALL = re.compile(r"(?<![\w$.])(?P<callee>[\w$]+(?:\.[\w$]+)?)(?P<charge>\s*\.\s*charge)?\s*\(\s*\{")
 _WASM_HASH_USE = re.compile(r"wasm_?hash|createWallet|deploy", re.I)
 #: Words that name a list of hashes to refuse (KNOWN_VULNERABLE_..., denyList, blockedHashes),
 #: matched as whole words of identifiers and strings in code, never in comments: 'blockchain',
@@ -129,11 +131,13 @@ def _package_root(lockset: Lockset, path: str) -> str:
     return next(("/".join(parts[:i]) for i in range(len(parts), 0, -1) if "/".join(parts[:i]) in lockset.importers), "")
 
 
-def _separate_installs(lockset: Lockset, package: str) -> set[str]:
+def _separate_installs(lockset: Lockset, package: str, installing: bool = False) -> set[str]:
     """Directories that install npm packages on their own: they have their own npm lockfile, or
-    their manifest declares ``package`` and so resolves it themselves."""
+    their manifest declares ``package`` and so resolves it themselves. With ``installing``, only
+    a lockfile that installs ``package`` itself counts."""
     locks = [lock for imp in lockset.importers.values() for lock in imp.get("lockfiles") or []] + list(lockset.locked)
-    return ({_directory(lock) for lock in locks if PurePosixPath(lock).name in _NPM_LOCKS}
+    return ({_directory(lock) for lock in locks if PurePosixPath(lock).name in _NPM_LOCKS
+             and (not installing or package in (lockset.locked.get(lock) or {}))}
             | {d for d, imp in lockset.importers.items() if package in (imp.get("deps") or {})})
 
 
@@ -144,6 +148,12 @@ def _in_tree(path: str, root: str, separate: set[str]) -> bool:
     parts = PurePosixPath(path).parts[:-1]
     first = len(PurePosixPath(root).parts) + 1 if root else 1
     return not any("/".join(parts[:i]) in separate for i in range(first, len(parts) + 1))
+
+
+def _under(names: list[str], root: str) -> list[str]:
+    """The sorted ``names`` inside ``root``'s directory tree, found by bisection: each package
+    root reads only its own files. ('0' is the character after '/'.)"""
+    return names[bisect_left(names, root + "/"):bisect_left(names, root + "0")] if root else names
 
 
 def _manifest(directory: str) -> str:
@@ -365,19 +375,25 @@ def _mpp_servers_without_fee_payer(name: str, text: str) -> list[str]:
             parts = re.split(r"\s+as\s+|\s*:\s*", spec.strip())
             if parts[0] in {"stellar", "charge"}:
                 callees.add(parts[-1])
+    if not callees:
+        return []
     hits = []
     # Every feePayer and spread in the file, found once: an options object holds one when the
     # first that starts inside it also ends inside it, so nested calls cost no rescans.
-    present = [(m.start(), m.end()) for m in re.finditer(r"\bfeePayer\b|\.\.\.", code)] if callees else []
+    present = [(m.start(), m.end()) for m in re.finditer(r"\bfeePayer\b|\.\.\.", code)]
     starts = [start for start, _ in present]
-    for callee in callees:
-        for m in re.finditer(rf"(?<![\w$.]){re.escape(callee)}(?:\s*\.\s*charge)?\s*\(\s*\{{", skel):
-            close = _closers(skel, "{", "}").get(m.end() - 1)
-            if close is None:
-                continue  # an options object that never closes is not a call to judge
-            k = bisect_left(starts, m.end() - 1)
-            if k == len(present) or present[k][1] > close:
-                hits.append(f"{name}:{_line(text, m.start())}")
+    # One pass over the file for every call that takes an options object; the imported names
+    # are looked up, so a file that imports the method under many aliases is still read once.
+    for m in _OPTIONS_CALL.finditer(skel):
+        callee = m["callee"]
+        if not (callee in callees or (not m["charge"] and callee.endswith(".charge") and callee[:-7] in callees)):
+            continue
+        close = _closers(skel, "{", "}").get(m.end() - 1)
+        if close is None:
+            continue  # an options object that never closes is not a call to judge
+        k = bisect_left(starts, m.end() - 1)
+        if k == len(present) or present[k][1] > close:
+            hits.append(f"{name}:{_line(text, m.start())}")
     return sorted(set(hits))
 
 
@@ -502,6 +518,9 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
 
     # JS: MPP charge servers, and passkey-kit wallets used with policy signers.
     mpp = adv.for_package("@stellar/mpp")[0]
+    js_code = sorted(n for n in files if n.endswith(_JS) and not _TEST_FILE.search(n))
+    mpp_separate = _separate_installs(lockset, mpp.package)
+    mainnet_in: dict[str, bool] = {}
     for name, text in sorted(files.items()):
         if not name.endswith(_JS) or "@stellar/mpp/charge/server" not in text or _TEST_FILE.search(name):
             continue
@@ -513,22 +532,28 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
         calls = _mpp_servers_without_fee_payer(name, text) if affected else []
         if calls:
             # Mainnet is reachable when the package's own code (not a comment, not a test) names it,
-            # a network-keyed map included: the map can select it.
+            # a network-keyed map included: the map can select it. The package is the tree of the
+            # server's nearest manifest without nested directories that install on their own (an
+            # example app with its own lockfile or its own @stellar/mpp); it is read once.
             root = _package_root(lockset, name)
-            package = {n: t for n, t in files.items() if (not root or n.startswith(root + "/"))
-                       and n.endswith(_JS) and not _TEST_FILE.search(n)}
-            mainnet = bool(network_hits(package, _MPP_MAINNET, skip_keyed=False))
+            if root not in mainnet_in:
+                package = {n: files[n] for n in _under(js_code, root) if _in_tree(n, root, mpp_separate)}
+                mainnet_in[root] = bool(network_hits(package, _MPP_MAINNET, skip_keyed=False))
+            mainnet = mainnet_in[root]
             copy(mpp, affected, f"{found[1]}: @stellar/mpp {', '.join(affected)}", Severity.HIGH if mainnet else Severity.MEDIUM,
                  "The MPP charge server accepts unsigned transaction-hash credentials",
                  f"@stellar/mpp {affected[0]} is installed and the charge method has no feePayer."
                  + ("" if mainnet else " Only testnet constants are reachable in this package."), calls[:5])
     # Policy signers count only inside the package root that resolves passkey-kit: its directory
     # tree, nested crates included, but not a nested package that installs on its own (its own
-    # npm lockfile, or its own passkey-kit dependency). That package is another wallet.
+    # npm lockfile, or its own passkey-kit dependency). That package is another wallet. A Rust
+    # policy contract is built by Cargo, so an npm lockfile beside it (TypeScript bindings) does
+    # not make it another wallet's; a nested package that installs the kit does.
     passkey = adv.for_package("passkey-kit")[0]
     separate = _separate_installs(lockset, passkey.package)
-    policy_files = [n for n, t in files.items() if n.endswith(_JS + (".rs", ".rs.hbs")) and _POLICY_SIGNER.search(t)
-                    and _POLICY_SIGNER.search(code_of(n) if n.endswith(".rs") else mask(t)[0])]
+    wallets = _separate_installs(lockset, passkey.package, installing=True)
+    policy_files = sorted(n for n, t in files.items() if n.endswith(_JS + (".rs", ".rs.hbs")) and _POLICY_SIGNER.search(t)
+                          and _POLICY_SIGNER.search(code_of(n) if n.endswith(".rs") else mask(t)[0]))
     seen: set[str] = set()
     for name, text in sorted(files.items()):
         if not name.endswith(_JS) or not re.search(r"""["']passkey-kit["']""", text):
@@ -541,7 +566,8 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
         consulted = True
         affected = [v for v in found[0] if passkey.affects(v)]
         root = resolution.root
-        policies = [n for n in policy_files if _in_tree(n, root, separate)]
+        policies = [n for n in _under(policy_files, root)
+                    if _in_tree(n, root, wallets if n.endswith((".rs", ".rs.hbs")) else separate)]
         if affected and policies:
             legacy = " Kits before 0.13 deploy the pre-1.0 wallet contract, four builds of which have an " \
                      "unauthenticated update_signer (PASSKEY-KIT-UPDATE-SIGNER)." if below(affected[0], "0.13.0") else ""
