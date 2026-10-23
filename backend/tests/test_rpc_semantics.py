@@ -488,9 +488,10 @@ def build_cmd(fn, args, send=None):
 def test_a_claim_released_after_a_cli_submission_fails_is_reported():
     flow = '''from escrow.chain import Client
 
-def execute(repo, client: Client, intent_id, amount):
+def execute(repo, intent_id, amount):
     if not repo.claim_escrow(intent_id):
         return None
+    client = Client()
     try:
         result = client.create(amount)
     except Exception:
@@ -499,24 +500,56 @@ def execute(repo, client: Client, intent_id, amount):
     return result
 '''
     found = hardening({"escrow/chain.py": PY_CLI, "escrow/flow.py": flow})
-    assert found[RETRY].severity.value == "medium" and "escrow/flow.py:8" in found[RETRY].evidence
-    # Typed as a Protocol: its stub stands for the classes the project builds where the
-    # Protocol is expected (a factory, an annotated name, an argument) or that subclass it.
+    assert found[RETRY].severity.value == "medium" and "escrow/flow.py:9" in found[RETRY].evidence
+    # A receiver is followed only when this function builds it: a parameter, typed with the
+    # class or with a Protocol it implements (wired up anywhere), is not resolved by its type.
+    param = flow.replace("def execute(repo, intent_id, amount):", "def execute(repo, client: Client, intent_id, amount):") \
+        .replace("    client = Client()\n", "")
+    assert RETRY not in hardening({"escrow/chain.py": PY_CLI, "escrow/flow.py": param})
     protocol = "from typing import Protocol\n\nclass Chain(Protocol):\n    def create(self, amount): ...\n"
-    typed = flow.replace("from escrow.chain import Client", "from escrow.port import Chain").replace("client: Client", "client: Chain")
-    for wiring in ("from escrow.chain import Client\n\ndef make_chain() -> Chain:\n    return Client()\n",
-                   "from escrow.chain import Client\n\ndef make_chain():\n    chain: Chain = Client()\n    return chain\n",
-                   "from escrow.chain import Client\nfrom escrow.flow import execute\n\ndef main(repo):\n"
-                   "    client = Client()\n    return execute(repo, client, 'i1', 5)\n"):
-        files = {"escrow/chain.py": PY_CLI, "escrow/port.py": protocol, "escrow/flow.py": typed, "escrow/main.py": wiring}
-        assert RETRY in hardening(files), wiring
+    typed = param.replace("from escrow.chain import Client", "from escrow.port import Chain").replace("client: Client", "client: Chain")
     subclass = PY_CLI.replace("import subprocess\n", "import subprocess\nfrom escrow.port import Chain\n").replace("class Client:", "class Client(Chain):")
-    assert RETRY in hardening({"escrow/chain.py": subclass, "escrow/port.py": protocol, "escrow/flow.py": typed})
-    # A class that only shares the method name does not stand for the Protocol.
-    assert RETRY not in hardening({"escrow/chain.py": PY_CLI, "escrow/port.py": protocol, "escrow/flow.py": typed})
+    wiring = "from escrow.chain import Client\n\ndef make_chain() -> Chain:\n    return Client()\n"
+    assert RETRY not in hardening({"escrow/chain.py": subclass, "escrow/port.py": protocol, "escrow/flow.py": typed,
+                                   "escrow/main.py": wiring})
     # An unknown receiver is not resolved by method name: `client.create` could be anything.
-    untyped = flow.replace("client: Client", "client")
+    untyped = param.replace("client: Client", "client")
     assert RETRY not in hardening({"escrow/chain.py": PY_CLI, "escrow/flow.py": untyped})
+
+
+def test_a_handler_for_an_error_only_a_submission_raises_marks_the_block_as_sending():
+    # The receiver is a parameter, so the call is not followed; but the block catches an error
+    # class of the project that only a submitting function raises, so it reaches one.
+    payer = PY_HEAD + '''class TxInFlight(Exception):
+    pass
+
+class Payer:
+    def pay(self, tx):
+        resp = soroban.send_transaction(tx)
+        if resp.status != SendTransactionStatus.PENDING:
+            raise RuntimeError("rejected")
+        raise TxInFlight(resp.hash)
+'''
+    flow = '''from agent.payer import TxInFlight
+
+def execute(payer, repo, intent, tx):
+    repo.claim_escrow(intent)
+    try:
+        return payer.pay(tx)
+    except TxInFlight:
+        raise
+    except Exception:
+        repo.release_escrow_claim(intent)
+        raise
+'''
+    found = hardening({"agent/payer.py": payer, "agent/flow.py": flow})
+    assert found[RETRY].severity.value == "medium" and "agent/flow.py:9" in found[RETRY].evidence
+    # The same error class also raised by code that sends nothing says nothing about the block.
+    checked = payer + "\n\ndef check(state):\n    raise TxInFlight(state)\n"
+    assert RETRY not in hardening({"agent/payer.py": checked, "agent/flow.py": flow})
+    # A third-party error class of the same name is not the project's.
+    imported = flow.replace("from agent.payer import TxInFlight", "from billing import TxInFlight")
+    assert RETRY not in hardening({"agent/payer.py": payer, "agent/flow.py": imported})
 
 
 def test_a_method_name_shared_with_a_submitting_class_is_not_a_submission():
@@ -550,10 +583,16 @@ class Submitter:
     assert RETRY not in hardening({"agent/limits.py": limits, "agent/submitter.py": submitter})
     # The same release around a call that does reach the submitting class is reported.
     owned = limits.replace("import sqlite3\n", "import sqlite3\nfrom agent.submitter import Submitter\n") \
+        .replace("        cur = self.conn.cursor()\n", "        chain = Submitter(URL)\n") \
+        .replace("            cur.execute(\"UPDATE budget SET reserved = reserved + ?\", (amount,))\n",
+                 "            chain.execute(envelope)\n")
+    assert RETRY in hardening({"agent/limits.py": owned, "agent/submitter.py": submitter})
+    # Held in an attribute set elsewhere, the client is not followed: another method may replace it.
+    held = limits.replace("import sqlite3\n", "import sqlite3\nfrom agent.submitter import Submitter\n") \
         .replace("        self.conn = sqlite3.connect(path)\n", "        self.conn = sqlite3.connect(path)\n        self.chain = Submitter(URL)\n") \
         .replace("            cur.execute(\"UPDATE budget SET reserved = reserved + ?\", (amount,))\n",
                  "            self.chain.execute(envelope)\n")
-    assert RETRY in hardening({"agent/limits.py": owned, "agent/submitter.py": submitter})
+    assert RETRY not in hardening({"agent/limits.py": held, "agent/submitter.py": submitter})
     ts_limits = TS_HEAD + '''export class Limits {
   async reserve(db: any, amount: string) {
     try {
@@ -568,8 +607,11 @@ class Submitter:
 '''
     ts_submitter = TS_HEAD + "export class Submitter {\n  async execute(tx: any) { return server.sendTransaction(tx); }\n}\n"
     assert RETRY not in hardening({"src/limits.ts": ts_limits, "src/submitter.ts": ts_submitter})
-    ts_owned = ts_limits.replace("async reserve(db: any, amount: string)", "async reserve(db: Submitter, amount: string)")
+    ts_owned = 'import { Submitter } from "./submitter";\n' + ts_limits.replace(
+        "    try {\n      await db.execute", "    const chain = new Submitter();\n    try {\n      await chain.execute")
     assert RETRY in hardening({"src/limits.ts": ts_owned, "src/submitter.ts": ts_submitter})
+    ts_typed = 'import { Submitter } from "./submitter";\n' + ts_limits.replace("async reserve(db: any,", "async reserve(db: Submitter,")
+    assert RETRY not in hardening({"src/limits.ts": ts_typed, "src/submitter.ts": ts_submitter})
     # A database cursor typed as a Protocol with an `execute` stub stands for no submitting class.
     cursor = '''from typing import Protocol
 
@@ -588,16 +630,16 @@ class Budget:
             raise
 '''
     assert RETRY not in hardening({"agent/limits.py": cursor, "agent/submitter.py": submitter})
-    # The same Protocol does stand for the submitting class once the project passes one for it.
+    # Nor once the project passes a submitting class for it: a parameter is not followed by type.
     wired = cursor + "\n\ndef run(budget: Budget, url):\n    budget.charge(Submitter(url), 5)\n"
     wired = "from agent.submitter import Submitter\n" + wired
-    assert RETRY in hardening({"agent/limits.py": wired, "agent/submitter.py": submitter})
+    assert RETRY not in hardening({"agent/limits.py": wired, "agent/submitter.py": submitter})
 
 
-def test_a_protocol_parameter_stands_only_for_classes_passed_to_its_own_function():
-    # The submitting class is passed to another function or method that only shares the name
-    # (and the parameter position or keyword) of the one whose parameter is typed as the
-    # Protocol: the database cursor still stands for no submitting class.
+def test_a_protocol_parameter_is_not_resolved_to_the_classes_passed_for_it():
+    # A submitting class passed to a function or method whose parameter is typed as a Protocol
+    # (or to another that only shares its name, position or keyword) does not make the
+    # Protocol's stub a submission: the parameter could hold any class with that method.
     chain = '''from stellar_sdk import Server
 
 class Submitter:
@@ -640,33 +682,36 @@ def settle(cur: Cursor, amount):
                    wallet + "\n    def run(self):\n        self.charge(Submitter(), 5)\n",
                    "\n\ndef settle(sub: Submitter, amount):\n    return sub.execute(amount)\n\n\ndef run():\n    settle(Submitter(), 5)\n",
                    # Two classes named Budget: the call may run either, so it says nothing.
-                   wallet.replace("Wallet", "Budget") + "\n\ndef run():\n    Budget().charge(Submitter(), 5)\n"):
-        assert RETRY not in hardening({"agent/chain.py": chain + wiring, "agent/limits.py": limits}), wiring
-    # Passed to the function whose parameter is typed as the Protocol, through a call that
-    # resolves to it, the submitting class does stand for the Protocol.
-    for wiring in ("\nfrom agent.limits import Budget\n\ndef run():\n    s = Submitter()\n    Budget().charge(s, 5)\n",
+                   wallet.replace("Wallet", "Budget") + "\n\ndef run():\n    Budget().charge(Submitter(), 5)\n",
+                   # Passed to the very function whose parameter is typed as the Protocol.
+                   "\nfrom agent.limits import Budget\n\ndef run():\n    s = Submitter()\n    Budget().charge(s, 5)\n",
                    "\nfrom agent.limits import Budget\n\ndef run(budget: Budget):\n    budget.charge(cur=Submitter(), amount=5)\n",
-                   "\nfrom agent.limits import settle\n\ndef run():\n    settle(Submitter(), 5)\n",
-                   "\nfrom agent import limits\n\ndef settle(sub: Submitter):\n    return sub\n\n\n"
-                   "def run():\n    limits.settle(Submitter(), 5)\n"):
-        assert hardening({"agent/chain.py": chain + wiring, "agent/limits.py": limits})[RETRY].severity.value == "medium", wiring
+                   "\nfrom agent.limits import settle\n\ndef run():\n    settle(Submitter(), 5)\n"):
+        assert RETRY not in hardening({"agent/chain.py": chain + wiring, "agent/limits.py": limits}), wiring
 
 
-def test_k3_passed_classes_resolve_each_file_imports_once():
-    # Every call that passes a project class is resolved through its receiver once a Protocol
-    # is in play; the receiver's imports come from one index per file, not one scan of the
-    # module body per receiver name (3,000 receivers over 20,000 statements took 9 s).
+def test_k3_resolution_reads_each_module_and_import_once():
+    # Many modules, each importing many project functions by name and calling them inside a
+    # block that releases on failure: each import resolves through one index of the project's
+    # module names and one table of the importing file's names, not a scan of every file per
+    # imported name (1,400 modules x 100 imports took 85 s; this shape took 18 s).
     started = time.perf_counter()
-    body = "from typing import Protocol\nclass P(Protocol):\n    def go(self, tx): ...\n" + \
-        "".join(f"v{i} = {i}\n" for i in range(20000)) + \
-        "class C:\n    def take(self, p, tx):\n        return p\n\nclass D:\n    pass\n\ndef wire(tx):\n" + \
-        "".join(f"    c{i}.take(D(), tx)\n" for i in range(3000)) + \
-        "def run(c: P, tx):\n    try:\n        return c.go(tx)\n    except Exception:\n        release(tx)\n        raise\n"
-    assert RETRY not in hardening({"agent/a.py": "from stellar_sdk import Server\n" + body})
-    assert time.perf_counter() - started < 6
+    count, names = 1500, 10
+    files = {"agent/__init__.py": "", "agent/lib.py": "from stellar_sdk import Server\n\nclass D:\n    pass\n\n" + "".join(
+        f"def g{k}(d, tx):\n    return d\n\n" for k in range(names)) + "def pay(tx):\n    return Server('u').submit_transaction(tx)\n"}
+    for j in range(count):
+        files[f"agent/w{j}.py"] = "from agent.lib import D, pay\n" + "".join(f"from agent.lib import g{k}\n" for k in range(names)) + \
+            "\n\ndef wire(tx, budget):\n    try:\n" + "".join(f"        g{k}(D(), tx)\n" for k in range(names)) + \
+            "    except Exception:\n        budget.release_reserved(tx)\n        raise\n"
+    files["agent/run.py"] = "from typing import Protocol\n\nclass P(Protocol):\n    def go(self, tx): ...\n\n" \
+        "def run(c: P, tx, budget):\n    try:\n        return c.go(tx)\n    except Exception:\n        budget.release_reserved(tx)\n        raise\n"
+    assert RETRY not in hardening(files)
+    files["agent/w0.py"] = files["agent/w0.py"].replace("        g0(D(), tx)\n", "        pay(tx)\n")
+    assert "agent/w0.py:" in hardening(files)[RETRY].evidence
+    assert time.perf_counter() - started < 15
 
 
-def test_a_release_around_a_module_instance_an_inline_client_or_a_dotted_module_call_is_reported():
+def test_a_release_around_a_client_built_here_or_a_module_function_is_reported_and_a_module_instance_is_not():
     chain = '''from stellar_sdk import Server
 
 class StellarClient:
@@ -690,16 +735,24 @@ def execute(budget, intent_id, envelope, amount):
         budget.release(intent_id, amount)
         raise
 '''
-    for head, call in (("from agent.chain import client", "client.pay(envelope)"),
-                       ("from agent.chain import StellarClient", "StellarClient().pay(envelope)"),
+    for head, call in (("from agent.chain import StellarClient", "StellarClient().pay(envelope)"),
+                       ("from agent.chain import StellarClient as Client", "Client().pay(envelope)"),
+                       ("from agent import chain", "chain.StellarClient().pay(envelope)"),
+                       ("from agent.chain import submit_payment as submit", "submit(envelope)"),
+                       ("from .chain import submit_payment", "submit_payment(envelope)"),
                        ("import agent.chain", "agent.chain.submit_payment(envelope)")):
         files = {"agent/chain.py": chain, "agent/flow.py": flow.replace("HEAD", head).replace("CALL", call)}
         assert hardening(files)[RETRY].severity.value == "medium", call
+    # A module-level instance may be replaced anywhere (a test double, a configured client), and
+    # a class of a third-party module that shares the name is not the project's.
+    for head, call in (("from agent.chain import client", "client.pay(envelope)"),
+                       ("from billing import StellarClient", "StellarClient().pay(envelope)")):
+        files = {"agent/chain.py": chain, "agent/flow.py": flow.replace("HEAD", head).replace("CALL", call)}
+        assert RETRY not in hardening(files), call
     # An instance of a class that does not submit is not a send.
-    quiet = chain.replace("client = StellarClient()", "class Ledger:\n    def pay(self, envelope):\n        return envelope\n\n"
-                                                      "client = Ledger()")
-    files = {"agent/chain.py": quiet, "agent/flow.py": flow.replace("HEAD", "from agent.chain import client")
-             .replace("CALL", "client.pay(envelope)")}
+    quiet = chain + "\nclass Ledger:\n    def pay(self, envelope):\n        return envelope\n"
+    files = {"agent/chain.py": quiet, "agent/flow.py": flow.replace("HEAD", "from agent.chain import Ledger")
+             .replace("CALL", "Ledger().pay(envelope)")}
     assert RETRY not in hardening(files)
     service = TS_HEAD + '''export class StellarService {
   async pay(tx: any) { return server.sendTransaction(tx); }
@@ -717,13 +770,18 @@ export async function execute(budget: any, id: string, tx: any) {
   }
 }
 '''
-    for head, call in (('import { stellarService } from "./chain";', "stellarService.pay(tx)"),
-                       ('import { StellarService } from "./chain";', "new StellarService().pay(tx)")):
+    for head, call in (('import { StellarService } from "./chain";', "new StellarService().pay(tx)"),
+                       ('import * as chain from "./chain.js";', "new chain.StellarService().pay(tx)"),
+                       ('import { StellarService } from "@/chain";', "new StellarService().pay(tx)")):
         files = {"src/chain.ts": service, "src/flow.ts": ts_flow.replace("HEAD", head).replace("CALL", call)}
         assert hardening(files)[RETRY].severity.value == "medium", call
+    for head, call in (('import { stellarService } from "./chain";', "stellarService.pay(tx)"),
+                       ('import { StellarService } from "@payments/chain";', "new StellarService().pay(tx)")):
+        files = {"src/chain.ts": service, "src/flow.ts": ts_flow.replace("HEAD", head).replace("CALL", call)}
+        assert RETRY not in hardening(files), call
     ledger = service.replace("return server.sendTransaction(tx);", "return tx;")
-    files = {"src/chain.ts": ledger, "src/flow.ts": ts_flow.replace("HEAD", 'import { stellarService } from "./chain";')
-             .replace("CALL", "stellarService.pay(tx)")}
+    files = {"src/chain.ts": ledger, "src/flow.ts": ts_flow.replace("HEAD", 'import { StellarService } from "./chain";')
+             .replace("CALL", "new StellarService().pay(tx)")}
     assert RETRY not in hardening(files)
 
 
@@ -732,12 +790,10 @@ def test_k3_resolution_reads_each_name_once_per_project():
     head = "from stellar_sdk import Server\n"
     files = {f"agent/m{k}.py": head + "".join(f"class I{k}_{i}:\n    def go(self, tx):\n        return I{k}_{(i + 1) % 1500}().go(tx)\n"
                                               for i in range(1500)) for k in range(3)}
-    files["agent/run.py"] = head + '''from typing import Protocol
+    files["agent/run.py"] = head + '''from agent.m0 import I0_0
 
-class P(Protocol):
-    def go(self, tx): ...
-
-def run(c: P, budget, tx):
+def run(budget, tx):
+    c = I0_0()
     try:
         return c.go(tx)
     except Exception:
@@ -746,7 +802,8 @@ def run(c: P, budget, tx):
 '''
     assert RETRY not in hardening(files)
     ts = TS_HEAD + "".join(f"class C{i} {{ async go(tx: any): Promise<any> {{ return new C{(i + 1) % 2500}().go(tx); }} }}\n"
-                           for i in range(2500)) + '''export async function run(c: C0, budget: any, tx: any) {
+                           for i in range(2500)) + '''export async function run(budget: any, tx: any) {
+  const c = new C0();
   try { return await c.go(tx); } catch (e) { await budget.releaseReserved(tx); throw e; }
 }
 '''
@@ -756,26 +813,31 @@ def run(c: P, budget, tx):
 
 def test_k3_receiver_classes_are_read_once_per_function_and_file():
     # One function with thousands of distinct receivers, each call in a try block that
-    # releases: the receiver's class comes from one index per function (Python) or per file
-    # (JavaScript), not one walk or two regex scans per name (2,000 receivers took 80 s).
+    # releases: what a receiver holds comes from one index per function, not one walk or two
+    # regex scans per name (2,000 receivers took 80 s). Nested try blocks and functions are
+    # judged against one index of the file, not walked again for each block around them.
     count = 3000
     started = time.perf_counter()
     py = "from stellar_sdk import Server\nclass C:\n    def go(self, tx):\n        return 1\n\ndef run(tx):\n" + "".join(
-        f"    try:\n        c{i}.go(tx)\n    except Exception:\n        release(tx)\n        raise\n" for i in range(count))
+        f"    try:\n        c{i}.go(tx)\n    except Exception:\n        release_budget(tx)\n        raise\n" for i in range(count))
     assert RETRY not in hardening({"agent/a.py": py})
     ts = TS_HEAD + "class C { go(tx: any) { return 1; } }\nexport async function run(tx: any) {\n" + "".join(
-        f"  try {{ await c{i}.go(tx); }} catch (e) {{ await release(tx); throw e; }}\n" for i in range(count)) + "}\n"
+        f"  try {{ await c{i}.go(tx); }} catch (e) {{ await releaseBudget(tx); throw e; }}\n" for i in range(count)) + "}\n"
     assert RETRY not in hardening({"src/a.ts": ts})
     paid = TS_HEAD + "export async function run(tx: any) {\n" + "".join(
-        f"  try {{ await f{i}(tx); }} catch (e) {{ await release(tx); throw e; }}\n" for i in range(count)) + "}\n"
+        f"  try {{ await f{i}(tx); }} catch (e) {{ await releaseBudget(tx); throw e; }}\n" for i in range(count)) + "}\n"
     assert RETRY not in hardening({"src/b.ts": paid})
+    nested = TS_HEAD + "class C { go(tx: any) { return 1; } }\n" + "".join(
+        f"function f{i}(tx: any) {{ const c = new C(); try {{ c.go(tx); " for i in range(count)) + \
+        "".join("} catch (e) { releaseBudget(tx); throw e; } }\n" for _ in range(count))
+    assert RETRY not in hardening({"src/c.ts": nested})
     assert time.perf_counter() - started < 10
-    # The receiver index still resolves a built and a typed receiver.
+    # The index still resolves a receiver built in the function; a typed one is not followed.
     service = TS_HEAD + "export class Payer { async go(tx: any) { return server.sendTransaction(tx); } }\n"
     for line in ("  const p = new Payer();\n", ""):
         flow = service + "export async function run(tx: any, q: Payer) {\n" + line + \
             f"  try {{ await {'p' if line else 'q'}.go(tx); }} catch (e) {{ await releaseBudget(tx); throw e; }}\n}}\n"
-        assert RETRY in hardening({"src/c.ts": flow}), line
+        assert (RETRY in hardening({"src/c.ts": flow})) == bool(line), line
 
 
 def test_a_release_only_for_errors_raised_before_the_send_is_not_reported():

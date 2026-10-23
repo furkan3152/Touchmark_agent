@@ -159,45 +159,20 @@ def _py_is_rpc(call: ast.Call, receivers: set[str], sdk_server: bool) -> bool:
     return text in receivers or (sdk_server and bool(re.search(r"soroban|rpc", text, re.I)))
 
 
-class _PyDefs:
-    """The non-test definitions of one function or method name, sorted once per project:
-    module-level functions by file, methods by their class (node and name)."""
-    __slots__ = ("plain", "by_owner", "by_class", "modules")
-
-    def __init__(self, entries):
-        self.plain: dict[str, list] = {}
-        self.by_owner: dict[int, list] = {}
-        self.by_class: dict[str, list] = {}
-        self.modules: dict[str, list] = {}  # module -> its module-level functions of this name (memo)
-        for py, fn in entries:
-            if TEST_PATH.search(py.path):
-                continue
-            owner = _py_owner(py, fn)
-            if owner is None:
-                self.plain.setdefault(py.path, []).append((py, fn))
-            elif isinstance(owner, ast.ClassDef):
-                self.by_owner.setdefault(id(owner), []).append((py, fn))
-                self.by_class.setdefault(owner.name, []).append((py, fn))
-
-    def in_module(self, module: str) -> list:
-        if module not in self.modules:
-            self.modules[module] = [d for path, found in self.plain.items() if _module_is(path, module) for d in found]
-        return self.modules[module]
-
-
 class _PyRules:
     def __init__(self, ctx: _Context):
         self.ctx = ctx
         self._submits: dict[int, tuple[bool, int]] = {}  # verdict, depth judged at (_judged)
-        self._set_submits: dict[tuple, tuple[bool, int]] = {}
-        self._defs: dict[str, _PyDefs] = {}
-        self._imported: dict[tuple, tuple[str, str | None] | None] = {}
-        self._import_names: dict[str, dict[str, tuple]] = {}
-        self._classes: dict[tuple, str | None] = {}
         self._frames: dict[str, dict[int, tuple]] = {}
-        self._scope_classes: dict[int, dict] = {}
-        self._attr_classes: dict[int, dict[str, str]] = {}
-        self._standing: tuple[dict[str, set[str]], dict[str, set[str]]] | None = None
+        self._locals: dict[int, dict] = {}
+        self._names: dict[str, dict[str, tuple]] = {}
+        self._lookups: dict[tuple, tuple | None] = {}
+        self._modules: dict[str, list] | None = None
+        self._methods: dict[tuple, list] = {}
+        self._members: dict[int, dict[str, list]] = {}
+        self._raisers: dict[int, list] | None = None
+        self._commands: dict[int, dict[str, list[str]]] = {}
+        self._strings: dict[int, list[str]] = {}
 
     # -------------------------------------------------- K2: enum compared with str, missing field
     def misread(self, py: PyFile) -> list[tuple[str, int, str, bool]]:
@@ -322,9 +297,9 @@ class _PyRules:
         if "except" not in py.text or not _RELEASE.search(py.text):
             return out
         for node in ast.walk(py.tree):
-            if not isinstance(node, ast.Try):
+            if not isinstance(node, ast.Try) or not any(_py_broad(h.type) for h in node.handlers):
                 continue
-            if not any(self._py_node_submits(py, stmt, 0) for stmt in node.body):
+            if not (any(self._py_node_submits(py, stmt) for stmt in node.body) or self._py_catches_sent(py, node)):
                 continue
             flags = {unparse(t) for stmt in node.body for n in ast.walk(stmt) if isinstance(n, (ast.Assign, ast.AugAssign))
                      for t in ([n.target] if isinstance(n, ast.AugAssign) else n.targets)
@@ -363,327 +338,275 @@ class _PyRules:
             node = py.parents.get(node)
         return False
 
-    def _py_node_submits(self, py: PyFile, stmt, depth: int) -> bool:
-        return any(isinstance(n, ast.Call) and self._py_call_submits(py, n, depth, stmt) for n in ast.walk(stmt))
+    def _py_node_submits(self, py: PyFile, stmt) -> bool:
+        return any(isinstance(n, ast.Call) and self._py_call_submits(py, n, 0) for n in ast.walk(stmt))
 
-    def _py_call_submits(self, py: PyFile, call: ast.Call, depth: int, scope) -> bool:
+    def _py_call_submits(self, py: PyFile, call: ast.Call, depth: int) -> bool:
         name = _py_name(call.func)
         if name in {"send_transaction", "submit_transaction"}:
             return True
         if any(k.arg == "send" and isinstance(k.value, ast.Constant) and k.value.value == "no" for k in call.keywords):
             return False
-        dotted = unparse(call.func)
-        if re.fullmatch(r"(?:subprocess\.)?(?:run|Popen|check_output|check_call|call)|os\.system", dotted):
-            return self._py_cli_sends(call, scope)
+        if re.fullmatch(r"(?:subprocess\.)?(?:run|Popen|check_output|check_call|call)|os\.system", _py_dotted(call.func) or ""):
+            return self._py_cli_sends(py, call)
         if depth >= 3:
             return False
-        shared, targets = self._py_targets(py, call)
-        if shared is None:
-            return any(self._py_fn_submits(other, fn, depth) for other, fn in targets)
-        # What a Protocol's method stands for: judged once per method, not once per call.
-        return _judged(self._set_submits, shared, depth, lambda: any(self._py_fn_submits(other, fn, depth) for other, fn in targets))
+        return any(self._py_fn_submits(other, fn, depth) for other, fn in self._py_targets(py, call))
 
     def _py_fn_submits(self, py: PyFile, fn, depth: int) -> bool:
         return _judged(self._submits, id(fn), depth, lambda: any(
-            isinstance(n, ast.Call) and self._py_call_submits(py, n, depth + 1, fn) for n in _py_walk(fn)))
+            isinstance(n, ast.Call) and self._py_call_submits(py, n, depth + 1) for n in _py_walk(fn)))
 
-    def _py_defs(self, name: str) -> _PyDefs:
-        if name not in self._defs:
-            self._defs[name] = _PyDefs(self.ctx.index.py_defs.get(name, []))
-        return self._defs[name]
+    def _py_catches_sent(self, py: PyFile, node: ast.Try) -> bool:
+        """A handler names a project exception that only submitting functions raise (`except
+        TxSubmittedUnconfirmed`): the body reaches one of them, whatever its receiver's type."""
+        for handler in node.handlers:
+            for kind in (handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]):
+                found = self._py_lookup(py, _py_dotted(kind) or "")
+                if found and found[0] == "class":
+                    sites = self._py_raisers().get(id(found[2]), [])
+                    if sites and all(fn is not None and self._py_fn_submits(other, fn, 1) for other, fn in sites):
+                        return True
+        return False
 
-    def _py_targets(self, py: PyFile, call: ast.Call, standing: bool = True) -> tuple[tuple | None, list[tuple[PyFile, ast.AST]]]:
-        """(a key when the list is shared by every call of the method, the project functions a
-        call runs), resolved through its receiver: `self.m()` in the caller's class, `f()`
-        defined in the module or imported by name, `mod.f()` / `pkg.mod.f()` from an imported
-        module, `obj.m()` where obj is annotated or built as a project class (here, inline as
-        `C().m()`, or as a module-level instance imported from another module), a Protocol's
-        stub standing for the classes that stand for the Protocol (_py_standing_for; with
-        `standing` false, the stub itself). A method called on anything else (`cur.execute()`)
-        is not followed: its name may belong to another class."""
-        name = _py_name(call.func)
-        if name not in self.ctx.index.py_defs:
-            return None, []
-        defs = self._py_defs(name)
+    def _py_raisers(self) -> dict[int, list]:
+        """Project exception class (by node) -> the functions that raise it (None at module
+        level), from one walk of each non-test module."""
+        if self._raisers is None:
+            self._raisers = {}
+            for py in self.ctx.index.py.values():
+                if TEST_PATH.search(py.path) or "raise" not in py.text:
+                    continue
+                for node in ast.walk(py.tree):
+                    if isinstance(node, ast.Raise) and node.exc is not None:
+                        exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+                        found = self._py_lookup(py, _py_dotted(exc) or "")
+                        if found and found[0] == "class":
+                            self._raisers.setdefault(id(found[2]), []).append((py, self._py_frame(py, node)[0]))
+        return self._raisers
+
+    def _py_targets(self, py: PyFile, call: ast.Call) -> list[tuple[PyFile, ast.AST]]:
+        """The project functions a call runs, followed only when the target is exact: `f()` defined
+        in the calling function or at module level here or in the project module it is imported
+        from by name (`mod.f()` through an imported module), `self.m()`, `cls.m()` or `super().m()`
+        in the caller's class or a project class it inherits from, and `C().m()` or `x.m()` after
+        `x = C()` in the same function, C a project class. A call on anything else (a parameter, an
+        attribute, a typed name) is not followed: its target may be any class with that method."""
         func = call.func
-        if isinstance(func, ast.Name):
-            local = defs.plain.get(py.path)
-            if local:
-                return None, local
-            source = self._py_imported(py, name)
-            return None, defs.in_module(source[0]) if source else []
-        if not isinstance(func, ast.Attribute):
-            return None, []
-        recv, kind = func.value, None
         fn, cls = self._py_frame(py, call)
+        held = self._py_locals(fn) if fn is not None else {}
+        if isinstance(func, ast.Name):
+            if func.id in held:
+                bound = held[func.id]
+                return [(py, bound)] if isinstance(bound, (ast.FunctionDef, ast.AsyncFunctionDef)) else []
+            found = self._py_lookup(py, func.id)
+            return [found[1:]] if found and found[0] == "def" else []
+        if not isinstance(func, ast.Attribute):
+            return []
+        recv = func.value
         if isinstance(recv, ast.Name) and recv.id in {"self", "cls"}:
-            if cls is None:
-                return None, []
-            own = defs.by_owner.get(id(cls))
-            if own:
-                return None, own
-            bases = sorted(b for b in {_py_annotation_class(b) for b in cls.bases} if b)  # inherited from a project class
-            return None, [d for b in bases for d in defs.by_class.get(b, [])]
-        if isinstance(recv, ast.Name):
-            source = self._py_imported(py, recv.id)
-            if source and source[1] is None:  # `import pkg.mod as m` / `from pkg import mod`
-                return None, defs.in_module(source[0])
-            key = (py.path, id(fn), recv.id)
-            if key not in self._classes:
-                self._classes[key] = self._py_class_of_name(py, fn, cls, recv.id) or (
-                    self._py_module_instance(*source) if source else None)  # `from agent.chain import client`
-            kind = self._classes[key]
-        elif isinstance(recv, ast.Attribute) and isinstance(recv.value, ast.Name) and recv.value.id == "self":
-            kind = self._py_attr_classes(cls).get(recv.attr) if cls is not None else None
-        elif isinstance(recv, ast.Attribute):
-            dotted = _py_dotted(recv)  # `agent.chain.submit()` after `import agent.chain`
-            if dotted and self._py_imported(py, dotted) == (dotted, None):
-                return None, defs.in_module(dotted)
-        elif isinstance(recv, ast.Call) and isinstance(recv.func, (ast.Name, ast.Attribute)) and \
-                _py_name(recv.func)[:1].isupper():
-            kind = _py_name(recv.func)  # `StellarClient().pay(env)`
-        if not kind:
-            return None, []
-        own = defs.by_class.get(kind, [])
-        if standing and own and all(_py_stub(d) for _, d in own):
-            # A Protocol or an abstract base: the methods of the classes that stand for it.
-            return ("standing", kind, name), [d for c in sorted(self._py_standing_for(kind))
-                                              for d in defs.by_class.get(c, []) if not _py_stub(d[1])]
-        return None, own
+            return self._py_methods(py, cls, func.attr) if cls is not None else []
+        if isinstance(recv, ast.Call) and isinstance(recv.func, ast.Name) and recv.func.id == "super":
+            return [m for base in self._py_bases(py, cls) for m in self._py_methods(*base, func.attr)] if cls is not None else []
+        if isinstance(recv, ast.Name) and recv.id in held:
+            recv = held[recv.id]  # `x = C()` in this function
+            if not isinstance(recv, str):
+                return []
+            found = self._py_lookup(py, recv)
+        elif isinstance(recv, ast.Call):  # `C().m()`
+            found = self._py_lookup(py, _py_dotted(recv.func) or "")
+        else:  # `mod.f()`, `pkg.mod.f()`
+            found = self._py_lookup(py, f"{_py_dotted(recv)}.{func.attr}") if _py_dotted(recv) else None
+            return [found[1:]] if found and found[0] == "def" else []
+        return self._py_methods(found[1], found[2], func.attr) if found and found[0] == "class" else []
 
-    def _py_frame(self, py: PyFile, call: ast.Call) -> tuple:
-        """(function, class) a call sits in, from one walk per file: no parent walk per call."""
+    def _py_frame(self, py: PyFile, node) -> tuple:
+        """(function, class) a call or raise sits in, from one walk per file: no parent walk per node."""
         frames = self._frames.get(py.path)
         if frames is None:
             frames = self._frames[py.path] = {}
             stack = [(py.tree, None, None)]
             while stack:
-                node, fn, cls = stack.pop()
-                if isinstance(node, ast.Call):
-                    frames[id(node)] = (fn, cls)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    fn = node
-                elif isinstance(node, ast.ClassDef):
-                    cls = node
-                stack.extend((child, fn, cls) for child in ast.iter_child_nodes(node))
-        return frames.get(id(call), (None, None))
+                node_, fn, cls = stack.pop()
+                if isinstance(node_, (ast.Call, ast.Raise)):
+                    frames[id(node_)] = (fn, cls)
+                if isinstance(node_, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    fn = node_
+                elif isinstance(node_, ast.ClassDef):
+                    cls = node_
+                stack.extend((child, fn, cls) for child in ast.iter_child_nodes(node_))
+        return frames.get(id(node), (None, None))
 
-    def _py_class_of_name(self, py: PyFile, fn, cls, name: str) -> str | None:
-        """The class a local name holds in the calling function, else at module level."""
-        for scope in ([fn] if fn is not None else []) + [py.tree]:
-            found = self._py_scope_classes(scope).get(name)
-            if isinstance(found, tuple):  # `client = self.a or self.b`
-                found = next((c for attr in found if cls is not None and (c := self._py_attr_classes(cls).get(attr))), None)
-            if found:
-                return found
-        return None
-
-    def _py_scope_classes(self, scope) -> dict:
-        """name -> the class it holds in one function (a parameter annotation, else its last
-        `name: C = ...` or `name = C(...)`; `name = self.a or self.b` gives the attributes) or
-        at module level (the first such statement): once per scope, not once per name."""
-        found = self._scope_classes.get(id(scope))
+    def _py_locals(self, fn) -> dict:
+        """Name -> what one function binds it to, for each name it binds: the class text of `x =
+        C(...)`, a nested def, or None (a parameter, any other value, or bound more than once).
+        One walk per function, not descending into nested ones."""
+        found = self._locals.get(id(fn))
         if found is None:
-            found = self._scope_classes[id(scope)] = {}
-            module = isinstance(scope, ast.Module)
-            nodes = scope.body if module else sorted(
-                (n for n in _py_walk(scope) if isinstance(n, (ast.Assign, ast.AnnAssign))), key=lambda n: (n.lineno, n.col_offset))
-            for node in nodes:
-                held = None
-                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                    held, targets = _py_annotation_class(node.annotation), [node.target.id]
-                elif isinstance(node, ast.Assign):
-                    targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
-                    held = _py_built_class(node.value) or (None if module else _py_self_attrs(node.value))
-                if held:
-                    for target in targets:
-                        if module:
-                            found.setdefault(target, held)
-                        else:
-                            found[target] = held
-            if not module:
-                for arg in [*scope.args.args, *scope.args.kwonlyargs, *scope.args.posonlyargs]:
-                    if arg.annotation is not None and (held := _py_annotation_class(arg.annotation)):
-                        found[arg.arg] = held
-        return found
-
-    def _py_attr_classes(self, cls: ast.ClassDef) -> dict[str, str]:
-        """attr -> the class `self.attr` holds: `attr: C` in the class body, `self.attr = C(...)`
-        or `self.attr = param` with param annotated in a method; once per class."""
-        found = self._attr_classes.get(id(cls))
-        if found is None:
-            found = self._attr_classes[id(cls)] = {}
-            for node in cls.body:
-                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and \
-                        (held := _py_annotation_class(node.annotation)):
-                    found.setdefault(node.target.id, held)
-            for method in cls.body:
-                if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                params = {a.arg: a.annotation for a in [*method.args.args, *method.args.kwonlyargs] if a.annotation is not None}
-                local: dict[str, str] = {}
-                for node in sorted((n for n in _py_walk(method) if isinstance(n, (ast.Assign, ast.AnnAssign))),
-                                   key=lambda n: (n.lineno, n.col_offset)):
+            bound: dict[str, list] = {}
+            made: set[int] = set()
+            for node in _py_walk(fn):
+                if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                    built = _py_call(node.value)
+                    held = _py_dotted(built.func) if built is not None and not isinstance(node.value, ast.Await) else None
                     for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-                        if not (isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self"):
+                        if isinstance(target, ast.Name):
+                            bound.setdefault(target.id, []).append(held)
+                            made.add(id(target))
+                elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and id(node) not in made:
+                    bound.setdefault(node.id, []).append(None)
+                elif isinstance(node, ast.arg):
+                    bound.setdefault(node.arg, []).append(None)
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    bound.setdefault(node.name, []).append(None if isinstance(node, ast.ClassDef) else node)
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    for alias in node.names:
+                        bound.setdefault((alias.asname or alias.name).split(".")[0], []).append(None)
+                elif isinstance(node, ast.ExceptHandler) and node.name:
+                    bound.setdefault(node.name, []).append(None)
+            found = self._locals[id(fn)] = {name: values[0] if len(values) == 1 else None for name, values in bound.items()}
+        return found
+
+    def _py_names(self, py: PyFile) -> dict[str, tuple]:
+        """What a module's top-level statements bind each name to: ("def", node), ("class", node),
+        ("from", module, level, name), ("module", module, level) or ("other",) (an assignment,
+        or bound more than once). `import a.b` binds both `a` and the dotted name `a.b`."""
+        found = self._names.get(py.path)
+        if found is None:
+            found = self._names[py.path] = {}
+
+            def bind(name: str, entry: tuple) -> None:
+                found[name] = entry if name not in found else ("other",)
+            for node in py.tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    bind(node.name, ("def", node))
+                elif isinstance(node, ast.ClassDef):
+                    bind(node.name, ("class", node))
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.asname:
+                            bind(alias.asname, ("module", alias.name, 0))
                             continue
-                        if isinstance(node, ast.AnnAssign):
-                            held = _py_annotation_class(node.annotation)
-                        elif isinstance(node.value, ast.Name) and node.value.id in params:
-                            held = _py_annotation_class(params[node.value.id])
-                        else:
-                            held = _py_built_class(node.value)
-                        if held:
-                            local[target.attr] = held
-                for attr, held in local.items():
-                    found.setdefault(attr, held)
+                        bind(alias.name.split(".")[0], ("module", alias.name.split(".")[0], 0))
+                        if "." in alias.name:
+                            bind(alias.name, ("module", alias.name, 0))
+                elif isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        if alias.name != "*":
+                            bind(alias.asname or alias.name, ("from", node.module or "", node.level, alias.name))
+                elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                    for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                        if isinstance(target, ast.Name):
+                            bind(target.id, ("other",))
         return found
 
-    def _py_standing_for(self, protocol: str) -> set[str]:
-        """The project classes a Protocol or abstract base stands for: its subclasses, and the
-        classes the project builds where it is expected (returned by a function annotated to
-        return it, assigned to a name annotated with it, or passed for a parameter annotated
-        with it), with their subclasses. A class that only shares a method name is not one."""
-        if self._standing is None:
-            self._standing = self._py_expected()
-        subclasses, expected = self._standing
-        found: set[str] = set()
-        todo = list(subclasses.get(protocol, set()) | expected.get(protocol, set()))
-        while todo:
-            name = todo.pop()
-            if name not in found and name != protocol:
-                found.add(name)
-                todo.extend(subclasses.get(name, ()))
+    def _py_lookup(self, py: PyFile, dotted: str, depth: int = 0) -> tuple | None:
+        """What a name or dotted name used in a module stands for, exactly: ("def", file, node),
+        ("class", file, node) or ("module", file, None), through imports of project modules
+        (re-exports included). A name the module does not bind, or binds from outside the
+        project, is None."""
+        key = (py.path, dotted)
+        if key in self._lookups:
+            return self._lookups[key]
+        self._lookups[key] = None  # an import cycle reads as unknown
+        found = None
+        entry = self._py_names(py).get(dotted) if dotted and depth < 8 else None
+        if entry is None and "." in dotted and depth < 8:
+            head, _, last = dotted.rpartition(".")
+            owner = self._py_lookup(py, head, depth + 1)
+            found = self._py_lookup(owner[1], last, depth + 1) if owner and owner[0] == "module" else None
+        elif entry is not None and entry[0] in {"def", "class"}:
+            found = (entry[0], py, entry[1])
+        elif entry is not None and entry[0] == "module":
+            module = self._py_module(py, entry[1], entry[2])
+            found = ("module", module, None) if module is not None else None
+        elif entry is not None and entry[0] == "from":
+            _, module, level, name = entry
+            source = self._py_module(py, module, level)
+            if source is not None and name in self._py_names(source):
+                found = self._py_lookup(source, name, depth + 1)
+            elif (sub := self._py_module(py, f"{module}.{name}" if module else name, level)) is not None:
+                found = ("module", sub, None)  # `from pkg import mod`
+        self._lookups[key] = found
         return found
 
-    def _py_expected(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-        """(base -> its subclasses, annotated class -> the classes built for it) over the
-        project's non-test modules, in one walk per module. A class passed for an annotated
-        parameter counts only when the call resolves to its function (_py_targets): a project
-        name index would merge every function of that name."""
-        subclasses: dict[str, set[str]] = {}
-        expected: dict[str, set[str]] = {}
-        classes: set[str] = set()
-        for py in self.ctx.index.py.values():
-            if TEST_PATH.search(py.path):
-                continue
-            for node in ast.walk(py.tree):
-                if isinstance(node, ast.ClassDef):
-                    classes.add(node.name)
-                    for base in node.bases:
-                        if (name := _py_annotation_class(base)):
-                            subclasses.setdefault(name, set()).add(node.name)
-                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    wanted = _py_annotation_class(node.returns) if node.returns is not None else None
-                    if wanted:
-                        for ret in _py_walk(node):
-                            if isinstance(ret, ast.Return) and ret.value is not None:
-                                built = _py_built_class(ret.value) or (
-                                    self._py_scope_classes(node).get(ret.value.id) if isinstance(ret.value, ast.Name) else None)
-                                if isinstance(built, str):
-                                    expected.setdefault(wanted, set()).add(built)
-                    args = node.args
-                    for arg, default in [*zip(args.args[len(args.args) - len(args.defaults):], args.defaults),
-                                         *zip(args.kwonlyargs, args.kw_defaults)]:
-                        if default is not None and arg.annotation is not None and (built := _py_built_class(default)) \
-                                and (wanted := _py_annotation_class(arg.annotation)):
-                            expected.setdefault(wanted, set()).add(built)
-                elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                    if (built := _py_built_class(node.value)) and (wanted := _py_annotation_class(node.annotation)):
-                        expected.setdefault(wanted, set()).add(built)
-                elif isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute)):
-                    table = None
-                    for at, value in [*enumerate(node.args), *((k.arg, k.value) for k in node.keywords if k.arg)]:
-                        built = _py_built_class(value)
-                        if built is None and isinstance(value, ast.Name):
-                            fn, _ = self._py_frame(py, node)
-                            built = self._py_scope_classes(fn if fn is not None else py.tree).get(value.id)
-                        if isinstance(built, str):
-                            table = self._py_param_classes(py, node) if table is None else table
-                            if (wanted := table.get(at)):
-                                expected.setdefault(wanted, set()).add(built)
-        return subclasses, {wanted: built & classes for wanted, built in expected.items()}
-
-    def _py_param_classes(self, py: PyFile, call: ast.Call) -> dict[int | str, str]:
-        """position or keyword -> the class its parameter is annotated with, in the functions
-        the call resolves to (_py_targets, the Protocol's stub itself); a parameter they do not
-        all annotate with the same class is left out, as is any call that does not resolve."""
-        tables = []
-        for other, fn in self._py_targets(py, call, standing=False)[1]:
-            table: dict[int | str, str] = {}
-            positional = [*fn.args.posonlyargs, *fn.args.args]
-            if isinstance(_py_owner(other, fn), ast.ClassDef):
-                positional = positional[1:]  # self
-            for i, arg in enumerate(positional):
-                if arg.annotation is not None and (wanted := _py_annotation_class(arg.annotation)):
-                    table[i] = table[arg.arg] = wanted
-            for arg in fn.args.kwonlyargs:
-                if arg.annotation is not None and (wanted := _py_annotation_class(arg.annotation)):
-                    table[arg.arg] = wanted
-            tables.append(table)
-        if not tables:
-            return {}
-        return {at: wanted for at, wanted in tables[0].items() if all(t.get(at) == wanted for t in tables[1:])}
-
-    def _py_imported(self, py: PyFile, name: str) -> tuple[str, str | None] | None:
-        """(module, imported name) a local name comes from: `from a.b import name` -> ("a.b",
-        "name"); `import a.b as name`, `import a.b` (for the name `a.b`), or `from a import b`
-        where a/b.py is a project module -> ("a.b", None). Once per file and name, from one
-        index of the file's imports (the first statement that binds the name)."""
-        key = (py.path, name)
-        if key not in self._imported:
-            names = self._import_names.get(py.path)
-            if names is None:
-                names = self._import_names[py.path] = {}
-                for node in py.tree.body:
-                    if isinstance(node, ast.Import) or (isinstance(node, ast.ImportFrom) and node.module):
-                        bound = {alias.asname or alias.name: (node, alias) for alias in node.names}  # the last alias wins
-                        for local, entry in bound.items():
-                            names.setdefault(local, entry)
-            found, entry = None, names.get(name)
-            if entry and isinstance(entry[0], ast.ImportFrom):
-                node, alias = entry
-                dotted = f"{node.module}.{alias.name}"
-                module = any(_module_is(path, dotted) for path in self.ctx.index.py)
-                found = (dotted, None) if module else (node.module, alias.name)
-            elif entry:
-                found = (entry[1].name, None)
-            self._imported[key] = found
-        return self._imported[key]
-
-    def _py_module_instance(self, module: str, name: str | None) -> str | None:
-        """The class of a module-level instance another module imports by name: `client =
-        StellarClient()` or `client: StellarClient = ...` in that module."""
-        key = ("instance", module, name)
-        if key not in self._classes:
-            found = None
+    def _py_module(self, py: PyFile, module: str, level: int) -> PyFile | None:
+        """The one non-test project file a module name stands for: relative to the importing file,
+        or (absolute) the only file whose path ends with it under any source root."""
+        if self._modules is None:
+            self._modules = {}
             for path, other in self.ctx.index.py.items():
-                if name is None or not _module_is(path, module) or TEST_PATH.search(path):
+                if TEST_PATH.search(path):
                     continue
-                for node in other.tree.body:
-                    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
-                        found = _py_annotation_class(node.annotation)
-                    elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
-                        built = _py_call(node.value)
-                        if built is not None and isinstance(built.func, (ast.Name, ast.Attribute)) and \
-                                _py_name(built.func)[:1].isupper():
-                            found = _py_name(built.func)
-            self._classes[key] = found
-        return self._classes[key]
+                stem = path[:-3]
+                stem = stem[:-9] if stem.endswith("/__init__") else "" if stem == "__init__" else stem
+                parts = stem.split("/")
+                for i in range(len(parts)):
+                    self._modules.setdefault(".".join(parts[i:]), []).append(other)
+        if level:
+            base = posixpath.dirname(py.path)
+            for _ in range(level - 1):
+                base = posixpath.dirname(base)
+            stem = posixpath.join(base, *module.split(".")) if module else base
+            other = self.ctx.index.py.get(stem + ".py") or self.ctx.index.py.get(stem + "/__init__.py")
+            return other if other is not None and not TEST_PATH.search(other.path) else None
+        found = self._modules.get(module, [])
+        return found[0] if len(found) == 1 else None
 
-    def _py_cli_sends(self, call: ast.Call, scope) -> bool:
+    def _py_methods(self, py: PyFile, cls: ast.ClassDef, name: str, depth: int = 0) -> list[tuple[PyFile, ast.AST]]:
+        """The methods `name` of a class: its own, else those of the first project base class that has it."""
+        key = (id(cls), name)
+        if key not in self._methods:
+            self._methods[key] = []  # an inheritance cycle reads as none
+            members = self._members.get(id(cls))
+            if members is None:
+                members = self._members[id(cls)] = {}
+                for node in cls.body:
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        members.setdefault(node.name, []).append((py, node))
+            self._methods[key] = members.get(name) or next((found for base in self._py_bases(py, cls) if depth < 8
+                                                            and (found := self._py_methods(*base, name, depth + 1))), [])
+        return self._methods[key]
+
+    def _py_bases(self, py: PyFile, cls: ast.ClassDef) -> list[tuple[PyFile, ast.ClassDef]]:
+        found = [self._py_lookup(py, _py_dotted(base) or "") for base in cls.bases]
+        return [(other, node) for kind, other, node in filter(None, found) if kind == "class"]
+
+    def _py_cli_sends(self, py: PyFile, call: ast.Call) -> bool:
+        """`stellar contract invoke` / `tx send` run as a command: the strings of its first
+        argument, of what the calling function assigns to it, and of the project function that
+        builds it (`cmd = build_cmd(...)`)."""
         words: list[str] = []
         for arg in call.args[:1]:
-            words += _py_strings(arg)
+            words += self._py_words(py, arg)
             if isinstance(arg, ast.Name):
-                for node in ast.walk(scope):
-                    if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == arg.id for t in node.targets):
-                        words += _py_strings(node.value)
-                        built = _py_call(node.value)
-                        for _, fn in self.ctx.index.py_defs.get(_py_name(built.func) if built else "", []):
-                            words += _py_strings(fn)
+                fn = self._py_frame(py, call)[0]
+                words += self._py_commands(py, fn if fn is not None else py.tree).get(arg.id, [])
         text = " ".join(words)
         return bool(_STELLAR_CLI.search(text)) and not re.search(r"--send[= ]no\b", text)
+
+    def _py_commands(self, py: PyFile, scope) -> dict[str, list[str]]:
+        """Name -> the strings assigned to it in one function (or at module level): one walk."""
+        found = self._commands.get(id(scope))
+        if found is None:
+            found = self._commands[id(scope)] = {}
+            for node in _py_walk(scope):
+                if isinstance(node, ast.Assign):
+                    words = self._py_words(py, node.value)
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            found.setdefault(target.id, []).extend(words)
+        return found
+
+    def _py_words(self, py: PyFile, value) -> list[str]:
+        """The strings of a value, and of the project function it calls (once per function)."""
+        words = _py_strings(value)
+        built = _py_call(value)
+        for _, fn in self._py_targets(py, built) if built is not None else []:
+            if id(fn) not in self._strings:
+                self._strings[id(fn)] = _py_strings(fn)
+            words += self._strings[id(fn)]
+        return words
 
 
 def _judged(memo: dict, key, depth: int, judge) -> bool:
@@ -705,67 +628,6 @@ def _py_dotted(node) -> str | None:
         parts.append(node.attr)
         node = node.value
     return ".".join([node.id, *reversed(parts)]) if isinstance(node, ast.Name) else None
-
-
-def _py_owner(py: PyFile, fn: ast.AST):
-    """What a function belongs to: its class (a method), None (a module-level function), or
-    False (a function nested in another, which no call from outside reaches by name)."""
-    parent = py.parents.get(fn)
-    return parent if isinstance(parent, ast.ClassDef) else None if isinstance(parent, ast.Module) else False
-
-
-def _module_is(path: str, dotted: str) -> bool:
-    """The file is the module `a.b` (a/b.py or a/b/__init__.py, under any source root)."""
-    stem = path[:-3] if path.endswith(".py") else path
-    stem = stem[:-9] if stem.endswith("/__init__") else stem
-    return ("/" + stem).endswith("/" + dotted.replace(".", "/"))
-
-
-def _py_annotation_class(node) -> str | None:
-    """`C`, `mod.C`, `Optional[C]`, `C | None` -> C (the first class named, left to right; no
-    recursion, so a long union cannot overflow the stack)."""
-    stack = [node]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, ast.Subscript):
-            stack.append(node.slice)
-        elif isinstance(node, ast.BinOp):
-            stack.extend((node.right, node.left))
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if re.fullmatch(r"[\w.]+", node.value):
-                return node.value.rsplit(".", 1)[-1]
-        elif isinstance(node, (ast.Name, ast.Attribute)):
-            return node.id if isinstance(node, ast.Name) else node.attr
-    return None
-
-
-def _py_built_class(value) -> str | None:
-    """`C(...)` or `mod.C(...)` (a capitalised callee) -> C."""
-    built = _py_call(value)
-    if built is not None and isinstance(built.func, (ast.Name, ast.Attribute)) and _py_name(built.func)[:1].isupper():
-        return _py_name(built.func)
-    return None
-
-
-def _py_self_attrs(value) -> tuple[str, ...] | None:
-    """`self.a`, `self.a or self.b`, `self.a if x else self.b` -> the attribute names, in order."""
-    attrs, stack = [], [value]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
-            attrs.append(node.attr)
-        elif isinstance(node, ast.BoolOp):
-            stack.extend(reversed(node.values))
-        elif isinstance(node, ast.IfExp):
-            stack.extend((node.orelse, node.body))
-    return tuple(attrs) or None
-
-
-def _py_stub(fn: ast.AST) -> bool:
-    """A Protocol or abstract method: a docstring, `...`, `pass` or `raise NotImplementedError`."""
-    body = [s for s in fn.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str))]
-    return all(isinstance(s, ast.Pass) or (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and s.value.value is ...)
-               or (isinstance(s, ast.Raise) and "NotImplementedError" in unparse(s)) for s in body)
 
 
 def _py_strings(node) -> list[str]:
@@ -871,10 +733,9 @@ _BEFORE_CALL = re.compile(r"(?<![\w$])#?([\w$]+)\s*(?:\??:[^=;\n(){},]{0,120})?[
 #: Call sites by name, for the factory calls: `getRpc(`, `this.makeRpc(`.
 _CALL_SITE = re.compile(r"(?:(?<![\w$.])|(?<=(?<![\w$.])this\.))([\w$]+)\s*\(")
 #: `name = new C(`, `this.name: T = new C(` (the class a name is built as; the type excludes
-#: brackets and commas, so `f(a: string, b = new C(` binds b) and `name: C` (typed as).
+#: brackets and commas, so `f(a: string, b = new C(` binds b).
 _JS_BUILT = re.compile(r"(?<![\w$.])(?:this\.)?#?([\w$]+)\s*(?:\??:[^=;\n(){},]{0,120})?=\s*(?:await\s+)?new\s+"
                        r"((?:[\w$]+\.)*[\w$]+)\s*[(<]")
-_JS_TYPED = re.compile(r"(?<![\w$.])#?([\w$]+)\s*\??:\s*(?:[\w$]+\.)*([A-Z][\w$]*)\b(?!\s*[.<\[])")
 #: `name = maker(` (what a local fetch is made by, for the paid-request test).
 _JS_MADE = re.compile(r"(?<![\w$])([\w$]+)\s*(?::[^=;\n(){},]{0,120})?=\s*(?:await\s+)?([\w$.]+)\s*\(")
 #: Class declarations and expressions.
@@ -907,19 +768,25 @@ def _ancestors(node, top) -> list | None:
 
 
 class _JsTree:
-    """One file's calls by callee name with the function each sits in, and each function's
-    enclosing function, from one walk (no parent lookups)."""
-    __slots__ = ("root", "calls", "outer")
+    """One file's calls by callee name with the function each sits in (also by the call's span),
+    and each function's enclosing function, from one walk (no parent lookups)."""
+    __slots__ = ("root", "calls", "order", "starts", "scope", "outer")
 
     def __init__(self, root):
         self.root = root
         self.calls: dict[str, list] = {}
+        self.order: list = []  # every call, in source order, with its start offset
+        self.starts: list[int] = []
+        self.scope: dict[tuple, object] = {}
         self.outer: dict[tuple, object] = {}
         stack = [(root, None)]
         while stack:
             node, fn = stack.pop()
             if node.type == "call_expression":
                 self.calls.setdefault(callee_name(node), []).append((node, fn))
+                self.order.append(node)
+                self.starts.append(node.start_byte)
+                self.scope[(node.start_byte, node.end_byte)] = fn
             elif js_functions_type(node):
                 self.outer[(node.start_byte, node.end_byte, node.type)] = fn
                 fn = node
@@ -1022,38 +889,11 @@ class _FileUses:
             stack.extend((child, node, fn) for child in reversed(node.named_children))
 
 
-class _JsDefs:
-    """The non-test functions of one name, sorted once per project: plain functions and object
-    literal properties by file, methods by class name and by class node."""
-    __slots__ = ("plain", "literal", "not_class", "by_class", "by_class_node")
-
-    def __init__(self, entries, class_at):
-        self.plain: dict[str, list] = {}
-        self.literal: dict[str, list] = {}
-        self.not_class: dict[str, list] = {}
-        self.by_class: dict[str, list] = {}
-        self.by_class_node: dict[tuple, list] = {}
-        for js, fn in entries:
-            cls = class_at(js, fn)
-            owner = _js_owner(fn, cls)
-            if owner is None:
-                self.plain.setdefault(js.path, []).append((js, fn))
-            elif owner is True:
-                self.literal.setdefault(js.path, []).append((js, fn))
-            if not isinstance(owner, str):
-                self.not_class.setdefault(js.path, []).append((js, fn))
-            else:
-                self.by_class.setdefault(owner, []).append((js, fn))
-            if cls is not None:
-                self.by_class_node.setdefault((js.path, cls.start_byte), []).append((js, fn))
-
-
 class _JsRules:
     def __init__(self, ctx: _Context):
         self.ctx = ctx
-        self._defs: dict[str, _JsDefs | None] = {}
         self._memo: dict[tuple, object] = {}
-        self._sends: dict[tuple, tuple[bool, int]] = {}
+        self._sent: dict[tuple, tuple[set[int], dict[int, int]]] = {}  # K3: per file and call depth (_sends_within)
         self._bound: set[str] | None = None
         self._aliases: dict[str, re.Pattern | None] = {}
         self._file_uses: dict[str, _FileUses] = {}
@@ -1549,99 +1389,298 @@ class _JsRules:
 
     # -------------------------------------------------- K3: released or rebuilt after broadcast
     def release_after_send(self, js: JsFile) -> list[tuple[int, str]]:
+        """Try blocks whose failure handler releases what was reserved although the block may
+        have sent. One walk of the file finds each handler's first release that no flag or
+        error test guards (in the handler's own function, outside the handlers nested in it);
+        whether the block sends comes from one judgment of each call (_sends_within)."""
         out = []
         if "catch" not in js.text or not _RELEASE.search(js.text):
             return out
-        for node in SourceIndex.walk(js.root):
-            if node.type != "try_statement":
-                continue
-            body, handler = node.child_by_field_name("body"), node.child_by_field_name("handler")
-            if body is None or handler is None or not self._submits(js, body, 0):
-                continue
-            catch = handler.child_by_field_name("body")
-            if catch is None or any(callee_name(c) in sdk.POLL_METHODS for c in SourceIndex.calls(catch)):
-                continue
-            flags = {_txt(a.child_by_field_name("left")) for a in SourceIndex.walk(body)
-                     if a.type == "assignment_expression" and a.child_by_field_name("left").type in
-                     {"identifier", "member_expression"}}  # transmitted = true; this.transmitted = true
-            for call in SourceIndex.calls(catch, include_nested=False):
-                name = callee_name(call)
-                if _RELEASE.search(name) and _RESERVED.search(_txt(call)) and not _guarded(call, catch, flags):
-                    out.append((js.line(handler), f"{js.snippet(handler)} -> {' '.join(_txt(call).split())[:100]}"))
-                    break
+        tries, released, polls, assigned = [], {}, [], {}
+        stack = [(js.root, -1, False)]  # node, index of the handler it sits in (-1: none), guarded
+        while stack:
+            node, at, guarded = stack.pop()
+            kind = node.type
+            if js_functions_type(node):
+                at, guarded = -1, False
+            elif kind == "try_statement":
+                body, handler = node.child_by_field_name("body"), node.child_by_field_name("handler")
+                catch = handler.child_by_field_name("body") if handler is not None else None
+                if body is not None and catch is not None:
+                    tries.append((handler, body, catch))
+                    rest = node.child_by_field_name("finalizer")
+                    stack.extend(item for item in ((rest, at, guarded), (catch, len(tries) - 1, False), (body, at, guarded))
+                                 if item[0] is not None)  # the block before its handler: its flags are known there
+                    continue
+            elif kind == "if_statement" and at >= 0 and not guarded:
+                guarded = _flag_test(_txt(node.child_by_field_name("condition")), tries[at][1], assigned)
+            elif kind == "assignment_expression" and node.child_by_field_name("left").type in {"identifier", "member_expression"}:
+                assigned.setdefault(_txt(node.child_by_field_name("left")), []).append(node.start_byte)  # sent = true
+            elif kind == "call_expression":
+                name = callee_name(node)
+                if name in sdk.POLL_METHODS:
+                    polls.append(node.start_byte)
+                elif at >= 0 and not guarded and at not in released and _RELEASE.search(name) and _RESERVED.search(_txt(node)):
+                    released[at] = node
+            stack.extend((child, at, guarded) for child in reversed(node.named_children))
+        for at, call in sorted(released.items()):
+            handler, body, catch = tries[at]
+            if not _within(polls, catch.start_byte, catch.end_byte) and self._sends_within(js, body.start_byte, body.end_byte, 0):
+                out.append((js.line(handler), f"{js.snippet(handler)} -> {' '.join(_txt(call).split())[:100]}"))
         return out
 
-    def _submits(self, js: JsFile, node, depth: int) -> bool:
-        for call in SourceIndex.calls(node):
-            name = callee_name(call)
-            if name in {"submitTransaction", "submitAsyncTransaction"} or \
-                    (name == "sendTransaction" and self._is_rpc(js, receiver(call))):
-                return True
-            if self._pays(js, call):
-                return True
-            if name in {"exec", "execSync", "spawn", "spawnSync", "execFile", "execa"} and \
-                    any(_STELLAR_CLI.search(_template_text(a) or _string_value(a) or "") for a in _args(call)):
-                return True
-            if depth < 2:
-                for other, fn in self._js_targets(js, call):
-                    if _judged(self._sends, _node_key(other, fn), depth, lambda: self._submits(other, fn, depth + 1)):
-                        return True
-        return False
+    def _sends_within(self, js: JsFile, lo: int, hi: int, depth: int) -> bool:
+        """Some call between two offsets of a file submits. The file's calls are judged in order
+        at most once per call depth: an index skips past calls already judged not to submit."""
+        tree = self._tree(js)
+        sends, skip = self._sent.setdefault((js.path, depth), (set(), {}))
+        j, seen = bisect_left(tree.starts, lo), []
+        while j < len(tree.order) and tree.starts[j] < hi and j not in sends:
+            if j in skip:
+                seen.append(j)
+                j = skip[j]
+            elif self._call_submits(js, tree.order[j], depth):
+                sends.add(j)
+            else:
+                seen.append(j)
+                j += 1
+        for k in seen:
+            skip[k] = j
+        return j in sends and tree.starts[j] < hi
+
+    def _call_submits(self, js: JsFile, call, depth: int) -> bool:
+        name = callee_name(call)
+        if name in {"submitTransaction", "submitAsyncTransaction"} or \
+                (name == "sendTransaction" and self._is_rpc(js, receiver(call))):
+            return True
+        if self._pays(js, call):
+            return True
+        if name in {"exec", "execSync", "spawn", "spawnSync", "execFile", "execa"} and \
+                any(_STELLAR_CLI.search(_template_text(a) or _string_value(a) or "") for a in _args(call)):
+            return True
+        return depth < 2 and any(self._sends_within(other, fn.start_byte, fn.end_byte, depth + 1)
+                                 for other, fn in self._js_targets(js, call))
 
     def _js_targets(self, js: JsFile, call) -> list[tuple[JsFile, object]]:
-        """The project functions a call runs, resolved through its receiver: `f()` defined in
-        this file or imported by name, `this.m()` in the caller's class, `mod.f()` on an
-        imported module, `obj.m()` where obj is built or typed as a project class (here, inline
-        as `new C().m()`, or as an instance another module exports) or is an object literal of
-        this file. A method called on anything else (`db.execute()`) is not followed: its name
-        may belong to another class."""
-        name = callee_name(call)
-        defs = self._js_defs(name)
+        """The project functions a call runs, followed only when the target is exact: `f()`
+        declared in the calling function or at the top of this file or the project module it is
+        imported from by name (`ns.f()` through a namespace import), `this.m()` or `super.m()` in
+        the caller's class or a project class it extends, and `new C().m()` or `x.m()` after `x =
+        new C()` in the same function, C a project class. A call on anything else (a parameter, a
+        typed name, a field) is not followed: its target may be any class with that method."""
         fn = _unwrap(call.child_by_field_name("function"))
-        if defs is None or fn is None:
+        if fn is None:
             return []
+        scope = self._tree(js).scope.get((call.start_byte, call.end_byte))
+        held = self._js_locals(js, scope) if scope is not None else {}
         if fn.type == "identifier":
-            local = defs.plain.get(js.path)
-            if local:
-                return local
-            return [d for path, found in defs.plain.items() if path != js.path for d in found] \
-                if _txt(fn) in _js_imports(js) else []
+            bound = held.get(_txt(fn), False)
+            if bound is not False:
+                return [(js, bound)] if bound is not None and not isinstance(bound, str) else []
+            found = self._js_lookup(js, _txt(fn))
+            return [found[1:]] if found and found[0] == "function" else []
         if fn.type != "member_expression":
             return []
-        obj = _unwrap(fn.child_by_field_name("object"))
-        if obj is not None and obj.type == "this":
+        obj, name = _unwrap(fn.child_by_field_name("object")), _txt(fn.child_by_field_name("property")).lstrip("#")
+        if obj is not None and obj.type in {"this", "super"}:
             cls = self._class_at(js, call)
             if cls is None:
                 return []
-            own = defs.by_class_node.get((js.path, cls.start_byte), [])
-            if own:
-                return own
-            heritage = next((_txt(c) for c in cls.named_children if c.type == "class_heritage"), "")
-            parent = re.search(r"\bextends\s+(?:[\w$]+\.)*([\w$]+)", heritage)  # inherited from a project class
-            return defs.by_class.get(parent.group(1), []) if parent else []
-        if obj is not None and obj.type == "identifier" and _js_imports(js).get(_txt(obj)) in {"namespace", "default"}:
-            return [d for path, found in defs.not_class.items() if path != js.path for d in found]
-        if obj is not None and obj.type == "new_expression":  # `new StellarService().pay(tx)`
-            ctor = obj.child_by_field_name("constructor")
-            return defs.by_class.get(_txt(ctor).rsplit(".", 1)[-1], []) if ctor is not None else []
-        holder = _js_holder(obj)
-        if not holder:
-            return []
-        kind = self._js_class_of(js, holder)
-        if kind is None and obj.type == "identifier" and _js_imports(js).get(holder) == "named":
-            kind = next((k for other in self._js_modules(js, holder) if (k := self._js_class_of(other, holder))), None)
-        if kind:
-            return defs.by_class.get(kind, [])
-        literal = self._js_literal_of(js, holder)
-        if literal is not None:
-            return [(f, d) for f, d in defs.literal.get(js.path, []) if literal[0] <= d.start_byte < literal[1]]
-        return []
+            return self._js_methods(js, cls, name) if obj.type == "this" else \
+                [m for base in self._js_bases(js, cls) for m in self._js_methods(*base, name)]
+        if obj is not None and obj.type == "identifier" and _txt(obj) in held:
+            built = held[_txt(obj)]  # `x = new C()` in this function
+            found = self._js_lookup(js, built) if isinstance(built, str) else None
+        elif obj is not None and obj.type == "new_expression":  # `new C().m()`
+            found = self._js_lookup(js, _js_path(obj.child_by_field_name("constructor")))
+        else:  # `ns.f()`
+            found = self._js_lookup(js, f"{_js_path(obj)}.{name}") if _js_path(obj) else None
+            return [found[1:]] if found and found[0] == "function" else []
+        return self._js_methods(found[1], found[2], name) if found and found[0] == "class" else []
 
-    def _js_defs(self, name: str) -> _JsDefs | None:
-        if name not in self._defs:
-            found = [(f, d) for f, d in self.ctx.index.defs(name) if not TEST_PATH.search(f.path)]
-            self._defs[name] = _JsDefs(found, self._class_at) if found else None
-        return self._defs[name]
+    def _js_locals(self, js: JsFile, fn) -> dict:
+        """Name -> what one function binds it to, for each name it binds: the constructor of `x =
+        new C(...)`, a function declared in it, or None (a parameter, any other value, or bound
+        more than once). One walk per function, not descending into nested ones."""
+        key = ("locals", js.path, fn.start_byte, fn.end_byte)
+        found = self._memo.get(key)
+        if found is None:
+            bound: dict[str, list] = {}
+
+            def unknown(node) -> None:
+                for n in SourceIndex.walk(node):
+                    if n.type in {"identifier", "shorthand_property_identifier_pattern"}:
+                        bound.setdefault(_txt(n), []).append(None)
+            params = fn.child_by_field_name("parameters") or fn.child_by_field_name("parameter")
+            if params is not None:
+                unknown(params)
+            stack = [fn.child_by_field_name("body")]
+            while stack:
+                node = stack.pop()
+                if node is None:
+                    continue
+                if js_functions_type(node):
+                    name = node.child_by_field_name("name") if node.type.endswith("function_declaration") else None
+                    if name is not None:
+                        bound.setdefault(_txt(name), []).append(node)
+                    continue
+                if node.type == "variable_declarator":
+                    target = node.child_by_field_name("name")
+                    if target is not None and target.type == "identifier":
+                        bound.setdefault(_txt(target), []).append(_js_held(_unwrap(node.child_by_field_name("value"))))
+                    elif target is not None:
+                        unknown(target)
+                elif node.type == "assignment_expression":
+                    left = node.child_by_field_name("left")
+                    if left is not None and left.type == "identifier":
+                        bound.setdefault(_txt(left), []).append(_js_held(_unwrap(node.child_by_field_name("right"))))
+                elif node.type in {"for_in_statement", "catch_clause"}:
+                    target = node.child_by_field_name("left") or node.child_by_field_name("parameter")
+                    if target is not None:
+                        unknown(target)
+                elif node.type in _CLASS_TYPES and node.child_by_field_name("name") is not None:
+                    bound.setdefault(_txt(node.child_by_field_name("name")), []).append(None)
+                stack.extend(node.named_children)
+            found = self._memo[key] = {name: values[0] if len(values) == 1 else None for name, values in bound.items()}
+        return found
+
+    def _js_names(self, js: JsFile) -> dict[str, tuple]:
+        """What a file's top-level statements bind each name to: ("function", node), ("class",
+        node), ("from", module, name) for a named or default import, ("module", module) for a
+        namespace import or a require, ("alias", name) for `export default name`, or ("other",)
+        (any other value, or bound more than once)."""
+        key = ("names", js.path)
+        found = self._memo.get(key)
+        if found is None:
+            found = self._memo[key] = {}
+
+            def bind(name: str, entry: tuple) -> None:
+                found[name] = entry if name not in found else ("other",)
+            for stmt in js.root.named_children:
+                if stmt.type == "import_statement":
+                    source = _string_value(stmt.child_by_field_name("source")) or ""
+                    for spec in SourceIndex.walk(stmt):
+                        if spec.type == "import_specifier":
+                            name = spec.child_by_field_name("name")
+                            bind(_txt(spec.child_by_field_name("alias") or name), ("from", source, _txt(name)))
+                        elif spec.type in {"import_clause", "namespace_import"}:
+                            for child in spec.named_children:
+                                if child.type == "identifier":
+                                    bind(_txt(child), ("module", source) if spec.type == "namespace_import" else ("from", source, "default"))
+                    continue
+                decl, default = stmt, False
+                if stmt.type == "export_statement":
+                    default = any(c.type == "default" for c in stmt.children)
+                    decl = stmt.child_by_field_name("declaration") or stmt.child_by_field_name("value")
+                    if decl is not None and default and decl.type == "identifier":
+                        bind("default", ("alias", _txt(decl)))
+                        continue
+                if decl is None:
+                    continue
+                kind = "function" if decl.type.endswith("function_declaration") else "class" if decl.type in _CLASS_TYPES else None
+                if kind:
+                    if decl.child_by_field_name("name") is not None:
+                        bind(_txt(decl.child_by_field_name("name")), (kind, decl))
+                    if default:
+                        bind("default", (kind, decl))
+                elif decl.type in {"lexical_declaration", "variable_declaration"}:
+                    for item in decl.named_children:
+                        target = item.child_by_field_name("name") if item.type == "variable_declarator" else None
+                        value = _unwrap(item.child_by_field_name("value")) if target is not None else None
+                        required = _string_value(_args(value)[0]) if value is not None and value.type == "call_expression" and \
+                            _txt(value.child_by_field_name("function")) == "require" and _args(value) else None
+                        if target is not None and target.type == "identifier":
+                            bind(_txt(target), ("module", required) if required else ("function", value) if js_functions_type(value)
+                                 else ("class", value) if value is not None and value.type in _CLASS_TYPES else ("other",))
+                        elif target is not None and target.type == "object_pattern" and required:
+                            for part in target.named_children:  # const { f, g: h } = require("./m")
+                                if part.type == "shorthand_property_identifier_pattern":
+                                    bind(_txt(part), ("from", required, _txt(part)))
+                                elif part.type == "pair_pattern" and part.child_by_field_name("value") is not None:
+                                    bind(_txt(part.child_by_field_name("value")), ("from", required, _txt(part.child_by_field_name("key"))))
+        return found
+
+    def _js_lookup(self, js: JsFile, dotted: str, depth: int = 0) -> tuple | None:
+        """What a name or dotted name used in a file stands for, exactly: ("function", file, node),
+        ("class", file, node) or ("module", file, None), through imports of project modules
+        (re-exports included). A name the file does not bind at its top, or binds from outside
+        the project, is None."""
+        key = ("lookup", js.path, dotted)
+        if key in self._memo:
+            return self._memo[key]
+        self._memo[key] = None  # an import cycle reads as unknown
+        found = None
+        entry = self._js_names(js).get(dotted) if dotted and depth < 8 else None
+        if entry is None and "." in dotted and depth < 8:
+            head, _, last = dotted.rpartition(".")
+            owner = self._js_lookup(js, head, depth + 1)
+            found = self._js_lookup(owner[1], last, depth + 1) if owner and owner[0] == "module" else None
+        elif entry is not None and entry[0] in {"function", "class"}:
+            found = (entry[0], js, entry[1])
+        elif entry is not None and entry[0] == "alias":
+            found = self._js_lookup(js, entry[1], depth + 1)
+        elif entry is not None and entry[0] in {"module", "from"}:
+            module = self._js_module(js, entry[1])
+            if module is not None:
+                found = ("module", module, None) if entry[0] == "module" else self._js_lookup(module, entry[2], depth + 1)
+        self._memo[key] = found
+        return found
+
+    def _js_module(self, js: JsFile, source: str) -> JsFile | None:
+        """The one non-test project file an import names: a relative module (with its extension
+        or index file), or for an aliased path (`@/lib/chain`) the only file whose path ends
+        with the part after the alias."""
+        if "stems" not in self._memo:  # module path (no extension, no /index) -> files; its shorter tails -> files
+            stems: dict[str, list] = {}
+            tails: dict[str, list] = {}
+            for path, other in self.ctx.index.js.items():
+                if TEST_PATH.search(path):
+                    continue
+                stem = re.sub(r"(?:/index)?\.[cm]?[jt]sx?$", "", path)
+                stems.setdefault(stem, []).append(other)
+                parts = stem.split("/")
+                for i in range(1, len(parts)):
+                    tails.setdefault("/".join(parts[i:]), []).append(other)
+            self._memo["stems"], self._memo["tails"] = stems, tails
+        if source.startswith("."):
+            base = posixpath.normpath(posixpath.join(posixpath.dirname(js.path), source))
+            found = self._memo["stems"].get(re.sub(r"(?:/index)?\.[cm]?[jt]sx?$", "", base), [])
+        else:
+            alias = re.match(r"([@~#][\w.-]*)/(.+)", source)  # `@/x/y`, `~/x/y`, `@app/x/y`; not a package `@scope/pkg`
+            tail = alias.group(2) if alias and (len(alias.group(1)) == 1 or "/" in alias.group(2)) else None
+            found = self._memo["stems"].get(tail, []) + self._memo["tails"].get(tail, []) if tail else []
+        return found[0] if len(found) == 1 else None
+
+    def _js_methods(self, js: JsFile, cls, name: str, depth: int = 0) -> list[tuple[JsFile, object]]:
+        """The methods `name` of a class: its own, else those of the project class it extends."""
+        key = ("methods", js.path, cls.start_byte, name)
+        if key not in self._memo:
+            self._memo[key] = []  # an inheritance cycle reads as none
+            own = [(js, f) for f in self._js_members(js, cls).get(name, [])]
+            self._memo[key] = own or next((found for base in self._js_bases(js, cls) if depth < 8
+                                           and (found := self._js_methods(*base, name, depth + 1))), [])
+        return self._memo[key]
+
+    def _js_members(self, js: JsFile, cls) -> dict[str, list]:
+        """Method name -> its functions in a class body (methods and function-valued fields)."""
+        key = ("members", js.path, cls.start_byte)
+        table = self._memo.get(key)
+        if table is None:
+            table = self._memo[key] = {}
+            body = cls.child_by_field_name("body")
+            for member in body.named_children if body is not None else []:
+                name = member.child_by_field_name("name") or member.child_by_field_name("property")
+                value = member if member.type == "method_definition" else \
+                    _unwrap(member.child_by_field_name("value")) if member.type in {"public_field_definition", "field_definition"} else None
+                if name is not None and js_functions_type(value):
+                    table.setdefault(_txt(name).lstrip("#"), []).append(value)
+        return table
+
+    def _js_bases(self, js: JsFile, cls) -> list[tuple[JsFile, object]]:
+        heritage = next((_txt(c) for c in cls.named_children if c.type == "class_heritage"), "")
+        parent = re.search(r"\bextends\s+([\w$.]+)", heritage)
+        found = self._js_lookup(js, parent.group(1)) if parent else None
+        return [found[1:]] if found and found[0] == "class" else []
 
     def _class_at(self, js: JsFile, node):
         """The class declaration a node sits in, from the file's class spans: one walk per file
@@ -1668,64 +1707,15 @@ class _JsRules:
             i = outer[i]
         return nodes[i] if i >= 0 else None
 
-    def _js_class_of(self, js: JsFile, name: str) -> str | None:
-        """The class a name holds in this file: `name = new C(...)`, `this.name = new C(...)`,
-        else `name: C` (a parameter, a variable or a field). The file is read once for every
-        name (the first binding of each), not once per name."""
-        key = ("classes", js.path)
-        if key not in self._memo:
-            built: dict[str, str] = {}
-            typed: dict[str, str] = {}
-            for m in _JS_BUILT.finditer(js.text):
-                built.setdefault(m.group(1), m.group(2))  # the constructor as written: `rpc.Server`
-            for m in _JS_TYPED.finditer(js.text):
-                typed.setdefault(m.group(1), m.group(2))
-            self._memo[key] = (built, typed)
-        built, typed = self._memo[key]
-        found = built.get(name)
-        return found.rsplit(".", 1)[-1] if found else typed.get(name)
-
     def _js_built_as(self, js: JsFile, name: str) -> str | None:
         """The constructor this file first builds a name with (`new ethers.JsonRpcProvider`)."""
-        self._js_class_of(js, name)
-        return self._memo[("classes", js.path)][0].get(name)
-
-    def _js_literal_of(self, js: JsFile, name: str) -> tuple[int, int] | None:
-        key = ("literal", js.path)
-        if key not in self._memo:  # name -> range of the object literal it is declared with, once per file
-            found: dict[str, tuple[int, int] | None] = {}
-            for node in SourceIndex.walk(js.root):
-                if node.type == "variable_declarator":
-                    target = _txt(node.child_by_field_name("name"))
-                    if target not in found:
-                        value = _unwrap(node.child_by_field_name("value"))
-                        found[target] = (value.start_byte, value.end_byte) if value is not None and value.type == "object" else None
-            self._memo[key] = found
+        key = ("built", js.path)
+        if key not in self._memo:  # the first binding of every name, from one scan of the file
+            built: dict[str, str] = {}
+            for m in _JS_BUILT.finditer(js.text):
+                built.setdefault(m.group(1), m.group(2))
+            self._memo[key] = built
         return self._memo[key].get(name)
-
-    def _js_modules(self, js: JsFile, name: str) -> list[JsFile]:
-        """The project files a named import may come from: the relative module it names
-        (with its extension or index file), or for an aliased path (`@/lib/chain`) the files
-        named like its last segment."""
-        key = ("module", js.path, name)
-        if key not in self._memo:
-            if "stems" not in self._memo:  # module path (no extension, no /index) -> files; last segment -> files
-                stems: dict[str, list] = {}
-                lasts: dict[str, list] = {}
-                for path, other in self.ctx.index.js.items():
-                    stem = re.sub(r"(?:/index)?\.[cm]?[jt]sx?$", "", path)
-                    stems.setdefault(stem, []).append(other)
-                    lasts.setdefault(stem.rsplit("/", 1)[-1], []).append(other)
-                self._memo["stems"], self._memo["lasts"] = stems, lasts
-            source = _js_import_sources(js).get(name) or ""
-            found = []
-            if source.startswith("."):
-                base = posixpath.normpath(posixpath.join(posixpath.dirname(js.path), source))
-                found = self._memo["stems"].get(re.sub(r"(?:/index)?\.[cm]?[jt]sx?$", "", base), [])
-            elif not source.startswith(("@stellar/", "node:")) and "/" in source:
-                found = self._memo["lasts"].get(source.rstrip("/").rsplit("/", 1)[-1], [])
-            self._memo[key] = [other for other in found if other is not js]
-        return self._memo[key]
 
     def _pays(self, js: JsFile, call) -> bool:
         """An x402 paid request: a fetch with a payment header, or a fetch wrapped to pay."""
@@ -1742,16 +1732,16 @@ class _JsRules:
             if key not in self._memo:  # name -> what it is first assigned from, once per file
                 made: dict[str, str] = {}
                 for m in _JS_MADE.finditer(js.text):
-                    made.setdefault(m.group(1), m.group(2).rsplit(".", 1)[-1])
+                    made.setdefault(m.group(1), m.group(2))
                 self._memo[key] = made
             maker = self._memo[key].get(name)
-            if maker:
-                if _PAYING_FETCH.match(maker):
-                    return True
-                key = ("pays", maker)
+            if maker and _PAYING_FETCH.match(maker.rsplit(".", 1)[-1]):
+                return True
+            found = self._js_lookup(js, maker) if maker else None  # a project function that wraps fetch
+            if found and found[0] == "function":
+                key = ("pays", found[1].path, found[2].start_byte)
                 if key not in self._memo:
-                    self._memo[key] = any(_PAYING_FETCH.match(callee_name(c)) for f, d in self.ctx.index.defs(maker)
-                                          for c in SourceIndex.calls(d))
+                    self._memo[key] = any(_PAYING_FETCH.match(callee_name(c)) for c in SourceIndex.calls(found[2]))
                 return self._memo[key]
         return False
 
@@ -1884,82 +1874,21 @@ class _JsRules:
         return sorted(places), after_send
 
 
-def _js_holder(obj) -> str:
-    """The name a receiver is held under: `client` or `this.client` -> client."""
-    if obj is not None and obj.type == "identifier":
-        return _txt(obj)
-    if obj is not None and obj.type == "member_expression":
-        base = _unwrap(obj.child_by_field_name("object"))
-        if base is not None and base.type == "this":
-            return _txt(obj.child_by_field_name("property"))
-    return ""
+def _js_path(node) -> str:
+    """`a.b.c` for a chain of plain names, else ""."""
+    parts, node = [], _unwrap(node)
+    while node is not None and node.type == "member_expression":
+        parts.append(_txt(node.child_by_field_name("property")))
+        node = _unwrap(node.child_by_field_name("object"))
+    return ".".join([_txt(node), *reversed(parts)]) if node is not None and node.type == "identifier" else ""
 
 
-def _js_owner(fn, cls) -> str | bool | None:
-    """What a function belongs to (cls: the class it sits in): the name of its class (a method),
-    True (a property of an object literal), or None (a function declared on its own)."""
-    parent = fn.parent
-    if fn.type == "method_definition" or (parent is not None and parent.type in {"public_field_definition", "field_definition"}):
-        if cls is not None:
-            name = cls.child_by_field_name("name")
-            return _txt(name) if name is not None else True
-        return True  # a method of an object literal
-    if parent is not None and parent.type == "pair":
-        return True
-    return None
-
-
-def _js_imports(js: JsFile) -> dict[str, str]:
-    """Local name -> how it is imported: "named", "default" or "namespace" (ES imports and
-    `const { f } = require(...)`); once per file."""
-    found = getattr(js, "_imports", None)
-    if found is None:
-        found = {}
-        for node in SourceIndex.walk(js.root):
-            if node.type == "import_statement":
-                for spec in SourceIndex.walk(node):
-                    if spec.type == "import_specifier":
-                        alias = spec.child_by_field_name("alias") or spec.child_by_field_name("name")
-                        found[_txt(alias)] = "named"
-                    elif spec.type == "namespace_import":
-                        found.update({_txt(c): "namespace" for c in spec.named_children if c.type == "identifier"})
-                    elif spec.type == "import_clause":
-                        found.update({_txt(c): "default" for c in spec.named_children if c.type == "identifier"})
-            elif node.type == "variable_declarator" and _txt(node.child_by_field_name("value")).startswith("require("):
-                target = node.child_by_field_name("name")
-                if target is not None and target.type == "identifier":
-                    found[_txt(target)] = "default"
-                elif target is not None:
-                    found.update({_txt(n): "named" for n in SourceIndex.walk(target)
-                                  if n.type in {"shorthand_property_identifier_pattern", "identifier"}})
-        js._imports = found
-    return found
-
-
-def _js_import_sources(js: JsFile) -> dict[str, str]:
-    """Local name -> the module it is imported from (ES imports and `const { f } = require()`);
-    once per file."""
-    found = getattr(js, "_import_sources", None)
-    if found is None:
-        found = {}
-        for node in SourceIndex.walk(js.root):
-            if node.type == "import_statement":
-                source = _string_value(node.child_by_field_name("source")) or ""
-                for spec in SourceIndex.walk(node):
-                    if spec.type == "import_specifier":
-                        alias = spec.child_by_field_name("alias") or spec.child_by_field_name("name")
-                        found[_txt(alias)] = source
-                    elif spec.type in {"namespace_import", "import_clause"}:
-                        found.update({_txt(c): source for c in spec.named_children if c.type == "identifier"})
-            elif node.type == "variable_declarator" and _txt(node.child_by_field_name("value")).startswith("require("):
-                value = node.child_by_field_name("value")
-                source = next((_string_value(a) for a in _args(value)), None) or ""
-                target = node.child_by_field_name("name")
-                if target is not None:
-                    found.update({_txt(n): source for n in SourceIndex.walk(target)
-                                  if n.type in {"shorthand_property_identifier_pattern", "identifier"}})
-        js._import_sources = found
-    return found
+def _js_held(value):
+    """What a binding holds, for call resolution: the constructor of `new C(...)` (as `C` or
+    `ns.C`), a function, or None."""
+    if value is not None and value.type == "new_expression":
+        return _js_path(value.child_by_field_name("constructor")) or None
+    return value if js_functions_type(value) else None
 
 
 def _innermost(spans: list, offsets, indexes: bool = False):
@@ -2056,17 +1985,16 @@ def _template_text(node) -> str | None:
     return None
 
 
-def _guarded(call, scope, flags: set[str]) -> bool:
-    """The release only runs when a flag set in the try block says nothing was sent, or
-    for an error class the code tests explicitly."""
-    node = call.parent
-    while node is not None and node != scope:
-        if node.type == "if_statement":
-            test = _txt(node.child_by_field_name("condition"))
-            if any(re.search(r"(?<![\w$.])" + re.escape(f) + r"(?![\w$])", test) for f in flags) or \
-                    re.search(r"instanceof|\.code\b|\.name\b|\.status\b", test):
-                return True
-        node = node.parent
+def _flag_test(test: str, block, assigned: dict[str, list[int]]) -> bool:
+    """A handler's test that keeps a release from running after a send: a name (or a prefix of
+    a dotted name) assigned in the try block (`if (!sent)`, `if (!ctx.sent)`), or the error's
+    class or code (`instanceof`, `e.code`)."""
+    if re.search(r"instanceof|\.code\b|\.name\b|\.status\b", test):
+        return True
+    for m in re.finditer(r"(?<![\w$.])[\w$]+(?:\.[\w$]+)*", test):
+        parts = m.group(0).split(".")
+        if any(_within(assigned.get(".".join(parts[:k]), []), block.start_byte, block.end_byte) for k in range(1, len(parts) + 1)):
+            return True
     return False
 
 
