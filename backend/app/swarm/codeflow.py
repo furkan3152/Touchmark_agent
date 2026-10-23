@@ -893,7 +893,9 @@ class _Interp:
             inner = kwargs.get("inner_transaction_envelope", args[2] if len(args) > 2 else set())
             # A transaction the server built and stored itself (looked up by id) is not foreign.
             foreign = "foreign_tx" in inner or bool(inner & UNTRUSTED and not inner & {"stored_record", "tx_built"})
-            if self.record and foreign and fee & DIRECT and "bounded" not in fee and not self.approved:
+            # Chosen by the caller (a tool argument, a request, the client's envelope), not read
+            # from the network's fee stats.
+            if self.record and foreign and fee & {"model", "external", "foreign_tx"} and "bounded" not in fee and not self.approved:
                 self.p.profile.add_fact("fee_bump_unbounded", self.p.location(self.module, node),
                                         "the fee of a foreign inner transaction comes from input")
             return {"tx_built"}

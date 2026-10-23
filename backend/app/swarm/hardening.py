@@ -123,7 +123,9 @@ _DEFAULT_SECRET = re.compile(
 _MPPX_SERVER_IMPORT = re.compile(r"""["'](?:mppx/(?:server|express|hono|nextjs|elysia)|@stellar/mpp/(?:charge|channel)/server)["']""")
 _MPPX_CREATE = re.compile(r"\bMppx\.create\s*\(")
 _SECRET_KEY_OPTION = re.compile(r"\bsecretKey\s*:\s*(?P<expr>[^,\n}]+)")
-_FALLBACK_LITERAL = re.compile(r"""(?:^|\?\?|\|\|)\s*(?P<q>["'`])(?P<value>[^"'`$]*)(?P=q)\s*$""")
+#: A non-empty literal the key falls back to. An empty one fails closed: mppx refuses a
+#: falsy secretKey at start-up ("Missing secret key", mppx server/Mppx.js).
+_FALLBACK_LITERAL = re.compile(r"""(?:^|\?\?|\|\|)\s*(?P<q>["'`])(?P<value>[^"'`$]+)(?P=q)\s*$""")
 _HTML_SINK = re.compile(r"\.(?:innerHTML|outerHTML)\s*\+?=\s*(?P<rhs>[^;\n]+)|\.insertAdjacentHTML\([^,]+,\s*(?P<arg>[^)\n]+)"
                         r"|dangerouslySetInnerHTML=\{\{\s*__html:\s*(?P<react>[^}\n]+)")
 _DYNAMIC = re.compile(r"\$\{|[\"'`]\s*\+\s*[A-Za-z_$]|\+\s*[A-Za-z_$]")
@@ -472,14 +474,17 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             "that forgot to set it.",
             defaults, "Fail at startup when the secret is unset instead of falling back to a default.",
             ["CWE-1188 Insecure Default Initialization of Resource", "CWE-798"], auditor, confidence=0.85))
+    by_file: dict[str, list[tuple[int, str]]] = {}
     for name, line, snippet in reused:
+        by_file.setdefault(name, []).append((line, snippet))
+    for name, places in by_file.items():  # one finding per file: the same lines would share an id
         findings.append(_finding(
-            stable_id("security-mpp-secret-reuses-stellar-seed", name, snippet), Severity.LOW,
+            stable_id("security-mpp-secret-reuses-stellar-seed", name, places[0][1]), Severity.LOW,
             "The MPP challenge key is the agent's Stellar seed",
             "The value that signs MPP payment challenges is also the secret seed of a Stellar account. The seed then "
             "sits in a second subsystem (HMAC keys are logged, rotated and shared differently from signing keys), and "
             "rotating one forces rotating the other.",
-            [f"{name}:{line} `{' '.join(snippet.split())[:160]}`"],
+            [f"{name}:{line} `{' '.join(snippet.split())[:160]}`" for line, snippet in places[:5]],
             "Give the MPP server its own random secret of at least 32 bytes.",
             ["CWE-323 Reusing a Nonce, Key Pair in Encryption", "MPP challenge binding"], auditor, confidence=0.85))
     return findings

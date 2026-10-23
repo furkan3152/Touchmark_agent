@@ -248,8 +248,10 @@ _TESTNET_CODE = re.compile(r"\bSTELLAR_TESTNET\b|\bUSDC_SAC_TESTNET\b|\bXLM_SAC_
                            r"[\"']testnet[\"']|" + "|".join(map(re.escape, NETWORK_MARKERS["testnet"])))
 #: Deployment descriptors that run several instances of a server (each with its own memory).
 _MULTI_INSTANCE_FILES = re.compile(r"(?:^|/)(?:vercel\.json|wrangler\.toml|serverless\.ya?ml|netlify\.toml)$")
-_MULTI_INSTANCE_CODE = re.compile(r"^\s*export\s+(?:const|async\s+function|function)\s+handler\b|\bexports\.handler\s*=|"
-                                  r"^\s*replicas:\s*(?:[2-9]|\d{2,})", re.M)
+#: A serverless entry point: counts only in the server's own module.
+_LAMBDA_HANDLER = re.compile(r"^\s*export\s+(?:const|async\s+function|function)\s+handler\b|\bexports\.handler\s*=", re.M)
+#: Kubernetes or compose replicas above one.
+_REPLICAS = re.compile(r"^\s*replicas:\s*(?:[2-9]|\d{2,})", re.M)
 
 #: fact kind -> (finding id, severity, title, detail, remediation, references, lower on testnet)
 _FACT_RULES = {
@@ -387,6 +389,38 @@ _FACT_RULES = {
 }
 
 
+@dataclass(frozen=True)
+class _FactHit:
+    """One place a fact rule fires. Hits of one rule in one file become one finding."""
+    kind: str
+    location: object
+    severity: Severity
+    note: str = ""
+    grade: EvidenceGrade = EvidenceGrade.CONFIRMED
+    confidence: float = 0.9
+
+
+def _fact_findings(hits: list[_FactHit], auditor: str) -> list[Finding]:
+    """One finding per rule and file, at the worst severity, with every place as evidence.
+    Two servers or switches in one module are one defect, and lines with the same text would
+    otherwise give two findings the same id."""
+    groups: dict[tuple[str, str], list[_FactHit]] = {}
+    for hit in hits:
+        groups.setdefault((hit.kind, hit.location.file), []).append(hit)
+    findings = []
+    for (kind, file), group in groups.items():
+        group.sort(key=lambda h: h.location.line)
+        worst = max(group, key=lambda h: h.severity.rank)
+        rule, _, title, detail, remediation, refs, _ = _FACT_RULES[kind]
+        findings.append(Finding(
+            id=stable_id(rule, file, group[0].location.text), dimension=Dimension.SECURITY,
+            severity=worst.severity, title=title, detail=detail,
+            evidence="; ".join(h.location.render() + (f" ({h.note})" if h.note else "") for h in group[:5]),
+            evidence_grade=worst.grade, remediation=remediation, references=refs, auditor=auditor,
+            confidence=max(h.confidence for h in group)))
+    return findings
+
+
 def _sponsor_gaps(fact) -> list[str]:
     gaps = [label for label, ok in (("R1 credential type", fact.get("credential_type")),
                                     ("R2 source pin", fact.get("source_pin"))) if not ok]
@@ -397,10 +431,11 @@ def _sponsor_gaps(fact) -> list[str]:
     return gaps
 
 
-def _sponsor_findings(profile, by_category: dict, auditor: str) -> tuple[list[Finding], dict]:
+def _sponsor_hits(profile, by_category: dict) -> tuple[list[_FactHit], dict]:
     """Fee sponsors and relayers (R1-R4, fee bumps). Where the signing site is already a
-    foreign-signing flow, the gaps are returned as notes for that finding instead."""
-    findings: list[Finding] = []
+    foreign-signing flow, the gaps are returned as notes for that finding instead. A sponsor
+    with R1 and R2 in place signed nothing the client chose (jsflow drops those flows)."""
+    hits: list[_FactHit] = []
     notes: dict = {}
     # The same defect as a foreign-signing or untrusted-transaction flow at the signing site.
     signed = {f.location for c in ("foreign_signing", "financial") for f in by_category.get(c, [])}
@@ -414,16 +449,14 @@ def _sponsor_findings(profile, by_category: dict, auditor: str) -> tuple[list[Fi
         confidence = 0.95 if fact.get("warned") else 0.85  # the guide's check, left as a comment
         if any(g.startswith(("R1", "R2", "R4")) for g in gaps):
             severity = Severity.HIGH if any(g.startswith(("R1", "R2")) for g in gaps) else Severity.MEDIUM
-            finding = _fact_finding("sponsor_rebuild", fact.location, auditor, severity=severity,
-                                    note="missing " + ", ".join(g for g in gaps if not g.startswith("R3")))
-            findings.append(finding.model_copy(update={"confidence": confidence}))
+            hits.append(_FactHit("sponsor_rebuild", fact.location, severity, confidence=confidence,
+                                 note="missing " + ", ".join(g for g in gaps if not g.startswith("R3"))))
         if "R3 client-chosen fee" in gaps:
-            findings.append(_fact_finding("sponsor_fee", fact.location, auditor))
+            hits.append(_FactHit("sponsor_fee", fact.location, Severity.MEDIUM))
     for fact in profile.facts_of("fee_bump_unbounded"):
         severity, extra = _adjusted("fee_bump_unbounded", Severity.MEDIUM, fact.location.file, False)
-        findings.append(_fact_finding("fee_bump_unbounded", fact.location, auditor, severity=severity,
-                                      note="; ".join([fact.detail] + extra)))
-    return findings, notes
+        hits.append(_FactHit("fee_bump_unbounded", fact.location, severity, "; ".join([fact.detail] + extra)))
+    return hits, notes
 
 
 def _grouped(facts) -> dict[str, list]:
@@ -542,26 +575,21 @@ def _testnet_only(artifact: AgentArtifact, lockset: Lockset, near: str, named: s
 
 
 def _multi_instance(artifact: AgentArtifact, lockset: Lockset, near: str) -> str:
-    """A deployment marker that runs several copies of the server at that package root."""
+    """A deployment marker that runs several copies of the server in ``near``: a descriptor
+    in its package and in a directory that holds it, a Lambda-style handler exported by its
+    own module, or replicas above one at its package root."""
     root = _package_root(lockset, near)
     inside = lambda f: not root or f.startswith(root + "/")  # noqa: E731
     for path in list(artifact.raw_metadata.get("deployment_markers") or []) + list(artifact.code_files):
-        if inside(path) and _MULTI_INSTANCE_FILES.search(path):
+        folder = path.rpartition("/")[0]
+        if _MULTI_INSTANCE_FILES.search(path) and inside(path) and (not folder or near.startswith(folder + "/")):
             return path
+    if _LAMBDA_HANDLER.search(artifact.code_files.get(near, "")):
+        return near
     for path, text in artifact.code_files.items():
-        if inside(path) and (path.endswith((".yml", ".yaml", ".js", ".ts", ".mjs")) and _MULTI_INSTANCE_CODE.search(text)):
+        if inside(path) and path.endswith((".yml", ".yaml")) and _REPLICAS.search(text):
             return path
     return ""
-
-
-def _fact_finding(kind: str, location, auditor: str, *, severity: Severity | None = None, note: str = "",
-                     grade: EvidenceGrade = EvidenceGrade.CONFIRMED) -> Finding:
-    rule, default, title, detail, remediation, refs, _ = _FACT_RULES[kind]
-    return Finding(
-        id=stable_id(rule, location.file, location.text), dimension=Dimension.SECURITY,
-        severity=severity or default, title=title, detail=detail,
-        evidence=location.render() + (f" ({note})" if note else ""), evidence_grade=grade,
-        remediation=remediation, references=refs, auditor=auditor, confidence=0.9)
 
 
 def _adjusted(kind: str, severity: Severity, file: str, testnet: bool) -> tuple[Severity, list[str]]:
@@ -574,25 +602,31 @@ def _adjusted(kind: str, severity: Severity, file: str, testnet: bool) -> tuple[
 
 
 def _payment_sdk_findings(artifact: AgentArtifact, profile, lockset: Lockset, by_category: dict,
-                          auditor: str) -> tuple[list[Finding], list]:
-    """Version-aware x402 and MPP rules. Returns the findings and the x402 clients whose
-    installed release caps each payment by default (amount caps for the control rules)."""
+                          auditor: str) -> tuple[list[Finding], list[_FactHit], list]:
+    """Version-aware x402 and MPP rules. Returns the findings, the fact hits, and the x402
+    clients whose installed release caps each payment by default (amount caps for the
+    control rules)."""
     findings: list[Finding] = []
+    hits: list[_FactHit] = []
     default_caps = []
+    # Wrapped clients whose spend controls are switched off: the client value carries the
+    # switch to the wrap (jsflow), or the switch sits in the wrap's own module.
+    switched_off = {f.location for f in profile.facts_of("x402_controls_off")}
     disabled_files = {f.location.file for f in profile.facts_of("x402_spend_controls_disabled")}
 
     # (A) x402 payers: whether the wrapped fetch pays whatever a 402 asks depends on the release.
     kept, notes = [], {}
     for flow in by_category.pop("x402_unbounded", []):
         state, why = _x402_cap(lockset, flow.location.file)
-        if state == "capped" or (flow.location.file in disabled_files and state != "uncapped"):
+        off = flow.location in switched_off or flow.location.file in disabled_files
+        if state == "capped" or (off and state != "uncapped"):
             # Capped by default, or reported below as a switched-off cap.
-            if state == "capped" and flow.location.file not in disabled_files:
+            if state == "capped" and not off:
                 default_caps.append(flow.location)
                 stellar, _, _ = _installed(lockset, "@x402/stellar", flow.location.file)
                 if stellar and all(below(v, X402_DEFAULT_CAP) is True for v in stellar):
-                    findings.append(_fact_finding("x402_stellar_not_default", flow.location, auditor,
-                                                     note=f"@x402/stellar {', '.join(stellar)} installed"))
+                    hits.append(_FactHit("x402_stellar_not_default", flow.location, Severity.INFO,
+                                         f"@x402/stellar {', '.join(stellar)} installed"))
             continue
         severity = Severity.HIGH if state == "uncapped" else Severity.MEDIUM
         if _NON_PRODUCTION.search(flow.location.file):
@@ -614,14 +648,18 @@ def _payment_sdk_findings(artifact: AgentArtifact, profile, lockset: Lockset, by
     for kind in ("x402_spend_controls_disabled", "x402_any_asset"):
         for fact in profile.facts_of(kind):
             file = fact.location.file
-            if _x402_cap(lockset, file)[0] == "uncapped":
+            cap_state = _x402_cap(lockset, file)[0]
+            if cap_state == "uncapped":
                 continue
             severity = _FACT_RULES[kind][1]
             text = artifact.code_files.get(file, "")
             if kind == "x402_spend_controls_disabled" and "onBeforePaymentCreation" in text and re.search(r"\babort\s*:\s*true", text):
                 severity = Severity.MEDIUM  # a hook can still refuse a payment
             severity, extra = _adjusted(kind, severity, file, False)
-            findings.append(_fact_finding(kind, fact.location, auditor, severity=severity, note="; ".join(extra)))
+            # Confirmed only on a resolved release that has the switch (2.23.0 or later).
+            hits.append(_FactHit(kind, fact.location, severity, "; ".join(
+                extra + ([] if cap_state == "capped" else ["installed @x402/core release not resolved"])),
+                grade=EvidenceGrade.CONFIRMED if cap_state == "capped" else EvidenceGrade.INFERRED))
 
     # (C) MPP servers, and (D) client switches.
     for fact in profile.facts_of("mpp_server"):
@@ -638,32 +676,31 @@ def _payment_sdk_findings(artifact: AgentArtifact, profile, lockset: Lockset, by
         store = fact.get("store")
         if store == "none" and optional:
             severity, extra = _adjusted("mpp_replay_store", Severity.HIGH, file, testnet)
-            findings.append(_fact_finding("mpp_replay_store", fact.location, auditor, severity=severity,
-                                             note="; ".join([f"no store; {installed}: replay checks run only with a store"] + extra)))
+            hits.append(_FactHit("mpp_replay_store", fact.location, severity,
+                                 "; ".join([f"no store; {installed}: replay checks run only with a store"] + extra)))
         elif store == "memory":
             marker = _multi_instance(artifact, lockset, file)
             severity, extra = _adjusted("mpp_replay_store", Severity.HIGH if marker else Severity.LOW, file,
                                         testnet and bool(marker))
-            findings.append(_fact_finding(
-                "mpp_replay_store", fact.location, auditor, severity=severity,
-                note="; ".join([f"Store.memory() with several instances ({marker})" if marker else
-                                "Store.memory(): replay records are lost on restart"] + extra)))
+            hits.append(_FactHit(
+                "mpp_replay_store", fact.location, severity,
+                "; ".join([f"Store.memory() with several instances ({marker})" if marker else
+                           "Store.memory(): replay records are lost on restart"] + extra)))
         if fact.get("max_fee_bump", 0) > MPP_DEFAULT_FEE_BUMP or (
                 mode == "channel" and fact.get("fee_bump_signer") and not fact.get("fee_budget")):
             severity, extra = _adjusted("mpp_fee_budget", Severity.MEDIUM, file, testnet)
-            findings.append(_fact_finding("mpp_fee_budget", fact.location, auditor, severity=severity,
-                                             note="; ".join(extra)))
+            hits.append(_FactHit("mpp_fee_budget", fact.location, severity, "; ".join(extra)))
     for kind in ("mpp_unsigned_push", "mpp_channel_state_unchecked", "mpp_unpinned_channel"):
         for fact in profile.facts_of(kind):
             file = fact.location.file
             severity, extra = _adjusted(kind, _FACT_RULES[kind][1], file, _testnet_only(artifact, lockset, file))
-            findings.append(_fact_finding(kind, fact.location, auditor, severity=severity, note="; ".join(extra)))
+            hits.append(_FactHit(kind, fact.location, severity, "; ".join(extra)))
     for fact in profile.facts_of("cli_auto_sign"):
         severity, extra = _adjusted("cli_auto_sign", Severity.MEDIUM if fact.get("direct") else Severity.LOW,
                                     fact.location.file, False)
-        findings.append(_fact_finding("cli_auto_sign", fact.location, auditor, severity=severity, note="; ".join(
+        hits.append(_FactHit("cli_auto_sign", fact.location, severity, "; ".join(
             (["the command takes tool or request arguments"] if fact.get("direct") else []) + extra)))
-    return findings, default_caps
+    return findings, hits, default_caps
 
 
 def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding]:
@@ -678,16 +715,14 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     for flow in profile.flows:
         by_category.setdefault(flow.category, []).append(flow)
     lockset = Lockset(artifact.raw_metadata.get("resolved_versions"))
-    payment_findings, default_caps = _payment_sdk_findings(artifact, profile, lockset, by_category, auditor)
-    sponsor_findings, sponsor_notes = _sponsor_findings(profile, by_category, auditor)
-    guarded = {(f.location.file, f.get("function")) for f in profile.facts_of("sponsor_rebuild") if _sponsor_gaps(f) == []}
-    for category in ("financial", "foreign_signing"):
-        # A sponsor that pins sources, accepts only Address credentials and one invocation, and
-        # sets its own fee authorizes nothing but that fee: the client's call is its own.
-        by_category[category] = [f for f in by_category.get(category, []) if (f.location.file, f.function) not in guarded]
-    findings += payment_findings + _seller_findings(profile, auditor) + sponsor_findings
+    payment_findings, payment_hits, default_caps = _payment_sdk_findings(artifact, profile, lockset, by_category, auditor)
+    sponsor_hits, sponsor_notes = _sponsor_hits(profile, by_category)
+    findings += payment_findings + _fact_findings(payment_hits + sponsor_hits, auditor) + _seller_findings(profile, auditor)
     amount_caps = list(profile.controls.get("amount_cap", [])) + default_caps
-    inspected = [f.location for f in profile.facts_of("sponsor_rebuild") if _sponsor_gaps(f) == []]
+    # A sponsor that accepts only Address credentials and pins both sources inspected the
+    # client's transaction (its signing flows were already dropped in jsflow).
+    inspected = [f.location for f in profile.facts_of("sponsor_rebuild")
+                 if not [g for g in _sponsor_gaps(f) if not g.startswith("R3")]]
     for category, (fid, severity, title, detail, remediation, refs) in _PATH_RULES.items():
         flows = by_category.get(category, [])
         # A value merely derived from an object that holds a secret (a receipt, a form's other

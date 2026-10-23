@@ -3,7 +3,12 @@ safe near-miss. Versions come from a synthetic lockfile record (no network)."""
 
 from __future__ import annotations
 
+import asyncio
+import json
+
+from backend.app.config import Settings
 from backend.app.models import AgentArtifact, SourceKind
+from backend.app.services.repo_audit import audit_repository
 from backend.app.swarm.agentic_paths import analyse_agentic_paths
 from backend.app.swarm.hardening import analyse_hardening, find_credentials
 
@@ -68,9 +73,36 @@ def test_x402_client_on_a_capped_release_is_not_unbounded():
 
 def test_x402_budget_check_before_signing_a_payload_is_not_unbounded():
     tool = ('import { x402Client, x402HTTPClient } from "@x402/core/client";\n'
-            'export async function pay(req: any) {\n  if (!spending.check(Number(req.amount))) throw new Error("budget");\n'
+            'export async function pay(req: any) {\n  if (!budget.check(Number(req.amount))) throw new Error("budget");\n'
             '  return http.createPaymentPayload(req);\n}\n')
     assert X402 not in paths({"src/pay.ts": tool}, lock(**{"@x402/core": "2.17.0"}))
+
+
+def test_x402_hook_that_compares_the_requirement_amount_caps_the_client():
+    old = lock(**{"@x402/core": "2.17.0", "@x402/fetch": "2.17.0"})
+    head = ('import { x402Client, wrapFetchWithPayment } from "@x402/fetch";\n'
+            'const client = new x402Client();\nclient.register("stellar:*", scheme);\n')
+    hook = ('client.onBeforePaymentCreation(async ({ selectedRequirements }): Promise<void | { abort: true }> => {\n'
+            '  if (BigInt(selectedRequirements.amount) > MAX_ATOMIC) return { abort: true };\n});\n')
+    wrap = "export const pay = wrapFetchWithPayment(fetch, client);\n"
+    # A hook registered as a statement of its own configures the client it is called on.
+    assert X402 not in paths({"src/pay.ts": head + hook + wrap}, old)
+    # A comparison that reads no requirement (or only a type annotation's `<`) is no ceiling.
+    retries = hook.replace("BigInt(selectedRequirements.amount) > MAX_ATOMIC", "retries.value > 3")
+    assert paths({"src/pay.ts": head + retries + wrap}, old)[X402].severity.value == "high"
+    typed = ('client.onBeforePaymentCreation(async ({ amount }: { amount: string }): Promise<void> => '
+             'log(amount));\n')
+    assert X402 in paths({"src/pay.ts": head + typed + wrap}, old)
+
+
+def test_x402_controls_switched_off_in_another_module_are_not_a_default_cap():
+    files = {"src/client.ts": 'import { x402Client } from "@x402/core/client";\n'
+                              'export const client = x402Client.fromConfig({ schemes: [], spendControls: false });\n',
+             "src/pay.ts": 'import { wrapFetchWithPayment } from "@x402/fetch";\nimport { client } from "./client";\n'
+                           'export const pay = wrapFetchWithPayment(fetch, client);\n'}
+    found = paths(files, lock(**CORE))
+    assert found["security-x402-spend-controls-disabled"].severity.value == "high"
+    assert "security-per-call-cap-only" not in found and "security-path-controls-not-enforced" in found
 
 
 def test_x402_core_that_refuses_stellar_usdc_is_reported_as_failing_closed():
@@ -95,6 +127,38 @@ def test_x402_spend_controls_switched_off():
     assert "security-x402-spend-controls-disabled" not in found
     # Before 2.23.0 the switch exists in no release: the unbounded payer finding covers the client.
     assert "security-x402-spend-controls-disabled" not in paths({"src/c.ts": off}, lock(**{"@x402/core": "2.8.0"}))
+    # Confirmed only on a resolved release that has the switch.
+    assert paths({"src/c.ts": off}, lock(**CORE))["security-x402-spend-controls-disabled"].evidence_grade.value == "confirmed"
+    assert paths({"src/c.ts": off})["security-x402-spend-controls-disabled"].evidence_grade.value == "inferred"
+
+
+def test_two_identical_switch_lines_in_one_file_are_one_finding():
+    two = ('import { x402Client } from "@x402/core/client";\n'
+           'export const a = x402Client.fromConfig({ schemes: A,\n  spendControls: false,\n});\n'
+           'export const b = x402Client.fromConfig({ schemes: B,\n  spendControls: false,\n});\n')
+    artifact = AgentArtifact(source_kind=SourceKind.REPO, name="agent", code_files={"src/c.ts": two},
+                             raw_metadata={"resolved_versions": lock(**CORE)})
+    found = [f for f in analyse_agentic_paths(artifact, "security") if "spend-controls" in f.id]
+    assert len(found) == 1 and "src/c.ts:3" in found[0].evidence and "src/c.ts:6" in found[0].evidence
+
+
+def test_two_mpp_servers_with_the_same_lines_audit_end_to_end(tmp_path):
+    # The orchestrator refuses a verdict with duplicate ids; the audit must still complete.
+    root = tmp_path / "agent"
+    (root / "src").mkdir(parents=True)
+    server = ('  stellar({\n    recipient: process.env.PAY_TO!,\n    currency: CURRENCY,\n  }),\n')
+    (root / "src/server.ts").write_text(
+        'import { Mppx } from "mppx/server";\nimport { stellar } from "@stellar/mpp/charge/server";\n'
+        'const SECRET = process.env.AGENT_SECRET!;\nconst kp = Keypair.fromSecret(SECRET);\n'
+        f'export const main = Mppx.create({{ secretKey: SECRET, methods: [\n{server}] }});\n'
+        f'export const test = Mppx.create({{ secretKey: SECRET, methods: [\n{server}] }});\n')
+    (root / "package.json").write_text(json.dumps({"name": "agent", "dependencies": {"@stellar/mpp": "0.4.0", "mppx": "0.5.5"}}))
+    out = asyncio.run(audit_repository(root, name="agent", purpose="", settings=Settings(_env_file=None), deep=False))
+    ids = [f["id"] for f in out["report"]["findings"]]
+    assert len(ids) == len(set(ids))
+    replay = [f for f in out["report"]["findings"] if f["id"].startswith(STORE + "-")]
+    assert len(replay) == 1 and "src/server.ts:6" in replay[0]["evidence"] and "src/server.ts:12" in replay[0]["evidence"]
+    assert len([i for i in ids if i.startswith("security-mpp-secret-reuses-stellar-seed-")]) == 1
 
 
 # --------------------------------------------------------------------------- (C, D) MPP
@@ -124,6 +188,15 @@ def test_mpp_memory_store_is_high_only_with_several_instances():
     assert found[STORE].severity.value == "high" and "vercel.json" in found[STORE].evidence
     lambda_handler = memory + "export const handler = async (event) => mppx.handle(event);\n"
     assert paths({"src/server.ts": lambda_handler}, lock(**{"@stellar/mpp": "0.7.1"}))[STORE].severity.value == "high"
+    # A handler exported by some other module, or a descriptor beside another app, says nothing
+    # about how many copies of this server run.
+    elsewhere = {"src/server.ts": memory, "scripts/cron.ts": "export const handler = async () => sweep();\n"}
+    assert paths(elsewhere, lock(**{"@stellar/mpp": "0.7.1"}))[STORE].severity.value == "low"
+    other_app = paths({"src/server.ts": memory}, lock(**{"@stellar/mpp": "0.7.1"}), deployment_markers=["web/vercel.json"])
+    assert other_app[STORE].severity.value == "low"
+    other_package = paths({"packages/api/src/server.ts": memory}, lock("packages/api", **{"@stellar/mpp": "0.7.1"}),
+                          deployment_markers=["vercel.json"])
+    assert other_package[STORE].severity.value == "low"
 
 
 def test_mpp_literal_switches():
@@ -158,6 +231,9 @@ def test_mpp_secret_key_fallback_folds_into_default_secret():
     named = fallback.replace("MPP_CHALLENGE", "MPP_SECRET_KEY")
     assert hardening({"src/mpp.ts": named})["security-default-secret"].evidence == "src/mpp.ts:3 MPP_SECRET_KEY"
     assert "security-default-secret" not in hardening({"src/mpp.ts": fallback.replace(' ?? "dev-only"', "")})
+    # An empty fallback fails closed: mppx refuses a falsy secretKey at start-up.
+    assert "security-default-secret" not in hardening({"src/mpp.ts": fallback.replace('"dev-only"', '""')})
+    assert "security-default-secret" not in hardening({"src/mpp.ts": fallback.replace('?? "dev-only"', "|| ''")})
 
 
 def test_mpp_secret_that_is_the_stellar_seed_is_low():
@@ -223,9 +299,9 @@ def test_settlement_success_checked_before_serving_is_safe():
 
 def test_helper_that_reports_success_only_by_http_status_is_unchecked():
     helper = ('async function settle(paymentPayload: unknown, paymentRequirements: unknown) {\n'
-              '  const settleRes = await fetch(`${FAC}/settle`, { method: "POST", body: JSON.stringify({ paymentPayload, paymentRequirements }) });\n'
-              '  if (!settleRes.ok) return { ok: false };\n  const d = await settleRes.json();\n'
-              '  return { ok: true, txHash: d.txHash || d.transaction };\n}\n')
+              '  const out = await fetch(`${FAC}/settle`, { method: "POST", body: JSON.stringify({ paymentPayload, paymentRequirements }) });\n'
+              '  if (!out.ok) return { ok: false };\n  const d = await out.json();\n'
+              '  return { ok: true, id: d.transaction };\n}\n')
     handler = ('export async function GET(req: Request) {\n'
                '  const header = req.headers.get("X-PAYMENT");\n  const payload = JSON.parse(atob(header));\n'
                '  const paid = await settle(payload, REQUIREMENTS);\n'
@@ -236,6 +312,53 @@ def test_helper_that_reports_success_only_by_http_status_is_unchecked():
     # A helper whose discriminator is set from success counts as the check.
     checked = helper.replace("  return { ok: true,", "  if (!d.success) return { ok: false };\n  return { ok: true,")
     assert "security-x402-settle-unchecked" not in paths({"src/app/api/data/route.ts": checked + handler})
+
+
+SETTLE_HEAD = ('import express from "express";\nimport { decodePaymentSignatureHeader } from "@x402/core/http";\n'
+               'const app = express();\nconst FAC = process.env.FAC_URL;\n')
+
+
+def test_reading_the_facilitator_response_is_not_serving_the_resource():
+    handler = (SETTLE_HEAD + 'app.get("/quote", async (req, res) => {\n'
+               '  const payload = decodePaymentSignatureHeader(req.header("PAYMENT-SIGNATURE"));\n'
+               '  const response = await fetch(`${FAC}/settle`, { method: "POST", body: JSON.stringify({ paymentPayload: payload, '
+               'paymentRequirements: REQS }) });\n  const result = await response.json();\n'
+               '  if (!result.success) return res.status(402).json({ error: "settle failed" });\n'
+               '  return res.json({ quote: 42 });\n});\n')
+    assert "security-x402-settle-unchecked" not in paths({"src/server.ts": handler})
+    helper = (SETTLE_HEAD + 'async function settle(payload) {\n'
+              '  const res = await fetch(`${FAC}/settle`, { method: "POST", body: JSON.stringify({ paymentPayload: payload, '
+              'paymentRequirements: REQS }) });\n  const data = await res.json();\n'
+              '  if (!data.success) throw new Error("settlement failed");\n  return data;\n}\n'
+              'app.get("/quote", async (req, res) => {\n'
+              '  const paid = await settle(decodePaymentSignatureHeader(req.header("PAYMENT-SIGNATURE")));\n'
+              '  return res.json({ quote: 42, tx: paid.transaction });\n});\n')
+    assert "security-x402-settle-unchecked" not in paths({"src/server.ts": helper})
+    # The facilitator URL held in a constant is still a settle call.
+    unchecked = helper.replace("fetch(`${FAC}/settle`", "fetch(SETTLE_URL").replace(
+        "const FAC = process.env.FAC_URL;\n", "const FAC = process.env.FAC_URL;\nconst SETTLE_URL = `${FAC}/settle`;\n").replace(
+        '  if (!data.success) throw new Error("settlement failed");\n', "")
+    assert paths({"src/server.ts": unchecked})["security-x402-settle-unchecked"].severity.value == "high"
+
+
+def test_a_log_request_before_the_success_check_serves_nothing():
+    handler = (SETTLE_HEAD + 'app.get("/quote", async (req, res) => {\n'
+               '  const s = await facilitator.settle(decodePaymentSignatureHeader(req.header("PAYMENT-SIGNATURE")), REQS);\n'
+               '  await fetch(process.env.AUDIT_URL, { method: "POST", body: JSON.stringify({ event: "settle", s }) });\n'
+               '  if (!s.success) return res.status(402).end();\n  res.json({ quote: 42 });\n});\n')
+    assert "security-x402-settle-unchecked" not in paths({"src/server.ts": handler})
+    # Forwarding to the paid upstream with the settlement never checked is still a delivery.
+    proxied = handler.replace("  if (!s.success) return res.status(402).end();\n  res.json({ quote: 42 });\n",
+                              "  return res.json(await (await fetch(UPSTREAM)).json());\n")
+    assert "security-x402-settle-unchecked" in paths({"src/server.ts": proxied})
+
+
+def test_a_settle_method_that_is_not_a_facilitator_is_not_a_payment_settlement():
+    channel = ('import { stellar } from "@stellar/mpp/channel/server";\nimport express from "express";\nconst app = express();\n'
+               'app.post("/close", async (req, res) => {\n'
+               '  const result = await channelServer.settle(req.body.channelId, req.body.amount);\n'
+               '  res.json({ closed: true, hash: result.hash });\n});\n')
+    assert "security-x402-settle-unchecked" not in paths({"src/channel.ts": channel})
 
 
 def test_facilitator_relay_is_not_a_resource_server():
@@ -249,8 +372,8 @@ def test_facilitator_relay_is_not_a_resource_server():
 
 VERIFY_ONLY = ('import { verifier } from "./verifier";\n'
                'export function paywall() {\n  return async (req: any, res: any, next: any) => {\n'
-               "    const xdr = req.headers['x-payment-signature'];\n"
-               '    const result = await verifier.verifyEnvelopeXdr(xdr, { expectedRecipient: R });\n'
+               "    const xdr = req.headers['x-payment'];\n"
+               '    const result = await verifier.verifyEnvelope(xdr, { payee: R });\n'
                '    if (!result.verified) return res.status(402).json(result);\n    next();\n  };\n}\n')
 
 
@@ -269,7 +392,7 @@ PROOF = ('export async function verifyHash(txHash: string, options: { memo?: str
          '  const tx = await server.transactions().transaction(txHash).call();\n'
          '  if (!tx.successful) return false;\n  CHECKS\n  return true;\n}\n'
          'app.get("/paid", async (req, res) => {\n'
-         "  const hash = req.headers['x-payment-tx'];\n  STORE\n"
+         "  const hash = req.headers['x-payment'];\n  STORE\n"
          '  if (!(await verifyHash(hash, {}))) return res.status(402).end();\n  res.json(DATA);\n});\n')
 
 
@@ -297,7 +420,7 @@ def test_transaction_hash_proof_bindings():
     assert rule not in paths({"src/explorer.ts": explorer})
     # A payer reading a 402 and checking its own payment is not a paywall either.
     payer = ('export async function payAndCheck(url: string) {\n  const res = await fetch(url);\n'
-             '  if (res.status === 402) {\n    const hash = res.headers.get("x-payment-tx");\n'
+             '  if (res.status === 402) {\n    const hash = res.headers.get("x-payment-response");\n'
              '    return server.transactions().transaction(hash).call();\n  }\n}\n')
     assert rule not in paths({"src/payer.ts": payer})
 
@@ -313,7 +436,7 @@ SPONSOR = ('import { Keypair, TransactionBuilder, Operation, rpc } from "@stella
            '    .addOperation(Operation.invokeHostFunction({ func: op.func, auth: op.auth, source: op.source }))\n'
            '    SOROBAN.build();\n'
            '  tx.sign(feePayer);\n  res.json(await server.sendTransaction(tx));\n});\n')
-GUARDS = ("if (clientTx.source !== SPONSORED_SOURCE || clientTx.operations.length !== 1) throw new Error('drift');\n"
+GUARDS = ("if (clientTx.source !== PLACEHOLDER_SOURCE || clientTx.operations.length !== 1) throw new Error('drift');\n"
           "  if (clientTx.operations[0].source !== undefined) throw new Error('op source');\n"
           "  for (const e of clientTx.operations[0].auth) if (e.credentials().switch() !== "
           "xdr.SorobanCredentialsType.sorobanCredentialsAddress()) throw new Error('cred');")
@@ -337,18 +460,73 @@ def test_guarded_sponsor_with_its_own_fee_is_safe():
     assert not [f for f in found if "sponsor" in f]
 
 
+def test_sponsor_guards_must_check_the_client_envelope_in_code():
+    # Look-alikes: a request field named source, and a logging helper that reads credentials.
+    lookalike = sponsor("", "BASE_FEE", "").replace(
+        'app.post("/submit", async (req, res) => {\n',
+        'import { describeAuth } from "./auth";\napp.post("/submit", async (req, res) => {\n'
+        '  if (req.body.source === "cli") log("cli client");\n').replace(
+        "  const account =", "  log(describeAuth(op.auth));\n  const account =")
+    auth = 'export function describeAuth(entries) {\n  return entries.map((e) => e.credentials().switch().name).join(",");\n}\n'
+    found = paths({"src/relay.ts": lookalike, "src/auth.ts": auth})
+    assert "R1 credential type" in found["security-path-untrusted-to-financial-sink"].detail
+    # The guide's checks left as comments check nothing.
+    comments = ("// SECURITY: Verify the transaction source is not the fee-payer\n"
+                "  // if (clientTx.source === feePayer.publicKey()) throw; check e.credentials().switch()\n")
+    found = paths({"src/relay.ts": sponsor(comments, "BASE_FEE", "")})
+    assert found["security-path-untrusted-to-financial-sink"].severity.value == "high"
+    # Checks in a throwing helper the handler calls count.
+    helper = ("function pin(tx) {\n  if (tx.source !== PLACEHOLDER_SOURCE) throw new Error('source');\n"
+              "  const op = tx.operations[0];\n  if (op.source) throw new Error('op source');\n"
+              "  if (!op.auth.every((e) => e.credentials().switch() === xdr.SorobanCredentialsType.sorobanCredentialsAddress()))\n"
+              "    throw new Error('credentials');\n}\n")
+    found = paths({"src/relay.ts": helper + sponsor("pin(clientTx);", "BASE_FEE", "")})
+    assert not {"security-path-external-transaction-signed", "security-path-untrusted-to-financial-sink"} & set(found)
+    asserted = helper.replace("if (op.source) throw new Error('op source');", "assert(!op.source);")
+    found = paths({"src/relay.ts": asserted + sponsor("pin(clientTx);", "BASE_FEE", "")})
+    assert not {"security-path-external-transaction-signed", "security-path-untrusted-to-financial-sink"} & set(found)
+    # `if (!op.source) throw` requires an operation source instead of forbidding one.
+    inverted = helper.replace("if (op.source) throw", "if (!op.source) throw")
+    found = paths({"src/relay.ts": inverted + sponsor("pin(clientTx);", "BASE_FEE", "")})
+    signed = [f for f in found.values() if f.id in {"security-path-external-transaction-signed",
+                                                     "security-path-untrusted-to-financial-sink"}]
+    assert signed and any("R2 source pin" in f.detail for f in signed)
+
+
+def test_guarded_sponsor_does_not_hide_a_separate_payment_from_input():
+    refund = ("const refund = new TransactionBuilder(await server.getAccount(feePayer.publicKey()), { fee: BASE_FEE, "
+              "networkPassphrase: NET }).addOperation(Operation.payment({ destination: req.body.refundTo, "
+              "asset: Asset.native(), amount: req.body.refund })).setTimeout(30).build();\n"
+              "  refund.sign(feePayer);\n  await server.sendTransaction(refund);\n")
+    guarded = sponsor(GUARDS, "BASE_FEE", "").replace("  res.json(await server.sendTransaction(tx));\n",
+                                                       "  res.json(await server.sendTransaction(tx));\n  " + refund)
+    found = paths({"src/relay.ts": guarded})
+    evidence = found["security-path-untrusted-to-financial-sink"].evidence
+    assert "refund.sign(feePayer)" in evidence and "tx.sign(feePayer)" not in evidence
+
+
+def test_guarded_sponsor_that_takes_the_client_fee_is_medium():
+    found = paths({"src/relay.ts": sponsor(GUARDS)})
+    assert found["security-path-sponsor-fee-from-client"].severity.value == "medium"
+    assert not {"security-path-external-transaction-signed", "security-path-untrusted-to-financial-sink"} & set(found)
+
+
 def test_fee_bump_with_an_input_fee():
-    tool = ('server.tool("bump", "fee bump", { innerTxXdr: z.string(), maxFee: z.string().optional() }, '
-            'async ({ innerTxXdr, maxFee }) => {\n  const kp = Keypair.fromSecret(process.env.SPONSOR_SECRET);\n'
-            '  const inner = new Transaction(innerTxXdr, NET);\n'
-            '  const fb = TransactionBuilder.buildFeeBumpTransaction(kp.publicKey(), maxFee || "100", inner, NET);\n'
+    tool = ('server.tool("bump", "fee bump", { innerXdr: z.string(), feeArg: z.string().optional() }, '
+            'async ({ innerXdr, feeArg }) => {\n  const kp = Keypair.fromSecret(process.env.SPONSOR_SECRET);\n'
+            '  const inner = new Transaction(innerXdr, NET);\n'
+            '  const fb = TransactionBuilder.buildFeeBumpTransaction(kp.publicKey(), feeArg || "100", inner, NET);\n'
             '  fb.sign(kp);\n  return horizon.submitTransaction(fb);\n});\n')
     found = paths({"src/t.ts": tool})
     assert found["security-path-fee-bump-unbounded"].severity.value == "medium"
     # The outer signature covers the fee only: it is not a signature over foreign operations.
     assert "security-path-external-transaction-signed" not in found
-    assert "security-path-fee-bump-unbounded" not in paths({"src/t.ts": tool.replace('maxFee || "100"', '"100"')})
-    stored = tool.replace("new Transaction(innerTxXdr, NET)", "await store.load(innerTxXdr)")
+    assert "security-path-fee-bump-unbounded" not in paths({"src/t.ts": tool.replace('feeArg || "100"', '"100"')})
+    # A fee read from the ledger is not one the caller chooses.
+    ledger = tool.replace('feeArg || "100"', "recent.records[0].max_fee").replace(
+        "  const inner =", "  const recent = await horizon.transactions().limit(1).call();\n  const inner =")
+    assert "security-path-fee-bump-unbounded" not in paths({"src/t.ts": ledger})
+    stored = tool.replace("new Transaction(innerXdr, NET)", "await store.load(innerXdr)")
     assert "security-path-fee-bump-unbounded" not in paths({"src/t.ts": stored})
     python = ('import os\nfrom stellar_sdk import Keypair, TransactionBuilder, TransactionEnvelope\nfrom mcp import tool\n'
               'KP = Keypair.from_secret(os.environ["SPONSOR_SECRET"])\n@tool\ndef bump(inner_xdr: str, fee: int):\n'
