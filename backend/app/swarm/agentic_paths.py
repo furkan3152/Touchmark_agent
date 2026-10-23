@@ -12,6 +12,9 @@ import re
 from dataclasses import dataclass
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
+from ..services.lockfiles import Lockset, below, spec_admits
+from ..stellar.canonical import NETWORK_MARKERS
+from .consolidate import stable_id
 
 
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -221,6 +224,485 @@ def _evidence(flows) -> str:
                      for flow in flows[:5])
 
 
+# --------------------------------------------------------------------------- payment SDKs
+#: @x402/core caps every payment by default from this release ($1 on the assets a scheme
+#: recognizes; other assets are refused), and @x402/stellar recognizes Stellar USDC from the
+#: same release. Checked in the published 2.22.0 and 2.23.0 packages: spendControls and
+#: findDefaultAsset first appear in 2.23.0.
+X402_DEFAULT_CAP = "2.23.0"
+#: @x402/fetch and @x402/axios X.Y.Z depend on @x402/core ~X.Y.0, so their version names
+#: the core a wrapper uses when the core is not a direct dependency.
+_X402_WRAPPERS = ("@x402/fetch", "@x402/axios")
+#: First @stellar/mpp release whose server throws at start-up without a replay store. Before
+#: it, the charge server checks used challenges and transaction hashes only `if (store)`
+#: (0.2.0 to 0.4.0); the channel server tracks vouchers in the store from 0.4.0.
+MPP_STORE_REQUIRED = {"charge": "0.5.0", "channel": "0.4.0"}
+#: The fee-bump ceiling @stellar/mpp uses when none is given (DEFAULT_MAX_FEE_BUMP_STROOPS).
+MPP_DEFAULT_FEE_BUMP = 10_000_000
+#: Example, test and development code: item severities drop one level there.
+_NON_PRODUCTION = re.compile(r"(?:^|/)(?:tests?|__tests__|spec|examples?|dev|demo)/", re.I)
+#: Code that names a network. A package that only names testnet moves test money.
+_MAINNET_CODE = re.compile(r"\bSTELLAR_PUBNET\b|\bUSDC_SAC_MAINNET\b|\bXLM_SAC_MAINNET\b|\bNetworks\.PUBLIC\b|"
+                           r"[\"'](?:pubnet|mainnet)[\"']|" + "|".join(map(re.escape, NETWORK_MARKERS["mainnet"])))
+_TESTNET_CODE = re.compile(r"\bSTELLAR_TESTNET\b|\bUSDC_SAC_TESTNET\b|\bXLM_SAC_TESTNET\b|\bNetworks\.TESTNET\b|"
+                           r"[\"']testnet[\"']|" + "|".join(map(re.escape, NETWORK_MARKERS["testnet"])))
+#: Deployment descriptors that run several instances of a server (each with its own memory).
+_MULTI_INSTANCE_FILES = re.compile(r"(?:^|/)(?:vercel\.json|wrangler\.toml|serverless\.ya?ml|netlify\.toml)$")
+#: A serverless entry point: counts only in the server's own module.
+_LAMBDA_HANDLER = re.compile(r"^\s*export\s+(?:const|async\s+function|function)\s+handler\b|\bexports\.handler\s*=", re.M)
+#: Kubernetes or compose replicas above one.
+_REPLICAS = re.compile(r"^\s*replicas:\s*(?:[2-9]|\d{2,})", re.M)
+
+#: fact kind -> (finding id, severity, title, detail, remediation, references, lower on testnet)
+_FACT_RULES = {
+    "x402_spend_controls_disabled": (
+        "security-x402-spend-controls-disabled", Severity.HIGH,
+        "x402 spend controls are switched off",
+        "The x402 client is configured with spendControls: false (or maxAmountPerPayment: false). From @x402/core "
+        "2.23.0 the client refuses payments above $1 and in unknown assets by default; this switch removes that, so "
+        "a paid endpoint chooses the amount and asset the agent pays.",
+        "Keep spendControls on; raise maxAmountPerPayment to the largest payment the agent should make, and list "
+        "extra assets with their own per-asset caps.",
+        ["x402 client spend controls", "OWASP LLM06 Excessive Agency"], False),
+    "x402_any_asset": (
+        "security-x402-any-asset-uncapped", Severity.MEDIUM,
+        "x402 client pays in any asset, uncapped",
+        "allowedAssets: true lets the client pay in any asset a 402 response names. The dollar cap applies only to "
+        "assets a scheme recognizes, so a payment in any other token has no ceiling.",
+        "List the extra assets the agent may pay in, each with an atomic maxAmountPerPayment.",
+        ["x402 client spend controls"], False),
+    "mpp_replay_store": (
+        "security-mpp-replay-store-missing", Severity.HIGH,
+        "MPP server accepts the same payment more than once",
+        "The @stellar/mpp server records used challenges and transaction hashes only in its store. Without a shared, "
+        "persistent store, one on-chain payment can be presented again for further paid requests.",
+        "Pass a persistent store shared by every instance (and upgrade @stellar/mpp: from 0.5.0 the server refuses "
+        "to start without one).",
+        ["MPP charge replay protection", "CWE-294 Authentication Bypass by Capture-replay"], True),
+    "mpp_unsigned_push": (
+        "security-mpp-unsigned-push-enabled", Severity.HIGH,
+        "MPP server accepts unsigned payment hashes",
+        "allowUnsignedPush: true accepts a transaction hash as payment without a signature from the payer. Anyone who "
+        "sees a payment on chain can present its hash as their own.",
+        "Leave allowUnsignedPush off so push credentials are signed by the payer.",
+        ["MPP charge push mode"], True),
+    "mpp_channel_state_unchecked": (
+        "security-mpp-channel-state-unchecked", Severity.MEDIUM,
+        "MPP channel server does not check the channel on chain",
+        "checkOnChainState: false stops the server from noticing that a payment channel was closed on chain. Vouchers "
+        "accepted after the close cannot be settled, so the service is delivered unpaid.",
+        "Leave checkOnChainState on (the default from @stellar/mpp 0.5.0).",
+        ["MPP payment channels"], False),
+    "mpp_fee_budget": (
+        "security-mpp-fee-budget-unbounded", Severity.MEDIUM,
+        "MPP server sponsors fees without a budget",
+        "The server fee-bumps settlement transactions with its own key, with a ceiling above the SDK default or no "
+        "per-funder fee budget. Payers who make it settle often spend the sponsor's XLM on fees.",
+        "Keep maxFeeBumpStroops at or below 10,000,000 stroops and set a feeBudget when a fee-bump signer is configured.",
+        ["MPP fee sponsorship", "CWE-770 Allocation of Resources Without Limits or Throttling"], False),
+    "mpp_unpinned_channel": (
+        "security-mpp-unpinned-channel", Severity.HIGH,
+        "MPP client signs for any payment channel",
+        "allowUnpinnedChannel: true makes the client sign vouchers for whatever channel contract the server names, "
+        "not one the operator chose.",
+        "Pass allowedChannels with the channel contracts the agent may pay into.",
+        ["MPP payment channels", "OWASP LLM06 Excessive Agency"], True),
+    "cli_auto_sign": (
+        "security-cli-auto-sign", Severity.LOW,
+        "Agent runs stellar contract invoke with --auto-sign",
+        "The command signs every Soroban authorization entry the invocation needs, including non-root ones the CLI "
+        "would otherwise ask about, so a contract call can authorize sub-invocations (transfers from the identity) "
+        "nobody reviewed.",
+        "Drop --auto-sign and review the authorization entries, or restrict the contract and function the tool may invoke.",
+        ["Stellar CLI contract invoke", "Soroban authorization"], False),
+    "x402_requirements_from_payer": (
+        "security-x402-requirements-from-payer", Severity.CRITICAL,
+        "The payer chooses the payment requirements the server verifies",
+        "The requirements passed to the facilitator's verify or settle call come from the payer's own payload or "
+        "request body (for example payload.accepted). The facilitator then checks the payment against terms the payer "
+        "wrote: any amount, asset, network or payee passes.",
+        "Build the requirements on the server for the route being paid, and compare payload.accepted with them "
+        "(findMatchingRequirements or a deep equality) before verifying or settling.",
+        ["x402 resource server", "CWE-807 Reliance on Untrusted Inputs in a Security Decision"], False),
+    "x402_settle_unchecked": (
+        "security-x402-settle-unchecked", Severity.HIGH,
+        "The paid resource is served without checking that settlement succeeded",
+        "The handler settles the payment and then serves the response, but no branch reads the settlement's "
+        "success. A facilitator answers HTTP 200 with success: false when the transfer failed (and with a "
+        "transaction while it is still pending), so a failed payment still gets the resource.",
+        "Serve only when settle() returned success: true; answer 402 otherwise. The HTTP status and the "
+        "transaction hash are not proof of payment.",
+        ["x402 facilitator settle response", "CWE-754 Improper Check for Unusual or Exceptional Conditions"], False),
+    "x402_verify_without_settle": (
+        "security-x402-verify-without-settle", Severity.HIGH,
+        "A payment is verified but never settled before serving",
+        "The handler verifies a payment the client signed and then serves the resource, but nothing in it settles or "
+        "submits the payment. A signed payload that is never submitted, or whose payer lacks the funds, gets the "
+        "resource for free, and the same payload can be presented again.",
+        "Settle (or submit) the payment and check its success before serving, or settle in a hook that runs once "
+        "the response succeeds and refuse further use of the payload.",
+        ["x402 resource server", "CWE-841 Improper Enforcement of Behavioral Workflow"], False),
+    "tx_hash_proof": (
+        "security-tx-hash-proof-unbound", Severity.HIGH,
+        "A transaction hash proves payment without being bound to this request",
+        "The server accepts a transaction hash the requester supplies as proof of payment and looks it up on "
+        "chain. Unless the hash is recorded as used, tied to the payer or to a challenge the server issued, and "
+        "recent, anyone can present someone else's payment, or an old one, for a paid response.",
+        "Record used hashes (a unique insert), require a memo or challenge id the server issued for this request, "
+        "check the source is the authenticated payer, and reject transactions older than the challenge.",
+        ["CWE-294 Authentication Bypass by Capture-replay", "x402 payment verification"], False),
+    "sponsor_rebuild": (
+        "security-path-sponsor-signs-foreign-ops", Severity.HIGH,
+        "The fee sponsor signs operations a client chose",
+        "The server rebuilds a client's transaction with its own account as the source and signs it, copying the "
+        "client's operations without checking that their credentials are Address credentials and that neither the "
+        "envelope nor the operation names the sponsor as source. A client can then make the sponsor's account the "
+        "source of a payment or an authorization the sponsor's signature satisfies.",
+        "Before signing, require one invokeHostFunction operation with no sub-invocations, Address credentials only, "
+        "an operation source that is unset (or the payer, never the sponsor) and an envelope source equal to a fixed "
+        "placeholder or the payer.",
+        ["Stellar fee sponsorship", "Soroban authorization", "OWASP LLM06 Excessive Agency"], False),
+    "sponsor_fee": (
+        "security-path-sponsor-fee-from-client", Severity.MEDIUM,
+        "The client sets the fee the sponsor pays",
+        "The rebuilt transaction takes its fee (or its Soroban resource data) from the client's envelope. "
+        "assembleTransaction adds the minimum resource fee on top of the incoming fee, so the client chooses how "
+        "much of the sponsor's XLM each transaction burns.",
+        "Use a constant base fee, simulate the rebuilt transaction and cap the total fee before signing.",
+        ["Stellar fee sponsorship", "CWE-770 Allocation of Resources Without Limits or Throttling"], False),
+    "fee_bump_unbounded": (
+        "security-path-fee-bump-unbounded", Severity.MEDIUM,
+        "A fee bump pays whatever fee the input names",
+        "The server wraps a transaction it did not build in a fee bump paid from its own account, with the fee taken "
+        "from a tool argument or request and no ceiling. The outer signature only covers fees, so the exposure is the "
+        "sponsor's XLM, at the rate the caller chooses.",
+        "Cap the fee-bump fee with a constant (or derive it from the network's fee stats with a ceiling), and fee-bump "
+        "only transactions whose operations the server checked.",
+        ["Stellar fee-bump transactions", "CWE-770 Allocation of Resources Without Limits or Throttling"], False),
+    "x402_stellar_not_default": (
+        "security-x402-stellar-usdc-not-default", Severity.INFO,
+        "x402 refuses Stellar USDC payments (fails closed)",
+        "@x402/core 2.23.0 or later accepts only assets a scheme recognizes, and the installed @x402/stellar predates "
+        "2.23.0, which first recognizes Stellar USDC. Payments on Stellar are refused rather than uncapped.",
+        "Upgrade @x402/stellar to the same release as @x402/core.",
+        ["x402 client spend controls"], False),
+}
+
+
+@dataclass(frozen=True)
+class _FactHit:
+    """One place a fact rule fires. Hits of one rule in one file become one finding."""
+    kind: str
+    location: object
+    severity: Severity
+    note: str = ""
+    grade: EvidenceGrade = EvidenceGrade.CONFIRMED
+    confidence: float = 0.9
+
+
+def _fact_findings(hits: list[_FactHit], auditor: str) -> list[Finding]:
+    """One finding per rule and file, at the worst severity, with every place as evidence.
+    Two servers or switches in one module are one defect, and lines with the same text would
+    otherwise give two findings the same id."""
+    groups: dict[tuple[str, str], list[_FactHit]] = {}
+    for hit in hits:
+        groups.setdefault((hit.kind, hit.location.file), []).append(hit)
+    findings = []
+    for (kind, file), group in groups.items():
+        group.sort(key=lambda h: h.location.line)
+        worst = max(group, key=lambda h: h.severity.rank)
+        rule, _, title, detail, remediation, refs, _ = _FACT_RULES[kind]
+        findings.append(Finding(
+            id=stable_id(rule, file, group[0].location.text), dimension=Dimension.SECURITY,
+            severity=worst.severity, title=title, detail=detail,
+            evidence="; ".join(h.location.render() + (f" ({h.note})" if h.note else "") for h in group[:5]),
+            evidence_grade=worst.grade, remediation=remediation, references=refs, auditor=auditor,
+            confidence=max(h.confidence for h in group)))
+    return findings
+
+
+def _sponsor_gaps(fact) -> list[str]:
+    gaps = [label for label, ok in (("R1 credential type", fact.get("credential_type")),
+                                    ("R2 source pin", fact.get("source_pin"))) if not ok]
+    if fact.get("facilitator") and not fact.get("single_invocation"):
+        gaps.append("R4 single invocation")
+    if fact.get("foreign_fee"):
+        gaps.append("R3 client-chosen fee")
+    return gaps
+
+
+def _sponsor_hits(profile, by_category: dict) -> tuple[list[_FactHit], dict]:
+    """Fee sponsors and relayers (R1-R4, fee bumps). Where the signing site is already a
+    foreign-signing flow, the gaps are returned as notes for that finding instead. A sponsor
+    with R1 and R2 in place signed nothing the client chose (jsflow drops those flows)."""
+    hits: list[_FactHit] = []
+    notes: dict = {}
+    # The same defect as a foreign-signing or untrusted-transaction flow at the signing site.
+    signed = {f.location for c in ("foreign_signing", "financial") for f in by_category.get(c, [])}
+    for fact in profile.facts_of("sponsor_rebuild"):
+        gaps = _sponsor_gaps(fact)
+        if not gaps:
+            continue
+        if fact.location in signed:
+            notes[fact.location] = "sponsor rebuild without " + ", ".join(gaps)
+            continue
+        confidence = 0.95 if fact.get("warned") else 0.85  # the guide's check, left as a comment
+        if any(g.startswith(("R1", "R2", "R4")) for g in gaps):
+            severity = Severity.HIGH if any(g.startswith(("R1", "R2")) for g in gaps) else Severity.MEDIUM
+            hits.append(_FactHit("sponsor_rebuild", fact.location, severity, confidence=confidence,
+                                 note="missing " + ", ".join(g for g in gaps if not g.startswith("R3"))))
+        if "R3 client-chosen fee" in gaps:
+            hits.append(_FactHit("sponsor_fee", fact.location, Severity.MEDIUM))
+    for fact in profile.facts_of("fee_bump_unbounded"):
+        severity, extra = _adjusted("fee_bump_unbounded", Severity.MEDIUM, fact.location.file, False)
+        hits.append(_FactHit("fee_bump_unbounded", fact.location, severity, "; ".join([fact.detail] + extra)))
+    return hits, notes
+
+
+def _grouped(facts) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for fact in facts:
+        out.setdefault(fact.location.file, []).append(fact)
+    return out
+
+
+def _seller_findings(profile, auditor: str) -> list[Finding]:
+    """Hand-written x402 sellers (S1-S4): one finding per rule and file."""
+    findings: list[Finding] = []
+    settles = profile.facts_of("x402_settle_call")
+    for kind in ("x402_requirements_from_payer", "x402_settle_unchecked", "x402_verify_without_settle"):
+        for file, facts in _grouped(profile.facts_of(kind)).items():
+            rule, severity, title, detail, remediation, refs, _ = _FACT_RULES[kind]
+            evidence = [f"{f.location.render()} [{f.detail}]" for f in facts[:3]]
+            if kind == "x402_settle_unchecked":
+                near = [f for f in settles if f.location.file == file] or settles
+                evidence += [f"settled at {f.location.render()}" for f in near[:2]]
+                if any(f.get("moves_funds") for f in facts):
+                    severity = Severity.CRITICAL
+            if kind == "x402_verify_without_settle":
+                evidence = [f"{f.location.render()} [{f.detail}; served at line {f.get('delivery')}]" for f in facts[:3]]
+            findings.append(Finding(
+                id=stable_id(rule, file, facts[0].location.text), dimension=Dimension.SECURITY, severity=severity,
+                title=title, detail=detail, evidence="; ".join(evidence), evidence_grade=EvidenceGrade.CONFIRMED,
+                remediation=remediation, references=refs, auditor=auditor, confidence=0.9))
+    for file, facts in _grouped(profile.facts_of("tx_hash_proof")).items():
+        worst = None
+        for fact in facts:
+            missing = [name for name, ok in (("used-hash store", fact.get("store")), ("payer or challenge binding",
+                       fact.get("payer") or fact.get("challenge")), ("age check", fact.get("age"))) if not ok]
+            bound = fact.get("payer") or fact.get("challenge")
+            if not fact.get("store") or (not bound and not fact.get("age")):
+                # Without a store one payment is redeemed again and again; without binding or an
+                # age limit every past payment to the merchant is a free pass.
+                severity = Severity.HIGH
+            elif not bound:
+                severity = Severity.MEDIUM
+            elif not fact.get("age"):
+                severity = Severity.LOW
+            else:
+                continue
+            if worst is None or severity.rank > worst[0].rank:
+                worst = (severity, fact, missing)
+        if worst:
+            severity, fact, missing = worst
+            rule, _, title, detail, remediation, refs, _ = _FACT_RULES["tx_hash_proof"]
+            findings.append(Finding(
+                id=stable_id(rule, file, fact.location.text), dimension=Dimension.SECURITY, severity=severity,
+                title=title, detail=detail, evidence=f"{fact.location.render()} [missing: {', '.join(missing)}]",
+                evidence_grade=EvidenceGrade.CONFIRMED, remediation=remediation, references=refs, auditor=auditor,
+                confidence=0.85))
+    return findings
+
+
+def _installed(lockset: Lockset, package: str, near: str) -> tuple[list[str], str | None, bool]:
+    """(installed versions, declared range, direct dependency) nearest to ``near``."""
+    found = lockset.resolve(package, near)
+    if found is None:
+        return [], None, False
+    return list(found.versions), found.spec, found.spec is not None
+
+
+def _x402_core(lockset: Lockset, near: str) -> tuple[list[str], str | None, str]:
+    """The @x402/core versions a client near ``near`` runs on: the core itself when declared,
+    else the wrapper's lockstep version, else every copy the lockfile installs."""
+    versions, spec, direct = _installed(lockset, "@x402/core", near)
+    if direct and versions:
+        return versions, spec, "@x402/core"
+    for wrapper in _X402_WRAPPERS:
+        w_versions, w_spec, _ = _installed(lockset, wrapper, near)
+        if w_versions:
+            return w_versions, w_spec, wrapper
+        spec = spec or w_spec
+    return versions, spec, "@x402/core"
+
+
+def _x402_cap(lockset: Lockset, near: str) -> tuple[str, str]:
+    """('capped' | 'uncapped' | 'depends', why) for x402 clients near ``near``."""
+    versions, spec, source = _x402_core(lockset, near)
+    if versions:
+        old = [v for v in versions if below(v, X402_DEFAULT_CAP) is True]
+        new = [v for v in versions if below(v, X402_DEFAULT_CAP) is False]
+        listed = f"{source} {', '.join(versions)} installed"
+        if new and not old:
+            return "capped", listed
+        if old and not new:
+            return "uncapped", f"{listed}; no default cap before {X402_DEFAULT_CAP}"
+        return "depends", f"{listed}; only some copies cap payments by default"
+    if spec:
+        before, after = spec_admits(spec, None, X402_DEFAULT_CAP), spec_admits(spec, X402_DEFAULT_CAP, None)
+        if before and after:
+            return "depends", f"no lockfile; {source} {spec} admits releases before and after {X402_DEFAULT_CAP}: the cap depends on install date"
+        if before is True and after is False:
+            return "uncapped", f"{source} {spec}; no default cap before {X402_DEFAULT_CAP}"
+        if after is True and before is False:
+            return "capped", f"{source} {spec}"
+    return "depends", f"installed @x402/core version unknown; payments are capped by default only from {X402_DEFAULT_CAP}"
+
+
+def _package_root(lockset: Lockset, near: str) -> str:
+    roots = [r for r in lockset.importers if r == "" or near == r or near.startswith(r + "/")]
+    return max(roots, key=len) if roots else ""
+
+
+def _testnet_only(artifact: AgentArtifact, lockset: Lockset, near: str, named: str = "") -> bool:
+    """Only testnet is named in the package that holds ``near``, so only test money moves."""
+    if named and (_MAINNET_CODE.search(named) or _MAINNET_CODE.search(f"'{named}'")):
+        return False
+    root = _package_root(lockset, near)
+    texts = [t for f, t in artifact.code_files.items()
+             if (not root or f.startswith(root + "/")) and not _NON_PRODUCTION.search(f)]
+    return any(_TESTNET_CODE.search(t) for t in texts) and not any(_MAINNET_CODE.search(t) for t in texts)
+
+
+def _multi_instance(artifact: AgentArtifact, lockset: Lockset, near: str) -> str:
+    """A deployment marker that runs several copies of the server in ``near``: a descriptor
+    in its package and in a directory that holds it, a Lambda-style handler exported by its
+    own module, or replicas above one at its package root."""
+    root = _package_root(lockset, near)
+    inside = lambda f: not root or f.startswith(root + "/")  # noqa: E731
+    for path in list(artifact.raw_metadata.get("deployment_markers") or []) + list(artifact.code_files):
+        folder = path.rpartition("/")[0]
+        if _MULTI_INSTANCE_FILES.search(path) and inside(path) and (not folder or near.startswith(folder + "/")):
+            return path
+    if _LAMBDA_HANDLER.search(artifact.code_files.get(near, "")):
+        return near
+    for path, text in artifact.code_files.items():
+        if inside(path) and path.endswith((".yml", ".yaml")) and _REPLICAS.search(text):
+            return path
+    return ""
+
+
+def _adjusted(kind: str, severity: Severity, file: str, testnet: bool) -> tuple[Severity, list[str]]:
+    notes = []
+    if testnet and _FACT_RULES[kind][6]:
+        severity, notes = severity.downgrade(1), notes + ["only testnet is named in this package"]
+    if _NON_PRODUCTION.search(file):
+        severity, notes = severity.downgrade(1), notes + ["example or test code"]
+    return severity, notes
+
+
+def _payment_sdk_findings(artifact: AgentArtifact, profile, lockset: Lockset, by_category: dict,
+                          auditor: str) -> tuple[list[Finding], list[_FactHit], list]:
+    """Version-aware x402 and MPP rules. Returns the findings, the fact hits, and the x402
+    clients whose installed release caps each payment by default (amount caps for the
+    control rules)."""
+    findings: list[Finding] = []
+    hits: list[_FactHit] = []
+    default_caps = []
+    # Wrapped clients whose spend controls are switched off: the client value carries the
+    # switch to the wrap (jsflow), or the switch sits in the wrap's own module.
+    switched_off = {f.location for f in profile.facts_of("x402_controls_off")}
+    disabled_files = {f.location.file for f in profile.facts_of("x402_spend_controls_disabled")}
+
+    # (A) x402 payers: whether the wrapped fetch pays whatever a 402 asks depends on the release.
+    kept, notes = [], {}
+    for flow in by_category.pop("x402_unbounded", []):
+        state, why = _x402_cap(lockset, flow.location.file)
+        off = flow.location in switched_off or flow.location.file in disabled_files
+        if state == "capped" or (off and state != "uncapped"):
+            # Capped by default, or reported below as a switched-off cap.
+            if state == "capped" and not off:
+                default_caps.append(flow.location)
+                stellar, _, _ = _installed(lockset, "@x402/stellar", flow.location.file)
+                if stellar and all(below(v, X402_DEFAULT_CAP) is True for v in stellar):
+                    hits.append(_FactHit("x402_stellar_not_default", flow.location, Severity.INFO,
+                                         f"@x402/stellar {', '.join(stellar)} installed"))
+            continue
+        severity = Severity.HIGH if state == "uncapped" else Severity.MEDIUM
+        if _NON_PRODUCTION.search(flow.location.file):
+            severity = severity.downgrade(1)
+        kept.append((flow, severity, state))
+        notes[flow.location] = why
+    if kept:
+        fid, _, title, detail, remediation, refs = _PATH_RULES["x402_unbounded"]
+        kept.sort(key=lambda item: -item[1].rank)
+        findings.append(Finding(
+            id=fid, dimension=Dimension.SECURITY, severity=kept[0][1], title=title,
+            detail=detail + (" Whether the installed x402 release caps payments by default could not be "
+                             "established for every client." if any(s == "depends" for _, _, s in kept) else ""),
+            evidence="; ".join(f"{flow.location.render()} [{notes[flow.location]}]" for flow, _, _ in kept[:5]),
+            evidence_grade=EvidenceGrade.CONFIRMED if kept[0][2] == "uncapped" else EvidenceGrade.INFERRED,
+            remediation=remediation, references=refs, auditor=auditor, confidence=0.95))
+
+    # (B) x402 switches. Before 2.23.0 they switch nothing off; (A) reports that client.
+    for kind in ("x402_spend_controls_disabled", "x402_any_asset"):
+        for fact in profile.facts_of(kind):
+            file = fact.location.file
+            cap_state = _x402_cap(lockset, file)[0]
+            if cap_state == "uncapped":
+                continue
+            severity = _FACT_RULES[kind][1]
+            text = artifact.code_files.get(file, "")
+            if kind == "x402_spend_controls_disabled" and "onBeforePaymentCreation" in text and re.search(r"\babort\s*:\s*true", text):
+                severity = Severity.MEDIUM  # a hook can still refuse a payment
+            severity, extra = _adjusted(kind, severity, file, False)
+            # Confirmed only on a resolved release that has the switch (2.23.0 or later).
+            hits.append(_FactHit(kind, fact.location, severity, "; ".join(
+                extra + ([] if cap_state == "capped" else ["installed @x402/core release not resolved"])),
+                grade=EvidenceGrade.CONFIRMED if cap_state == "capped" else EvidenceGrade.INFERRED))
+
+    # (C) MPP servers, and (D) client switches.
+    for fact in profile.facts_of("mpp_server"):
+        file, mode = fact.location.file, fact.get("mode")
+        versions, spec, _ = _installed(lockset, "@stellar/mpp", file)
+        boundary = MPP_STORE_REQUIRED.get(mode, "0.0.0")
+        if versions:
+            optional = all(below(v, boundary) is True for v in versions)
+            installed = f"@stellar/mpp {', '.join(versions)} installed"
+        else:
+            optional = bool(spec) and spec_admits(spec, None, boundary) is True and spec_admits(spec, boundary, None) is False
+            installed = f"@stellar/mpp {spec}"
+        testnet = _testnet_only(artifact, lockset, file, fact.get("network") or "")
+        store = fact.get("store")
+        if store == "none" and optional:
+            severity, extra = _adjusted("mpp_replay_store", Severity.HIGH, file, testnet)
+            hits.append(_FactHit("mpp_replay_store", fact.location, severity,
+                                 "; ".join([f"no store; {installed}: replay checks run only with a store"] + extra)))
+        elif store == "memory":
+            marker = _multi_instance(artifact, lockset, file)
+            severity, extra = _adjusted("mpp_replay_store", Severity.HIGH if marker else Severity.LOW, file,
+                                        testnet and bool(marker))
+            hits.append(_FactHit(
+                "mpp_replay_store", fact.location, severity,
+                "; ".join([f"Store.memory() with several instances ({marker})" if marker else
+                           "Store.memory(): replay records are lost on restart"] + extra)))
+        if fact.get("max_fee_bump", 0) > MPP_DEFAULT_FEE_BUMP or (
+                mode == "channel" and fact.get("fee_bump_signer") and not fact.get("fee_budget")):
+            severity, extra = _adjusted("mpp_fee_budget", Severity.MEDIUM, file, testnet)
+            hits.append(_FactHit("mpp_fee_budget", fact.location, severity, "; ".join(extra)))
+    for kind in ("mpp_unsigned_push", "mpp_channel_state_unchecked", "mpp_unpinned_channel"):
+        for fact in profile.facts_of(kind):
+            file = fact.location.file
+            severity, extra = _adjusted(kind, _FACT_RULES[kind][1], file, _testnet_only(artifact, lockset, file))
+            hits.append(_FactHit(kind, fact.location, severity, "; ".join(extra)))
+    for fact in profile.facts_of("cli_auto_sign"):
+        severity, extra = _adjusted("cli_auto_sign", Severity.MEDIUM if fact.get("direct") else Severity.LOW,
+                                    fact.location.file, False)
+        hits.append(_FactHit("cli_auto_sign", fact.location, severity, "; ".join(
+            (["the command takes tool or request arguments"] if fact.get("direct") else []) + extra)))
+    return findings, hits, default_caps
+
+
 def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     from .codeflow import analyse_code
 
@@ -232,6 +714,15 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     by_category: dict[str, list] = {}
     for flow in profile.flows:
         by_category.setdefault(flow.category, []).append(flow)
+    lockset = Lockset(artifact.raw_metadata.get("resolved_versions"))
+    payment_findings, payment_hits, default_caps = _payment_sdk_findings(artifact, profile, lockset, by_category, auditor)
+    sponsor_hits, sponsor_notes = _sponsor_hits(profile, by_category)
+    findings += payment_findings + _fact_findings(payment_hits + sponsor_hits, auditor) + _seller_findings(profile, auditor)
+    amount_caps = list(profile.controls.get("amount_cap", [])) + default_caps
+    # A sponsor that accepts only Address credentials and pins both sources inspected the
+    # client's transaction (its signing flows were already dropped in jsflow).
+    inspected = [f.location for f in profile.facts_of("sponsor_rebuild")
+                 if not [g for g in _sponsor_gaps(f) if not g.startswith("R3")]]
     for category, (fid, severity, title, detail, remediation, refs) in _PATH_RULES.items():
         flows = by_category.get(category, [])
         # A value merely derived from an object that holds a secret (a receipt, a form's other
@@ -260,6 +751,13 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
             severity = severity.downgrade(2)
         chosen = direct or flows
         confirmed = bool(direct)
+        attached = {loc: note for loc, note in sponsor_notes.items() if any(f.location == loc for f in flows)}
+        if attached and (category == "foreign_signing" or not any(
+                f.location in attached for f in by_category.get("foreign_signing", []))) and category in {"foreign_signing", "financial"}:
+            # One finding per defect: a sponsor's rebuild gaps are evidence for the signing flow.
+            chosen = sorted(chosen, key=lambda f: f.location not in attached)
+            detail = detail + " The signer is a fee sponsor that rebuilds the client's transaction: " + "; ".join(
+                f"{loc.file}:{loc.line} {note}" for loc, note in attached.items()) + "."
         findings.append(Finding(
             id=fid, dimension=Dimension.SECURITY,
             # A file path its caller chooses is the caller's own business unless input from
@@ -338,7 +836,7 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     executable = {name for name in artifact.code_files if name.lower().endswith(_IMPLEMENTATION_SUFFIXES)}
     signing = any(tool.requires_signature or set(tool.scopes) & _SIGNING_SCOPES for tool in artifact.tools) or any(
         profile.has(cap) for cap in ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation"))
-    enforced = any(profile.controls.get(kind) for kind in ("allowlist", "amount_cap", "approval", "transaction_inspection"))
+    enforced = bool(amount_caps or inspected) or any(profile.controls.get(kind) for kind in ("allowlist", "approval", "transaction_inspection"))
     if signing and executable and not enforced:
         findings.append(Finding(
             id="security-path-controls-not-enforced", dimension=Dimension.SECURITY,
@@ -358,6 +856,8 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     # only control, and a reworded, role-played or indirect request gets past a model.
     moving = {f.id for f in findings} & {"security-path-untrusted-to-financial-sink", "security-path-forgeable-approval",
                                          "security-path-external-transaction-signed", "security-path-x402-payment-unbounded"}
+    moving |= {f.id for f in findings if f.id.startswith(("security-x402-spend-controls-disabled-",
+                                                         "security-x402-any-asset-uncapped-"))}
     rules = _prompt_payment_rules(artifact)
     if moving and rules:
         findings.append(Finding(
@@ -375,14 +875,14 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     # A per-payment cap with no running total: many small requests each pass it.
     pay_files = {loc.file for cap in ("stellar_signing", "tx_submission", "payment", "contract_invocation")
                  for loc in profile.capabilities.get(cap, [])}
-    if profile.controls.get("amount_cap") and pay_files and not any(
+    if amount_caps and pay_files and not any(
             _CUMULATIVE.search(artifact.code_files.get(f, "")) for f in pay_files):
         findings.append(Finding(
             id="security-per-call-cap-only", dimension=Dimension.SECURITY, severity=Severity.MEDIUM,
             title="Payments are capped per call, with no total or rate limit",
             detail="Each payment is checked against a maximum, but nothing tracks how much has been sent. Splitting a "
                    "large request into many calls that each stay under the cap moves any amount.",
-            evidence="caps at " + "; ".join(loc.render() for loc in profile.controls["amount_cap"][:3])
+            evidence="caps at " + "; ".join(loc.render() for loc in amount_caps[:3])
                      + " · no running total in " + ", ".join(sorted(pay_files)[:5]),
             evidence_grade=EvidenceGrade.INFERRED,
             remediation="Keep a persistent spent-amount per period (and per user for shared funds), reject when it "

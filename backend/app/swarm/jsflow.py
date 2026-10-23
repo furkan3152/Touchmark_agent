@@ -39,7 +39,7 @@ import re
 from dataclasses import dataclass, field
 
 from .codeflow import DIRECT, UNTRUSTED, CodeProfile, Flow, Location  # noqa: F401  (re-exported types)
-from .codeflow import _HUMAN_DECISION, _LOOKUP, _NOT_HUMAN
+from .codeflow import CLI_AUTO_SIGN as _CLI_AUTO_SIGN, _HUMAN_DECISION, _LOOKUP, _NOT_HUMAN
 
 JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts")
 _RESOLVE_SUFFIXES = ("", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts",
@@ -116,6 +116,76 @@ _X402_SIGNER = re.compile(r"(?:^|\.)(?:createPaymentPayload|createPaymentHeader|
                           r"signPaymentPayload|createStellarSigner)$")
 _X402_LIMITS = {"maxValue", "maxAmount", "maxPaymentAmount", "maxAmountRequired", "policy", "policies",
                 "paymentRequirementsSelector", "selector", "budget", "maxPrice", "spendLimit"}
+#: x402Client methods that take a function deciding which requirement is paid. One that
+#: compares the requirement's amount is a ceiling; one that filters networks is not.
+_X402_DECIDERS = {"registerPolicy", "onBeforePaymentCreation"}
+#: Fields of a payment requirement that hold the amount it asks for (x402 v2, v1).
+_REQUIREMENT_AMOUNT = {"amount", "maxAmountRequired"}
+#: Literal options that turn an SDK safeguard off: (package the file imports, option, the
+#: value that disables it, fact kind). Verified against the published packages: x402
+#: spendControls from @x402/core 2.23.0; MPP allowUnsignedPush, allowUnpinnedChannel and
+#: feeBudget from @stellar/mpp 0.7.0; checkOnChainState defaults to true from 0.5.0.
+_SAFEGUARD_SWITCHES = (
+    ("@x402/", "spendControls", "false", "x402_spend_controls_disabled"),
+    ("@x402/", "maxAmountPerPayment", "false", "x402_spend_controls_disabled"),
+    ("@x402/", "allowedAssets", "true", "x402_any_asset"),
+    ("@stellar/mpp", "allowUnsignedPush", "true", "mpp_unsigned_push"),
+    ("@stellar/mpp", "checkOnChainState", "false", "mpp_channel_state_unchecked"),
+    ("@stellar/mpp", "allowUnpinnedChannel", "true", "mpp_unpinned_channel"),
+)
+#: @stellar/mpp server methods: `stellar(...)`, `stellar.charge(...)` or `charge(...)` from
+#: the charge entry point, and the same with `channel` from the channel entry point.
+_MPP_SERVER = re.compile(r"^@stellar/mpp/(?P<mode>charge|channel)/server\.(?:stellar|stellar\.(?:charge|channel)|charge|channel)$")
+# ---- x402 / MPP sellers (resource servers that take payment by hand)
+#: Request headers that carry a payment from the payer (x402 v2 PAYMENT-SIGNATURE, v1
+#: X-PAYMENT, and the X-PAYMENT-SIGNATURE / X-PAYMENT-TX variants hand-written sellers use).
+_PAYMENT_HEADER = re.compile(r"^(?:payment-signature|x-payment|x-payment-signature|x-payment-tx)$", re.I)
+#: A constant naming that header (`HEADERS.paymentSignature`, `X_PAYMENT_HEADER`).
+_PAYMENT_HEADER_CONST = re.compile(r"(?:^|\.)(?:payment_?signature|x_?payment)(?:_?header)?$", re.I)
+#: SDK decoders whose result is the payer's payload.
+_PAYMENT_DECODERS = {"decodePaymentSignatureHeader", "decodePaymentHeader", "decodeXPaymentHeader", "decodePayment"}
+#: Facilitator calls: settle(payload, requirements) moves the money, verify(...) only checks it.
+_SETTLE_SINK = {"settle", "settlePayment"}
+_VERIFY_SINK = {"verify", "verifyPayment"}
+#: Verification of a client-signed envelope (not of a transaction hash, which S4 covers).
+_ENVELOPE_VERIFY = re.compile(r"^verify(?:Envelope\w*|SignedXdr|TransactionXdr|Xdr)$")
+#: Receivers of a generic `verify` that is a payment verification, not a JWT or signature one.
+_PAYMENT_VERIFIER = re.compile(r"facilit|x402|payment|resource|verifier|paywall", re.I)
+#: A facilitator URL: a literal, constant or template ending in /verify or /settle.
+_FACILITATOR_PATH = re.compile(r"/(?P<op>verify|settle)/?[\"'`]?\s*$")
+#: Calls that bind payer-chosen requirements to the server's own (S1 sanitizers).
+_REQUIREMENT_MATCHERS = re.compile(r"^(?:findMatchingRequirements|findMatchingPaymentRequirements|isDeepStrictEqual|"
+                                   r"deepEqual|deepStrictEqual|isEqual|equals|requirementsMatch\w*|matchesRequirements)$")
+#: Settlement-result fields that say whether money moved; `ok`, `status` and the transaction
+#: hash do not (a settlement_pending response carries a transaction with success: false).
+_SETTLE_SUCCESS = {"success", "isSuccess"}
+#: Response senders: the paid resource reaches the payer through one of these.
+_RESPONDERS = re.compile(r"^(?:res|response|reply|c|ctx|h)\.(?:\w+\.)*(?:json|send|end|write|text|html|body|sendFile|stream|pipe)$|"
+                         r"^(?:NextResponse|Response)\.json$|^(?:Response|NextResponse)$")
+#: Upstream proxies: the paid request is forwarded to the service behind the paywall.
+_PROXIES = re.compile(r"(?:^|\.)(?:proxy|proxyRequest|forward|forwardRequest|web)$", re.I)
+#: Assertion helpers: `assert(settlement.success)` is a check like an if.
+_ASSERTION = re.compile(r"^(?:assert\w*|invariant|ensure\w*|require\w*)$")
+#: Calls that look a transaction up by hash (S4 sinks).
+_TX_LOOKUP = re.compile(r"(?:^|\.)getTransaction$|\.transactions\.transaction$")
+_TX_LOOKUP_URL = re.compile(r"/transactions/\$\{|[\"']getTransaction[\"']")
+# ---- fee sponsors and relayers (rebuild or fee-bump a client's transaction)
+#: Calls that load the account a builder uses as its source.
+_LOAD_ACCOUNT = {"loadAccount", "getAccount"}
+#: Labels of values taken from a client's envelope.
+_FOREIGN = frozenset({"foreign_tx", "foreign_ops"})
+#: A fee chosen by whoever calls: a tool or request argument, or the client's own envelope
+#: (not a fee read from the network's fee stats, which no caller chooses).
+_FEE_INPUT = frozenset({"model", "external"}) | _FOREIGN
+#: Array methods whose callback judges each entry (`op.auth.every((e) => ...)`).
+_PREDICATES = {"every", "some", "find", "findIndex", "filter", "forEach"}
+#: What a sponsor that signs a rebuilt client operation has checked; once R1 and R2 hold, the
+#: client's operation is authorized by the client alone and these labels no longer apply.
+_SPONSORED = frozenset({"invoke_untrusted", "foreign_tx", "foreign_ops", "foreign_source", "foreign_fee"})
+#: The Stellar fee-payer guide leaves the source check as this comment.
+_SPONSOR_WARNING = re.compile(r"SECURITY:\s*Verify the (?:transaction|operation) source is not the fee[- ]?payer", re.I)
+#: A replay store that lives in one process: `Store.memory()` from mppx or @stellar/mpp.
+_MEMORY_STORE = re.compile(r"^(?:mppx(?:/\w+)?|@stellar/mpp(?:/[\w/]+)?)\.Store\.memory$")
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s$]+(?:/|$)")
 from .codeflow import AMOUNT_NAME, HANDLER_NAME, RECEIVED_NAME  # noqa: E402
 _NAME_SOURCES = {"userinput", "prompt", "payload", "command", "cmd", "code", "webhook", "query", "message", "body",
@@ -233,6 +303,73 @@ def _props(obj) -> dict:
     return out
 
 
+def _param_names(fn_node) -> set[str]:
+    """Names a function's parameters bind (destructured ones too; types and defaults not)."""
+    params = fn_node.child_by_field_name("parameters") or fn_node.child_by_field_name("parameter")
+    names: set[str] = set()
+    stack = [params]
+    while stack:
+        n = stack.pop()
+        if n is None or n.type == "type_annotation":
+            continue
+        if n.type in {"identifier", "shorthand_property_identifier_pattern"}:
+            names.add(_txt(n))
+        elif n.type in {"required_parameter", "optional_parameter"}:
+            stack.append(n.child_by_field_name("pattern"))
+        elif n.type in {"assignment_pattern", "object_assignment_pattern"}:
+            stack.append(n.child_by_field_name("left"))
+        elif n.type == "pair_pattern":
+            stack.append(n.child_by_field_name("value"))
+        else:
+            stack.extend(n.named_children)
+    return names
+
+
+def _compares_amount(fn_node) -> bool:
+    """An x402 policy, hook or selector that compares a requirement's amount: one side of a
+    <, >, <= or >= reads `.amount` (or `.maxAmountRequired`) of a parameter of the function or
+    of a callback inside it (`reqs.filter((r) => BigInt(r.amount) <= MAX)`). Type annotations
+    are not comparisons, and `retries.value > 3` reads no requirement."""
+    params: set[str] = set()
+    comparisons = []
+    stack = [fn_node]
+    while stack:
+        n = stack.pop()
+        if _is_function(n):
+            params |= _param_names(n)
+        if n.type == "binary_expression" and _txt(n.child_by_field_name("operator")) in {"<", ">", "<=", ">="}:
+            comparisons.append(n)
+        stack.extend(n.named_children)
+
+    def reads_amount(side) -> bool:
+        todo = [side]
+        while todo:
+            m = _unwrap(todo.pop())
+            if m is None or _is_function(m):
+                continue
+            if m.type == "member_expression" and _txt(m.child_by_field_name("property")) in _REQUIREMENT_AMOUNT:
+                root = m
+                while root is not None and root.type in {"member_expression", "subscript_expression"}:
+                    root = _unwrap(root.child_by_field_name("object"))
+                if root is not None and root.type == "identifier" and _txt(root) in params:
+                    return True
+            if m.type == "identifier" and _txt(m) in params & _REQUIREMENT_AMOUNT:
+                return True  # ({ amount }) => amount <= MAX
+            todo.extend(m.named_children)
+        return False
+    return any(reads_amount(c.child_by_field_name("left")) or reads_amount(c.child_by_field_name("right"))
+               for c in comparisons)
+
+
+def _controls_off(config: dict) -> bool:
+    """x402 client config with `spendControls: false` or `{ maxAmountPerPayment: false }`."""
+    value = _unwrap(config.get("spendControls"))
+    if value is None:
+        return False
+    inner = _unwrap(_props(value).get("maxAmountPerPayment")) if value.type == "object" else value
+    return inner is not None and inner.type == "false"
+
+
 _FUNCTION_TYPES = {"function_declaration", "function_expression", "arrow_function", "method_definition",
                    "generator_function_declaration", "generator_function", "function"}
 
@@ -301,6 +438,19 @@ class JsProject:
         self.schemas: dict[str, dict[str, dict[str, str]]] = {}  # module -> schema const -> constraints
         self.class_attrs: dict[str, dict[str, set[str]]] = {}
         self.wallet_names: dict[str, set[str]] = {}
+        #: Who calls each project function, and what it calls (seller and sponsor checks
+        #: look one or two calls away).
+        self.callers: dict[str, set[str]] = {}
+        self.callees: dict[str, set[str]] = {}
+        #: Per function, what it checks about a client's envelope (fee sponsors, item 12).
+        self.sponsor_checks: dict[str, set[str]] = {}
+        #: Seller facts gathered while recording: settle calls per module, transaction-hash
+        #: lookups, the proof checks each function makes, and route paths of handlers.
+        self.settle_sinks: dict[str, list[Location]] = {}
+        self.tx_lookups: list[tuple[str | None, str, Location]] = []
+        self.proof_checks: dict[str, set[str]] = {}
+        self.route_paths: dict[str, str] = {}
+        self._seller_scope: dict[str, bool] = {}
         self._owners: dict[str, list[str]] | None = None
         self.declared_entry = entrypoints or {}
         self._propagated = False
@@ -778,6 +928,7 @@ class JsProject:
                         fk = self._function_arg(a, module.path)
                         if fk:
                             self._mark_entry(fk, "external", "HTTP route")
+                            self.route_paths[fk] = first
                     continue
                 if short == "use" and args and any(self._function_arg(a, module.path) for a in args) and re.search(r"^(?:app|router|server)\b", label):
                     for a in args:
@@ -879,6 +1030,16 @@ class JsProject:
                         self._owners.setdefault(method, []).append(f"{m.path}:{c}")
         return self._owners
 
+    def imported_value(self, module: _Module, name: str) -> set[str]:
+        """Labels of a module-level value another project module exports under ``name``."""
+        target = module.imports.get(name, "")
+        if not target or target.startswith(("lib:", "module:")):
+            return set()
+        mod, sym = target.rsplit(":", 1)
+        other = self.modules.get(mod)
+        values = getattr(self, "globals", {})  # complete once every module's state is known
+        return set(values.get(mod, {}).get(other.exports.get(sym, sym), set())) if other is not None else set()
+
     def _imported(self, module: _Module, name: str) -> str | None:
         target = module.imports.get(name, "")
         if not target or target.startswith(("lib:", "module:")):
@@ -964,6 +1125,94 @@ class JsProject:
             _JsInterp(self, module, None, record=True).block(module.root.named_children, dict(self.globals[path]))
         for key in self.functions:
             self._analyse(key, record=True)
+        for module in self.modules.values():
+            self._scan_payment_settings(module)
+        self._tx_proof_facts()
+        for locations in self.settle_sinks.values():
+            for location in locations:
+                self.profile.add_fact("x402_settle_call", location)
+
+    # ------------------------------------------------------------ SDK settings
+    def _module_label(self, module: _Module, callee) -> str:
+        """A call's label with the module's library imports expanded."""
+        label = _dotted(callee)
+        head, _, rest = label.partition(".")
+        target = module.imports.get(head, "")
+        if target.startswith("lib:"):
+            return target[4:].strip(".") + ("." + rest if rest else "")
+        return label
+
+    @staticmethod
+    def imports_package(module: _Module, prefix: str) -> bool:
+        return any(t.startswith("lib:" + prefix) for t in module.imports.values())
+
+    def seller_scope(self, module: _Module) -> bool:
+        """The module takes x402 or MPP payments: it imports a payment SDK or reads a payment header."""
+        if module.path not in self._seller_scope:
+            self._seller_scope[module.path] = any(self.imports_package(module, p) for p in ("@x402/", "@stellar/mpp", "mppx")) \
+                or bool(re.search(r"payment-signature|x-payment|paymentSignature|X_PAYMENT", "\n".join(module.lines), re.I))
+        return self._seller_scope[module.path]
+
+    def _options_object(self, module: _Module, node):
+        """An options argument: an object literal, or a module constant bound to one."""
+        node = _unwrap(node)
+        if node is not None and node.type == "identifier":
+            name = _txt(node)
+            for stmt in module.root.named_children:
+                decl = stmt.child_by_field_name("declaration") if stmt.type == "export_statement" else stmt
+                if decl is None or decl.type not in {"lexical_declaration", "variable_declaration"}:
+                    continue
+                for d in decl.named_children:
+                    if d.type == "variable_declarator" and _txt(d.child_by_field_name("name")) == name:
+                        node = _unwrap(d.child_by_field_name("value"))
+        return node if node is not None and node.type == "object" else None
+
+    def _scan_payment_settings(self, module: _Module) -> None:
+        """Literal switches that turn an x402 or MPP safeguard off, and how each @stellar/mpp
+        server is configured. Whether they matter depends on the installed version, which
+        agentic_paths reads from the lockfile."""
+        stack = [module.root]
+        while stack:
+            node = stack.pop()
+            stack.extend(node.named_children)
+            if node.type == "pair":
+                key = node.child_by_field_name("key")
+                name = _string_value(key) if key is not None and key.type == "string" else _txt(key)
+                value = _unwrap(node.child_by_field_name("value"))
+                for package, option, off, kind in _SAFEGUARD_SWITCHES:
+                    if name == option and value is not None and value.type == off and self.imports_package(module, package):
+                        self.profile.add_fact(kind, self.location(module, node), f"{option}: {off}")
+                continue
+            if node.type != "call_expression":
+                continue
+            label = self._module_label(module, node.child_by_field_name("function"))
+            args = _args(node)
+            first = _unwrap(args[0]) if args else None
+            if label.endswith(".setSpendControls") and first is not None and first.type == "false" \
+                    and self.imports_package(module, "@x402/"):
+                self.profile.add_fact("x402_spend_controls_disabled", self.location(module, node), "setSpendControls(false)")
+            mode = _MPP_SERVER.match(label)
+            options = self._options_object(module, args[0]) if mode and args else None
+            if options is None:
+                continue
+            props = _props(options)
+            if "store" not in props and any(c.type == "spread_element" for c in options.named_children):
+                continue  # the store may come in through the spread
+            store = _unwrap(props.get("store"))
+            store_kind = "none" if store is None else "memory" if store.type == "call_expression" and _MEMORY_STORE.match(
+                self._module_label(module, store.child_by_field_name("function"))) else "other"
+            fee_cap = _unwrap(props.get("maxFeeBumpStroops"))
+            try:
+                fee_cap_value = int(_txt(fee_cap).replace("_", "")) if fee_cap is not None and fee_cap.type == "number" else 0
+            except ValueError:
+                fee_cap_value = 0
+            fee_payer = _props(props.get("feePayer")) if props.get("feePayer") is not None else {}
+            network = _unwrap(props.get("network"))
+            self.profile.add_fact(
+                "mpp_server", self.location(module, node), f"@stellar/mpp {mode.group('mode')} server",
+                mode=mode.group("mode"), store=store_kind, max_fee_bump=fee_cap_value,
+                fee_bump_signer="feeBumpSigner" in fee_payer or "feeBumpSigner" in props, fee_budget="feeBudget" in props,
+                network=(_string_value(network) or _txt(network)) if network is not None else "")
 
     def _module_state(self, module: _Module) -> dict[str, set[str]]:
         state: dict[str, set[str]] = {}
@@ -1014,7 +1263,79 @@ class JsProject:
         else:  # concise arrow body
             interp.returned |= interp.tags(body, state)
             interp.check_return(body, interp.returned)
+            interp.sponsor_checks |= interp._sponsor_guards(body, state)
         self.returns[key] |= interp.returned
+        self.sponsor_checks.setdefault(key, set()).update(interp.sponsor_checks)
+        if record:
+            self.proof_checks.setdefault(key, set()).update(interp.proof_checks)
+            self._seller_facts(fn, module, interp)
+
+    # ----------------------------------------------------------------- sellers
+    #: Settlement anywhere in a module (no leading \w*: it made the search quadratic on long words).
+    _SETTLES = re.compile(r"(?i:settle)\w*\s*\(|\.(?:submitTransaction|sendTransaction|submitAsyncTransaction)\s*\(|"
+                          r"\.on\(\s*[\"'](?:finish|close)[\"']")
+    _MOVES_FUNDS = re.compile(r"Operation\.(?:payment|pathPayment\w*|createAccount)\s*\(|\.transfer\s*\(|invokeContract\w*\s*\(")
+
+    def _seller_facts(self, fn: _JsFunction, module: _Module, interp: "_JsInterp") -> None:
+        """S1-S3 for one handler. A facilitator (it answers with the verification or settlement
+        itself, or serves /verify and /settle) is not a resource server."""
+        if interp.relay or not self.seller_scope(module):
+            return
+        route = self.route_paths.get(fn.key, "")
+        if re.search(r"/(?:verify|settle)\b", route) or re.search(r"(?:^|/)(?:verify|settle)(?:/|$)|facilitator", module.path.lower()):
+            return
+        text = _txt(fn.node)
+        if interp.payer_requirements and interp.resource_after_sink:
+            self.profile.add_fact("x402_requirements_from_payer", self.location(module, interp.payer_requirements[0]), fn.name)
+        if interp.unchecked_deliveries:
+            self.profile.add_fact("x402_settle_unchecked", self.location(module, interp.unchecked_deliveries[0]), fn.name,
+                                  moves_funds=bool(self._MOVES_FUNDS.search(text)))
+        if interp.verified_deliveries and not self._SETTLES.search("\n".join(module.lines)):
+            # Settlement anywhere in the module (a finish hook, a later middleware) may be the deferred one.
+            delivery = self.location(module, interp.verified_deliveries[0])
+            self.profile.add_fact("x402_verify_without_settle", self.location(module, interp.client_verified[0]), fn.name,
+                                  delivery=delivery.line)
+
+    #: A record of used proofs: a replay guard, a used-hash lookup or a unique insert.
+    _PROOF_STORE = re.compile(r"\breplay\w*\s*\.|\b(?:used|seen|spent|redeemed|claimed|processed|consumed)\w*\s*(?:\.|\()|"
+                              r"\bis\w*(?:Used|Seen|Spent|Redeemed|Processed)\s*\(|\b(?:record|mark|save|insert)\w*Payment\w*\s*\(|"
+                              r"\.claim\s*\(|\bUNIQUE\b|ON CONFLICT|\.(?:setnx|setNX|sadd|sAdd)\s*\(")
+
+    #: The server answers 402 Payment Required (a payer that reads a 402 does not match).
+    _SENDS_402 = re.compile(r"\.(?:status|code)\(\s*402\s*\)|status:\s*402\b|,\s*402\s*\)|sendStatus\(\s*402\s*\)")
+
+    def related(self, key: str | None) -> set[str]:
+        """Functions whose checks guard what ``key`` does: its callers and the helpers they
+        and it call, two calls away each way (``key`` itself excluded)."""
+        if key is None:
+            return set()
+
+        def reach(start: set[str], graph: dict[str, set[str]]) -> set[str]:
+            seen, frontier = set(start), set(start)
+            for _ in range(2):
+                frontier = {n for k in frontier for n in graph.get(k, ()) if n not in seen}
+                seen |= frontier
+            return seen
+        return reach(reach({key}, self.callers), self.callees) - {key}
+
+    def _scope(self, key: str | None, hops: int = 2) -> list[str]:
+        scope, frontier = [key] if key else [], [key] if key else []
+        for _ in range(hops):
+            frontier = [c for k in frontier for c in sorted(self.callers.get(k, ())) if c in self.functions and c not in scope]
+            scope += frontier
+        return scope
+
+    def _tx_proof_facts(self) -> None:
+        """S4: a transaction hash the requester supplies is looked up and the result gates a
+        paid response. Records which checks the lookup and its callers make."""
+        for key, path, location in self.tx_lookups:
+            scope = self._scope(key)
+            text = "\n".join(_txt(self.functions[k].node) for k in scope)
+            if not self._SENDS_402.search(text):
+                continue  # not a paywall: an explorer, a payer checking its own payment, a reporting tool
+            checks = set().union(*(self.proof_checks.get(k, set()) for k in scope)) if scope else set()
+            self.profile.add_fact("tx_hash_proof", location, path, store=bool(self._PROOF_STORE.search(text)),
+                                  payer="payer" in checks, challenge="challenge" in checks, age="age" in checks)
 
     def propagate_props(self, key: str, literal_props: list[dict[str, set[str]] | None]) -> None:
         slots = self.entry_props[key]
@@ -1090,6 +1411,26 @@ class _JsInterp:
         self.aliases: dict[str, str] = {}
         self.approved = False
         self.literal_params: dict[str, dict[str, set[str]]] = {}
+        #: Seller state for this function: settle calls whose success nothing branched on,
+        #: verifications of a client-signed payload, and what was delivered after them.
+        self.unchecked_settles: list = []
+        self.client_verified: list = []
+        self.unchecked_deliveries: list = []
+        self.verified_deliveries: list = []
+        self.payer_requirements: list = []
+        self.sink_seen = False
+        self.resource_after_sink: list = []
+        self.relay = False
+        self.requirements_bound = False
+        #: Checks a transaction-hash proof passed (S4): store, payer, challenge, age.
+        self.proof_checks: set[str] = set()
+        #: Checks made on a client's envelope so far (fee sponsors, R1/R2/R4).
+        self.sponsor_checks: set[str] = set()
+        #: Outbound requests after an unchecked settlement: a delivery only if the settlement
+        #: is still unchecked when the handler ends (an audit hook before the check is not).
+        self._pending_upstream: set[tuple[int, int]] = set()
+        self._conditional = 0
+        self._adjust: dict[tuple, tuple[set[str], set[str]]] = {}
 
     # ------------------------------------------------------------------ labels
     def canonical(self, callee) -> str:
@@ -1188,6 +1529,8 @@ class _JsInterp:
             container, key = self.tags(obj, state), self.tags(index, state)
             if key & UNTRUSTED and not container & UNTRUSTED:
                 key = key | {"stored_record"}
+            if self._names_payment_header(index) and container & {"external", "model"}:
+                key = key | {"payment_header"}  # headers['x-payment']: the payer's payload
             return container | key
         if t in {"call_expression", "new_expression"}:
             found = self.call(node, state)
@@ -1212,6 +1555,7 @@ class _JsInterp:
             # when its side of the condition holds.
             cond = node.child_by_field_name("condition")
             self.tags(cond, state)
+            self._settle_checked(cond, state)
             when_true = {k: set(v) for k, v in state.items()}
             # It controls a value only when it passes that value on (`a <= MAX ? a : MAX`);
             # choosing between constants (`step >= 1 ? "on" : "off"`) controls nothing.
@@ -1227,6 +1571,8 @@ class _JsInterp:
         if t in {"binary_expression"}:
             op = _txt(node.child_by_field_name("operator"))
             left = self.tags(node.child_by_field_name("left"), state)
+            if op in {"&&", "||"}:
+                self._settle_checked(node.child_by_field_name("left"), state)  # `s.success && next()`
             right = self.tags(node.child_by_field_name("right"), state)
             if op in {"===", "!==", "==", "!=", "<", ">", "<=", ">=", "instanceof", "in"}:
                 return set()
@@ -1282,12 +1628,17 @@ class _JsInterp:
             return base | {"secret"}
         if "signer" in base:
             return {"secret"} if prop in {"secret", "rawSecretKey", "_secretKey", "secretKey"} else set()
+        if prop == "operations" and "foreign_tx" in base:
+            # The operations of a foreign envelope stay foreign wherever they are rebuilt.
+            base = base | {"foreign_ops"}
         if "secret" in base and not _SECRET_ENV.search(prop):
             # A config or signer object that holds a secret also holds public fields
             # (address, network, url). Reading one of those is not reading the secret.
             base = (base - {"secret"}) | {"secret_possible"}
         if _REQUEST_KEY.search(key):
             base.add("external")
+            if re.search(r"\.body\b", key):
+                base.add("request_body")
         if obj is not None and obj.type == "identifier" and _txt(obj) in self.module.constants:
             return set()
         return base
@@ -1300,7 +1651,8 @@ class _JsInterp:
             # A hash, JSON encoding or canonical form fixes the shape of what is later signed:
             # the requester can no longer make it equal a transaction hash.
             out = out | {"structured"}
-        return out
+        add, strip = self._adjust.pop((node.start_byte, node.end_byte), (set(), set()))
+        return (out - strip) | add
 
     def _call(self, node, state) -> set[str]:
         is_new = node.type == "new_expression"
@@ -1318,6 +1670,14 @@ class _JsInterp:
             else:
                 args.append(self.tags(a, state))
         every = set().union(*args) if args else set()
+        self._seller(node, label, short, callee_u, receiver_node, receiver, arg_nodes, args, state, is_new)
+        sponsored = self._sponsor(node, label, short, callee_u, receiver, arg_nodes, args, is_new, state)
+        if sponsored:
+            # A sponsor that checked the client's envelope signs only its own fee payment.
+            receiver = receiver - sponsored
+            target = _unwrap(receiver_node)
+            if target is not None and _dotted(target) in state:
+                state[_dotted(target)] = state[_dotted(target)] - sponsored
 
         # Callbacks receive what the call works on (promise values, iterated items).
         for a in arg_nodes:
@@ -1325,11 +1685,17 @@ class _JsInterp:
             if fk and not label.endswith(("tool", "registerTool")):
                 self.p.propagate(fk, [every | receiver] * max(1, len(self.p.entry[fk])))
                 self.p.called.add(fk)
+                if self.fn is not None:
+                    self.p.callees.setdefault(self.fn.key, set()).add(fk)
 
         if _MASKING.match(short):
             # maskSecret(s) -> "SABC…WXYZ": what it prints is not the secret.
             return every - {"secret", "secret_possible"}
         key = self.p.resolve(self.module, callee, self.fn, self.local_types)
+        if key:
+            self.p.callers.setdefault(key, set()).add(self.fn.key if self.fn else f"module:{self.module.path}")
+            if self.fn is not None:
+                self.p.callees.setdefault(self.fn.key, set()).add(key)
         if key and _SIGN_FOREIGN.search(label) and not _WALLET_PROMPT.search(label):
             # A thin project wrapper named signTransaction / signAndSubmit still signs the
             # envelope it is given; judge the call site as well as the wrapper body. Only
@@ -1386,9 +1752,10 @@ class _JsInterp:
             # A key generated right here (Keypair.random) is not yet anyone's funded account.
             return {"secret", "fresh"} if "fresh" in receiver else {"secret"}
         if short in {"publicKey", "accountId", "toString"} and "signer" in receiver:
-            return set()
+            # The server's own account: what it loads from this key is a sponsor's source account.
+            return {"sponsor_key"} if short == "publicKey" else set()
         if _REQUEST_CALL.search(label):
-            return receiver | {"external"}
+            return receiver | {"external"} | ({"request_body"} if short in {"json", "text", "formData", "arrayBuffer", "blob"} else set())
         if _LLM_CALL.search(label) or _LLM_CALL.search("." + label):
             self._cap("llm_call", node)
             # The client object holds the provider API key; only the request content reaches the model.
@@ -1399,6 +1766,23 @@ class _JsInterp:
             self._cap("payment", node)
             self._cap("stellar_signing", node)
             return every | receiver
+        if self.p.imports_package(self.module, "@x402/") and (
+                (short in _X402_DECIDERS | {"setSpendControls"} and receiver_node is not None)
+                or (is_new and short == "x402Client") or label.endswith("x402Client.fromConfig")):
+            # A client whose policy, hook or selector compares the requirement's amount (or
+            # whose config names a ceiling) does not pay whatever the server asks; one whose
+            # spend controls are switched off carries that to the fetch it wraps.
+            config = _props(arg_nodes[0]) if label.endswith("fromConfig") and arg_nodes else {}
+            capped = bool(set(config) & _X402_LIMITS) or (short != "setSpendControls" and any(
+                _is_function(_unwrap(a)) and _compares_amount(_unwrap(a)) for a in arg_nodes))
+            first = _unwrap(arg_nodes[0]) if arg_nodes else None
+            off = _controls_off(config) or (short == "setSpendControls" and first is not None and first.type == "false")
+            labels = ({"x402_capped"} if capped else set()) | ({"x402_off"} if off else set())
+            target = _unwrap(receiver_node)
+            if labels and target is not None and target.type == "identifier":
+                # `client.onBeforePaymentCreation(...)` as a statement of its own configures `client`.
+                state[_txt(target)] = state.get(_txt(target), set()) | labels
+            return receiver | every | labels
         if _X402_PAYER.search(label):
             # The wrapped fetch signs whatever payment a 402 response requests. Without a
             # ceiling or selector, the paid server chooses recipient, asset and amount.
@@ -1413,8 +1797,14 @@ class _JsInterp:
                         inner = _unwrap(value)
                         if inner is not None and inner.type == "object":
                             options |= set(_props(inner))
-            if not options & _X402_LIMITS and not self.approved:
+            # A client configured in another module (`import { client } from "./client"`).
+            client = every | set().union(*(self.p.imported_value(self.module, _txt(a)) for a in map(_unwrap, arg_nodes)
+                                           if a is not None and a.type == "identifier" and _txt(a) not in state))
+            if not options & _X402_LIMITS and not self.approved and "x402_capped" not in client:
                 self._flow("x402_unbounded", node, {"external"}, "402 responses decide the payment; no maximum or selector is set")
+            if self.record and ("x402_off" in client or any(_controls_off(_props(a)) for a in arg_nodes)):
+                # The client (from any module) or this wrap's own config switches spend controls off.
+                self.p.profile.add_fact("x402_controls_off", self.p.location(self.module, node), "spend controls switched off")
             return every | receiver
         if is_new and short == "Server" and _LEDGER_ENDPOINT.search(label) and arg_nodes:
             # The RPC or Horizon server decides what the agent signs (simulation, auth entries, quotes).
@@ -1489,6 +1879,9 @@ class _JsInterp:
             self._cap("process_spawn" if fixed else "code_execution", node)
             if command & UNTRUSTED and not fixed:
                 self._flow("command", node, command, "shell command" if shell else "argument list, no shell")
+            if self.record and _CLI_AUTO_SIGN.search(" ".join(_txt(a) for a in arg_nodes)):
+                self.p.profile.add_fact("cli_auto_sign", self.p.location(self.module, node),
+                                        "stellar contract invoke --auto-sign", direct=bool(command & DIRECT))
             return set()
         if _FILE_SINK.search(label):
             self._cap("file_access", node)
@@ -1726,6 +2119,417 @@ class _JsInterp:
         if "pay_route_untrusted" in tx_tags:
             self._flow("asset_route", node, tx_tags, "the assets or path of a path payment come from input")
 
+    # ----------------------------------------------------------------- sellers
+    @staticmethod
+    def _names_payment_header(arg) -> bool:
+        arg = _unwrap(arg)
+        if arg is None:
+            return False
+        value = _string_value(arg)
+        if value is not None:
+            return bool(_PAYMENT_HEADER.match(value))
+        return arg.type in {"identifier", "member_expression"} and bool(_PAYMENT_HEADER_CONST.search(_dotted(arg)))
+
+    @staticmethod
+    def _refusal(callee_u, arg_nodes) -> bool:
+        """A response with a 4xx/5xx status: the payer is turned away, nothing is delivered."""
+        if callee_u is not None and re.search(r"\.(?:status|code)\(\s*[45]\d\d\s*\)", _txt(callee_u)):
+            return True
+        for a in arg_nodes[1:2]:
+            a_u = _unwrap(a)
+            if a_u is not None and a_u.type == "number" and _txt(a_u)[:1] in "45" and len(_txt(a_u)) == 3:
+                return True
+            status = _unwrap(_props(a_u).get("status")) if a_u is not None and a_u.type == "object" else None
+            if status is not None and status.type == "number" and _txt(status)[:1] in "45":
+                return True
+        return False
+
+    def _responds(self, label: str, callee_u, receiver: set[str]) -> bool:
+        """The call sends the handler's response: a global Response, or a send method on a
+        response object the handler (or the function around it) received as a parameter
+        (`res.json`, `reply.send`, `c.json`). Reading the facilitator's own HTTP response
+        (`response.json()` after a fetch) sends nothing."""
+        if re.match(r"^(?:NextResponse|Response)(?:\.json)?$", label):
+            return True
+        if not _RESPONDERS.search(label) or receiver & {"settle_result", "verify_result"}:
+            return False
+        root = callee_u
+        while root is not None and root.type in {"member_expression", "call_expression"}:
+            root = _unwrap(root.child_by_field_name("object" if root.type == "member_expression" else "function"))
+        if root is None or root.type != "identifier":
+            return False
+        params, fn = set(), self.fn
+        while fn is not None:
+            params |= _param_names(fn.node)
+            fn = self.p.functions.get(fn.parent) if fn.parent else None
+        return _txt(root) in params
+
+    def _declared_text(self, name: str) -> str:
+        """The initializer of `const name = ...` in this function or at module level."""
+        for scope in ([self.fn.node] if self.fn is not None else []) + [self.module.root]:
+            stack = [scope]
+            while stack:
+                n = stack.pop()
+                if n.type == "variable_declarator" and _txt(n.child_by_field_name("name")) == name:
+                    value = n.child_by_field_name("value")
+                    return _txt(value) if value is not None else ""
+                if n is scope or not _is_function(n):
+                    stack.extend(n.named_children)
+        return name
+
+    def _json_body(self, options) -> dict:
+        """`{ body: JSON.stringify({...}) }` (or a plain object body) -> the body's properties."""
+        body = _unwrap(_props(options).get("body") or _props(options).get("data")) if options is not None else None
+        if body is not None and body.type == "call_expression" and _dotted(body.child_by_field_name("function")) == "JSON.stringify":
+            body = _unwrap(_args(body)[0]) if _args(body) else None
+        return _props(body) if body is not None and body.type == "object" else {}
+
+    def _seller(self, node, label, short, callee_u, receiver_node, receiver, arg_nodes, args, state, is_new) -> None:
+        """x402 / MPP seller sources, sinks and deliveries at one call (spec item 08)."""
+        add: set[str] = set()
+        strip: set[str] = set()
+        every = set().union(*args) if args else set()
+        if short in _PAYMENT_DECODERS or (any(self._names_payment_header(a) for a in arg_nodes)
+                                          and (every | receiver) & {"external", "model"}):
+            add.add("payment_header")
+        if _REQUIREMENT_MATCHERS.match(short) and not is_new:
+            strip |= {"payment_header", "request_body"}  # the server's own requirements come back
+        scope = self.p.seller_scope(self.module)
+        op, payload, requirements = None, set(), set()
+        http = bool(_HTTP_CALL.search(label)) and bool(arg_nodes)
+        if scope and http:
+            url = _unwrap(arg_nodes[0])
+            text = self._declared_text(_txt(url)) if url is not None and url.type == "identifier" else _txt(url)
+            found = _FACILITATOR_PATH.search(text)  # a literal, a template, or a constant holding one
+            if found:
+                op = found.group("op")
+                body = self._json_body(_unwrap(arg_nodes[1]) if len(arg_nodes) > 1 else None)
+                payload = self.tags(body.get("paymentPayload"), state) if body.get("paymentPayload") is not None else set()
+                requirements = self.tags(body.get("paymentRequirements"), state) if body.get("paymentRequirements") is not None else set()
+        elif scope and receiver_node is not None and len(arg_nodes) >= 2 and short in _SETTLE_SINK and (
+                short == "settlePayment" or _PAYMENT_VERIFIER.search(_txt(receiver_node)) or "payment_header" in args[0]):
+            # A facilitator or resource server settles a payer's payload (not a channel's own settle()).
+            op, payload, requirements = "settle", args[0], args[1]
+        elif scope and receiver_node is not None and len(arg_nodes) >= 2 and short in _VERIFY_SINK \
+                and _PAYMENT_VERIFIER.search(_txt(receiver_node)) and "payment_header" in args[0]:
+            op, payload, requirements = "verify", args[0], args[1]
+        elif scope and _ENVELOPE_VERIFY.match(short) and args and "payment_header" in args[0]:
+            op, payload = "verify", args[0]
+        if op == "settle":
+            add.add("settle_result")
+            self.unchecked_settles.append(node)
+            if self.record:
+                bucket = self.p.settle_sinks.setdefault(self.module.path, [])
+                if self.p.location(self.module, node) not in bucket:
+                    bucket.append(self.p.location(self.module, node))
+        elif op == "verify":
+            add.add("verify_result")
+            if "payment_header" in payload:
+                self.client_verified.append(node)
+        if op and requirements & {"payment_header", "request_body"} and not self.requirements_bound:
+            self.payer_requirements.append(node)
+        self.sink_seen = self.sink_seen or bool(op)
+        if _ASSERTION.match(short) and re.search(r"\b(?:success|isSuccess)\b", " ".join(_txt(a) for a in arg_nodes)):
+            self._settle_checked(node, state)  # assert(settlement.success)
+        # Transaction-hash proofs (S4): a hash the requester supplies is looked up on chain.
+        hashed = (_TX_LOOKUP.search(label) and args and args[0] & {"external", "model"}) or (
+            http and not op and _TX_LOOKUP_URL.search(" ".join(_txt(a) for a in arg_nodes)) and every & {"external", "model"})
+        if hashed and self.record:
+            self.p.tx_lookups.append((self.fn.key if self.fn else None, self.module.path, self.p.location(self.module, node)))
+        # Deliveries: the paid resource, the next middleware, or an upstream service.
+        delivered = resource = upstream = False
+        if callee_u is not None and callee_u.type == "identifier" and _txt(callee_u) == "next" and not is_new:
+            delivered = resource = not arg_nodes  # next(err) hands an error on; it serves nothing
+        elif self._responds(label, callee_u, receiver) and not self._refusal(callee_u, arg_nodes):
+            body = _unwrap(arg_nodes[0]) if arg_nodes else None
+            answer = args[0] & {"settle_result", "verify_result"} if args else set()
+            if answer and body.type in {"identifier", "member_expression"}:
+                self.relay = True  # a facilitator answers with the verification or settlement itself
+            else:
+                delivered, resource = True, not answer
+        elif (http and not op and not hashed) or (_PROXIES.search(label) and not is_new):
+            delivered = resource = True
+            upstream = http and not _PROXIES.search(label)
+        if resource and self.sink_seen:
+            self.resource_after_sink.append(node)
+        if delivered and scope:
+            if self.unchecked_settles or any("settle_result" in tags for tags in state.values()):
+                self.unchecked_deliveries.append(node)
+                if upstream:
+                    self._pending_upstream.add((node.start_byte, node.end_byte))
+            if self.client_verified:
+                self.verified_deliveries.append(node)
+        if add or strip:
+            self._adjust[(node.start_byte, node.end_byte)] = (add, strip)
+
+    def _sponsor(self, node, label, short, callee_u, receiver, arg_nodes, args, is_new, state) -> set[str]:
+        """Fee sponsors (spec item 12): a builder sourced by the server's own account that
+        carries a foreign transaction's operations, and fee bumps of foreign envelopes.
+        Returns the labels a sponsor that checked the client's envelope no longer signs for."""
+        add: set[str] = set()
+        every = set().union(*args) if args else set()
+        if (short in _LOAD_ACCOUNT and "sponsor_key" in every) or (is_new and short == "Account" and args and "sponsor_key" in args[0]):
+            add.add("sponsor_account")
+        if is_new and short == "TransactionBuilder" and args and "sponsor_account" in args[0]:
+            add.add("sponsor_built")
+            if len(arg_nodes) > 1 and self.tags(_props(arg_nodes[1]).get("fee"), state) & _FOREIGN:
+                add.add("foreign_fee")  # `fee: clientTx.fee`: the client sets what the sponsor pays
+        if short == "setSorobanData" and "sponsor_built" in receiver and every & _FOREIGN:
+            add.add("foreign_fee")  # resource fee copied from the client's envelope
+        if short == "operations" and "foreign_tx" in receiver:
+            add.add("foreign_ops")
+        if "Operation" in label.split(".")[:-1] or label.startswith(("Operation.", "Op.")):
+            add |= every & {"foreign_ops"}
+            source = _props(arg_nodes[0]).get("source") if arg_nodes else None
+            if source is not None and self._chain_tags(source, state) & _FOREIGN:
+                add.add("foreign_source")  # the client's operation source is copied into the rebuild
+        if _ASSERTION.match(short):
+            for a in arg_nodes:
+                self.sponsor_checks |= self._sponsor_guards(a, state)  # assert(tx.source === PLACEHOLDER)
+        if short == "address" and callee_u is not None and callee_u.type == "member_expression" \
+                and self._credentials_call(callee_u.child_by_field_name("object"), state):
+            # js-xdr union accessors throw for another arm: credentials().address() rejects
+            # SourceAccount (and delegated) credentials.
+            self.sponsor_checks.add("credential_type")
+        strip: set[str] = set()
+        if short == "buildFeeBumpTransaction" and len(args) >= 3:
+            fee, inner = args[1], args[2]
+            # A transaction the server built and stored itself (looked up by id) is not foreign.
+            foreign_inner = bool(inner & _FOREIGN) or (bool(inner & UNTRUSTED) and not inner & {"stored_record", "tx_built"})
+            if foreign_inner and fee & _FEE_INPUT and "bounded" not in fee and not self.approved and self.record:
+                self.p.profile.add_fact("fee_bump_unbounded", self.p.location(self.module, node),
+                                        "the fee of a foreign inner transaction comes from input")
+            # The outer envelope is the server's own; its signature covers the fee, not the
+            # inner operations (those are authorized by the inner signatures).
+            add.add("tx_built")
+            strip |= _FOREIGN | UNTRUSTED
+        sponsored: set[str] = set()
+        if short == "sign" and {"sponsor_built", "foreign_ops"} <= receiver and "signer" in every:
+            # Checks made before this point here, and anywhere in the helpers and callers around it.
+            checks = set(self.sponsor_checks)
+            for key in self.p.related(self.fn.key if self.fn else None):
+                checks |= self.p.sponsor_checks.get(key, set())
+            credential = "credential_type" in checks
+            # R2: the envelope's source is pinned, and the operation's source is too unless the
+            # rebuild leaves it out.
+            source_pin = "tx_source" in checks and ("op_source" in checks or "foreign_source" not in receiver)
+            if self.record:
+                self.p.profile.add_fact(
+                    "sponsor_rebuild", self.p.location(self.module, node), "the sponsor signs a rebuilt foreign operation",
+                    function=self.fn.name if self.fn else "<module>", foreign_fee="foreign_fee" in receiver,
+                    warned=bool(self.fn is not None and _SPONSOR_WARNING.search(_txt(self.fn.node))),
+                    facilitator=self._facilitator(), credential_type=credential, source_pin=source_pin,
+                    single_invocation="single_invocation" in checks)
+            if credential and source_pin:
+                sponsored = set(_SPONSORED)
+        if add or strip:
+            current = self._adjust.get((node.start_byte, node.end_byte), (set(), set()))
+            self._adjust[(node.start_byte, node.end_byte)] = (current[0] | add, current[1] | strip)
+        return sponsored
+
+    def _facilitator(self) -> bool:
+        """An x402 facilitator settles payers' transactions (R4 applies to it)."""
+        name = f"{self.module.path} {self.fn.name if self.fn else ''}"
+        route = self.p.route_paths.get(self.fn.key, "") if self.fn else ""
+        return self.p.imports_package(self.module, "@x402/") or bool(re.search(r"facilitat", name, re.I)) \
+            or bool(re.search(r"/(?:settle|verify)\b", route))
+
+    # ------------------------------------------------------------ sponsor guards
+    def _chain_tags(self, node, state) -> set[str]:
+        """Labels of the value an access chain starts from (`op.auth[0]`, `e.credentials()`),
+        read without evaluating any call again: calls along the chain hand their receiver's
+        labels on."""
+        node = _unwrap(node)
+        if node is None:
+            return set()
+        if node.type == "identifier":
+            return set(state.get(_txt(node), set()))
+        if node.type == "call_expression":
+            fn = _unwrap(node.child_by_field_name("function"))
+            return self._chain_tags(fn.child_by_field_name("object"), state) \
+                if fn is not None and fn.type == "member_expression" else set()
+        if node.type in {"member_expression", "subscript_expression"}:
+            key = _dotted(node) if node.type == "member_expression" else ""
+            if key and key in state:
+                return set(state[key])
+            base = self._chain_tags(node.child_by_field_name("object"), state)
+            if node.type == "member_expression" and _txt(node.child_by_field_name("property")) == "operations" \
+                    and "foreign_tx" in base:
+                base.add("foreign_ops")
+            return base
+        return set()
+
+    def _credentials_call(self, node, state) -> bool:
+        """`<foreign entry>.credentials()`."""
+        node = _unwrap(node)
+        if node is None or node.type != "call_expression":
+            return False
+        fn = _unwrap(node.child_by_field_name("function"))
+        return fn is not None and fn.type == "member_expression" \
+            and _txt(fn.child_by_field_name("property")) == "credentials" and bool(self._chain_tags(node, state) & _FOREIGN)
+
+    def _credential_switch(self, node, state) -> bool:
+        """`<foreign entry>.credentials().switch()` (or its `.name` / `.value`)."""
+        node = _unwrap(node)
+        while node is not None and node.type == "member_expression" and _txt(node.child_by_field_name("property")) in {"name", "value"}:
+            node = _unwrap(node.child_by_field_name("object"))
+        if node is None or node.type != "call_expression":
+            return False
+        fn = _unwrap(node.child_by_field_name("function"))
+        return fn is not None and fn.type == "member_expression" and _txt(fn.child_by_field_name("property")) == "switch" \
+            and self._credentials_call(fn.child_by_field_name("object"), state)
+
+    def _guard_operand(self, side, other, op: str, state) -> set[str]:
+        side = _unwrap(side)
+        if side is None:
+            return set()
+        found: set[str] = set()
+        equality = op in {"===", "!==", "==", "!="}
+        prop = _txt(side.child_by_field_name("property")) if side.type == "member_expression" else ""
+        if equality and self._credential_switch(side, state):
+            found.add("credential_type")
+        if equality and prop == "source" and not self._chain_tags(other, state) & _FOREIGN:
+            # Compared with a placeholder, the payer, the sponsor, or undefined.
+            tags = self._chain_tags(side.child_by_field_name("object"), state)
+            found |= {"op_source"} if "foreign_ops" in tags else {"tx_source"} if "foreign_tx" in tags else set()
+        if prop == "length":
+            obj = _unwrap(side.child_by_field_name("object"))
+            inner = _unwrap(obj.child_by_field_name("function")) if obj is not None and obj.type == "call_expression" else None
+            if obj is not None and obj.type == "member_expression" and _txt(obj.child_by_field_name("property")) == "operations" \
+                    and "foreign_tx" in self._chain_tags(obj.child_by_field_name("object"), state):
+                found.add("single_invocation")
+            elif inner is not None and inner.type == "member_expression" \
+                    and _txt(inner.child_by_field_name("property")) == "subInvocations" and self._chain_tags(obj, state) & _FOREIGN:
+                found.add("single_invocation")
+        return found
+
+    def _sponsor_guards(self, node, state, rejects: bool = False) -> set[str]:
+        """What a condition, assertion or returned expression checks about a client's envelope
+        before a fee sponsor signs it: R1 `credential_type` (an auth entry's
+        credentials().switch() is compared), R2 `tx_source` / `op_source` (the envelope's or an
+        operation's source is compared, or the operation's required absent), R4
+        `single_invocation` (operations.length or subInvocations() is compared). Only values
+        from the client's envelope count; comments and look-alike names do not. ``rejects``:
+        the expression being true refuses the request (`if (C) throw`); otherwise true means
+        valid (an assertion, a validator's return value)."""
+        found: set[str] = set()
+        # (node, scope, sign): sign is True or False while the node's truthiness decides the
+        # expression's (through !, &&, || and parentheses), None elsewhere.
+        stack = [(_unwrap(node), state, True)]
+        while stack:
+            sub, scope, sign = stack.pop()
+            if sub is None or _is_function(sub):
+                continue
+            child_sign = None
+            if sub.type == "parenthesized_expression":
+                child_sign = sign
+            elif sub.type == "unary_expression" and _txt(sub.child_by_field_name("operator")) == "!":
+                child_sign = None if sign is None else not sign
+            elif sub.type == "binary_expression":
+                op = _txt(sub.child_by_field_name("operator"))
+                if op in {"&&", "||"}:
+                    child_sign = sign
+                if op in {"===", "!==", "==", "!=", "<", ">", "<=", ">="}:
+                    left, right = sub.child_by_field_name("left"), sub.child_by_field_name("right")
+                    found |= self._guard_operand(left, right, op, scope) | self._guard_operand(right, left, op, scope)
+            elif sub.type == "call_expression":
+                fn = _unwrap(sub.child_by_field_name("function"))
+                method = _txt(fn.child_by_field_name("property")) if fn is not None and fn.type == "member_expression" else ""
+                args = [_unwrap(a) for a in _args(sub)]
+                tags = self._chain_tags(fn.child_by_field_name("object"), scope) if method else set()
+                if method in _PREDICATES and tags & _FOREIGN:
+                    # `op.auth.every((e) => e.credentials().switch() === ...)`: each entry is foreign.
+                    for a in args:
+                        if _is_function(a):
+                            inner = dict(scope)
+                            inner.update({name: set(tags) for name in _param_names(a)})
+                            # some/every/find are true when their callback is.
+                            stack.append((_unwrap(a.child_by_field_name("body")), inner,
+                                          sign if method in {"some", "every", "find"} else None))
+                elif method in {"includes", "has"} and args and self._credential_switch(args[0], scope):
+                    found.add("credential_type")
+            elif sub.type == "member_expression" and _txt(sub.child_by_field_name("property")) == "source" \
+                    and sign is not None and sign == rejects \
+                    and "foreign_ops" in self._chain_tags(sub.child_by_field_name("object"), scope):
+                # `if (op.source) throw` or `assert(!op.source)`: the operation must name no
+                # source. `if (!op.source) throw` and `op.source || x` require none of that.
+                found.add("op_source")
+            stack.extend((c, scope, child_sign) for c in sub.named_children)
+        return found
+
+    @staticmethod
+    def _logs_only(consequence, alternative) -> bool:
+        """`if (C) console.warn(...)`: the check is reported, not enforced."""
+        if alternative is not None or consequence is None:
+            return False
+        stmts = [c for c in (consequence.named_children if consequence.type == "statement_block" else [consequence])
+                 if c.type != "comment"]
+        return bool(stmts) and all(c.type == "expression_statement" and re.match(r"(?:console|logger|log)\b", _txt(c))
+                                   for c in stmts)
+
+    def _settle_checked(self, cond, state) -> None:
+        """A branch condition that reads a settlement's success clears every pending settle."""
+        stack = [cond]
+        while stack:
+            sub = stack.pop()
+            if sub is None or _is_function(sub):
+                continue
+            stack.extend(sub.named_children)
+            if sub.type == "member_expression" and _txt(sub.child_by_field_name("property")) in _SETTLE_SUCCESS:
+                held = _dotted(_unwrap(sub.child_by_field_name("object")))
+                seen = state.get(held) or state.get(held.split(".")[0], set())
+            elif sub.type == "identifier" and _txt(sub) in _SETTLE_SUCCESS:
+                seen = state.get(_txt(sub), set())
+            elif sub.type == "call_expression" and sub is not cond and any(
+                    "settle_result" in state.get(_dotted(a), set()) for a in _args(sub)
+                    if _unwrap(a) is not None and _unwrap(a).type in {"identifier", "member_expression"}):
+                seen = {"settle_result"}  # `if (!isSettled(s))`: a helper judges the settlement
+            else:
+                continue
+            if "settle_result" in seen or self.unchecked_settles:
+                self.unchecked_settles.clear()
+                # Requests sent before the check (an audit or log hook) served nothing yet.
+                self.unchecked_deliveries = [n for n in self.unchecked_deliveries
+                                             if (n.start_byte, n.end_byte) not in self._pending_upstream]
+                self._pending_upstream.clear()
+                for name in [n for n, tags in state.items() if "settle_result" in tags]:
+                    state[name] = state[name] - {"settle_result"}  # sets may be shared with module state
+                return
+
+    def _proof_check(self, text: str, sides) -> None:
+        """Record what a fail-closed comparison checks about a transaction-hash proof."""
+        if self._conditional:
+            return
+        if re.search(r"memo|challenge|nonce|request_?id|requestId|invoice|order_?id|orderId|reference", text, re.I):
+            self.proof_checks.add("challenge")
+        if re.search(r"(?:^|[.\[\s(!])(?:from|source|source_?account|sourceAccount|payer|sender)\b", text) and \
+                not any(tags & {"payment_header", "request_body"} for tags in sides):
+            self.proof_checks.add("payer")
+        if re.search(r"created_?at|createdAt|close_?time|closeTime|timestamp|\bage(?:_?ms|_?seconds|_?secs?)?\b|max_?age|maxAge|"
+                     r"txTime|Date\.now", text, re.I):
+            self.proof_checks.add("age")
+
+    def _optional_guard(self, cond) -> bool:
+        """`if (options.expectedMemo && ...)` where no caller passes expectedMemo: what the
+        branch checks never runs."""
+        if self.fn is None:
+            return False
+        params = {name: i for i, (name, _) in enumerate(self.fn.params) if name}
+        stack = [_unwrap(cond)]
+        while stack:
+            sub = stack.pop()
+            if sub is None:
+                continue
+            if sub.type == "binary_expression" and _txt(sub.child_by_field_name("operator")) == "&&":
+                stack += [_unwrap(sub.child_by_field_name("left")), _unwrap(sub.child_by_field_name("right"))]
+            elif sub.type == "member_expression":
+                obj = _unwrap(sub.child_by_field_name("object"))
+                if obj is not None and obj.type == "identifier" and _txt(obj) in params:
+                    passed = self.p.entry_props.get(self.fn.key, [])[params[_txt(obj)]:params[_txt(obj)] + 1]
+                    if passed and isinstance(passed[0], dict) and _txt(sub.child_by_field_name("property")) not in passed[0]:
+                        return True
+        return False
+
     # ------------------------------------------------------------------ guards
     def assume(self, cond, truth: bool, state, *, node) -> None:
         """Record what holds after a fail-closed check.
@@ -1750,14 +2554,17 @@ class _JsInterp:
             if op in {"&&", "||"}:
                 # One of the two holds: a value is clean only if both branches clean it.
                 branches = []
+                self._conditional += 1
                 for side in (left, right):
                     copy = {k: set(v) for k, v in state.items()}
                     self.assume(side, truth, copy, node=node)
                     branches.append(copy)
+                self._conditional -= 1
                 for name in set(branches[0]) | set(branches[1]):
                     state[name] = branches[0].get(name, set()) | branches[1].get(name, set())
                 return
             if op in {"<", "<=", ">", ">="}:
+                self._proof_check(_txt(cond), [])
                 upper_left = (op in {"<", "<="}) == truth  # left <= right holds
                 value, bound = (left, right) if upper_left else (right, left)
                 names = {n for n in self._compared(value)
@@ -1771,6 +2578,11 @@ class _JsInterp:
                         self._control("amount_cap", node)
                 return
             if (op in {"!==", "!="} and not truth) or (op in {"===", "=="} and truth):
+                sides = [self.tags(left, state), self.tags(right, state)]
+                self._proof_check(_txt(cond), sides)
+                payer = {"payment_header", "request_body"}
+                if any(t & payer for t in sides) and not all(t & payer for t in sides):
+                    self.requirements_bound = True  # a payer-chosen field equals the server's value
                 for side, other in ((left, right), (right, left)):
                     other_u = _unwrap(other)
                     if other_u is None or other_u.type in {"null", "undefined"} or _txt(other_u) == "undefined":
@@ -2048,6 +2860,9 @@ class _JsInterp:
             consequence = stmt.child_by_field_name("consequence")
             alternative = stmt.child_by_field_name("alternative")
             self.tags(cond, state)
+            self._settle_checked(cond, state)
+            if not self._logs_only(consequence, alternative):
+                self.sponsor_checks |= self._sponsor_guards(cond, state, rejects=_terminates(consequence))
             if self._nonblocking(stmt) and self.record:
                 self.p.profile.nonblocking_controls.append(self.p.location(self.module, stmt))
             if _terminates(consequence) and alternative is None:
@@ -2055,16 +2870,19 @@ class _JsInterp:
                 self.assume(cond, False, state, node=stmt)
                 return
             branches = []
+            optional = self._optional_guard(cond)
             for i, body in enumerate((consequence, alternative)):
                 branch = {k: set(v) for k, v in state.items()}
                 saved = self.approved
                 if i == 0:
                     self.assume(cond, True, branch, node=stmt)
+                    self._conditional += optional
                 if body is not None:
                     inner = body.named_children[0] if body.type == "else_clause" and body.named_children else body
                     self.statement(inner, branch)
                 if i == 0:
                     self.approved = saved
+                    self._conditional -= optional
                 branches.append(branch)
             for key in set(branches[0]) | set(branches[1]):
                 state[key] = branches[0].get(key, set()) | branches[1].get(key, set())
@@ -2114,6 +2932,8 @@ class _JsInterp:
             return
         if t == "switch_statement":
             self.tags(stmt.child_by_field_name("value"), state)
+            if self._credential_switch(stmt.child_by_field_name("value"), state):
+                self.sponsor_checks.add("credential_type")  # switch (e.credentials().switch()) { ... }
             body = stmt.child_by_field_name("body")
             for case in (body.named_children if body is not None else []):
                 branch = {k: set(v) for k, v in state.items()}
@@ -2127,6 +2947,7 @@ class _JsInterp:
             value = set()
             for child in stmt.named_children:
                 value |= self.tags(child, state)
+                self.sponsor_checks |= self._sponsor_guards(child, state)  # `return tx.source === PLACEHOLDER`
             self.returned |= value
             self.check_return(stmt, value)
             return
