@@ -38,6 +38,9 @@ SOURCE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", "
 TEMPLATE_SUFFIXES = (".hbs", ".handlebars", ".j2", ".jinja", ".jinja2", ".tmpl", ".mustache", ".ejs")
 LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "poetry.lock", "uv.lock",
              "Pipfile.lock", "go.sum", "bun.lock", "bun.lockb")
+#: Deeper paths are not source anyone reads: real repositories stay far below this, and
+#: path handling costs grow with depth (a hostile tree of ~1,000-level branches stalls it).
+MAX_PATH_DEPTH = 64
 #: Files that deploy a server as several instances (serverless functions, edge workers), where
 #: in-memory state such as an MPP replay store is not shared between requests.
 DEPLOYMENT_MARKERS = {"vercel.json", "wrangler.toml", "serverless.yml", "serverless.yaml", "netlify.toml"}
@@ -278,10 +281,11 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     blueprint: dict = {}
     tmark_record: dict = {}
     markers: list[str] = []
+    prefix = len(str(root)) + 1
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.is_symlink():
+        if str(path).count("/", prefix) >= MAX_PATH_DEPTH or not path.is_file() or path.is_symlink():
             continue
-        rel = path.relative_to(root)
+        rel = Path(str(path)[prefix:])
         if path.name in DEPLOYMENT_MARKERS and not _skipped(rel):
             markers.append(rel.as_posix())
         if rel.as_posix() in OWNERSHIP_FILES and path.stat().st_size <= DECLARATION_BYTES:

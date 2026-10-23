@@ -89,3 +89,19 @@ def test_intake_records_where_the_server_is_deployed_as_several_instances(tmp_pa
     (tmp_path / "node_modules" / "x").mkdir(parents=True)
     (tmp_path / "node_modules" / "x" / "wrangler.toml").write_text("")
     assert select_repository(tmp_path)[1]["deployment_markers"] == ["vercel.json"]
+
+
+def test_paths_deeper_than_any_real_repository_are_not_selected(tmp_path):
+    import time
+
+    from backend.app.services.repo_audit import MAX_PATH_DEPTH, select_repository
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "agent.ts").write_text("export const a = 1;\n")
+    deep = tmp_path.joinpath(*["d"] * (MAX_PATH_DEPTH + 5))
+    deep.mkdir(parents=True)
+    (deep / "x.ts").write_text("export const b = 2;\n")
+    started = time.monotonic()
+    files, _ = select_repository(tmp_path)
+    assert "src/agent.ts" in files and not any(name.endswith("/x.ts") for name in files)
+    assert time.monotonic() - started < 5
