@@ -131,6 +131,7 @@ EVIDENCE_GAP_RULES = frozenset({
 WARNING_RULES = frozenset({"compliance-no-human-oversight", "intent-full-autonomy-over-funds"})
 #: Gaps that make a pass impossible: the reviewed scope itself is incomplete.
 BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface",
+                           "security-deep-review-incomplete",
                            "security-controls-unverifiable", "stellar_native-onchain-source-unbound",
                            "stellar_native-onchain-contract-code-unresolved",
                            "stellar_native-onchain-contract-bytecode-incomplete",
@@ -186,6 +187,22 @@ PAYMENT_BYPASS_RULES = re.compile(
     r"^security-asset-checked-by-code-only$|^stellar_native-rpc-send-treated-as-final-|"
     r"(?:^|-)(?:x402-settle-unchecked|x402-verify-without-settle|x402-requirements-from-payer|tx-hash-proof-unbound)"
     r"(?:-[0-9a-f]{8})?$")
+
+
+#: Candidate rules: heuristic flow and semantics rules whose precision on code no rule author
+#: had seen (held-out sets, docs/EVIDENCE.md) is below that of the structural rules. Their
+#: pattern is evidence that a defect may exist, not proof: the independent verifier decides.
+#: A candidate it refutes, quoting the code that contradicts it, is dismissed (kept in the
+#: report at no weight); one it confirms or cannot check stays a risk. A family leaves this
+#: list only when it measures well on a held-out set it was not tuned on.
+CANDIDATE_RULES = re.compile(
+    r"^security-(?:x402|mpp|tx-hash|network|missing-issuer|payee|amount-parsed|strkey|path-fee-bump|"
+    r"path-sponsor|per-call-cap|retry-may-pay|soroban-overflow)-|"
+    r"^stellar_native-(?:rpc|bigint|transaction-meta|amount-above|memo-required|sdk-removed|soroban)-")
+
+
+def candidate(finding: Finding) -> bool:
+    return bool(CANDIDATE_RULES.search(finding.id))
 
 
 def payment_bypass(finding: Finding) -> bool:

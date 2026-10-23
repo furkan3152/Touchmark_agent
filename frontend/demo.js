@@ -204,7 +204,8 @@ function aiLine(ai) {
       $("token").textContent = cred.token_id;
       if (cred.card_svg) {
         const card = new Blob([cred.card_svg], { type: "image/svg+xml" });
-        $("cred-card").src = URL.createObjectURL(card);
+        // A data URL: the page CSP allows data: images, not blob: ones.
+        $("cred-card").src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(cred.card_svg);
         $("dl-card").onclick = () => save(card, `touchmark-${cred.token_id.slice(0, 12)}.svg`);
         $("dl-meta").onclick = () => save(new Blob([JSON.stringify(cred.metadata, null, 2)], { type: "application/json" }), `touchmark-${cred.token_id.slice(0, 12)}.json`);
       }

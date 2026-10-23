@@ -227,3 +227,45 @@ def test_the_model_review_is_told_which_contract_files_no_crate_builds():
     files = {"contracts/sample.rs": "", "vault/Cargo.toml": "", "vault/src/lib.rs": "", "README.md": ""}
     assert _unbuilt_contracts(files) == ["contracts/sample.rs"]
     assert _unbuilt_contracts({"Cargo.toml": "", "src/lib.rs": ""}) == []
+
+
+def test_a_refuted_candidate_rule_is_dismissed_but_kept_visible():
+    from backend.app.swarm.policy import review_decision
+    ids = ["security-x402-settle-unchecked-0a1b2c3d", "security-network-chosen-by-counterparty-0a1b2c3d",
+           "stellar_native-soroban-token-move-unbound-0a1b2c3d", "security-path-untrusted-to-financial-sink"]
+    results = {"results": [{"finding_id": i, "verdict": "refuted", "quote_verified": True,
+                            "quote": "if (!settled.success) throw", "file": "a.ts", "line": 9, "reason": "checked"}
+                           for i in ids]}
+    verdicts = [_verdict(i) for i in ids]
+    out = AuditSwarm._apply_disputes(verdicts, results)
+    x402, network, token_move, proven = (v.findings[0] for v in out)
+    for f in (x402, network):
+        assert not f.is_risk and f.severity == Severity.INFO and f.penalty == 0
+        assert f.title.startswith("Dismissed candidate") and "refutes" in f.detail
+    assert out[0].score > verdicts[0].score  # the dismissal is reflected in the auditor score
+    assert token_move.is_risk and token_move.severity == Severity.MEDIUM  # fund control is only lowered
+    assert proven.is_risk and proven.severity == Severity.MEDIUM  # proven rules are only lowered
+    assert review_decision([x402, network], {"deep_core_complete": True}, 100) == "pass"
+
+
+def test_a_confirmed_or_unchecked_candidate_stays_a_risk():
+    out = AuditSwarm._apply_disputes(
+        [_verdict("security-x402-settle-unchecked"), _verdict("security-mpp-replay-store-missing")],
+        {"results": [{"finding_id": "security-x402-settle-unchecked", "verdict": "confirmed", "quote_verified": True,
+                      "quote": "await settle(p)", "reason": "ignored"}]})
+    assert all(v.findings[0].is_risk and v.findings[0].severity == Severity.HIGH for v in out)
+
+
+def test_the_verifier_checks_candidates_first():
+    from backend.app.services.finding_verifier import selectable
+    picked = selectable([_verdict(f"security-path-secret-{i}").findings[0] for i in range(3)]
+                        + [_verdict("security-network-fallback-mainnet").findings[0]], limit=2)
+    assert picked[0].id == "security-network-fallback-mainnet"
+
+
+def test_a_candidate_rated_no_issue_is_dismissed():
+    out = AuditSwarm._apply_disputes([_verdict("security-strkey-invalid-0a1b2c3d")], {"results": [
+        {"finding_id": "security-strkey-invalid-0a1b2c3d", "verdict": "partial", "quote_verified": True,
+         "quote": "const dest = PLACEHOLDER", "reviewed_severity": "none", "reason": "benchmark placeholder"}]})
+    f = out[0].findings[0]
+    assert not f.is_risk and f.penalty == 0 and "finds no issue" in f.detail
