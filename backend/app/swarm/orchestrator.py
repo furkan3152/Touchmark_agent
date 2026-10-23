@@ -384,6 +384,10 @@ class AuditSwarm:
         pattern rules, which cannot read intent, not a way to talk a risk away."""
         results = {r["finding_id"]: r for r in verification.get("results", []) if r.get("quote_verified")
                    and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
+        # "unverifiable" needs no quote: the verifier could not find the code that makes the
+        # claim true. It never removes a finding, but an unconfirmed rule finding is capped.
+        results.update({r["finding_id"]: r for r in verification.get("results", [])
+                        if r.get("verdict") == "unverifiable" and r["finding_id"] not in results})
         if not results:
             return verdicts
         out = []

@@ -277,8 +277,8 @@ def test_an_unconfirmed_high_rule_finding_does_not_block_on_its_own():
     verdicts = {"security-path-untrusted-to-financial-sink": "partial", "intent-tmark-authority-mismatch": "unverifiable",
                 "stellar_native-stellar-secret-seed": "partial", "security-path-external-transaction-signed": "confirmed"}
     out = AuditSwarm._apply_disputes([_verdict(i) for i in ids], {"results": [
-        {"finding_id": i, "verdict": v, "quote_verified": True, "quote": "pay(dest, amount)", "reason": "r"}
-        for i, v in verdicts.items()]})
+        {"finding_id": i, "verdict": v, "quote_verified": v != "unverifiable", "quote": "pay(dest, amount)" if v != "unverifiable" else "",
+         "reason": "r"} for i, v in verdicts.items()]})
     sink, tmark, seed, confirmed = (v.findings[0] for v in out)
     assert sink.severity == Severity.MEDIUM and sink.is_risk and "did not confirm" in sink.detail
     assert tmark.severity == Severity.MEDIUM
