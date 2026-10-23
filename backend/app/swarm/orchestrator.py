@@ -14,6 +14,7 @@ from ..models import (
     AuditTier,
     AuditorVerdict,
     EvidenceGrade,
+    FindingKind,
     Severity,
     SwarmMemberStats,
 )
@@ -31,6 +32,7 @@ from .policy import (
     AUDIT_POLICY_VERSION,
     artifact_commitment,
     audit_surface_coverage,
+    candidate,
     evidence_summary,
     finding_set_commitment,
     review_decision,
@@ -188,6 +190,7 @@ class AuditSwarm:
             from ..services.finding_verifier import verify_artifact
             verification = await verify_artifact(finding_verifier, artifact, [f for v in verdicts for f in v.findings])
             verdicts = self._apply_disputes(verdicts, verification)
+        verdicts = self._require_deep_review(artifact, verdicts, deep_record)
         verdicts = self._consolidate(verdicts)
 
         score, badge, dim_scores, findings, notes, disagreement, breakdown, assurance = (
@@ -333,11 +336,46 @@ class AuditSwarm:
             updated.append(self._rescore(verdict, findings) if changed else verdict)
         return updated
 
+    def _require_deep_review(self, artifact, verdicts, deep_record: dict):
+        """Pattern rules cannot see application logic: a replayable payment proof, an endpoint
+        anyone can call, a budget keyed on an address an attacker can rotate. On agents no rule
+        author had seen, rules alone passed one with three such high defects. So a passing
+        decision needs a completed deep review that read every file holding the agent's
+        authority; without one the decision is needs_evidence, never pass."""
+        from ..models import Dimension, Finding, FindingKind
+        from ..services.deep_review import authority_files
+        if not artifact.code_files:
+            return verdicts
+        needed = authority_files(artifact)
+        read = set((deep_record.get("coverage") or {}).get("files_read") or [])
+        status = deep_record.get("status") or "not_run"
+        unread = sorted(needed - read)
+        if status == "completed" and not unread:
+            return verdicts
+        reason = (f"The deep review did not run ({status})." if status != "completed" else
+                  f"The deep review did not read {len(unread)} file(s) holding the agent's authority.")
+        gap = Finding(
+            id="security-deep-review-incomplete", dimension=Dimension.SECURITY, severity=Severity.MEDIUM,
+            title="The code holding the agent's authority was not fully read by the deep review",
+            detail=reason + " Pattern rules cannot judge application logic such as replayable payment "
+                   "proofs, unauthenticated endpoints or budgets an attacker can sidestep, so the audit "
+                   "cannot pass on rules alone.",
+            evidence=", ".join(unread[:20]) or status, evidence_grade=EvidenceGrade.CONFIRMED,
+            remediation="Run the audit with the deep review enabled and enough time to read these files.",
+            auditor="security", confidence=0.9, kind=FindingKind.EVIDENCE_GAP)
+        out, added = [], False
+        for verdict in verdicts:
+            if not added and verdict.dimension is Dimension.SECURITY:
+                verdict = self._rescore(verdict, [*verdict.findings, gap])
+                added = True
+            out.append(verdict)
+        return out
+
     @staticmethod
     def _apply_disputes(verdicts, verification: dict):
         """Record each verdict on its finding. A rule finding that independent verification
-        refutes, quoting the code that contradicts it, is lowered one level and marked as disputed. It is never removed,
-        and model-review findings are not lowered: the verifier is a second opinion on the
+        refutes, quoting the code that contradicts it, is lowered one level and marked as disputed. It is never removed;
+        a candidate-rule finding (policy.CANDIDATE_RULES) is dismissed to a zero-weight note instead. Model-review findings are not lowered: the verifier is a second opinion on the
         pattern rules, which cannot read intent, not a way to talk a risk away."""
         results = {r["finding_id"]: r for r in verification.get("results", []) if r.get("quote_verified")
                    and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
@@ -362,15 +400,28 @@ class AuditSwarm:
                         "severity": reviewed,
                         "detail": f.detail + f" Independent verification rates this {reviewed.value}: "
                                   f"{str(r.get('reason', ''))[:240]}"})
-                if (r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk
-                        and not f.id.startswith("stellar_native-onchain-contract-")):  # a source quote cannot refute bytecode
+                refuted = (r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk
+                           and not f.id.startswith("stellar_native-onchain-contract-"))  # a source quote cannot refute bytecode
+                no_issue = (r is not None and r.get("verdict") in {"confirmed", "partial"} and f.is_risk
+                            and str(r.get("reviewed_severity", "")).lower() == "none")
+                if (refuted or no_issue) and candidate(f) and not _KEEPS_SEVERITY.search(f.id):
+                    # A candidate rule only proposes a defect; refuted at a quoted code line, or
+                    # rated as no issue at all, it is dismissed. It stays visible but carries no weight.
+                    f = f.model_copy(update={
+                        "kind": FindingKind.WARNING, "severity": Severity.INFO,
+                        "title": "Dismissed candidate: " + f.title,
+                        "detail": f.detail + f" Independent verification {'refutes' if refuted else 'finds no issue in'} this candidate ({r.get('file', '')}:"
+                                  f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.3)})
+                elif refuted:
                     f = f.model_copy(update={
                         "severity": f.severity.downgrade(1),
                         "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"
                                   f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.5)})
                 findings.append(f)
-            out.append(verdict.model_copy(update={"findings": findings}))
+            out.append(AuditSwarm._rescore(verdict, findings) if findings != verdict.findings
+                       else verdict.model_copy(update={"findings": findings}))
         return out
 
     def _consolidate(self, verdicts):

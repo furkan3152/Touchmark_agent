@@ -182,6 +182,17 @@ def _priority(artifact) -> list[str]:
     return sorted(_reviewable(artifact), key=score)
 
 
+def authority_files(artifact) -> set[str]:
+    """Shipped (non-test) source files where the analysis saw signing, payment, approval or
+    input entry points. A passing decision needs a deep review that read every one of them."""
+    profile = artifact.code_profile or {}
+    paths = {loc.split(":", 1)[0] for group in ("capabilities", "controls")
+             for locs in (profile.get(group) or {}).values() for loc in locs}
+    paths |= {str(flow.get("location", "")).split(":", 1)[0] for flow in profile.get("flows") or []}
+    paths |= {entry.split(":", 1)[0] for entry in profile.get("entrypoints") or {}}
+    return {p for p in paths & _reviewable(artifact) if not _TEST_PATH.search(p)}
+
+
 def _reviewable(artifact) -> set[str]:
     """Source files whose reading counts towards coverage (manifests are not code)."""
     from ..swarm.provenance import _is_manifest
