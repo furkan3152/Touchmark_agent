@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import PurePosixPath
 
 from ..models import AgentArtifact, EvidenceGrade, Finding, FindingKind, Severity
-from ..services.lockfiles import Lockset, below, exact_pin
+from ..services.lockfiles import Lockset, _directory, below, exact_pin
 from ..stellar import advisories as adv
 from .consolidate import stable_id
 from .network_rules import mask
@@ -25,7 +25,8 @@ from .stellar_native import _FUNCTION, _rust_code, contract_sources
 from .tmark_check import _MAINNET, network_hits
 
 #: Lockfile names: a version read from one of them is what is installed.
-_LOCKS = {"Cargo.lock", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"}
+_NPM_LOCKS = {"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"}
+_LOCKS = {"Cargo.lock"} | _NPM_LOCKS
 _JS = (".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".mts", ".cts")
 #: @stellar/mpp's own constants for the public network, next to the shared mainnet markers.
 _MPP_MAINNET = re.compile(r"\b(?:STELLAR_PUBNET|USDC_SAC_MAINNET|XLM_SAC_MAINNET)\b|" + _MAINNET.pattern)
@@ -54,7 +55,11 @@ _WRAPS = {"slice": {"start": ("Excluded", 2**32 - 1), "end": ("Included", 2**32 
 #: A bound written as an integer literal, or as the type's maximum.
 _LITERAL = re.compile(r"^(\d[\d_]*)(?:_?u(?:32|64))?$")
 _TYPE_MAX = re.compile(r"^(?:(?:core|std)\s*::\s*)?u(32|64)\s*::\s*MAX$")
-_BOUND = re.compile(r"(?:[\w:]*::)?Bound\s*::\s*(Included|Excluded|Unbounded)\b")
+#: std::ops::Bound, written with or without its path (only the last segment is read).
+_BOUND = re.compile(r"\bBound\s*::\s*(Included|Excluded|Unbounded)\b")
+#: A range argument longer than this, or wrapped in more redundant parentheses, is not read: its
+#: bounds count as not visible, as those of a range held in a variable do.
+_RANGE_CHARS, _RANGE_PARENS = 400, 8
 _PRNG_BINDING = re.compile(r"\blet\s+(?:mut\s+)?([a-z_]\w*)\s*(?::[^=;]*)?=[^;]*\.\s*prng\s*\(\s*\)\s*;|"
                            r"\b([a-z_]\w*)\s*:\s*&?\s*(?:[\w:]*::)?Prng\b")
 _FR_IMPORT = re.compile(r"\b(?:bn254|bls12_381)\s*::\s*(?:\{[^}]*\bFr\b|Fr\b)")
@@ -124,6 +129,23 @@ def _package_root(lockset: Lockset, path: str) -> str:
     return next(("/".join(parts[:i]) for i in range(len(parts), 0, -1) if "/".join(parts[:i]) in lockset.importers), "")
 
 
+def _separate_installs(lockset: Lockset, package: str) -> set[str]:
+    """Directories that install npm packages on their own: they have their own npm lockfile, or
+    their manifest declares ``package`` and so resolves it themselves."""
+    locks = [lock for imp in lockset.importers.values() for lock in imp.get("lockfiles") or []] + list(lockset.locked)
+    return ({_directory(lock) for lock in locks if PurePosixPath(lock).name in _NPM_LOCKS}
+            | {d for d, imp in lockset.importers.items() if package in (imp.get("deps") or {})})
+
+
+def _in_tree(path: str, root: str, separate: set[str]) -> bool:
+    """``path`` is in ``root``'s directory tree and not under a nested directory in ``separate``."""
+    if root and not path.startswith(root + "/"):
+        return False
+    parts = PurePosixPath(path).parts[:-1]
+    first = len(PurePosixPath(root).parts) + 1 if root else 1
+    return not any("/".join(parts[:i]) in separate for i in range(first, len(parts) + 1))
+
+
 def _manifest(directory: str) -> str:
     return "Cargo.toml" if directory in ("", ".") else f"{directory}/Cargo.toml"
 
@@ -191,39 +213,69 @@ def _name_collisions(files: dict[str, str], crates: dict[str, str]) -> list[str]
             for fn, line in i["fns"] if (crates[i["file"]], i["type"], fn) in exported]
 
 
-def _call_argument(code: str, open_paren: int) -> str | None:
-    """The text between the parenthesis at ``open_paren`` and the one that closes it."""
-    close = _closers(code, "(", ")").get(open_paren)
-    return None if close is None else code[open_paren + 1:close]
+@lru_cache(maxsize=32)
+def _range_index(code: str) -> tuple[list[int], list[int], dict[int, list[int]], list[int], list[tuple[int, str]]]:
+    """One pass over a file for _bounds: each bracket's offset and the depth after it, each
+    range operator `..` by the depth it sits at, and each Bound:: path (start, end, kind)."""
+    brackets, depths, dots, depth = [], [], {}, 0
+    for m in re.finditer(r"[(\[{)\]}]|\.\.(?!\.)", code):
+        if m.group() == "..":
+            dots.setdefault(depth, []).append(m.start())
+        else:
+            depth += 1 if m.group() in "([{" else -1
+            brackets.append(m.start())
+            depths.append(depth)
+    paths = list(_BOUND.finditer(code))
+    return brackets, depths, dots, [m.start() for m in paths], [(m.end(), m[1]) for m in paths]
 
 
-def _bounds(argument: str) -> list[tuple[str, str]] | None:
-    """[(kind, value)] for the start and end bound of a range argument, kind being Included,
-    Excluded or Unbounded; None when the argument is not written as a range (a variable)."""
-    argument = argument.strip()
-    while argument.startswith("(") and _call_argument(argument, 0) == argument[1:-1]:
-        argument = argument[1:-1].strip()
-    if _BOUND.search(argument):
+def _bounds(code: str, open_paren: int) -> list[tuple[str, str]] | None:
+    """[(kind, value)] for the start and end bound of the range argument of the call whose
+    parenthesis opens at ``open_paren``, kind being Included, Excluded or Unbounded; None when
+    the argument is not written as a range (a variable), or is too long or too deeply wrapped to
+    read (_RANGE_CHARS, _RANGE_PARENS). Brackets and operators come from _range_index, so a file
+    with thousands of calls or nested parentheses is read once, not once per call."""
+    closers = _closers(code, "(", ")")
+    close = closers.get(open_paren)
+    if close is None or close - open_paren > _RANGE_CHARS:
+        return None
+    a, b = open_paren + 1, close
+    for _ in range(_RANGE_PARENS + 1):  # strip whitespace and redundant parentheses
+        a = b - len(code[a:b].lstrip())
+        b = a + len(code[a:b].rstrip())
+        if a < b and code[a] == "(" and closers.get(a) == b - 1:
+            a, b = a + 1, b - 1
+        else:
+            break
+    else:
+        return None
+    brackets, depths, dots, path_starts, paths = _range_index(code)
+    first, last = bisect_left(path_starts, a), bisect_left(path_starts, b)
+    if first < last:  # (Bound::Excluded(x), Bound::Included(y)): exactly two
+        if last - first != 2:
+            return None
         out = []
-        for m in _BOUND.finditer(argument):
+        for end, kind in paths[first:last]:
             value = ""
-            if m[1] != "Unbounded":
-                rest = argument[m.end():].lstrip()
-                inner = _call_argument(rest, 0) if rest.startswith("(") else None
-                if inner is None:
+            if kind != "Unbounded":
+                p = end + len(code[end:b]) - len(code[end:b].lstrip())
+                inner = closers.get(p) if code.startswith("(", p) else None
+                if inner is None or inner >= b:
                     return None
-                value = inner
-            out.append((m[1], value.strip()))
-        return out if len(out) == 2 else None
-    depth = 0
-    for i, c in enumerate(argument):
-        depth += (c in "([{") - (c in ")]}")
-        if depth == 0 and argument.startswith("..", i) and not argument.startswith("...", i):
-            inclusive = argument.startswith("..=", i)
-            start, end = argument[:i].strip(), argument[i + (3 if inclusive else 2):].strip()
-            return [("Included", start) if start else ("Unbounded", ""),
-                    (("Included" if inclusive else "Excluded"), end) if end else ("Unbounded", "")]
-    return None
+                value = code[p + 1:inner]
+            out.append((kind, value.strip()))
+        return out
+    k = bisect_left(brackets, a)
+    level = depths[k - 1] if k else 0
+    found = dots.get(level, [])
+    i = bisect_left(found, a)
+    if i == len(found) or found[i] + 2 > b:
+        return None
+    p = found[i]
+    inclusive = code.startswith("..=", p) and p + 3 <= b
+    start, end = code[a:p].strip(), code[p + (3 if inclusive else 2):b].strip()
+    return [("Included", start) if start else ("Unbounded", ""),
+            (("Included" if inclusive else "Excluded"), end) if end else ("Unbounded", "")]
 
 
 def _can_wrap(value: str, edge: int) -> bool:
@@ -236,8 +288,8 @@ def _can_wrap(value: str, edge: int) -> bool:
     return int(literal[1].replace("_", "")) == edge if literal else True
 
 
-def _range_wraps(method: str, argument: str | None) -> bool:
-    bounds = _bounds(argument) if argument is not None else None
+def _range_wraps(method: str, code: str, open_paren: int) -> bool:
+    bounds = _bounds(code, open_paren)
     if bounds is None:
         return True  # a range held in a variable: its bounds are not visible
     return any(kind == _WRAPS[method][side][0] and _can_wrap(value, _WRAPS[method][side][1])
@@ -247,21 +299,24 @@ def _range_wraps(method: str, argument: str | None) -> bool:
 def _unchecked_ranges(files: dict[str, str], manifest: str | None) -> tuple[list[str], list[str]]:
     """GHSA-96xm-fv9w-pf3f: release builds without overflow checks, and a Bytes/Vec slice or a
     Prng::gen_range in contract code whose bound can sit where the SDK's arithmetic wraps
-    (_WRAPS). Returns (calls that can wrap, calls whose literal bounds cannot). Without the
+    (_WRAPS). Returns (calls that can wrap, the places of calls whose bounds cannot: literals
+    away from the edge, or bounds of a kind the SDK does no arithmetic on). Without the
     workspace manifest the profile is unknown: no match."""
     if manifest is None or re.search(r"(?ms)^\[profile\.release\][^\[]*?^\s*overflow-checks\s*=\s*true", manifest):
         return [], []
-    hits, literal = [], []
+    hits, safe = [], []
     for name, code in files.items():
         prng = {a or b for a, b in _PRNG_BINDING.findall(code)}
         calls = [("slice", m) for m in _SLICE.finditer(code)]
         calls += [("gen_range", m) for m in _GEN_RANGE.finditer(code) if not m[1] or m[1] in prng]
         for method, m in sorted(calls, key=lambda c: c[1].start()):
             place = f"{name}:{_line(code, m.start())}"
-            (hits if _range_wraps(method, _call_argument(code, m.end() - 1)) else literal).append(place)
+            (hits if _range_wraps(method, code, m.end() - 1) else safe).append(place)
             if len(hits) >= 5:
-                return hits, literal[:5]
-    return hits, literal[:5]
+                break
+        if len(hits) >= 5:
+            break
+    return hits, list(dict.fromkeys(safe))[:5]
 
 
 def _fr_equality(files: dict[str, str], raw: dict[str, str]) -> list[str]:
@@ -311,13 +366,17 @@ def _mpp_servers_without_fee_payer(name: str, text: str) -> list[str]:
             if parts[0] in {"stellar", "charge"}:
                 callees.add(parts[-1])
     hits = []
+    # Every feePayer and spread in the file, found once: an options object holds one when the
+    # first that starts inside it also ends inside it, so nested calls cost no rescans.
+    present = [(m.start(), m.end()) for m in re.finditer(r"\bfeePayer\b|\.\.\.", code)] if callees else []
+    starts = [start for start, _ in present]
     for callee in callees:
         for m in re.finditer(rf"(?<![\w$.]){re.escape(callee)}(?:\s*\.\s*charge)?\s*\(\s*\{{", skel):
             close = _closers(skel, "{", "}").get(m.end() - 1)
             if close is None:
                 continue  # an options object that never closes is not a call to judge
-            options = code[m.end() - 1:min(close, m.end() + 20_000)]
-            if not re.search(r"\bfeePayer\b|\.\.\.", options):
+            k = bisect_left(starts, m.end() - 1)
+            if k == len(present) or present[k][1] > close:
                 hits.append(f"{name}:{_line(text, m.start())}")
     return sorted(set(hits))
 
@@ -438,7 +497,7 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
                 copy(advisory, affected, installed, Severity.INFO,
                      f"{advisory.package} {affected[0]} is within {advisory.id}; check whether its condition applies",
                      f"The installed version is affected. {_NOT_SHOWN[advisory.condition]}",
-                     [f"literal bounds that cannot wrap at {', '.join(safe)}"] if safe else [],
+                     [f"calls whose bounds cannot wrap at {', '.join(safe)}"] if safe else [],
                      EvidenceGrade.INFERRED, gap=True)
 
     # JS: MPP charge servers, and passkey-kit wallets used with policy signers.
@@ -463,9 +522,11 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
                  "The MPP charge server accepts unsigned transaction-hash credentials",
                  f"@stellar/mpp {affected[0]} is installed and the charge method has no feePayer."
                  + ("" if mainnet else " Only testnet constants are reachable in this package."), calls[:5])
-    # Policy signers count only inside the package root that resolves passkey-kit (its directory
-    # tree, nested crates included): a sibling package with its own lockfile is another wallet.
+    # Policy signers count only inside the package root that resolves passkey-kit: its directory
+    # tree, nested crates included, but not a nested package that installs on its own (its own
+    # npm lockfile, or its own passkey-kit dependency). That package is another wallet.
     passkey = adv.for_package("passkey-kit")[0]
+    separate = _separate_installs(lockset, passkey.package)
     policy_files = [n for n, t in files.items() if n.endswith(_JS + (".rs", ".rs.hbs")) and _POLICY_SIGNER.search(t)
                     and _POLICY_SIGNER.search(code_of(n) if n.endswith(".rs") else mask(t)[0])]
     seen: set[str] = set()
@@ -480,7 +541,7 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
         consulted = True
         affected = [v for v in found[0] if passkey.affects(v)]
         root = resolution.root
-        policies = [n for n in policy_files if not root or n.startswith(root + "/")]
+        policies = [n for n in policy_files if _in_tree(n, root, separate)]
         if affected and policies:
             legacy = " Kits before 0.13 deploy the pre-1.0 wallet contract, four builds of which have an " \
                      "unauthenticated update_signer (PASSKEY-KIT-UPDATE-SIGNER)." if below(affected[0], "0.13.0") else ""

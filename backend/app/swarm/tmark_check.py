@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import re
 import tokenize
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar.canonical import NETWORK_MARKERS
@@ -79,10 +79,12 @@ def _finding(fid: str, severity: Severity, title: str, detail: str, evidence: st
 
 class _Blocks:
     """The innermost '{' open at any offset of a file, from one pass over its braces, and
-    whether that block is opened under a network key with a testnet sibling nearby."""
+    whether that block is opened under a network key with a testnet sibling nearby. Siblings
+    are found in one pass too, so nested keyed blocks do not each rescan what they enclose."""
 
     def __init__(self, text: str):
         self.text, self.positions, self.openers, self.closes, self.keyed = text, [], [], {}, {}
+        self.siblings: list[tuple[int, int]] | None = None
         stack: list[int] = []
         for m in re.finditer(r"[{}]", text):
             if m.group() == "{":
@@ -100,9 +102,15 @@ class _Blocks:
         if brace not in self.keyed:
             close = self.closes.get(brace, len(self.text))
             self.keyed[brace] = (bool(_AS_BLOCK.search(self.text[max(0, brace - _KEY_REACH):brace]))
-                                 and bool(_TESTNET_SIBLING.search(self.text, max(0, brace - _BLOCK_REACH),
-                                                                  close + _BLOCK_REACH)))
+                                 and self._sibling(max(0, brace - _BLOCK_REACH), close + _BLOCK_REACH))
         return self.keyed[brace]
+
+    def _sibling(self, start: int, end: int) -> bool:
+        """A testnet sibling key lies within [start, end)."""
+        if self.siblings is None:
+            self.siblings = [(m.start(), m.end()) for m in _TESTNET_SIBLING.finditer(self.text)]
+        k = bisect_left(self.siblings, (start, -1))
+        return k < len(self.siblings) and self.siblings[k][1] <= end
 
 
 def _network_keyed(text: str, start: int, end: int, line_start: int, blocks: _Blocks) -> bool:
@@ -175,23 +183,41 @@ def _fails_first(skel: str) -> bool:
     return False
 
 
-def _refused(code: str, skel: str, start: int, end: int, python: bool, rust: bool) -> bool:
-    """The match at [start, end) is a guard that refuses its network (see _REFUSAL_REACH)."""
+def _python_if(skel: str, line_start: int) -> tuple[int, int, bool] | None:
+    """The `if` or `elif` that opens the line at ``line_start``: where its condition lies, and
+    whether the condition is unconditional and the branch starts by failing. None when the line
+    opens no `if`. Read once per line, so many markers on one long line cost one read of it."""
+    line_end = skel.find("\n", line_start)
+    line_end = len(skel) if line_end < 0 else line_end
+    m = re.match(r"(\s*)(?:el)?if\b(.*?):(.*)$", skel[line_start:line_end])
+    if not m:
+        return None
+    condition, branch, indent = m.group(2), m.group(3)[:4 * _REFUSAL_REACH], len(m.group(1))
+    if not branch.strip():  # the branch is the indented block below
+        rest = []
+        for line in skel[line_end + 1:line_end + 1 + 4 * _REFUSAL_REACH].split("\n"):
+            if line.strip() and len(line) - len(line.lstrip()) <= indent:
+                break
+            rest.append(line)
+        branch = "\n".join(rest)
+    refuses = not _CONDITIONAL.search(re.sub(r"!==?", "", condition)) and _fails_first(branch)
+    return line_start + m.start(2), line_start + m.end(2), refuses
+
+
+def _refused(code: str, skel: str, start: int, end: int, python: bool, rust: bool,
+             line_start: int = -1, lines: dict | None = None) -> bool:
+    """The match at [start, end) is a guard that refuses its network (see _REFUSAL_REACH).
+    ``line_start`` is where the match's line starts, and ``lines`` caches _python_if per line."""
     if python:
-        line_start = code.rfind("\n", 0, start) + 1
-        line_end = code.find("\n", end)
-        line_end = len(code) if line_end < 0 else line_end
-        m = re.match(r"(\s*)(?:el)?if\b(.*?):(.*)$", skel[line_start:line_end])
-        if not m or not (line_start + m.start(2) <= start and end <= line_start + m.end(2)):
+        line_start = code.rfind("\n", 0, start) + 1 if line_start < 0 else line_start
+        lines = {} if lines is None else lines
+        if line_start not in lines:
+            lines[line_start] = _python_if(skel, line_start)
+        guard = lines[line_start]
+        if not guard or not (guard[0] <= start and end <= guard[1]) or not guard[2]:
             return False
-        condition, branch, indent = m.group(2), m.group(3), len(m.group(1))
-        if not branch.strip():  # the branch is the indented block below
-            rest = []
-            for line in skel[line_end + 1:line_end + 1 + 4 * _REFUSAL_REACH].split("\n"):
-                if line.strip() and len(line) - len(line.lstrip()) <= indent:
-                    break
-                rest.append(line)
-            branch = "\n".join(rest)
+        before, after_text = code[max(0, start - 80):start], code[end:end + 80]  # operator and URL prefix
+        return bool(_EQUALS_BEFORE.search(before)) or bool(_EQUALS_AFTER.match(after_text))
     else:
         ifs = [m for m in _IF.finditer(skel, max(0, start - _REFUSAL_REACH), start)]
         if not ifs:
@@ -235,7 +261,7 @@ def network_hits(files: dict[str, str], pattern: re.Pattern, skip_keyed: bool = 
         if not name.endswith(_CODE) or not pattern.search(text):
             continue
         code, skel = _masked(name, text)
-        line_start, scanned, blocks = 0, 0, None
+        line_start, scanned, blocks, lines = 0, 0, None, {}
         for m in pattern.finditer(code):
             newline = code.rfind("\n", scanned, m.start())
             line_start, scanned = (newline + 1 if newline >= 0 else line_start), m.start()
@@ -243,7 +269,7 @@ def network_hits(files: dict[str, str], pattern: re.Pattern, skip_keyed: bool = 
                 blocks = blocks or _Blocks(code)
                 if _network_keyed(code, m.start(), m.end(), line_start, blocks):
                     continue
-            if _refused(code, skel, m.start(), m.end(), name.endswith(".py"), name.endswith(".rs")):
+            if _refused(code, skel, m.start(), m.end(), name.endswith(".py"), name.endswith(".rs"), line_start, lines):
                 continue
             hits.append(f"{name}:{code.count(chr(10), 0, m.start()) + 1}")
             break

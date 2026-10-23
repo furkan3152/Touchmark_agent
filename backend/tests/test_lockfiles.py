@@ -8,7 +8,7 @@ import json
 import time
 
 from backend.app.services import lockfiles
-from backend.app.services.lockfiles import Lockset, exact_pin, read_repository, spec_admits, version_key
+from backend.app.services.lockfiles import Lockset, exact_pin, read_repository, spec_admits, spec_intervals, version_key
 
 
 def test_ranges_admit_exactly_the_versions_their_package_manager_would_install():
@@ -203,3 +203,29 @@ def test_a_declared_dependency_without_its_own_entry_takes_only_locked_versions_
     assert mpp.versions == ("0.4.2",) and mpp.source == "yarn.lock"
     assert locks.resolve("@x402/core", "src/a.ts").versions == ()      # the locked copy is not this range's
     assert locks.resolve("@x402/fetch", "src/a.ts").versions == ()     # an unreadable range admits nothing
+
+
+def test_a_lockfile_above_a_directory_it_does_not_list_says_nothing_about_it(tmp_path):
+    # A scaffold template below a pnpm workspace that does not list it: the root lockfile has no
+    # importer for it, so its declared range takes no version from there.
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"@stellar/stellar-sdk": "^14.0.0"}}))
+    (tmp_path / "pnpm-workspace.yaml").write_text("packages:\n  - 'packages/*'\n")
+    (tmp_path / "pnpm-lock.yaml").write_text(
+        "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      other:\n        specifier: 1.0.0\n"
+        "        version: 1.0.0\n\npackages:\n\n  '@stellar/stellar-sdk@14.6.1':\n    resolution: {integrity: x}\n")
+    template = tmp_path / "packages/cli/templates/bot"
+    template.mkdir(parents=True)
+    (template / "package.json").write_text(json.dumps({"dependencies": {"@stellar/stellar-sdk": "^14.0.0"}}))
+    locks = Lockset.read(tmp_path)
+    assert locks.resolve("@stellar/stellar-sdk", "packages/cli/templates/bot/src/a.ts").versions == ()
+    # The lockfile in the root's own directory still stands for the root.
+    assert locks.resolve("@stellar/stellar-sdk", "src/a.ts").versions == ("14.6.1",)
+
+
+def test_long_ranges_are_unreadable_at_once():
+    for spec in (">=0.1" + " " * 120_000 + "<1", " " * 20_000 + "x", "1" + " || 1" * 10_000):
+        started = time.monotonic()
+        assert spec_intervals(spec) is None and exact_pin(spec) is None and spec_admits(spec, "0.4.0") is None
+        assert time.monotonic() - started < 0.1
+    assert spec_intervals(">=1.2.3 <2.0.0 || ^3.0.0") == [((1, 2, 3), (2, 0, 0)), ((3, 0, 0), (4, 0, 0))]
+    assert exact_pin(" ==2.8.0 ") == "2.8.0"

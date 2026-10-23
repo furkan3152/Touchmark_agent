@@ -68,10 +68,12 @@ class Hit:
 # --------------------------------------------------------------------------- masking
 def mask(text: str, python: bool = False) -> tuple[str, str]:
     """(code, skeleton) with offsets kept: comments blanked in both, string contents also
-    blanked in the skeleton (its quotes stay). Regular-expression literals are not
-    recognised; a quote inside one can only shorten what a rule sees."""
+    blanked in the skeleton (its quotes stay). A ' or " that does not close on its line opens
+    no string: it is a Rust lifetime, a quote in a regular-expression literal or an apostrophe
+    in JSX text, and the code after it is still read."""
     code, skel = list(text), list(text)
     i, n = 0, len(text)
+    unclosed: dict[str, int] = {}  # quote -> where its last unclosed scan stopped
     while i < n:
         c = text[i]
         if (python and c == "#") or (not python and text.startswith("//", i)):
@@ -90,6 +92,9 @@ def mask(text: str, python: bool = False) -> tuple[str, str]:
         elif c in "'\"`":
             triple = python and text.startswith(c * 3, i)
             quote = c * 3 if triple else c
+            if not triple and unclosed.get(c, -1) > i:
+                i += 1  # the same quote did not close before this line ended: neither does this one
+                continue
             j = i + len(quote)
             while j < n:
                 if text[j] == "\\":
@@ -98,8 +103,12 @@ def mask(text: str, python: bool = False) -> tuple[str, str]:
                 if text.startswith(quote, j):
                     break
                 if text[j] == "\n" and quote in ("'", '"'):
-                    break  # an unterminated one-line string ends with its line
+                    break
                 j += 1
+            if quote in ("'", '"') and (j >= n or text[j] == "\n"):
+                unclosed[c] = j
+                i += 1
+                continue
             end = min(n, j + len(quote))
             for k in range(i + len(quote), min(n, j)):
                 if text[k] != "\n":

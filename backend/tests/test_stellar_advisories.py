@@ -12,6 +12,7 @@ from datetime import date
 import pytest
 
 from backend.app.models import AgentArtifact, Severity, SourceKind
+from backend.app.services.lockfiles import Lockset
 from backend.app.stellar import advisories
 from backend.app.swarm import advisory_check
 from backend.app.swarm.advisory_check import advisory_findings
@@ -145,6 +146,11 @@ def test_prng_gen_range_is_medium_but_rand_gen_range_off_chain_is_not(tmp_path):
     ("b.slice(0..=end)", True),
     ("b.slice((Bound::Excluded(start), Bound::Unbounded))", True),
     ("b.slice(0..4).len() as u64 + (0..=n).count() as u64", False),  # the range after the call is not its argument
+    ("b.slice(((0..4)))", False),                         # redundant parentheses are read through
+    ("b.slice(0..(1 + 1))", False),
+    # Past _RANGE_PARENS parentheses or _RANGE_CHARS characters the bounds are not read: not visible.
+    ("b.slice(" + "(" * 9 + "0..4" + ")" * 9 + ")", True),
+    ("b.slice(0..(" + "1 + " * 120 + "1))", True),
 ])
 def test_only_a_range_bound_that_can_wrap_meets_the_overflow_condition(tmp_path, call, risk):
     source = VAULT.replace("{ owner(&e).require_auth(); set_owner(&e, &new) }",
@@ -152,7 +158,7 @@ def test_only_a_range_bound_that_can_wrap_meets_the_overflow_condition(tmp_path,
     [finding] = dep_findings(rust_repo(tmp_path, "22.0.8", source), "ghsa-96xm-fv9w-pf3f")
     assert finding["severity"] == ("medium" if risk else "info"), call
     if not risk:
-        assert "literal bounds that cannot wrap at src/lib.rs:8" in finding["evidence"]
+        assert finding["evidence"].endswith("calls whose bounds cannot wrap at src/lib.rs:8"), finding["evidence"]
 
 
 def test_overflow_checks_are_read_from_the_workspace_root(tmp_path):
@@ -257,6 +263,11 @@ def test_a_commented_out_charge_call_or_a_brace_in_a_string_is_not_a_server_with
     # Near miss: the same server without the sponsor is still reported, at the call's line.
     [finding] = mpp_findings(tmp_path / "b", "0.4.0", sponsored.replace("feePayer: sponsor, ", ""))
     assert finding["severity"] == "high" and "src/server.ts:4" in finding["evidence"]
+    # A quote in a regular-expression literal opens no string: the call after it is still read.
+    regex = ('import { stellar } from "@stellar/mpp/charge/server";\n'
+             'const quote = /"/; export const method = stellar.charge({ recipient, currency: USDC });\n')
+    [finding] = mpp_findings(tmp_path / "c", "0.4.0", regex)
+    assert "src/server.ts:2" in finding["evidence"]
 
 
 def test_two_servers_on_one_mpp_version_are_one_finding(tmp_path):
@@ -309,6 +320,37 @@ def test_policy_signers_count_only_inside_the_package_root_that_installs_the_kit
     found = dep_findings(audit(tmp_path / "b", {**template, "package.json": "{}", "src/utils.ts": "export {};\n"}),
                          "passkey-kit-policy-signer")
     assert [f["evidence"].split(";")[0] for f in found] == ["templates/wallet/package-lock.json: passkey-kit 0.12.0"]
+
+
+def test_a_nested_package_that_installs_on_its_own_is_not_part_of_the_root_wallet(tmp_path):
+    wallet = 'import { PasskeyKit } from "passkey-kit";\nexport const kit = (k: PasskeyKit) => k;\n'
+    policy = 'import { PasskeyKit } from "passkey-kit";\nexport const add = (kit: PasskeyKit, p: string) => kit.addPolicy(p, {});\n'
+    root = {"package.json": json.dumps({"dependencies": {"passkey-kit": "^0.12.0"}}),
+            "package-lock.json": package_lock(passkey_kit="0.12.0"), "src/index.ts": wallet}
+    nested = {"apps/policy-wallet/package.json": json.dumps({"dependencies": {"passkey-kit": "^0.11.0"}}),
+              "apps/policy-wallet/package-lock.json": package_lock(passkey_kit="0.11.0"),
+              "apps/policy-wallet/src/policy.ts": policy}
+    # Near miss: the root wallet (0.12.0) has no policy signer; the nested app's own install does.
+    found = dep_findings(audit(tmp_path / "a", {**root, **nested}), "passkey-kit-policy-signer")
+    assert [f["evidence"] for f in found] == [
+        "apps/policy-wallet/package-lock.json: passkey-kit 0.11.0; policy signers: apps/policy-wallet/src/policy.ts"]
+    # The same holds below a nested package root, and for a nested package that declares the kit
+    # itself without a lockfile of its own.
+    moved = {f"web/{k}": v for k, v in {**root, **nested}.items()}
+    found = dep_findings(audit(tmp_path / "b", {**moved, "package.json": "{}"}), "passkey-kit-policy-signer")
+    assert [f["evidence"].split(";")[0] for f in found] == ["web/apps/policy-wallet/package-lock.json: passkey-kit 0.11.0"]
+    lockset = Lockset({"importers": {"": {"lockfiles": ["package-lock.json"], "deps": {"passkey-kit": {}}},
+                                     "apps/w": {"lockfiles": ["package-lock.json"], "deps": {"passkey-kit": {}}},
+                                     "apps/m": {"lockfiles": ["package-lock.json"], "deps": {}}}})
+    separate = advisory_check._separate_installs(lockset, "passkey-kit")
+    assert not advisory_check._in_tree("apps/w/src/policy.ts", "", separate)
+    assert advisory_check._in_tree("apps/m/src/policy.ts", "", separate)
+    assert advisory_check._in_tree("apps/w/src/policy.ts", "apps/w", separate)
+    # A workspace member that installs through the root's lockfile is part of the root's wallet.
+    member = {"packages/policies/package.json": json.dumps({"name": "policies"}),
+              "packages/policies/src/policy.ts": policy.replace("passkey-kit", "./kit")}
+    [note] = dep_findings(audit(tmp_path / "d", {**root, **member}), "passkey-kit-policy-signer")
+    assert note["evidence"] == "package-lock.json: passkey-kit 0.12.0; policy signers: packages/policies/src/policy.ts"
 
 
 # ----------------------------------------------------------------- known-bad wallet WASM
@@ -426,6 +468,8 @@ def test_unclosed_calls_and_repeated_hashes_cost_one_pass(settings):
     cases = {
         "mpp": {"src/server.ts": 'import { stellar } from "@stellar/mpp/charge/server";\n' + "stellar({ a: 1, " * 8_000},
         "slices": {"Cargo.toml": CARGO_TOML.format(sdk="22.0.8", extra=""), "src/lib.rs": VAULT + ".slice(" * 50_000},
+        "nested mpp": {"src/server.ts": 'import { stellar } from "@stellar/mpp/charge/server";\n'
+                                        + "stellar.charge({ a: " * 20_000 + "1" + " })" * 20_000},
         "hashes": {"src/kit.ts": f'export const w = kit.createWallet({{ wasmHash: "{BAD_HASH}" }});\n' * 5_000},
     }
     for label, files in cases.items():
@@ -437,3 +481,17 @@ def test_unclosed_calls_and_repeated_hashes_cost_one_pass(settings):
         assert time.perf_counter() - started < 1.5, label
         assert len({f.id for f in found}) == len(found), label  # duplicate ids fail the whole auditor
     assert [f.severity for f in found] == [Severity.CRITICAL]
+
+
+def test_range_arguments_are_read_from_one_pass_over_the_file():
+    # Deep parentheses, thousands of Bound paths in one argument, and thousands of literal calls.
+    manifest = CARGO_TOML.format(sdk="22.0.8", extra="")
+    for body, wraps in (("b.slice(" + "(" * 16_000 + "0..=n" + ")" * 16_000 + ");", True),
+                        ("b.slice((" + ", ".join(["Bound::Included(1)"] * 8_000) + "));", True),
+                        ("let x = b.slice(1..b.slice(1..3).len());\n" * 10_000, False),
+                        # Nested calls: the outer arguments are too long to read, so they count.
+                        ("b.slice((1 + b.slice((" * 2_000 + "1..3" + ")).len())..3)" * 2_000 + ";", True)):
+        started = time.perf_counter()
+        hits, safe = advisory_check._unchecked_ranges({"src/lib.rs": _rust_code(body)}, manifest)
+        assert time.perf_counter() - started < 1.0, body[:30]
+        assert bool(hits) is wraps and (bool(safe) or wraps), body[:30]

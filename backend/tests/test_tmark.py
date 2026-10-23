@@ -243,7 +243,9 @@ def test_a_long_line_before_a_network_marker_costs_little():
     # Minified code or a hex blob before the marker; then thousands of keyed markers on one line.
     for line, limit in (("a" * 100_000 + " https://horizon.stellar.org", 0.1), ("x." * 50_000 + "horizon.stellar.org", 0.1),
                         ("mainnet: 'https://horizon.stellar.org', testnet: 'x', " * 3_000, 0.5),
-                        ("{ mainnet: {" + " u: 'https://horizon.stellar.org'," * 3_000 + " }, testnet: {} }", 0.5)):
+                        ("{ mainnet: {" + " u: 'https://horizon.stellar.org'," * 3_000 + " }, testnet: {} }", 0.5),
+                        # Nested keyed blocks, each with a marker, whose testnet sibling follows them all.
+                        ("c = " + "mainnet: { u: 'https://horizon.stellar.org', " * 1_400 + "}" * 1_400 + " testnet: {}", 0.5)):
         started = time.perf_counter()
         network_hits({"src/min.js": line + "\n"}, _MAINNET)
         assert time.perf_counter() - started < limit, line[:20]
@@ -270,6 +272,10 @@ def test_a_marker_in_a_trailing_comment_a_block_comment_or_a_docstring_is_not_us
     # Near misses: the same marker as a value, and a '//' inside a string, are code.
     assert network_hits({"src/e.ts": "const url = 'https://horizon.stellar.org'; // mainnet\n"}, _MAINNET) == ["src/e.ts:1"]
     assert network_hits({"src/f.py": "URL = 'https://horizon.stellar.org'  # not a docstring\n"}, _MAINNET) == ["src/f.py:1"]
+    # A Rust lifetime or a quote in a regular-expression literal opens no string: the comment after it is a comment.
+    assert not network_hits({"src/g.rs": "fn f(x: &'static str) {} // PUBLIC_NETWORK_PASSPHRASE\n"}, _MAINNET)
+    assert not network_hits({"src/h.ts": "const q = /'/; // https://horizon.stellar.org\n"}, _MAINNET)
+    assert network_hits({"src/i.rs": "fn f(x: &'static str) { PUBLIC_NETWORK_PASSPHRASE }\n"}, _MAINNET) == ["src/i.rs:1"]
     trailing = "export const HORIZON = 'https://horizon-testnet.stellar.org'; // mainnet would be https://horizon.stellar.org\n"
     assert network_findings(tmp_path, "testnet", trailing) is None
 
@@ -296,3 +302,13 @@ def test_many_refusal_guards_or_an_unclosed_guard_cost_linear_time():
         started = time.perf_counter()
         network_hits({name: text}, _MAINNET)
         assert time.perf_counter() - started < 1.0, name
+
+
+def test_one_python_guard_with_thousands_of_markers_is_read_once():
+    # 4000 or-ed markers in one `if` (160 KB on one line), and a long inline branch.
+    chained = "if " + " or ".join(["p == Network.PUBLIC_NETWORK_PASSPHRASE"] * 4_000) + ":\n    raise ValueError('no')\n"
+    for text, expected in ((chained, []), (chained.replace(":\n", " and strict:\n", 1), ["a.py:1"]),
+                           ("if p == Network.PUBLIC_NETWORK_PASSPHRASE:" + " " * 200_000 + ";\n", ["a.py:1"])):
+        started = time.perf_counter()
+        assert network_hits({"a.py": text}, _MAINNET) == expected
+        assert time.perf_counter() - started < 1.0

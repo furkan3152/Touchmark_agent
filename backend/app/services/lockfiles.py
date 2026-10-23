@@ -93,9 +93,13 @@ class Lockset:
             if pinned:
                 return Resolution(package, (pinned,), spec, dep.get("source") or root, root)
             # The importer's own entry named no version (an older lockfile layout, two locked
-            # copies): the root's lockfiles still say what is installed, but only versions the
-            # declared range admits stand for this root. An unreadable range admits nothing.
+            # copies): a lockfile in the root's own directory still says what is installed, but
+            # only versions the declared range admits stand for this root. A lockfile further up
+            # that names no version for it (a directory that is not a workspace member, such as
+            # a scaffold template) says nothing about it. An unreadable range admits nothing.
             for lock in self.importers[root].get("lockfiles") or []:
+                if _directory(lock) != root:
+                    continue
                 ecosystem = _ECOSYSTEM.get(PurePosixPath(lock).name, "npm")
                 fitting = [v for v in (self.locked.get(lock) or {}).get(package) or []
                            if spec_admits(spec or "", v, _next_patch(v), ecosystem) is True]
@@ -117,8 +121,9 @@ class Lockset:
 #: ('-rc.1+b'), PEP 440 parts ('.post0', 'rc1', '.dev2', a fourth number). Only the first three
 #: numbers are compared, so a pre-release counts as its release, as it did for npm.
 _VERSION = re.compile(r"^\s*v?(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(?:[-+._]?[0-9A-Za-z][0-9A-Za-z.+_-]*)?\s*$")
-#: Longer strings are not versions; the bound also keeps the match cheap on hostile input.
-_VERSION_CHARS = 128
+#: Longer strings are not versions, and longer ranges are not read (a hand-written range is a few
+#: dozen characters); the bounds also keep the regular expressions cheap on hostile input.
+_VERSION_CHARS, _SPEC_CHARS = 128, 256
 
 
 def version_key(version: str) -> tuple[int, int, int] | None:
@@ -137,7 +142,9 @@ def below(version: str, boundary: str) -> bool | None:
 
 def exact_pin(spec: str | None) -> str | None:
     """'2.8.0' or '=2.8.0' (npm), '=2.8.0' (Cargo), '==2.8.0' (pip): the one version allowed."""
-    m = re.fullmatch(r"\s*(?:==?)?\s*v?(\d+\.\d+\.\d+)\s*", spec if isinstance(spec, str) else "")
+    if not isinstance(spec, str) or len(spec) > _SPEC_CHARS:
+        return None
+    m = re.fullmatch(r"(?:==?)?\s*v?(\d+\.\d+\.\d+)", spec.strip())
     return m.group(1) if m else None
 
 
@@ -207,8 +214,8 @@ def _comparator(token: str, ecosystem: str) -> tuple | None:
 
 def spec_intervals(spec: str, ecosystem: str = "npm") -> list[tuple] | None:
     """The versions a range admits, as half-open intervals; None when it cannot be read
-    (a tag, a URL, a workspace link)."""
-    spec = spec.strip() if isinstance(spec, str) else ""
+    (a tag, a URL, a workspace link, or longer than _SPEC_CHARS)."""
+    spec = spec.strip() if isinstance(spec, str) and len(spec) <= _SPEC_CHARS else ""
     if not spec or re.match(r"^(?:workspace:|link:|file:|git|https?:|npm:|github:|latest|next)", spec):
         return None
     out = []
@@ -514,6 +521,12 @@ def _nearest(locks: dict, directory: str, names: tuple[str, ...]) -> str | None:
     return None
 
 
+def _directory(path: str) -> str:
+    """The directory of a repository path, '' for the root."""
+    parent = PurePosixPath(path).parent.as_posix()
+    return "" if parent == "." else parent
+
+
 def _ordered(versions: set[str]) -> list[str]:
     return sorted(versions, key=lambda v: version_key(v) or (0, 0, 0))
 
@@ -543,8 +556,7 @@ def read_repository(root: Path) -> dict:
     importers: dict[str, dict] = {}
     manifests = sorted((r for r, p in rel.items() if p.name in _MANIFESTS), key=_depth_first)[:_MAX_MANIFESTS]
     for path in manifests:
-        directory = PurePosixPath(path).parent.as_posix()
-        directory = "" if directory == "." else directory
+        directory = _directory(path)
         try:
             ecosystem, declared = _manifest_deps(rel[path])
         except Exception:  # noqa: BLE001 - an unreadable manifest declares nothing
@@ -555,8 +567,7 @@ def read_repository(root: Path) -> dict:
         resolved: dict[str, str] = {}
         if lock:
             entry["lockfiles"].append(lock)
-            lock_dir = PurePosixPath(lock).parent.as_posix()
-            lock_dir = "" if lock_dir == "." else lock_dir
+            lock_dir = _directory(lock)
             inner = directory[len(lock_dir):].lstrip("/") if lock_dir else directory
             resolved = locks[lock].direct(inner, declared, ecosystem)
         for dep, spec in declared.items():

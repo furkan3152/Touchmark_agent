@@ -22,6 +22,13 @@ def test_masking_keeps_offsets_and_hides_comments():
     code, skel = mask("const a = 'x{'; // b {\n/* c } */ let d = `${e}`;")
     assert len(code) == len(skel) and "b {" not in code and "c }" not in code and "'x{'" in code
     assert "{" not in skel.split(";")[0]
+    # A quote that does not close on its line (a lifetime, a regular-expression literal) opens no string,
+    # and thousands of them on one line cost one pass.
+    code, skel = mask("fn f(x: &'a str) {} // note\nconst re = /\"/; call({ a })\n")
+    assert "note" not in code and "call({ a })" in skel
+    started = time.perf_counter()
+    assert len(mask("\\'" * 100_000)[1]) == 200_000
+    assert time.perf_counter() - started < 0.5
     assert net_of("Networks.PUBLIC") == "mainnet" and net_of("'stellar:testnet'") == "testnet"
     assert net_of("'public'") == "mainnet" and net_of("'https://horizon.stellar.org'") is None
 
