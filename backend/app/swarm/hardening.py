@@ -70,7 +70,8 @@ _PLACEHOLDER = re.compile(rb"(?i)x{6,}|your[_-]|example|dummy|placeholder|redact
 #: directory `.stellar` in a project or `~/.config/stellar` (stellar-cli config/locator.rs).
 #: A `secret_key` there is an S... seed, which the committed-seed check already reports.
 _CLI_IDENTITY = re.compile(r"(?:^|/)(?:\.stellar|\.config/stellar)/identity/[^/]+\.toml$")
-_SEED_PHRASE = re.compile(rb"""^\s*seed_phrase\s*=\s*["']([a-z ]{20,})["']""", re.M)
+#: Leading blanks are [ \t]: a \s there crosses blank lines and backtracks quadratically on them.
+_SEED_PHRASE = re.compile(rb"""^[ \t]*seed_phrase[ \t]*=[ \t]*["']([a-z ]{20,})["']""", re.M)
 #: A credential kind whose account and network are not known from the file alone.
 CLI_SEED_PHRASE = "Stellar CLI identity seed phrase"
 
@@ -124,10 +125,6 @@ _DEFAULT_SECRET = re.compile(
 #: can mint challenges the server accepts (mppx server/Mppx.js).
 _MPPX_SERVER_IMPORT = re.compile(r"""["'](?:mppx/(?:server|express|hono|nextjs|elysia)|@stellar/mpp/(?:charge|channel)/server)["']""")
 _MPPX_CREATE = re.compile(r"\bMppx\.create\s*\(")
-_SECRET_KEY_OPTION = re.compile(r"\bsecretKey\s*:\s*(?P<expr>[^,\n}]+)")
-#: A non-empty literal the key falls back to. An empty one fails closed: mppx refuses a
-#: falsy secretKey at start-up ("Missing secret key", mppx server/Mppx.js).
-_FALLBACK_LITERAL = re.compile(r"""(?:^|\?\?|\|\|)\s*(?P<q>["'`])(?P<value>[^"'`$]+)(?P=q)\s*$""")
 _HTML_SINK = re.compile(r"\.(?:innerHTML|outerHTML)\s*\+?=\s*(?P<rhs>[^;\n]+)|\.insertAdjacentHTML\([^,]+,\s*(?P<arg>[^)\n]+)"
                         r"|dangerouslySetInnerHTML=\{\{\s*__html:\s*(?P<react>[^}\n]+)")
 _DYNAMIC = re.compile(r"\$\{|[\"'`]\s*\+\s*[A-Za-z_$]|\+\s*[A-Za-z_$]")
@@ -182,37 +179,124 @@ def _wrapped_sink(text: str, pos: int, value: str) -> bool:
                for call in re.finditer(r"\b" + re.escape(fn) + r"\(([^\n]*)", text))
 
 
+class _JsScopes:
+    """Which declaration a name in a parsed JS/TS file refers to: the nearest enclosing block
+    or function that declares it. Each block's names are indexed once."""
+
+    def __init__(self, js):
+        self.js = js
+        self._blocks: dict[tuple[int, int], dict[str, object]] = {}
+
+    def _declared(self, block) -> dict[str, object]:
+        key = (block.start_byte, block.end_byte)
+        if key not in self._blocks:
+            names: dict[str, object] = {}
+            for stmt in block.named_children:
+                decl = stmt.child_by_field_name("declaration") if stmt.type == "export_statement" else stmt
+                if decl is not None and decl.type in {"lexical_declaration", "variable_declaration"}:
+                    for d in decl.named_children:
+                        name = d.child_by_field_name("name") if d.type == "variable_declarator" else None
+                        if name is not None and name.type == "identifier":
+                            names.setdefault(name.text.decode("utf-8", "replace"), d)
+            self._blocks[key] = names
+        return self._blocks[key]
+
+    def binding(self, ident):
+        """('decl', declarator) | ('param', function) | None (not declared in this file)."""
+        name = ident.text.decode("utf-8", "replace")
+        node = ident.parent
+        while node is not None:
+            if self.js._is_function(node) and name in self.js._param_names(node):
+                return "param", node
+            if node.type in {"statement_block", "program", "switch_body"} and name in self._declared(node):
+                return "decl", self._declared(node)[name]
+            node = node.parent
+        return None
+
+    def value(self, node):
+        """A named value's declared initializer; any other expression as it is."""
+        node = self.js._unwrap(node)
+        if node is not None and node.type in {"identifier", "shorthand_property_identifier"}:
+            bound = self.binding(node)
+            if bound is not None and bound[0] == "decl":
+                return self.js._unwrap(bound[1].child_by_field_name("value"))
+            return None
+        return node
+
+    def origin(self, node):
+        """Where a key comes from, comparable across uses: an environment variable, a
+        declaration, a parameter, or a name this file does not declare."""
+        node = self.js._unwrap(node)
+        if node is None:
+            return None
+        if node.type == "member_expression" and self.js._dotted(node).startswith("process.env."):
+            return "env", self.js._dotted(node)
+        if node.type in {"identifier", "shorthand_property_identifier"}:
+            bound = self.binding(node)
+            if bound is None:
+                return "global", node.text
+            init = self.js._unwrap(bound[1].child_by_field_name("value")) if bound[0] == "decl" else None
+            if init is not None and init.type == "member_expression" and self.js._dotted(init).startswith("process.env."):
+                return "env", self.js._dotted(init)
+            return bound[0], bound[1].start_byte, node.text
+        return None
+
+
+def _literal_fallback(js, node) -> bool:
+    """A non-empty literal the key is, or falls back to (`?? "dev"`, `|| 'dev'`). An empty one
+    fails closed (mppx refuses a falsy secretKey at start-up: "Missing secret key", mppx
+    server/Mppx.js), and a YOUR_... template placeholder is skipped as the env-variable rule
+    skips it."""
+    node = js._unwrap(node)
+    if node is not None and node.type == "binary_expression" and node.child_by_field_name("operator").type in {"??", "||"}:
+        node = js._unwrap(node.child_by_field_name("right"))
+    value = js._string_value(node) if node is not None else None
+    return bool(value) and "$" not in value and not re.match(r"(?i)your[_-]|<|x{4,}", value)
+
+
 def _mppx_secrets(name: str, text: str) -> tuple[list[str], list[tuple[int, str]]]:
     """In an MPP server, the `secretKey` options that fall back to a value written in the
     repository (as default-secret evidence), and those that are also the Stellar seed
-    passed to Keypair.fromSecret (line, code)."""
+    passed to Keypair.fromSecret (line, code). Read from the syntax tree: a name resolves to
+    the declaration in scope, and comments and string contents are not code."""
     defaults: list[str] = []
     reuse: list[tuple[int, str]] = []
-    if not _MPPX_SERVER_IMPORT.search(text):
+    if not _MPPX_SERVER_IMPORT.search(text) or not _MPPX_CREATE.search(text):
         return defaults, reuse
+    from . import jsflow as js
+    if not js.is_js(name) or not js.available():
+        return defaults, reuse
+    lower = name.lower()
+    parser = js._parsers()["tsx" if lower.endswith(".tsx") else "ts" if lower.endswith((".ts", ".mts", ".cts")) else "js"]
+    try:
+        root = parser.parse(text.encode("utf-8", "replace")).root_node
+    except (ValueError, RecursionError):
+        return defaults, reuse
+    scopes = _JsScopes(js)
+    creates, seeds = [], []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.named_children)
+        if node.type == "call_expression":
+            label = js._dotted(node.child_by_field_name("function"))
+            if label == "Mppx.create":
+                creates.append(node)
+            elif label.rsplit(".", 1)[-1] == "fromSecret" and js._args(node):
+                seeds.append(js._args(node)[0])
+    seed_origins = {scopes.origin(a) for a in seeds} - {None}
     lines = text.splitlines()
-    for call in _MPPX_CREATE.finditer(text):
-        open_at = call.end() + len(text[call.end():]) - len(text[call.end():].lstrip())
-        if text[open_at:open_at + 1] != "{":
-            continue  # options passed by name: not read here
-        block = _block(text, open_at)
-        for option in _SECRET_KEY_OPTION.finditer(block):
-            expr = option.group("expr").strip()
-            at = open_at + option.start("expr")
-            if _commented(text, at):
-                continue
-            target, target_at = expr, at
-            named = re.fullmatch(r"[A-Za-z_$][\w$]*", expr)
-            if named:
-                declared = re.search(r"\b(?:const|let|var)\s+" + re.escape(expr) + r"\s*(?::[^=\n]+)?=\s*([^;\n]+)", text)
-                if declared:
-                    target, target_at = declared.group(1).strip(), declared.start(1)
-            if _FALLBACK_LITERAL.search(target):
-                defaults.append(f"{name}:{_line(text, target_at)} secretKey")
-            key = expr if named or re.fullmatch(r"process\.env\.\w+", expr) else ""
-            if key and re.search(r"\bfromSecret\(\s*" + re.escape(key) + r"\s*[,)]", text):
-                line = _line(text, at)
-                reuse.append((line, lines[line - 1] if line <= len(lines) else expr))
+    for call in sorted(creates, key=lambda n: n.start_byte):
+        options = js._unwrap(js._args(call)[0]) if js._args(call) else None
+        value = js._props(options).get("secretKey") if options is not None and options.type == "object" else None
+        if value is None:
+            continue  # options passed by name, or no key: not read here
+        target = scopes.value(value)
+        if target is not None and _literal_fallback(js, target):
+            defaults.append(f"{name}:{target.start_point[0] + 1} secretKey")
+        if scopes.origin(value) in seed_origins:
+            line = value.start_point[0] + 1
+            reuse.append((line, lines[line - 1] if line <= len(lines) else ""))
     return defaults, reuse
 
 
@@ -424,8 +508,8 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
 
     # Soroban contracts whose release build wraps on overflow.
     manifests = {n: t for n, t in files.items() if n.endswith("Cargo.toml")}
-    soroban = [n for n, t in manifests.items() if re.search(r"^\s*soroban-sdk\s*=", t, re.M)]
-    if soroban and not any(re.search(r"^\s*overflow-checks\s*=\s*true", t, re.M) for t in manifests.values()):
+    soroban = [n for n, t in manifests.items() if re.search(r"^[ \t]*soroban-sdk[ \t]*=", t, re.M)]
+    if soroban and not any(re.search(r"^[ \t]*overflow-checks[ \t]*=[ \t]*true", t, re.M) for t in manifests.values()):
         findings.append(_finding(
             "security-soroban-overflow-unchecked", Severity.MEDIUM,
             "Soroban contract arithmetic can wrap around in release builds",
@@ -470,11 +554,15 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             defaults.append(f"{name}:{_line(text, m.start())} {var}")
     # An MPP server's challenge key with a fallback value: the same defect, one finding.
     reused = []
+    places = {d.split(" ", 1)[0] for d in defaults}  # file:line already reported
     for name, text in code.items():
         if _TESTLIKE.search(name):
             continue
         mpp_defaults, mpp_reuse = _mppx_secrets(name, text)
-        defaults += [d for d in mpp_defaults if not any(e.split(" ", 1)[0] == d.split(" ", 1)[0] for e in defaults)]
+        for d in mpp_defaults:
+            if d.split(" ", 1)[0] not in places:
+                places.add(d.split(" ", 1)[0])
+                defaults.append(d)
         reused += [(name, line, snippet) for line, snippet in mpp_reuse]
     if defaults:
         findings.append(_finding(
