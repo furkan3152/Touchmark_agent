@@ -14,6 +14,7 @@ level), because whoever can rewrite the entry controls the agent's code.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import struct
 from dataclasses import dataclass
@@ -176,6 +177,51 @@ def _sc_to_py(value: xdr.SCVal):
     return t.name
 
 
+def _inspect(code: bytes) -> dict:
+    """Spec, metadata and bytecode profile of a WASM (CPU only; the reader runs it in a thread)."""
+    facts: dict = {}
+    functions: list[SpecFunction] | None = None
+    try:
+        sections = wasm_custom_sections(code)
+        spec = parse_spec(sections.get("contractspecv0", b""))
+        meta = parse_meta(sections.get("contractmetav0", b"")) if sections.get("contractmetav0") else {}
+    except READ_ERRORS as exc:
+        facts["spec_error"] = str(exc)[:200]
+    else:
+        functions = spec
+        facts.update(functions=[f.as_dict() for f in functions], meta=meta,
+                     custom_account=any(f.name == "__check_auth" for f in functions))
+    try:
+        profile = wasm_profile.profile(code, [f.name for f in functions or []])
+    except wasm_profile.WasmError as exc:
+        facts["profile_error"] = str(exc)[:200]
+        facts["upgradeable"] = any(f.name in _UPGRADE_NAMES for f in functions or [])
+    else:
+        facts["profile"] = profile
+        facts["upgradeable"] = profile["can_upgrade"]
+    return facts
+
+
+def without_export_detail(chain: dict) -> dict:
+    """Chain facts with each WASM profile cut to its module-level facts (imports, upgrade
+    exports and their paths, hidden exports, delegated signers, coverage). The per-export
+    reach and flows feed the rules and stay in the report; a reviewer reading the facts gets
+    the summary, which stays small whatever the module exports."""
+    def cut(contract: dict) -> dict:
+        out = dict(contract)
+        if isinstance(out.get("profile"), dict):
+            profile = {k: v for k, v in out["profile"].items() if k != "exports"}
+            profile["exports_described"] = len(out["profile"].get("exports") or {})
+            out["profile"] = profile
+        ref = out.get("external_ref")
+        if isinstance(ref, dict) and isinstance(ref.get("owner_contract"), dict):
+            out["external_ref"] = {**ref, "owner_contract": cut(ref["owner_contract"])}
+        return out
+    if not isinstance((chain or {}).get("contract"), dict):
+        return chain
+    return {**chain, "contract": cut(chain["contract"])}
+
+
 class SorobanReader:
     def __init__(self, network: str, *, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 15.0):
         profile = NETWORKS[network]
@@ -321,25 +367,8 @@ class SorobanReader:
         facts: dict = {"code_size": len(code), "wasm_hash_verified": hashlib.sha256(code).hexdigest() == wasm_hash.hex()}
         if code_entry.archived:
             facts["code_archived"] = True
-        functions: list[SpecFunction] | None = None
-        try:
-            sections = wasm_custom_sections(code)
-            spec = parse_spec(sections.get("contractspecv0", b""))
-            meta = parse_meta(sections.get("contractmetav0", b"")) if sections.get("contractmetav0") else {}
-        except READ_ERRORS as exc:
-            facts["spec_error"] = str(exc)[:200]
-        else:
-            functions = spec
-            facts.update(functions=[f.as_dict() for f in functions], meta=meta,
-                         custom_account=any(f.name == "__check_auth" for f in functions))
-        try:
-            profile = wasm_profile.profile(code, [f.name for f in functions or []])
-        except wasm_profile.WasmError as exc:
-            facts["profile_error"] = str(exc)[:200]
-            facts["upgradeable"] = any(f.name in _UPGRADE_NAMES for f in functions or [])
-        else:
-            facts["profile"] = profile
-            facts["upgradeable"] = profile["can_upgrade"]
+        # Bounded CPU work (wasm_profile budgets it), off the event loop so other requests go on.
+        facts.update(await asyncio.to_thread(_inspect, code))
         return facts
 
     async def registry_agent(self, registry_id: str, agent_id_hex: str) -> dict:

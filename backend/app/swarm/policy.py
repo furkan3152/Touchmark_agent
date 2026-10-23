@@ -133,6 +133,7 @@ WARNING_RULES = frozenset({"compliance-no-human-oversight", "intent-full-autonom
 BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface",
                            "security-controls-unverifiable", "stellar_native-onchain-source-unbound",
                            "stellar_native-onchain-contract-code-unresolved",
+                           "stellar_native-onchain-contract-bytecode-incomplete",
                            # A rule family that failed on this source (BaseAuditor.contained).
                            "stellar_native-rules-incomplete-advisories", "stellar_native-rules-incomplete-rpc-semantics",
                            "security-rules-incomplete-network-binding"})

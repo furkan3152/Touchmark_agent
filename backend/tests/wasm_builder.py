@@ -181,3 +181,30 @@ def contract_wasm(exports: dict[str, list[str]], *, helpers: dict[str, list[str]
     if meta:
         module += meta_section(meta)
     return module
+
+
+def raw_module(types: list[tuple[int, int]], imports: list[str | tuple[str, int]], funcs: list[int],
+               exports: list[tuple[str, int]], bodies: list[tuple[int, bytes]], *, memory: bool = False,
+               stack_pointer: bool = False, globals_: int = 0) -> bytes:
+    """A module from parts, for hostile and hand-built shapes: ``types`` are (params, results)
+    of i64 values, ``imports`` host codes ("l.6", typed by type 0) or (code, type index), then
+    the defined functions' type indexes, function exports (name, index) and bodies as
+    (number of i64 locals, instructions without the final end). ``stack_pointer`` declares
+    global 0 as a Rust build's stack pointer; ``globals_`` adds that many mutable i64 globals."""
+    imports = [(c, 0) if isinstance(c, str) else c for c in imports]
+    module = b"\0asm\x01\0\0\0"
+    module += section(1, _vec([b"\x60" + _vec([b"\x7e"] * p) + _vec([b"\x7e"] * r) for p, r in types]))
+    module += section(2, _vec([_name(c.split(".")[0]) + _name(c.split(".", 1)[1]) + b"\x00" + leb(t) for c, t in imports]))
+    module += section(3, _vec([leb(t) for t in funcs]))
+    if memory:
+        module += section(5, _vec([b"\x00\x01"]))
+    if stack_pointer or globals_:
+        module += section(6, _vec([b"\x7f\x01\x41" + leb(1 << 16) + b"\x0b"] * stack_pointer
+                                  + [b"\x7e\x01\x42\x00\x0b"] * globals_))
+    module += section(7, _vec([_name(name) + b"\x00" + leb(index) for name, index in exports]))
+
+    def code(locals_: int, instructions: bytes) -> bytes:
+        body = (leb(1) + leb(locals_) + b"\x7e" if locals_ else b"\x00") + instructions + b"\x0b"
+        return leb(len(body)) + body
+    module += section(10, _vec([code(n, instructions) for n, instructions in bodies]))
+    return module

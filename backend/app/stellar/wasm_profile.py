@@ -14,18 +14,24 @@ stack-frame slots the SDK passes values through (a BytesN argument is converted 
 out-pointer) into the arguments of update_current_contract_wasm,
 update_current_contract_executable_ref and put_contract_data, and into any host function
 that could check them. A memory write it cannot place forgets every slot, so the flow can
-miss a path but does not invent one.
+miss a path but does not invent one; what an argument lost that way is recorded, because
+"nothing checks the hash" is only shown when nothing about the hash was forgotten.
 
 The codes are named from soroban_env_host_fns.json, a subset of rs-soroban-env's env.json
 pinned to one commit. The decoder knows the instructions a Soroban build contains (MVP,
 sign extension, saturating truncation, bulk memory and table operations, reference types).
 Anything else stops the call graph: that is an evidence gap, never a finding.
+
+Anyone can deploy a module and have it read, so every step is bounded: reachability is
+computed once per strongly connected component of the call graph, the data flow counts its
+work and gives up at a budget (an evidence gap), and the facts describe at most
+_MAX_EXPORTS exports, those findings can come from first.
 """
 
 from __future__ import annotations
 
 import json
-from collections import deque
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,7 +41,7 @@ HOST_FUNCTIONS: dict[str, tuple[str, int | None]] = {k: (v[0], v[1]) for k, v in
 #: The rs-soroban-env commit the table was taken from.
 HOST_TABLE_COMMIT: str = _TABLE["source"]["commit"]
 #: Bumped whenever the decoder or the facts it derives change.
-DECODER_VERSION = "2"
+DECODER_VERSION = "3"
 
 #: update_current_contract_wasm, update_current_contract_executable_ref: replace own code.
 UPGRADE = frozenset({"l.6", "l.j"})
@@ -62,8 +68,14 @@ DELEGATED_SIGNERS = "a.9"
 SDK_EXPORTS = frozenset({"_"})
 #: Entry points the host calls itself; not reachable by an ordinary invocation.
 HOST_ENTRY_POINTS = frozenset({"__check_auth", "__constructor"})
+#: Function names are SCSymbols: at most 32 bytes of [A-Za-z0-9_] (Stellar-contract.x
+#: SCSYMBOL_LIMIT, rs-soroban-env symbol.rs encode_byte). The host looks an invoked function
+#: up by that name, so an export named otherwise cannot be invoked.
+_SYMBOL = re.compile(r"[A-Za-z0-9_]{0,32}")
 #: Host functions whose call paths are recorded for findings.
 _TRACED = UPGRADE | EXTERNAL_REF | CALL | {PUT_DATA, DELEGATED_SIGNERS}
+#: Storage and executable-tag writes; what an unlisted export must not reach unauthenticated.
+_WRITES, _RISKY = frozenset({PUT_DATA, EXECUTABLE_TAG}), UPGRADE | CALL | {PUT_DATA}
 #: Host functions whose arguments the data flow records, with their arity (env.json).
 _SINKS = {"l.6": 1, "l.j": 2, PUT_DATA: 3}
 #: Host functions that use a value without being able to check it: the SDK's BytesN length
@@ -86,10 +98,22 @@ _BINARY = frozenset({*range(0x46, 0x50), *range(0x51, 0x67), *range(0x6A, 0x79),
 #: 0xFC sub-opcode -> operands popped, values pushed (beyond the saturating truncations).
 _FC_STACK = {8: (3, 0), 9: (0, 0), 10: (3, 0), 11: (3, 0), 12: (3, 0), 13: (0, 0), 14: (3, 0), 15: (2, 1),
              16: (0, 1), 17: (3, 0)}
-#: Data flow bounds: more locals or rounds than this leave the flow out; more offsets into
-#: one base, slots, caller-visible writes or a larger offset than this are forgotten.
-_MAX_LOCALS, _MAX_ROUNDS = 50_000, 64
+#: Data flow bounds: more locals in a function, more rounds without a fixpoint, or more work
+#: over the whole module than this leave the flow out. Work counts instructions walked and
+#: values, memory slots and the sources they hold copied, joined or compared; a unit costs at
+#: most 0.75 us, so the budget stops any module within about 3 s. Real builds have at most 72
+#: locals and parameters in a function and use at most 14% of the budget (94 SDK and test
+#: WASMs; the largest, 66 KB, takes 0.14 s).
+_MAX_LOCALS, _MAX_ROUNDS, _MAX_WORK = 1_000, 64, 4_000_000
+#: Work charged per walk over a body and per instruction walked, beyond the values touched.
+_PASS_COST, _STEP_COST = 16, 2
+#: More offsets into one base, slots, caller-visible writes or a larger offset than this are
+#: forgotten.
 _MAX_OFFSETS, _MAX_SLOTS, _MAX_WRITES, _MAX_OFFSET = 4, 512, 64, 1 << 20
+#: Facts kept per module: exports described in detail, names per list, functions shown per
+#: call path (the first and last few), argument indexes per flow.
+_MAX_EXPORTS, _MAX_NAMES, _MAX_HOPS, _MAX_ARGS = 64, 256, 12, 32
+_HEAD, _TAIL = 6, 4
 _EMPTY: frozenset = frozenset()
 #: The source "anything the caller had stored" (see the data flow notes below).
 _CALLER_MEMORY = ("m*",)
@@ -315,25 +339,33 @@ def profile(wasm: bytes, spec_names: list[str] | None = None) -> dict:
 
     Reachability follows direct calls through every branch, so a host function missing from
     an export's set is never called by it, except through call_indirect, which is recorded.
-    Raises WasmError when the module itself cannot be read; a body the decoder does not know
-    only leaves the call graph out (``callgraph.status`` says why), and a body the data flow
-    cannot follow only leaves the flows out (``dataflow.status``).
+    Only exports a transaction can invoke (named by a valid symbol) are analysed, and at most
+    _MAX_EXPORTS of them are described (``exports_omitted`` counts the rest). Raises WasmError
+    when the module itself cannot be read; a body the decoder does not know only leaves the
+    call graph out (``callgraph.status`` says why), and a body the data flow cannot follow
+    only leaves the flows out (``dataflow.status``).
     """
     module = parse_module(wasm)
     imports = set(module.func_imports)
+    known = sorted(i for i in imports if i in HOST_FUNCTIONS)
+    exports = {n: i for n, i in module.exports.items() if _SYMBOL.fullmatch(n)}
     out: dict = {
         "decoder": DECODER_VERSION, "host_table_commit": HOST_TABLE_COMMIT,
-        "imports": sorted(imports), "unknown_imports": sorted(i for i in imports if i not in HOST_FUNCTIONS),
+        "imports": known, **_listed("unknown_imports", sorted(imports - set(known))),
         "can_upgrade": bool(imports & UPGRADE), "has_auth": bool(imports & AUTH_CALLS),
         "calls_out": bool(imports & CALL), "verifies_sig": bool(imports & SIG_VERIFY),
         "manages_external_refs": bool(imports & EXTERNAL_REF), "writes_data": PUT_DATA in imports,
-        "function_exports": sorted(module.exports),
+        **_listed("function_exports", sorted(exports)),
     }
+    if len(exports) < len(module.exports):
+        out.update(_listed("uninvokable_exports", sorted(set(module.exports) - set(exports))))
+    hidden: list[str] = []
     if spec_names:
         named = set(spec_names)
-        out["hidden_exports"] = sorted(n for n in module.exports if n not in named and n not in SDK_EXPORTS
-                                       and (not n.startswith("__") or n in HOST_ENTRY_POINTS))
-        out["spec_only"] = sorted(named - set(module.exports))
+        hidden = sorted(n for n in exports if n not in named and n not in SDK_EXPORTS
+                        and (not n.startswith("__") or n in HOST_ENTRY_POINTS))
+        out.update(_listed("hidden_exports", hidden))
+        out.update(_listed("spec_only", sorted(named - set(module.exports))))
     imported = len(module.func_imports)
     decoded: list[tuple[int, list[tuple[int, object]]]] = []
     try:
@@ -344,56 +376,207 @@ def profile(wasm: bytes, spec_names: list[str] | None = None) -> dict:
         return out
     graph = [({imm for op, imm in code if op == 0x10}, any(op == 0x11 for op, _ in code)) for _, code in decoded]
     out["callgraph"] = {"status": "decoded", "functions": len(graph)}
-    exports = out["exports"] = {name: _reach(name, index, module, graph)
-                                for name, index in sorted(module.exports.items())}
+    reach = _Reach(module, graph)
+    flow = _DataFlow(module, decoded, graph)
     try:
-        flow = _DataFlow(module, decoded, graph)
         flow.run()
     except _FlowError as exc:
         out["dataflow"] = {"status": "incomplete", "error": str(exc)[:200]}
     else:
         out["dataflow"] = {"status": "decoded"}
-        for name, index in module.exports.items():
-            if index >= imported:
-                exports[name]["flows"] = flow.flows(index)
-    upgraders = {n: r for n, r in exports.items() if set(r["reaches"]) & UPGRADE}
+    traced = out["dataflow"]["status"] == "decoded"
+    reaches = {name: reach.of(index) for name, index in exports.items()}
+    hidden_set = set(hidden)
+    ranked = sorted(exports, key=lambda n: reach.rank(n, *reaches[n], n in hidden_set))
+    details: dict = {}
+    for name in sorted(ranked[:_MAX_EXPORTS]):
+        index, (bits, indirect) = exports[name], reaches[name]
+        details[name] = {"reaches": list(reach.names(bits)), "indirect": indirect,
+                         "paths": reach.paths(name, index, bits)}
+        if index < imported or traced:  # a re-exported host function needs no body
+            try:
+                details[name]["flows"] = flow.flows(index)
+            except _FlowError:
+                pass
+    out["exports"] = details
+    if len(ranked) > _MAX_EXPORTS:
+        out["exports_omitted"] = len(ranked) - _MAX_EXPORTS
+    if len(hidden) > _MAX_NAMES:  # list the unlisted exports findings can come from first
+        risky = [n for n in hidden if reach.unguarded(*reaches[n], _RISKY)]
+        out.update(_listed("hidden_exports", risky + sorted(hidden_set - set(risky))))
+    upgraders = {n: r for n, r in details.items() if set(r["reaches"]) & UPGRADE}
     out["upgrade_exports"] = {n: next(p for c, p in sorted(r["paths"].items()) if c in UPGRADE)
                               for n, r in upgraders.items()}
     # Another contract or an indirect call may hold the check: authentication is unproven.
     out["upgrade_auth_unproven"] = sorted(n for n, r in upgraders.items() if not set(r["reaches"]) & AUTH
                                           and (set(r["reaches"]) & CALL or r["indirect"]))
-    out["delegates_read"] = DELEGATED_SIGNERS in (exports.get("__check_auth") or {}).get("reaches", [])
+    out["delegates_read"] = DELEGATED_SIGNERS in (details.get("__check_auth") or {}).get("reaches", [])
     return out
 
 
-def _reach(name: str, start: int, module: Module, graph: list[tuple[set[int], bool]]) -> dict:
-    imported = len(module.func_imports)
-    parent: dict[int, int | None] = {start: None}
-    queue = deque([start])
-    reached: set[str] = set()
-    paths: dict[str, str] = {}
-    indirect = False
-    while queue:
-        node = queue.popleft()
-        if node < imported:
-            code = module.func_imports[node]
-            reached.add(code)
-            if code in _TRACED and code not in paths:
-                hops, step = [], parent[node]
-                while step is not None:
-                    hops.append(f"f{step}")
-                    step = parent[step]
-                paths[code] = " -> ".join([f"export {name}", *hops[::-1], f"import {describe(code)}"])
-            continue
-        if node - imported >= len(graph):
-            continue
-        targets, calls_indirect = graph[node - imported]
-        indirect |= calls_indirect
-        for target in sorted(targets):
-            if target not in parent:
-                parent[target] = node
-                queue.append(target)
-    return {"reaches": sorted(reached), "indirect": indirect, "paths": paths}
+def _listed(key: str, names: list[str]) -> dict:
+    """A list of names cut at _MAX_NAMES, with the count of the rest."""
+    out: dict = {key: names[:_MAX_NAMES]}
+    if len(names) > _MAX_NAMES:
+        out[f"{key}_omitted"] = len(names) - _MAX_NAMES
+    return out
+
+
+class _Reach:
+    """The host functions each function can reach through direct calls, and the call path to
+    each traced one. Reach is a bitset of host functions per strongly connected component of
+    the call graph, and the paths come from one backward search per traced host function, so
+    the cost is linear in the module whatever the number of exports. Only host functions in
+    the pinned table are named; ``unknown_imports`` lists the rest.
+
+    A path is the one a breadth-first search from the export, taking callees in index order,
+    finds first: a shortest path, at each hop the lowest-numbered callee that stays on one."""
+
+    def __init__(self, module: Module, graph: list[tuple[set[int], bool]]):
+        self.imported, self.imports = len(module.func_imports), module.func_imports
+        base, size = self.imported, len(graph)
+        self.codes = sorted({c for c in module.func_imports if c in HOST_FUNCTIONS})
+        self.bit = {c: 1 << i for i, c in enumerate(self.codes)}
+        #: Defined callees (as body numbers) and the host functions each body calls itself.
+        self.calls = [sorted({t - base for t in targets if base <= t < base + size}) for targets, _ in graph]
+        self.direct = [0] * size
+        for v, (targets, _) in enumerate(graph):
+            for t in targets:
+                if t < base:
+                    self.direct[v] |= self.bit.get(self.imports[t], 0)
+        self.comp, self.bits, self.indirect = self._components([ind for _, ind in graph])
+        self._names: dict[int, tuple[str, ...]] = {}
+        self._masks: dict[frozenset, int] = {}
+        self._toward_cache: dict[str, tuple[list[int], list[int], list[tuple[int, ...]]]] = {}
+        self._callers: list[list[int]] | None = None
+
+    def _components(self, indirect: list[bool]) -> tuple[list[int], list[int], list[bool]]:
+        """Tarjan's algorithm, iteratively; a component is finished after every component it
+        calls, so its reach is its own calls joined with theirs."""
+        size = len(self.calls)
+        order, low, comp = [-1] * size, [0] * size, [-1] * size
+        on_stack = [False] * size
+        stack: list[int] = []
+        bits: list[int] = []
+        ind: list[bool] = []
+        counter = 0
+        for root in range(size):
+            if order[root] >= 0:
+                continue
+            work = [(root, 0)]
+            while work:
+                v, i = work[-1]
+                if i == 0:
+                    order[v] = low[v] = counter
+                    counter += 1
+                    stack.append(v)
+                    on_stack[v] = True
+                if i < len(self.calls[v]):
+                    work[-1] = (v, i + 1)
+                    w = self.calls[v][i]
+                    if order[w] < 0:
+                        work.append((w, 0))
+                    elif on_stack[w]:
+                        low[v] = min(low[v], order[w])
+                    continue
+                work.pop()
+                if work:
+                    parent = work[-1][0]
+                    low[parent] = min(low[parent], low[v])
+                if low[v] != order[v]:
+                    continue
+                members, c = [], len(bits)
+                while True:
+                    w = stack.pop()
+                    on_stack[w], comp[w] = False, c
+                    members.append(w)
+                    if w == v:
+                        break
+                b, flag = 0, False
+                for w in members:
+                    b, flag = b | self.direct[w], flag or indirect[w]
+                    for x in self.calls[w]:
+                        if comp[x] != c:
+                            b, flag = b | bits[comp[x]], flag or ind[comp[x]]
+                bits.append(b)
+                ind.append(flag)
+        return comp, bits, ind
+
+    def of(self, index: int) -> tuple[int, bool]:
+        """(host function bitset, reaches call_indirect) of a function index."""
+        if index < self.imported:
+            return self.bit.get(self.imports[index], 0), False
+        if index - self.imported >= len(self.comp):
+            return 0, False
+        c = self.comp[index - self.imported]
+        return self.bits[c], self.indirect[c]
+
+    def mask(self, codes: frozenset) -> int:
+        if codes not in self._masks:
+            self._masks[codes] = sum(self.bit[c] for c in codes & self.bit.keys())
+        return self._masks[codes]
+
+    def names(self, bits: int) -> tuple[str, ...]:
+        if bits not in self._names:
+            self._names[bits] = tuple(c for i, c in enumerate(self.codes) if bits >> i & 1)
+        return self._names[bits]
+
+    def unguarded(self, bits: int, indirect: bool, codes) -> bool:
+        """Reaches one of ``codes`` with no authentication, contract call or indirect call."""
+        return bool(bits & self.mask(codes)) and not bits & self.mask(AUTH | CALL) and not indirect
+
+    def rank(self, name: str, bits: int, indirect: bool, hidden: bool) -> tuple:
+        """Exports findings can come from first: unauthenticated before authenticated, then
+        upgrades and host entry points, storage and tag writers, other traced calls; unlisted
+        before listed."""
+        kind = (0 if bits & self.mask(UPGRADE) or name in HOST_ENTRY_POINTS else
+                1 if bits & self.mask(_WRITES) else 2 if bits & self.mask(_TRACED) else 3)
+        return bool(bits & self.mask(AUTH | CALL)) or indirect, kind, not hidden, name
+
+    def paths(self, name: str, index: int, bits: int) -> dict[str, str]:
+        out = {}
+        for code in self.names(bits & self.mask(_TRACED)):
+            hops = [] if index < self.imported else self._hops(code, index - self.imported)
+            out[code] = " -> ".join([f"export {name}", *hops, f"import {describe(code)}"])
+        return out
+
+    def _hops(self, code: str, node: int) -> list[str]:
+        dist, nxt, tail = self._toward(code)
+        steps = [node]
+        while dist[steps[-1]] > 0 and len(steps) < (_MAX_HOPS if dist[node] < _MAX_HOPS else _HEAD):
+            steps.append(nxt[steps[-1]])
+        hops = [f"f{self.imported + v}" for v in steps]
+        if dist[node] >= _MAX_HOPS:
+            hops += [f"({dist[node] + 1 - _HEAD - _TAIL} more)"] + [f"f{self.imported + v}" for v in tail[node]]
+        return hops
+
+    def _toward(self, code: str) -> tuple[list[int], list[int], list[tuple[int, ...]]]:
+        """Per body: calls to the nearest body that calls ``code`` itself, the next hop on the
+        path, and the last _TAIL bodies of the path."""
+        if code not in self._toward_cache:
+            if self._callers is None:
+                self._callers = [[] for _ in self.calls]
+                for v, callees in enumerate(self.calls):
+                    for w in callees:
+                        self._callers[w].append(v)
+            bit, size = self.bit[code], len(self.calls)
+            dist, nxt, tail = [-1] * size, [-1] * size, [()] * size
+            order = [v for v in range(size) if self.direct[v] & bit]
+            for v in order:
+                dist[v] = 0
+            for v in order:  # grows while it is walked: breadth first
+                for u in self._callers[v]:
+                    if dist[u] < 0:
+                        dist[u] = dist[v] + 1
+                        order.append(u)
+            for v in order:
+                if dist[v] == 0:
+                    tail[v] = (v,)
+                    continue
+                w = nxt[v] = min(x for x in self.calls[v] if dist[x] == dist[v] - 1)
+                tail[v] = tail[w] if len(tail[w]) >= _TAIL else (v, *tail[w])
+            self._toward_cache[code] = dist, nxt, tail
+        return self._toward_cache[code]
 
 
 # ---------------------------------------------------------------------------------- data flow
@@ -467,6 +650,18 @@ def _widen(value: frozenset) -> frozenset:
         | {("@", b, None) for b in crowded}
 
 
+def _from_caller(label) -> bool:
+    """A source the caller supplied: a parameter, or something the caller had stored."""
+    while isinstance(label, tuple) and label[0] == "~":
+        label = label[1]
+    return isinstance(label, int) or (isinstance(label, tuple) and label[0] in ("m", "m*"))
+
+
+def _size(values) -> int:
+    """Work to copy, join or compare values: one per value and one per source it holds."""
+    return len(values) + sum(map(len, values))
+
+
 class _Memory:
     """Linear memory as far as the flow follows it: values stored at a known offset from this
     function's frame or from a pointer parameter. Any write it cannot place (an unknown
@@ -492,12 +687,6 @@ class _Memory:
             return frozenset((("m", key[0], key[1]),))
         return _EMPTY
 
-    def store(self, key: tuple | None, value: frozenset) -> None:
-        if key is None or (key not in self.slots and len(self.slots) >= _MAX_SLOTS):
-            self.forget()
-        else:
-            self.slots[key] = value
-
     def forget(self) -> None:
         self.slots, self.entry = {}, False
 
@@ -511,6 +700,9 @@ class _Memory:
         """Every source the followed slots hold, and the caller's memory while it is intact."""
         out = frozenset((_CALLER_MEMORY,)) if self.entry else _EMPTY
         return out.union(*map(_data, self.slots.values()))
+
+    def size(self) -> int:
+        return _size(self.slots.values())
 
     def widen(self) -> "_Memory":
         return _Memory({k: _widen(v) for k, v in self.slots.items()}, self.entry)
@@ -526,11 +718,7 @@ _State = tuple[list[frozenset], list[frozenset], _Memory]
 def _join_values(a: list[frozenset], b: list[frozenset]) -> list[frozenset]:
     if len(a) != len(b):
         raise _FlowError("branches disagree on the stack")
-    return [x | y for x, y in zip(a, b)]
-
-
-def _join(a: _State, b: _State) -> _State:
-    return _join_values(a[0], b[0]), _join_values(a[1], b[1]), a[2].join(b[2])
+    return [x if x is y else x | y for x, y in zip(a, b)]
 
 
 @dataclass
@@ -549,24 +737,39 @@ class _Frame:
 
 #: A function summary: sources of its results; (host, argument sources) of every upgrade and
 #: storage write it can make; the caller-visible slots it leaves, as ((param, off), sources);
-#: whether it may overwrite memory it does not describe.
-_Summary = tuple[tuple[frozenset, ...], frozenset, frozenset, bool]
+#: whether it may overwrite memory it does not describe; the caller-supplied sources it may
+#: have dropped on the way (forgotten memory, a global, an indirect call), whose later checks
+#: the flow would not see.
+_Summary = tuple[tuple[frozenset, ...], frozenset, frozenset, bool, frozenset]
 
 
 class _DataFlow:
     """Function summaries in terms of each function's own parameters, recomputed until no
-    summary changes (callees first)."""
+    summary changes (callees first). ``work`` counts the steps taken; past _MAX_WORK the flow
+    stops (_FlowError), so no module costs more than the budget."""
 
     def __init__(self, module: Module, decoded: list[tuple[int, list[tuple[int, object]]]],
                  graph: list[tuple[set[int], bool]]):
         self.module, self.decoded, self.imported = module, decoded, len(module.func_imports)
         self.summary: dict[int, _Summary] = {}
         self.order = self._postorder(graph)
+        self.callers: dict[int, set[int]] = {}
+        for i, (targets, _) in enumerate(graph):
+            for target in targets:
+                if target >= self.imported:
+                    self.callers.setdefault(target, set()).add(self.imported + i)
+        self.work = 0
+        self._flows: dict[int, dict] = {}
         names = {c: HOST_FUNCTIONS[c][0] if c in HOST_FUNCTIONS else "" for c in module.func_imports}
         #: Host functions that may write linear memory (and any the table does not know).
         self.memory_writers = {c for c, n in names.items() if not n or n.endswith("_to_linear_memory")}
         #: Host functions that read linear memory: what they build may hold any followed slot.
         self.memory_readers = {c for c, n in names.items() if "linear_memory" in n and c not in self.memory_writers}
+
+    def spend(self, units: int) -> None:
+        self.work += units
+        if self.work > _MAX_WORK:
+            raise _FlowError("the data flow needs more work than its budget")
 
     def _postorder(self, graph: list[tuple[set[int], bool]]) -> list[int]:
         seen: set[int] = set()
@@ -603,19 +806,49 @@ class _DataFlow:
         return self.module.types[imm]
 
     def run(self) -> None:
+        """Rounds over the functions, callees first; a function is analysed again only when a
+        callee's summary changed since (its own summary depends on nothing else)."""
+        stale = set(self.order)
         for _ in range(_MAX_ROUNDS):
-            changed = False
             for index in self.order:
+                if index not in stale:
+                    continue
+                stale.discard(index)
                 summary = self._analyse(index)
+                self.spend(2 * (len(summary[1]) + len(summary[2]) + len(summary[4]) + _size(summary[0])))
                 if summary != self.summary.get(index):
-                    self.summary[index], changed = summary, True
-            if not changed:
+                    self.summary[index] = summary
+                    stale |= self.callers.get(index, set())
+            if not stale:
                 return
         raise _FlowError("the data flow did not converge")
 
     def flows(self, index: int) -> dict:
         """Which parameters of a function reach the code an upgrade installs, a storage write,
-        or a host function that can check them (``checked``: precise or through memory)."""
+        or a host function that can check them (``checked``: precise or through memory), and
+        which installed ones the flow may have lost track of on the way (``upgrade_code_lost``:
+        a check on those could go unseen). An exported host function (a re-export of an
+        import) passes its arguments straight to the host."""
+        if index not in self._flows:
+            if index < self.imported:
+                sinks, lost = self._host_sinks(index), _EMPTY
+            else:
+                sinks, lost = (self.summary[index][1], self.summary[index][4]) if index in self.summary else ((), _EMPTY)
+            self._flows[index] = self._flows_from(sinks, lost)
+        return self._flows[index]
+
+    def _host_sinks(self, index: int) -> set:
+        """The sinks of a host function called with its own parameters, as _call records them."""
+        host, (params, _) = self.module.func_imports[index], self.signature(index)
+        args = tuple(frozenset((i,)) for i in range(params))
+        if host in _SINKS:
+            return {(host, (args + (_EMPTY,) * _SINKS[host])[:_SINKS[host]])}
+        if params and host not in _NOT_CHECKS and host not in self.memory_readers:
+            return {("use", (frozenset(range(params)),))}
+        return set()
+
+    @staticmethod
+    def _flows_from(sinks, lost: frozenset) -> dict:
         code_args: set[int] = set()
         tag_args: set[int] = set()
         stores: set[int] = set()
@@ -623,10 +856,11 @@ class _DataFlow:
         checked: set[int] = set()
         from_storage = False
         params = lambda value: {lb for lb in value if isinstance(lb, int)}  # noqa: E731
-        for host, args in self.summary[index][1] if index in self.summary else ():
+        maybe = lambda value: params(value) | {lb[1] for lb in value  # noqa: E731
+                                               if isinstance(lb, tuple) and lb[0] == "~" and isinstance(lb[1], int)}
+        for host, args in sinks:
             if host == "use":
-                checked |= params(args[0]) | {lb[1] for lb in args[0]
-                                              if isinstance(lb, tuple) and lb[0] == "~" and isinstance(lb[1], int)}
+                checked |= maybe(args[0])
             elif host == "l.6":
                 code_args |= params(args[0])
                 from_storage |= "S" in args[0]
@@ -638,9 +872,10 @@ class _DataFlow:
                 stores |= params(args[1])
                 if "T" in args[0]:
                     tag_writes |= params(args[1])
-        return {"upgrade_code": sorted(code_args), "upgrade_code_checked": sorted(code_args & checked),
-                "upgrade_tag": sorted(tag_args), "upgrade_from_storage": from_storage, "stores": sorted(stores),
-                "tag_writes": sorted(tag_writes)}
+        listed = lambda indexes: sorted(indexes)[:_MAX_ARGS]  # noqa: E731
+        return {"upgrade_code": listed(code_args), "upgrade_code_checked": listed(code_args & checked),
+                "upgrade_code_lost": listed(code_args & maybe(lost)), "upgrade_tag": listed(tag_args),
+                "upgrade_from_storage": from_storage, "stores": listed(stores), "tag_writes": listed(tag_writes)}
 
     def _analyse(self, index: int) -> _Summary:
         params, results = self.signature(index)
@@ -651,25 +886,47 @@ class _DataFlow:
         for _ in range(_MAX_ROUNDS):
             sinks: set = set()
             exits: list = []
-            if not self._pass(index, code, params, declared, results, heads, sinks, exits):
+            lost: set = set()
+            if not self._pass(index, code, params, declared, results, heads, sinks, exits, lost):
                 break
         else:
             raise _FlowError(f"no fixpoint in f{index}")
         if not exits:
-            return (_EMPTY,) * results, frozenset(sinks), frozenset(), False
+            return (_EMPTY,) * results, frozenset(sinks), frozenset(), False, self._caller_part(lost)
         values, memory = exits[0]
         for more, more_memory in exits[1:]:
+            self.spend(_size(values) + _size(more) + memory.size() + more_memory.size())
             values, memory = _join_values(values, more), memory.join(more_memory)
         writes = frozenset((k, v) for k, v in memory.slots.items() if isinstance(k[0], int))
         clobbers = not memory.entry
         if len(writes) > _MAX_WRITES:
+            lost.update(*(_data(v) for _, v in writes))
             writes, clobbers = frozenset(), True
-        return tuple(_widen(v) for v in values), frozenset(sinks), writes, clobbers
+        self.spend(memory.size() + len(sinks) + len(lost))
+        return tuple(_widen(v) for v in values), frozenset(sinks), writes, clobbers, self._caller_part(lost)
+
+    @staticmethod
+    def _caller_part(lost: set) -> frozenset:
+        return frozenset(lb for lb in lost if _from_caller(lb))
+
+    def _forget(self, mem: _Memory, lost: set) -> None:
+        """Forget every followed slot; what they held (and the caller's memory) is lost."""
+        self.spend(mem.size())
+        lost.update(mem.contents())
+        mem.forget()
+
+    def _store(self, mem: _Memory, key: tuple | None, value: frozenset, lost: set) -> None:
+        if key is None or (key not in mem.slots and len(mem.slots) >= _MAX_SLOTS):
+            self._forget(mem, lost)
+            lost.update(_data(value))
+        else:
+            mem.slots[key] = value
 
     def _pass(self, index: int, code: list[tuple[int, object]], params: int, declared: int, results: int,
-              heads: dict[int, _State], sinks: set, exits: list) -> bool:
+              heads: dict[int, _State], sinks: set, exits: list, lost: set) -> bool:
         """One walk over a body; True when a loop head took a new state (walk again)."""
         local = [frozenset((i,)) for i in range(params)] + [_EMPTY] * declared
+        self.spend(_PASS_COST + _STEP_COST * len(code) + len(local))
         stack: list[frozenset] = []
         mem = _Memory()
         ctrl = [_Frame("func", 0, 0, results)]
@@ -678,7 +935,11 @@ class _DataFlow:
         def top(n: int) -> list[frozenset]:
             if len(stack) - n < ctrl[-1].height:
                 raise _FlowError(f"stack underflow in f{index}")
-            return stack[len(stack) - n:] if n else []
+            if not n:
+                return []
+            values = stack[len(stack) - n:]
+            self.spend(_size(values))
+            return values
 
         def pop(n: int = 1) -> list[frozenset]:
             values = top(n)
@@ -686,23 +947,33 @@ class _DataFlow:
                 del stack[-n:]
             return values
 
+        def snapshot(values: list[frozenset]) -> _State:
+            self.spend(len(local) + len(mem.slots))
+            return list(local), values, mem.copy()
+
+        def join(a: _State, b: _State) -> _State:
+            self.spend(_size(a[0]) + _size(a[1]) + a[2].size() + _size(b[0]) + _size(b[1]) + b[2].size())
+            return _join_values(a[0], b[0]), _join_values(a[1], b[1]), a[2].join(b[2])
+
         def branch(depth: int) -> None:
             nonlocal grew
             if depth >= len(ctrl):
                 raise _FlowError(f"branch out of f{index}")
             target = ctrl[-1 - depth]
             if target.kind == "loop":
-                state: _State = (list(local), top(target.params), mem.copy())
+                state: _State = snapshot(top(target.params))
                 old = heads.get(target.pc)
                 if old is not None:
-                    state = _join(old, state)
+                    state = join(old, state)
                 state = ([_widen(v) for v in state[0]], [_widen(v) for v in state[1]], state[2].widen())
+                self.spend(2 * (_size(state[0]) + _size(state[1]) + state[2].size()))  # widen, compare
                 if old is None or state[0] != old[0] or state[1] != old[1] or state[2] != old[2]:
                     heads[target.pc], grew = state, True
             elif target.kind == "func":
+                self.spend(len(mem.slots))
                 exits.append((top(results), mem.copy()))
             else:
-                target.ends.append((list(local), top(target.results), mem.copy()))
+                target.ends.append(snapshot(top(target.results)))
 
         for pc, (op, imm) in enumerate(code):
             if not ctrl:
@@ -718,21 +989,22 @@ class _DataFlow:
                 entry = top(ins)
                 frame = _Frame(kind, len(stack) - ins, ins, outs, pc)
                 if op == 0x04:
-                    frame.else_state = (list(local), entry, mem.copy())
+                    frame.else_state = snapshot(entry)
                 elif op == 0x03 and pc in heads:
-                    local, values, mem = _join((local, entry, mem), heads[pc])
+                    local, values, mem = join((local, entry, mem), heads[pc])
                     stack[frame.height:] = values
                 ctrl.append(frame)
                 continue
             if op == 0x05:
                 frame = ctrl[-1]
                 if live:
-                    frame.ends.append((list(local), top(frame.results), mem.copy()))
+                    frame.ends.append(snapshot(top(frame.results)))
                 del stack[frame.height:]
                 frame.has_else = True
                 live = frame.else_state is not None
                 if live:
                     local, values, mem = list(frame.else_state[0]), frame.else_state[1], frame.else_state[2].copy()
+                    self.spend(len(local) + len(mem.slots))
                     stack.extend(values)
                 continue
             if op == 0x0B:
@@ -740,11 +1012,12 @@ class _DataFlow:
                 values = top(frame.results) if live else []
                 if frame.kind == "func":
                     if live:
+                        self.spend(len(mem.slots))
                         exits.append((values, mem.copy()))
                     ctrl.pop()
                     continue
                 if live and frame.kind != "loop":
-                    frame.ends.append((list(local), values, mem.copy()))
+                    frame.ends.append(snapshot(values))
                 if frame.kind == "if" and not frame.has_else and frame.else_state is not None:
                     frame.ends.append(frame.else_state)  # the false branch passes the parameters through
                 ctrl.pop()
@@ -754,8 +1027,9 @@ class _DataFlow:
                 elif frame.ends:
                     merged = frame.ends[0]
                     for more in frame.ends[1:]:
-                        merged = _join(merged, more)
+                        merged = join(merged, more)
                     local, values, mem = list(merged[0]), merged[1], merged[2].copy()
+                    self.spend(len(local) + len(mem.slots))
                     stack.extend(values)
                     live = True
                 else:
@@ -771,6 +1045,7 @@ class _DataFlow:
                     for depth in imm:
                         branch(depth)
                 elif op == 0x0F:
+                    self.spend(len(mem.slots))
                     exits.append((top(results), mem.copy()))
                 live = False
                 del stack[ctrl[-1].height:]
@@ -778,12 +1053,12 @@ class _DataFlow:
                 pop()
                 branch(imm)
             elif op == 0x10:
-                stack.extend(self._call(imm, pop, mem, sinks))
+                stack.extend(self._call(imm, pop, mem, sinks, lost))
             elif op == 0x11:
                 pop()  # table index
                 ins, outs = self.block_type(imm)
-                pop(ins)
-                mem.forget()
+                lost.update(*map(_data, pop(ins)))  # whatever the callee does with them is unseen
+                self._forget(mem, lost)
                 stack.extend([_EMPTY] * outs)
             elif op == 0x20:
                 if imm >= len(local):
@@ -806,7 +1081,7 @@ class _DataFlow:
             elif op in (0x3F, 0xD0, 0xD2) or 0x42 <= op <= 0x44:
                 stack.append(_EMPTY)  # memory.size, ref.null, ref.func, other constants
             elif op == 0x24:
-                pop()
+                lost.update(_data(pop()[0]))  # global.get gives nothing back
             elif op in (0x25, 0x40):
                 pop()
                 stack.append(_EMPTY)  # table.get, memory.grow
@@ -814,7 +1089,7 @@ class _DataFlow:
                 stack.append(mem.load(_address(pop()[0], imm)))
             elif 0x36 <= op <= 0x3E:
                 value, address = pop()[0], pop()[0]
-                mem.store(_address(address, imm), value)
+                self._store(mem, _address(address, imm), value, lost)
             elif op == 0x26:
                 pop(2)
             elif op in (0x6A, 0x6B):  # i32.add, i32.sub: pointer arithmetic when one side is a constant
@@ -837,7 +1112,7 @@ class _DataFlow:
                 taken, pushed = _FC_STACK[op & 0xFF]
                 pop(taken)
                 if op in (0xFC08, 0xFC0A, 0xFC0B):  # memory.init, memory.copy, memory.fill
-                    mem.forget()
+                    self._forget(mem, lost)
                 stack.extend([_EMPTY] * pushed)
             else:
                 raise _FlowError(f"no stack effect for 0x{op:x}")
@@ -845,7 +1120,7 @@ class _DataFlow:
             raise _FlowError(f"unterminated body of f{index}")
         return grew
 
-    def _call(self, callee: int, pop, mem: _Memory, sinks: set) -> list[frozenset]:
+    def _call(self, callee: int, pop, mem: _Memory, sinks: set, lost: set) -> list[frozenset]:
         params, results = self.signature(callee)
         args = pop(params)
         if callee < self.imported:
@@ -855,11 +1130,12 @@ class _DataFlow:
                 arity = _SINKS[host]
                 sinks.add((host, tuple(_data(a) for a in (args + [_EMPTY] * arity)[:arity])))
             elif host in self.memory_readers:  # builds an object from memory: it carries what it read
+                self.spend(mem.size())
                 used = _maybe(used | mem.contents())
             if used and host not in _NOT_CHECKS and host not in self.memory_readers:
                 sinks.add(("use", (used,)))
             if host in self.memory_writers:
-                mem.forget()
+                self._forget(mem, lost)
             if host == GET_DATA:
                 value = frozenset(("S",))
             elif host == EXECUTABLE_TAG:
@@ -872,37 +1148,44 @@ class _DataFlow:
         summary = self.summary.get(callee)
         if summary is None:  # not summarised yet (a cycle): the next round sees it
             return [_EMPTY] * results
-        returned, callee_sinks, writes, clobbers = summary
+        returned, callee_sinks, writes, clobbers, callee_lost = summary
+        self.spend(len(callee_sinks) + len(writes))
         out = [self._subst(r, args, mem) for r in returned]
         for host, host_args in callee_sinks:
             sinks.add((host, tuple(_data(self._subst(a, args, mem)) for a in host_args)))
+        lost.update(self._subst(callee_lost, args, mem))
         placed = [(_address(args[i], off) if i < len(args) else None, self._subst(v, args, mem))
-                  for (i, off), v in sorted(writes, key=repr)]
+                  for (i, off), v in sorted(writes, key=lambda w: w[0])]
         if clobbers:
-            mem.forget()
+            self._forget(mem, lost)
         for key, value in placed:
-            mem.store(key, value)
+            self._store(mem, key, value, lost)
         return out
 
-    @staticmethod
-    def _subst(labels: frozenset, args: list[frozenset], mem: _Memory) -> frozenset:
+    def _subst(self, labels: frozenset, args: list[frozenset], mem: _Memory) -> frozenset:
         """A callee's value in its caller's terms (memory as it was when the call started)."""
+        self.spend(len(labels))
         out: set = set()
         for label in labels:
             if isinstance(label, int):
                 if label < len(args):
+                    self.spend(len(args[label]))
                     out |= args[label]
             elif isinstance(label, tuple) and label[0] == "@":
                 if isinstance(label[1], int) and label[1] < len(args):
+                    self.spend(2 * len(args[label[1]]))
                     out |= _shift(args[label[1]], label[2]) - _data(args[label[1]])
                 # a pointer into the callee's own frame does not outlive the call
             elif isinstance(label, tuple) and label[0] == "m":
                 if label[1] < len(args):
+                    self.spend(len(args[label[1]]))
                     out |= mem.load(_address(args[label[1]], label[2]))
             elif label == _CALLER_MEMORY:
+                self.spend(mem.size())
                 out |= mem.contents()
             elif isinstance(label, tuple) and label[0] == "~":
-                out |= _maybe(_DataFlow._subst(frozenset((label[1],)), args, mem))
+                out |= _maybe(self._subst(frozenset((label[1],)), args, mem))
             else:
                 out.add(label)
+        self.spend(len(out))
         return frozenset(out)
