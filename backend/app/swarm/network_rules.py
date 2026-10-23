@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import re
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from hashlib import sha1
 
@@ -24,6 +25,7 @@ from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar.canonical import MAINNET_PASSPHRASE, NETWORK_MARKERS, TESTNET_PASSPHRASE, USDC_ISSUER, USDC_SAC
 from .consolidate import stable_id
 from .codeflow import unparse
+from .source_index import PARSE_ERRORS
 
 _JS = (".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts")
 #: Example, test and development code: findings there drop one level.
@@ -119,28 +121,29 @@ def mask(text: str, python: bool = False) -> tuple[str, str]:
     return "".join(code), "".join(skel)
 
 
+#: Bracket partners per text and bracket kind, built once (see _closing). Each entry keeps its
+#: text alive, so an id is never reused while it is cached.
+_PARTNERS: dict[tuple[int, str], tuple[str, dict[int, int]]] = {}
+
+
 def _closing(skel: str, start: int, opening: str = "{", closing: str = "}", limit: int = 20_000) -> int:
-    """Offset of the bracket that closes the one at ``start`` (or the end of the bounded window)."""
-    depth = 0
+    """Offset of the bracket that closes the one at ``start`` (or the end of the bounded window).
+    The partners of every ``opening`` in the text are found in one pass and kept."""
+    key = (id(skel), opening)
+    entry = _PARTNERS.get(key)
+    if entry is None or entry[0] is not skel:
+        partners, stack = {}, []
+        for m in re.finditer(re.escape(opening) + "|" + re.escape(closing), skel):
+            if m.group() == opening:
+                stack.append(m.start())
+            elif stack:
+                partners[stack.pop()] = m.start()
+        if len(_PARTNERS) > 64:
+            _PARTNERS.clear()
+        entry = _PARTNERS[key] = (skel, partners)
     end = min(len(skel), start + limit)
-    for i in range(start, end):
-        ch = skel[i]
-        if ch == opening:
-            depth += 1
-        elif ch == closing:
-            depth -= 1
-            if depth == 0:
-                return i
-    return end
-
-
-def _line(text: str, pos: int) -> int:
-    return text.count("\n", 0, pos) + 1
-
-
-def _line_text(text: str, line: int) -> str:
-    lines = text.splitlines()
-    return lines[line - 1] if 0 < line <= len(lines) else ""
+    close = entry[1].get(start)
+    return close if close is not None and close < end else end
 
 
 def _string_value(expr: str) -> str | None:
@@ -173,6 +176,14 @@ def net_of(expr: str) -> str | None:
 _MANIFESTS = ("package.json", "pyproject.toml", "setup.py", "Cargo.toml")
 
 
+_PY_BREAK, _JS_BREAK = re.compile(r"\r\n|\r|\n"), re.compile(r"\n")
+_BRACKET = re.compile(r"[(\[{)\]}]")
+#: A brace that opens a function body: after `=>`, or after the `)` of a parameter list (with
+#: an optional return type).
+_FUNCTION_HEAD = re.compile(r"(?:=>|\)(?:\s*:\s*[^{};=()]{1,160})?)\s*$")
+_CONTROL_WORDS = frozenset({"if", "for", "while", "switch", "catch", "with"})
+
+
 @dataclass
 class _Source:
     name: str
@@ -182,6 +193,103 @@ class _Source:
     python: bool
     package: str = ""  # the nearest directory with a manifest (the repository root by default)
     selectors: list | None = None  # computed once (fallback and pair rules both read them)
+    _newlines: list | None = None
+    _lines: list | None = None
+    _heads: list | None = None
+    _pairs: dict | None = None
+    _owner: tuple | None = None
+    _bodies: dict = field(default_factory=dict)
+    memo: dict = field(default_factory=dict)  # per-file results the rules share
+
+    def _breaks(self) -> re.Pattern:
+        # Lines end where the parser numbering them says: ast at \r\n, \r and \n, tree-sitter at
+        # \n only (str.splitlines also splits at \f, \x1c-\x1e, \x85, U+2028 and U+2029).
+        return _PY_BREAK if self.python else _JS_BREAK
+
+    def line(self, pos: int) -> int:
+        """The 1-based line of an offset."""
+        if self._newlines is None:
+            self._newlines = [m.start() for m in self._breaks().finditer(self.text)]
+        return bisect_left(self._newlines, pos) + 1
+
+    def line_start(self, line: int) -> int:
+        """The offset where a 1-based line starts."""
+        self.line(0)
+        if line <= 1:
+            return 0
+        if line - 2 >= len(self._newlines):
+            return len(self.text)
+        at = self._newlines[line - 2]
+        return at + (2 if self.text.startswith("\r\n", at) else 1)
+
+    def line_text(self, line: int) -> str:
+        if self._lines is None:
+            self._lines = self._breaks().split(self.text)
+        return self._lines[line - 1].rstrip("\r") if 0 < line <= len(self._lines) else ""
+
+    def region(self, pos: int) -> tuple[int, int]:
+        """The top-level declaration that holds ``pos``: from the last top-level head at or
+        before it to the next one (heads found once per file)."""
+        if self._heads is None:
+            self._heads = [m.start() for m in _TOP_LEVEL.finditer(self.code)]
+        i = bisect_right(self._heads, pos)
+        return (self._heads[i - 1] if i else 0), (self._heads[i] if i < len(self._heads) else len(self.code))
+
+    def pairs(self) -> dict[int, int]:
+        """Each bracket's partner, both ways, matched with one stack over (, [ and { alike (as
+        the depth counters of the scans here count them); an unclosed bracket has none. The
+        innermost open bracket at and after each bracket is kept for _owner."""
+        if self._pairs is None:
+            pairs: dict[int, int] = {}
+            stack: list[int] = []
+            at, inside, after = [], [], []  # bracket offset, innermost open at it, and after it
+            for m in _BRACKET.finditer(self.skel):
+                i = m.start()
+                at.append(i)
+                if m.group() in "([{":
+                    inside.append(stack[-1] if stack else -1)
+                    stack.append(i)
+                else:
+                    if stack:
+                        start = stack.pop()
+                        pairs[start], pairs[i] = i, start
+                    inside.append(stack[-1] if stack else -1)
+                after.append(stack[-1] if stack else -1)
+            self._pairs, self._owner = pairs, (at, inside, after)
+        return self._pairs
+
+    def _owner_of(self, pos: int) -> int:
+        """The innermost open bracket that holds ``pos`` (-1 at top level)."""
+        self.pairs()
+        at, inside, after = self._owner
+        i = bisect_right(at, pos) - 1
+        return -1 if i < 0 else inside[i] if at[i] == pos else after[i]
+
+    def function_at(self, pos: int) -> tuple[int, int] | None:
+        """The body `{...}` of the innermost function holding ``pos``, or None at top level."""
+        pairs = self.pairs()
+        node = self._owner_of(pos)
+        path = []
+        while node >= 0 and node not in self._bodies:
+            path.append(node)
+            node = self._owner_of(node)
+        found = self._bodies.get(node) if node >= 0 else None
+        for opening in reversed(path):  # outermost first: an inner function wins over its parent
+            if self.skel[opening] == "{" and opening in pairs and self._function_body(opening):
+                found = (opening, pairs[opening])
+            self._bodies[opening] = found
+        return found
+
+    def _function_body(self, brace: int) -> bool:
+        floor = max(0, brace - 200)
+        head = _FUNCTION_HEAD.search(self.skel, floor, brace)
+        if head is None:
+            return False
+        if self.skel.startswith("=>", head.start()):
+            return True
+        opening = self._pairs.get(head.start())
+        word = re.search(r"([\w$]+)\s*$", self.skel[max(0, opening - 40):opening]) if opening is not None else None
+        return opening is not None and not (word and word.group(1) in _CONTROL_WORDS)
 
 
 def _package_of(name: str, roots: set[str]) -> str:
@@ -237,24 +345,37 @@ _SWITCH = re.compile(r"\bswitch\s*\(\s*(?P<subject>[\w$.?!\[\]'\"]+)\s*\)\s*\{")
 _YIELD = re.compile(r"\breturn\s+(?P<ret>[^;\n]+)|(?<![\w$.])(?P<target>[\w$.]+)\s*=(?!=)\s*(?P<val>[^;\n]+)")
 
 
+#: Inside a switch body: a case or default label, or a bracket to skip or stop at.
+_SWITCH_EVENT = re.compile(r"[(\[{)\]}]|(?<![\w$.])(?:case|default)\b")
+
+
 def _js_switches(src: _Source) -> list[Selector]:
     out = []
+    pairs = src.pairs() if "switch" in src.skel else {}
     for m in _SWITCH.finditer(src.skel):
         open_at = m.end() - 1
         close = _closing(src.skel, open_at)
         body_skel, body = src.skel[open_at + 1:close], src.code[open_at + 1:close]
-        # Labels at the switch's own depth only.
-        depth, marks = 0, []
-        for i, ch in enumerate(body_skel):
-            if ch in "{([":
-                depth += 1
-            elif ch in "})]":
-                depth -= 1
-            elif depth == 0 and ch in "cd":
-                hit = _CASE.match(body_skel, i)
-                if hit and (i == 0 or not (body_skel[i - 1].isalnum() or body_skel[i - 1] in "_$.")):
-                    label = body[hit.start("label"):hit.end("label")].strip() if hit.group("label") else None
-                    marks.append((i, hit.end(), label))
+        # Labels at the switch's own depth only: nested groups are skipped whole.
+        marks, i = [], open_at + 1
+        while True:
+            event = _SWITCH_EVENT.search(src.skel, i, close)
+            if event is None:
+                break
+            i = event.start()
+            if src.skel[i] in ")]}":
+                break
+            if src.skel[i] in "([{":
+                partner = pairs.get(i)
+                if partner is None or partner >= close:
+                    break  # open to the end of the body: nothing after it is at depth 0
+                i = partner + 1
+                continue
+            hit = _CASE.match(body_skel, i - open_at - 1)
+            if hit:
+                label = body[hit.start("label"):hit.end("label")].strip() if hit.group("label") else None
+                marks.append((hit.start(), hit.end(), label))
+            i = event.end()
         clauses = []
         for k, (start, end, label) in enumerate(marks):
             stop = marks[k + 1][0] if k + 1 < len(marks) else len(body)
@@ -283,11 +404,15 @@ def _js_switches(src: _Source) -> list[Selector]:
             pending = []
         if not yields:
             continue
-        line = _line(src.text, m.start())
-        out.append(Selector(src.name, line, " ".join(src.code[m.start():close + 1].split())[:400],
+        out.append(Selector(src.name, src.line(m.start()), _snippet(src.code, m.start(), close + 1),
                             m.group("subject"), [e for e in explicit if e], fallback, yields, False,
                             passphrase=_passphrases(written)))
     return out
+
+
+def _snippet(code: str, start: int, end: int) -> str:
+    """Whitespace-collapsed code, at most 400 characters (read from a bounded window)."""
+    return " ".join(code[start:min(end, start + 4000)].split())[:400]
 
 
 def _label_value(label: str) -> str:
@@ -296,25 +421,6 @@ def _label_value(label: str) -> str:
         return value.lower()
     found = net_of(label)
     return found or label
-
-
-def _split_ternary(skel: str, code: str, start: int, end: int) -> tuple[list[tuple[str, str]], str] | None:
-    """`a ? x : b ? y : z` between start and end -> ([(cond, value), ...], else)."""
-    depth, q, cond_start, i = 0, None, start, start
-    pieces: list[tuple[str, str]] = []
-    while i < end:
-        ch = skel[i]
-        if ch in "([{":
-            depth += 1
-        elif ch in ")]}":
-            depth -= 1
-        elif depth == 0 and ch == "?" and skel[i + 1:i + 2] not in ("?", ".") and skel[i - 1:i] != "?":
-            q = i
-        elif depth == 0 and ch == ":" and q is not None:
-            pieces.append((code[cond_start:q].strip(), code[q + 1:i].strip()))
-            cond_start, q = i + 1, None
-        i += 1
-    return (pieces, code[cond_start:end].strip()) if pieces else None
 
 
 _ASSIGN_TERNARY = re.compile(r"(?:\b(?:const|let|var)\s+(?P<decl>[\w$]+)(?:\s*:[^=;\n]+)?|(?<![\w$])(?P<attr>this\.[\w$]+|[\w$]+))"
@@ -349,29 +455,71 @@ def _conditions(src: _Source, conds: list[str], before: int) -> tuple[list[str],
     return explicit, guess, subject
 
 
+#: What can end a statement, or split a ternary, at its own depth; a bare `=` (not ==, <=,
+#: =>) starts another assignment.
+_STATEMENT_EVENT = re.compile(r"[(\[{)\]};,\n?:]|(?<![=!<>])=(?![=>])")
+
+
+def _statement(src: _Source, start: int) -> tuple[int, list[int]]:
+    """(end, depth-0 `?` and `:` offsets) of the expression assigned at ``start``. It ends at a
+    `;`, `,` or another assignment at its own depth, at a bracket that closes an enclosing one,
+    or at a line break that does not continue it (the next line starting with ? : . | &, or
+    this one ending with ? : = ( , | &). Bracketed groups are skipped whole, so each character
+    is looked at once per statement that holds it at depth 0; the window is 1,200 characters."""
+    skel, pairs = src.skel, src.pairs()
+    n = min(len(skel), start + 1200)
+    marks: list[int] = []
+    last, i, tail = start, start, ""  # tail: the last non-blank character so far
+    while True:
+        event = _STATEMENT_EVENT.search(skel, i, n)
+        if event is None:
+            return n, marks
+        i = event.start()
+        ch = skel[i]
+        if ch in "([{":
+            close = pairs.get(i)
+            if close is None or close >= n:
+                return n, marks  # still open at the end of the window
+            i = last = close + 1
+            tail = skel[close]
+            continue
+        if ch in ")]};,=":
+            return i, marks
+        if ch in "?:":
+            marks.append(i)
+            last, tail = i + 1, ch
+            i += 1
+            continue
+        # A line break: the statement goes on only when either side says so.
+        gap = skel[last:i].rstrip()
+        tail = gap[-1] if gap else tail
+        if not re.match(r"\s*[?:.|&]", skel[i + 1:i + 40]) and (not tail or tail not in "?:=(,|&"):
+            return i, marks
+        last = i + 1
+        i += 1
+
+
+def _split_marks(skel: str, code: str, start: int, end: int, marks: list[int]) -> tuple[list[tuple[str, str]], str] | None:
+    """`a ? x : b ? y : z` -> ([(cond, value), ...], else), from the depth-0 `?` and `:` offsets."""
+    q, cond_start = None, start
+    pieces: list[tuple[str, str]] = []
+    for i in marks:
+        if i >= end:
+            break
+        if skel[i] == "?" and skel[i + 1:i + 2] not in ("?", ".") and skel[i - 1:i] != "?":
+            q = i
+        elif skel[i] == ":" and q is not None:
+            pieces.append((code[cond_start:q].strip(), code[q + 1:i].strip()))
+            cond_start, q = i + 1, None
+    return (pieces, code[cond_start:end].strip()) if pieces else None
+
+
 def _js_ternaries(src: _Source) -> list[Selector]:
     out = []
     for m in _ASSIGN_TERNARY.finditer(src.skel):
         start = m.end()
-        # The statement ends at a ';' or a blank-indented line at depth 0.
-        depth, i, n = 0, start, min(len(src.skel), start + 1200)
-        while i < n:
-            ch = src.skel[i]
-            if ch in "([{":
-                depth += 1
-            elif ch in ")]}":
-                if depth == 0:
-                    break
-                depth -= 1
-            elif depth == 0 and ch == ";":
-                break
-            elif depth == 0 and ch == "\n" and not re.match(r"\s*[?:.|&]", src.skel[i + 1:i + 40]) \
-                    and not re.search(r"[?:=(,|&]\s*$", src.skel[start:i]):
-                break
-            i += 1
-        if "?" not in src.skel[start:i]:
-            continue
-        parts = _split_ternary(src.skel, src.code, start, i)
+        i, marks = _statement(src, start)
+        parts = _split_marks(src.skel, src.code, start, i, marks)
         if not parts:
             continue
         pieces, last = parts
@@ -382,7 +530,7 @@ def _js_ternaries(src: _Source) -> list[Selector]:
             continue
         explicit, guess, subject = _conditions(src, conds, m.start())
         target = m.group("decl") or m.group("attr") or ""
-        line = _line(src.text, m.start())
+        line = src.line(m.start())
         out.append(Selector(src.name, line, " ".join(src.code[m.start():i].split())[:400], subject,
                             explicit, nets[-1], {x for x in nets if x}, guess, target, passphrase=_passphrases(values)))
     return out
@@ -391,7 +539,7 @@ def _js_ternaries(src: _Source) -> list[Selector]:
 def _py_selectors(src: _Source) -> list[Selector]:
     try:
         tree = ast.parse(src.text)
-    except (SyntaxError, ValueError, RecursionError):
+    except PARSE_ERRORS:
         return []
     out = []
     aliases = {t.id: n.value for n in ast.walk(tree) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Compare)
@@ -490,7 +638,7 @@ def _js_if_chains(src: _Source) -> list[Selector]:
         if not any(nets) or sum(1 for x in nets if x) < 2:
             continue
         explicit, guess, subject = _conditions(src, [c for c, _ in chain], m.start())
-        out.append(Selector(src.name, _line(src.text, m.start()), " ".join(src.code[m.start():final[1]].split())[:400],
+        out.append(Selector(src.name, src.line(m.start()), " ".join(src.code[m.start():final[1]].split())[:400],
                             subject, explicit, nets[-1], {x for x in nets if x}, guess,
                             passphrase=_passphrases([v for _, v in chain] + [final[0]])))
     return out
@@ -553,7 +701,7 @@ def _js_map_fallbacks(src: _Source, group: list[_Source]) -> list[Selector]:
                          r"\s*=(?!=)\s*$", src.skel[max(0, m.start() - 120):m.start()])
         target = (head.group("decl") or head.group("attr")) if head else ""
         nets = {fallback} | {n for n in (net_of(f'"{k}"') for k in keys) if n}
-        out.append(Selector(src.name, _line(src.text, m.start()), " ".join(src.code[m.start():end + len(expr)].split())[:400],
+        out.append(Selector(src.name, src.line(m.start()), " ".join(src.code[m.start():end + len(expr)].split())[:400],
                             m.group("key").strip(), keys, fallback, nets, False, target,
                             passphrase=_passphrases([body, expr])))
     return out
@@ -612,7 +760,8 @@ def _py_chains(tree: ast.Module, src: _Source) -> list[Selector]:
                         explicit.append(const.value.lower())
                         continue
                 explicit.append(unparse(test))
-            lines = src.text.splitlines()[start.lineno - 1:getattr(final, "end_lineno", start.lineno) or start.lineno]
+            last = min(getattr(final, "end_lineno", start.lineno) or start.lineno, start.lineno + 200)
+            lines = [src.line_text(n) for n in range(start.lineno, last + 1)]
             out.append(Selector(src.name, start.lineno, " ".join(" ".join(lines).split())[:400], subject, explicit,
                                 nets[-1], {x for x in nets if x}, guess,
                                 passphrase=_passphrases([unparse(v) for _, v in chain] + [unparse(final)])))
@@ -647,7 +796,7 @@ def selectors(src: _Source, group: list[_Source]) -> list[Selector]:
             found = _py_selectors(src)
             try:
                 found += _py_chains(ast.parse(src.text), src)
-            except (SyntaxError, ValueError, RecursionError):
+            except PARSE_ERRORS:
                 pass
         else:
             found = _js_switches(src) + _js_ternaries(src) + _js_if_chains(src) + _js_map_fallbacks(src, group)
@@ -689,7 +838,15 @@ _NETWORK_FN = r"[\w$]*(?:[Pp]assphrase|PASSPHRASE|[Nn]etwork_?[Cc]onfig|NETWORK_
 
 def _definition(name: str, group: list[_Source]) -> str:
     """The object literal or dict a table name is assigned, or the body of the function whose
-    call result it is assigned (`this.networkConfig = getNetworkConfig(url)`), in the package."""
+    call result it is assigned (`this.networkConfig = getNetworkConfig(url)`), in the package.
+    Looked up once per name and package."""
+    memo = group[0].memo.setdefault("definitions", {}) if group else {}
+    if name not in memo:
+        memo[name] = _find_definition(name, group)
+    return memo[name]
+
+
+def _find_definition(name: str, group: list[_Source]) -> str:
     n = re.escape(name)
     for src in group:
         for m in re.finditer(r"(?<![\w$])(?:this\.|self\.)?" + n + r"\s*(?::[^=;\n{]{0,200})?=(?!=)\s*", src.skel):
@@ -707,6 +864,25 @@ def _definition(name: str, group: list[_Source]) -> str:
     return ""
 
 
+#: Where a name reaches a passphrase (see _feeds_signing), found once per file with the name
+#: captured: a network-config call, a CLI --network, and a table subscript.
+_TO_NETWORK_FN = re.compile(r"(?<![\w$])" + _NETWORK_FN + r"\s*\(\s*(?:this\.|self\.)?([\w$]+)\s*[,)]")
+_TO_CLI = re.compile(r"""--network(?:\s+|=)(?:\$\{|\{)\s*(?:this\.|self\.)?([\w$]+)|["']--network["']\s*,\s*(?:this\.|self\.)?([\w$]+)""")
+_SUBSCRIPT = re.compile(r"(?<![\w$])(?P<table>[\w$.]+)\s*\[\s*(?:this\.|self\.)?(?P<name>[\w$]+)\s*\]")
+
+
+def _uses(src: _Source) -> tuple[set[str], dict[str, list]]:
+    """(names passed to a network function or a CLI --network, name -> table subscripts it keys)."""
+    if "uses" not in src.memo:
+        direct = {m.group(1) for m in _TO_NETWORK_FN.finditer(src.code)}
+        direct |= {m.group(1) or m.group(2) for m in _TO_CLI.finditer(src.code)}
+        keyed: dict[str, list] = {}
+        for m in _SUBSCRIPT.finditer(src.code):
+            keyed.setdefault(m.group("name"), []).append(m)
+        src.memo["uses"] = (direct, keyed)
+    return src.memo["uses"]
+
+
 def _feeds_signing(src: _Source, sel: Selector, group: list[_Source]) -> bool:
     """The selector's value reaches a passphrase: it yields a passphrase constant itself, keys
     a table whose entries hold passphrases, is passed to a passphrase or network-config
@@ -717,13 +893,11 @@ def _feeds_signing(src: _Source, sel: Selector, group: list[_Source]) -> bool:
     name = sel.target.rsplit(".", 1)[-1]
     if not name:
         return False
-    ref = r"(?:this\.|self\.)?" + re.escape(name) + r"(?![\w$])"
     code = src.code
-    if re.search(r"(?<![\w$])" + _NETWORK_FN + r"\s*\(\s*" + ref + r"\s*[,)]", code):
+    direct, keyed = _uses(src)
+    if name in direct:
         return True
-    if re.search(r"--network(?:\s+|=)(?:\$\{|\{)\s*" + ref + r"""|["']--network["']\s*,\s*""" + ref, code):
-        return True
-    for m in re.finditer(r"(?<![\w$])(?P<table>[\w$.]+)\s*\[\s*" + ref + r"\s*\]", code):
+    for m in keyed.get(name, []):
         if re.match(r"\s*\??\.\s*(?:networkPassphrase|passphrase|network_passphrase)\b", code[m.end():m.end() + 80]):
             return True  # TABLE[net].networkPassphrase
         held = re.search(r"(?<![\w$.])([\w$]+)\s*=\s*$", code[max(0, m.start() - 80):m.start()])
@@ -769,7 +943,7 @@ def fallback_hits(sources: list[_Source]) -> tuple[list[Hit], list[Selector]]:
             elif sel.fallback == "testnet":
                 # A value compared just before the selector has a branch of its own (`if (net ===
                 # 'custom') return config.passphrase`).
-                at = sum(len(x) + 1 for x in src.code.split("\n")[:sel.line - 1])
+                at = src.line_start(sel.line)
                 before = src.code[max(0, at - 800):at]
                 compared = r"""[!=]==?\s*["'`]{v}["'`]|["'`]{v}["'`]\s*[!=]==?"""
                 strays = sorted(v for v in unhandled if not _TESTNET_NAME.match(v)
@@ -812,6 +986,10 @@ def cli_hits(sources: list[_Source], files: dict[str, str], fallbacks: list[Sele
     defined = {m.group("name") for text in files.values() for m in _NETWORK_ADD.finditer(text)}
     known = CLI_NETWORKS | defined
     launches = {src.package for src in sources if _EXEC.search(src.code)}
+    package_of = {src.name: src.package for src in sources}
+    by_target: dict[str, list[Selector]] = {}
+    for sel in fallbacks:
+        by_target.setdefault(sel.target.rsplit(".", 1)[-1], []).append(sel)
     hits, folded = [], {}
     for src in sources:
         if src.package not in launches:
@@ -820,22 +998,23 @@ def cli_hits(sources: list[_Source], files: dict[str, str], fallbacks: list[Sele
         if src.python:
             commands += [(m.start(), m.group("arg"), None) for m in _PY_CLI_LIST.finditer(src.code)]
         for pos, arg, expr in commands:
-            if _DOC_CONTEXT.search(src.code[max(0, src.code.rfind("\n", 0, pos) - 200):pos]):
+            line_at = src.code.rfind("\n", max(0, pos - 4000), pos)
+            if _DOC_CONTEXT.search(src.code[max(0, (line_at if line_at >= 0 else pos - 4000) - 200):pos]):
                 continue
-            line = _line(src.text, pos)
+            line = src.line(pos)
             if expr is None:
                 if arg not in known and _NET_NAME.match(arg):
-                    hits.append(Hit("security-cli-network-unknown", src.name, line, _line_text(src.text, line),
+                    hits.append(Hit("security-cli-network-unknown", src.name, line, src.line_text(line),
                                     _severity(Severity.LOW, src.name), f"--network {arg}"))
                 continue
             literals = {v for v in re.findall(r"""["'`]([\w:-]+)["'`]""", expr)}
             names = {n.rsplit(".", 1)[-1] for n in re.findall(r"[A-Za-z_$][\w$.]*", expr) if not n.startswith(("'", '"'))}
             for lit in sorted(literals):
                 if lit not in known and _NET_NAME.match(lit):
-                    hits.append(Hit("security-cli-network-unknown", src.name, line, _line_text(src.text, line),
+                    hits.append(Hit("security-cli-network-unknown", src.name, line, src.line_text(line),
                                     _severity(Severity.LOW, src.name), f"--network falls back to {lit}"))
-            for sel in fallbacks:
-                same_tree = src.package == next((s.package for s in sources if s.name == sel.file), None)
+            for sel in [s for name in sorted(names) for s in by_target.get(name, [])]:
+                same_tree = src.package == package_of.get(sel.file)
                 name = sel.target.rsplit(".", 1)[-1]
                 strays = sorted(y for y in _selector_names(sel) if y not in known)
                 if same_tree and name and name in names and strays:
@@ -875,11 +1054,131 @@ _PY_OPERATOR_KEY = re.compile(r"\bKeypair\.from_secret\(\s*(?:os\.(?:environ|get
 def _region(src: _Source, pos: int) -> tuple[int, int]:
     """The top-level declaration that holds ``pos``: from the last top-level head before it to
     the next one."""
-    start = 0
-    for m in _TOP_LEVEL.finditer(src.code, 0, pos):
-        start = m.start()
-    nxt = _TOP_LEVEL.search(src.code, pos)
-    return start, (nxt.start() if nxt else len(src.code))
+    return src.region(pos)
+
+
+#: A same-file function, by name: `function f(`, `const f = (...) =>`, `const f = async function`.
+_JS_DEF = re.compile(r"\bfunction\s*\*?\s*(?P<a>[\w$]+)\s*\(|\b(?:const|let|var)\s+(?P<b>[\w$]+)\s*(?::[^=;\n]{0,160})?=\s*"
+                     r"(?:async\s+)?(?:function\b|\([^)]{0,400}\)\s*(?::[^=;{]{0,160})?=>|[\w$]+\s*=>)")
+_CALLED = re.compile(r"(?<![\w$.])([\w$]+)\s*\(")
+#: At most this many distinct network values are judged per function, and this many callees read.
+_PER_SCOPE_VALUES, _CALLEES = 16, 16
+
+
+def _js_defs(src: _Source) -> dict[str, tuple[int, int]]:
+    """Function name -> body span, for the functions this file defines (first definition wins);
+    their parameter names go to src.memo["params"]."""
+    if "defs" not in src.memo:
+        defs: dict[str, tuple[int, int]] = {}
+        params: dict[str, list[str | None]] = {}
+        pairs = src.pairs()
+        for m in _JS_DEF.finditer(src.skel):
+            name = m.group("a") or m.group("b")
+            brace = src.skel.find("{", m.end(), m.end() + 400)
+            if name in defs or brace < 0 or brace not in pairs:
+                continue
+            body = src.function_at(brace + 1)
+            if body is not None and body[0] == brace:
+                defs[name] = body
+                opening = src.skel.find("(", m.start("a" if m.group("a") else "b") + len(name), brace)
+                if opening >= 0:
+                    params[name] = [(re.match(r"(?:\.\.\.)?\s*([\w$]+)", part) or [None, None])[1]
+                                    for part in _arguments(src, opening)]
+                else:  # `const f = x => {`
+                    single = re.search(r"([\w$]+)\s*=>\s*$", src.skel[m.start():brace])
+                    params[name] = [single.group(1) if single else None]
+        src.memo["defs"], src.memo["params"] = defs, params
+    return src.memo["defs"]
+
+
+def _arguments(src: _Source, opening: int) -> list[str]:
+    """The depth-0 comma-separated parts between ``opening`` and its partner (bracketed groups
+    and strings skipped whole)."""
+    pairs = src.pairs()
+    close = pairs.get(opening)
+    if close is None:
+        return []
+    parts, start, i = [], opening + 1, opening + 1
+    while i < close:
+        ch = src.skel[i]
+        if ch in "([{" and i in pairs:
+            i = pairs[i] + 1
+            continue
+        if ch == ",":
+            parts.append(src.code[start:i].strip())
+            start = i + 1
+        i += 1
+    last = src.code[start:close].strip()
+    return parts + [last] if last or parts else parts
+
+
+def _callee_endpoint(src: _Source, scope: tuple[int, int], value: str) -> bool:
+    """The function hands ``value`` to a function of this file (one of the callees whose
+    signature _operator_signs reads) that picks the endpoint from that parameter:
+    `signAndSend(tx, network)` -> `horizonFor(network)` inside signAndSend."""
+    defs = _js_defs(src)
+    params, picks = src.memo["params"], src.memo.setdefault("callee_picks", {})
+    seen: set[str] = set()
+    for m in _CALLED.finditer(src.code, scope[0], scope[1]):
+        name = m.group(1)
+        if name not in defs or defs[name] == scope:
+            continue
+        seen.add(name)
+        if len(seen) > _CALLEES:
+            return False
+        names = params.get(name, [])
+        for position, arg in enumerate(_arguments(src, m.end() - 1)):
+            param = names[position] if position < len(names) else None
+            if arg != value or not param:
+                continue
+            if (name, param) not in picks:  # once per callee and parameter, whatever the number of tools
+                picks[name, param] = bool(_picks(src.code[defs[name][0]:defs[name][1]], param)[1])
+            if picks[name, param]:
+                return True
+    return False
+
+
+def _signing(src: _Source, span: tuple[int, int]) -> tuple[bool, bool, set[str]]:
+    """(signs, loads an operator key, the names its sign calls pass) for one function body;
+    computed once per body."""
+    cache = src.memo.setdefault("signing", {})
+    if span not in cache:
+        names: set[str] = set()
+        signs = False
+        for m in _SIGNS.finditer(src.code, span[0], span[1]):
+            signs = True
+            close = _closing(src.skel, m.end() - 1, "(", ")", limit=400)
+            names |= set(re.findall(r"(?<![\w$])(?:this\.)?([\w$]+)", src.code[m.end():close]))
+        key = _OPERATOR_KEY.search(src.code, span[0], span[1])
+        operator = bool(key) and not re.search(_INPUT_ROOT + r"\??\.\w*secret", key.group(0), re.I)
+        cache[span] = (signs, operator, names)
+    return cache[span]
+
+
+def _operator_keys(src: _Source) -> set[str]:
+    """Names this file binds to an operator key: `const kp = Keypair.fromSecret(process.env.X)`,
+    `this.keypair = ...`, a class field."""
+    if "keys" not in src.memo:
+        src.memo["keys"] = {m.group(1) for m in re.finditer(r"(?<![\w$])(?:this\.)?([\w$]+)\s*(?::[^=;\n]{0,120})?=\s*"
+                                                         r"(?:await\s+)?(?=Keypair\.fromSecret\()", src.code)
+                            if _OPERATOR_KEY.match(src.code, m.end())}
+    return src.memo["keys"]
+
+
+def _operator_signs(src: _Source, scope: tuple[int, int]) -> bool:
+    """The function signs with an operator key: it (or a function of this file it calls) signs,
+    and the key is loaded there or is a name this file binds to an operator key."""
+    spans = [scope]
+    defs = _js_defs(src)
+    for name in dict.fromkeys(m.group(1) for m in _CALLED.finditer(src.code, scope[0], scope[1])):
+        if name in defs and defs[name] != scope and len(spans) <= _CALLEES:
+            spans.append(defs[name])
+    signs = operator = False
+    names: set[str] = set()
+    for span in spans:
+        s, o, n = _signing(src, span)
+        signs, operator, names = signs or s, operator or o, names | n
+    return signs and (operator or bool(names & _operator_keys(src)))
 
 
 def _picks(region: str, value: str):
@@ -919,32 +1218,38 @@ def per_call_hits(sources: list[_Source]) -> list[Hit]:
         if src.python:
             hits += _py_per_call(src)
             continue
-        seen: set[tuple[int, int, str]] = set()
+        judged: dict[tuple[int, int], set[str]] = {}
         candidates = [(m.group("var"), m.start()) for m in _NET_ARG.finditer(src.code)]
         candidates += [(m.group("src"), m.start()) for m in _DIRECT_NET_ARG.finditer(src.code)]
         for value, pos in candidates:
-            start, end = _region(src, pos)
-            if (start, end, value) in seen:
+            # The function that reads the value (a tool callback, a route handler): its own
+            # picks and signature count, not those of another tool in the same declaration.
+            top = src.region(pos)
+            start, end = src.function_at(pos) or top
+            values = judged.setdefault((start, end), set())
+            if value in values or len(values) >= _PER_SCOPE_VALUES:
                 continue
-            seen.add((start, end, value))
+            values.add(value)
             region = src.code[start:end]
             passphrase, endpoint = _picks(region, value)
             if not passphrase or _pinned(region, value):
                 continue
-            line = _line(src.text, pos if endpoint else start + passphrase.start())
+            endpoint = endpoint or _callee_endpoint(src, (start, end), value)
+            line = src.line(pos if endpoint else start + passphrase.start())
             if not endpoint:
                 used = [u.group("a") or u.group("b") for u in _ENDPOINT_USE.finditer(region)]
                 if any(u and value not in u and not re.search(r"\b" + re.escape(value.rsplit(".", 1)[-1]) + r"\b", u)
                        for u in used):
-                    hits.append(Hit("security-network-endpoint-mismatch", src.name, line, _line_text(src.text, line),
+                    hits.append(Hit("security-network-endpoint-mismatch", src.name, line, src.line_text(line),
                                     Severity.LOW, f"`{value}` picks the passphrase, but the endpoint stays on configuration",
                                     group="per-call-endpoint"))
                 continue
-            key = _OPERATOR_KEY.search(region)
-            if not _HANDLER.search(region) or not key or not _SIGNS.search(region) \
-                    or re.search(_INPUT_ROOT + r"\??\.\w*secret", key.group(0), re.I):
+            handlers = src.memo.setdefault("handler_regions", {})
+            if top not in handlers:  # once per top-level region, not once per tool in it
+                handlers[top] = bool(_HANDLER.search(src.code, top[0], top[1]))
+            if not handlers[top] or not _operator_signs(src, (start, end)):
                 continue
-            hits.append(Hit("security-network-chosen-per-call", src.name, line, _line_text(src.text, line),
+            hits.append(Hit("security-network-chosen-per-call", src.name, line, src.line_text(line),
                             _severity(Severity.MEDIUM, src.name),
                             f"`{value}` picks both the passphrase and the endpoint the operator key signs for",
                             group="per-call"))
@@ -954,7 +1259,7 @@ def per_call_hits(sources: list[_Source]) -> list[Hit]:
 def _py_per_call(src: _Source) -> list[Hit]:
     try:
         tree = ast.parse(src.text)
-    except (SyntaxError, ValueError, RecursionError):
+    except PARSE_ERRORS:
         return []
     hits = []
     for fn in ast.walk(tree):
@@ -964,7 +1269,7 @@ def _py_per_call(src: _Source) -> list[Hit]:
         params = {a.arg for a in [*fn.args.args, *fn.args.kwonlyargs]}
         if not tool or "network" not in params:
             continue
-        body = unparse(fn)
+        body = src.code[src.line_start(fn.lineno):src.line_start((fn.end_lineno or fn.lineno) + 1)]  # sliced, not unparsed
         if not _PY_OPERATOR_KEY.search(body) or not re.search(r"\.sign\s*\(|authorize_entry\s*\(", body):
             continue
         passphrase = re.search(r"(?:PASSPHRASE\w*|passphrase\w*)\s*\[\s*network\b|\w*passphrase\w*\(\s*network\b|"
@@ -973,7 +1278,7 @@ def _py_per_call(src: _Source) -> list[Hit]:
         endpoint = re.search(r"\b\w*(?:horizon|rpc|soroban|server|url)\w*\s*\(\s*network\b|\[\s*network\s*\]\s*\.\s*"
                              r"(?:horizon|rpc|url)|\bServer\s*\([^)]*\bnetwork\b", body, re.I)
         if passphrase and endpoint and not re.search(r"network\s*!=\s*(?:settings|config|os\.)", body):
-            hits.append(Hit("security-network-chosen-per-call", src.name, fn.lineno, _line_text(src.text, fn.lineno),
+            hits.append(Hit("security-network-chosen-per-call", src.name, fn.lineno, src.line_text(fn.lineno),
                             _severity(Severity.MEDIUM, src.name),
                             "the tool's `network` argument picks both the passphrase and the endpoint", group="per-call"))
     return hits
@@ -1013,8 +1318,8 @@ def counterparty_hits(sources: list[_Source]) -> list[Hit]:
             options = src.code[open_at:_closing(src.skel, open_at, limit=2000) + 1]
             if not re.search(r"\b(?:secretKey|keypair)\b", options) or re.search(r"\brpcUrl\b", options):
                 continue
-            line = _line(src.text, call.start())
-            hits.append(Hit("security-network-chosen-by-counterparty", src.name, line, _line_text(src.text, line),
+            line = src.line(call.start())
+            hits.append(Hit("security-network-chosen-by-counterparty", src.name, line, src.line_text(line),
                             _severity(Severity.MEDIUM, src.name), group=f"{src.name}:{line}"))
     return hits
 
@@ -1043,6 +1348,44 @@ def _host_net(url: str) -> str | None:
     return None
 
 
+#: A passphrase constant a configured network name can pick.
+_PASS_SITE = re.compile(r"Networks?\.(?:PUBLIC|TESTNET)|_NETWORK_PASSPHRASE")
+_WORD = re.compile(r"[\w$]+")
+
+
+def _inside_word(code: str, at: int) -> bool:
+    return at > 0 and (code[at - 1].isalnum() or code[at - 1] in "_$")
+
+
+def _near_passphrase(group: list[_Source]) -> dict[str, dict[str, tuple[int, int]]]:
+    """word -> {file: (first, last offset)} of the words that stand within 120 characters of a
+    passphrase constant in the same statement (no `;` or line break between): what
+    `KEY[^;\\n]{0,120}PASSPHRASE` or the reverse would match, indexed once per package."""
+    memo = group[0].memo
+    if "near" not in memo:
+        near: dict[str, dict[str, tuple[int, int]]] = {}
+
+        def add(word: str, name: str, at: int) -> None:
+            first, last = near.setdefault(word, {}).get(name, (at, at))
+            near[word][name] = (min(first, at), max(last, at))
+        for s in group:
+            code = s.code
+            for m in _PASS_SITE.finditer(code):
+                floor = max(0, m.start() - 120)
+                left = max(floor, code.rfind(";", floor, m.start()) + 1, code.rfind("\n", floor, m.start()) + 1)
+                for w in _WORD.finditer(code, max(0, left - 64), m.start()):
+                    if w.end() >= left and not _inside_word(code, w.start()):
+                        add(w.group(), s.name, w.start())
+                ceiling = min(len(code), m.end() + 121)
+                stops = [x for x in (code.find(";", m.end(), ceiling), code.find("\n", m.end(), ceiling)) if x >= 0]
+                right = min(stops) if stops else ceiling
+                for w in _WORD.finditer(code, m.end(), right + 64):
+                    if w.start() < right and not _inside_word(code, w.start()):
+                        add(w.group(), s.name, w.start())
+        memo["near"] = near
+    return memo["near"]
+
+
 def mismatch_hits(sources: list[_Source]) -> list[Hit]:
     """N4. A configured network name picks the passphrase while the Horizon or RPC URL keeps a
     fixed-network default of its own (or the passphrase is fixed while the URL is
@@ -1057,29 +1400,31 @@ def mismatch_hits(sources: list[_Source]) -> list[Hit]:
         if _STARTUP_CHECK.search(text):
             continue
         for src in group:
+            eligible = None
             for m in _ENDPOINT_KEY.finditer(src.code):
                 expr = m.group("expr")
                 default = _URL_DEFAULT.search(expr)
                 ternary = "?" in expr.replace("??", "").replace("?.", "")
                 if not default or not _CONFIGURED.search(expr) or ternary or _host_net(default.group("url")) is None:
                     continue
-                # The configured network name that picks the passphrase somewhere in the package.
-                for n in _NETWORK_KEY.finditer(src.code):
-                    key = n.group("key")
-                    if not _CONFIGURED.search(n.group("expr")):
-                        continue
-                    passphrase = r"(?:Networks?\.(?:PUBLIC|TESTNET)|_NETWORK_PASSPHRASE)"
-                    k = r"\b" + re.escape(key) + r"\b"
-                    elsewhere = "\n".join([s.code for s in group if s is not src] + [src.code[:n.start()], src.code[n.end():]])
-                    picks = re.search(k + r"[^;\n]{0,120}" + passphrase + "|" + passphrase + r"[^;\n]{0,120}" + k, elsewhere)
-                    if not picks or key in expr:
-                        continue
-                    line = _line(src.text, m.start())
-                    hits.append(Hit("security-network-endpoint-mismatch", src.name, line, _line_text(src.text, line),
-                                    _severity(Severity.LOW, src.name),
-                                    f"{key} picks the passphrase, but {m.group('key')} defaults to a "
-                                    f"{_host_net(default.group('url'))} URL of its own", group=f"{src.name}:{key}"))
-                    break
+                if eligible is None:
+                    # The configured network names that pick the passphrase somewhere in the
+                    # package other than their own definition.
+                    near, eligible = _near_passphrase(group), []
+                    for n in _NETWORK_KEY.finditer(src.code):
+                        places = near.get(n.group("key"), {})
+                        own = places.get(src.name)
+                        if _CONFIGURED.search(n.group("expr")) and (len(places) > (1 if own else 0) or (
+                                own and (own[0] < n.start() or own[1] >= n.end()))):
+                            eligible.append(n.group("key"))
+                key = next((k for k in eligible if k not in expr), None)
+                if key is None:
+                    continue
+                line = src.line(m.start())
+                hits.append(Hit("security-network-endpoint-mismatch", src.name, line, src.line_text(line),
+                                _severity(Severity.LOW, src.name),
+                                f"{key} picks the passphrase, but {m.group('key')} defaults to a "
+                                f"{_host_net(default.group('url'))} URL of its own", group=f"{src.name}:{key}"))
         hits += _fixed_pairs(group, text)
     return hits
 
@@ -1099,44 +1444,55 @@ def _fixed_pairs(group: list[_Source], text: str) -> list[Hit]:
     hits = []
     found = [sel for src in group for sel in selectors(src, group)]
     selected = any(sel.yields and re.search(r"[Pp]assphrase|PASSPHRASE|Networks?\.", sel.text) for sel in found)
+    configured = bool(_CONFIG_PASSPHRASE_JS.search(text))
+    served: dict[str, bool] = {}  # name -> a Server is built from it somewhere in the package
+    py_text = "\n".join(s.code for s in group if s.python)
     for src in group:
         if _NON_PRODUCTION.search(src.name):
             continue
         if src.python:
-            hits += _py_fixed_pairs(src, group, selected)
+            hits += _py_fixed_pairs(src, group, selected, py_text)
             continue
-        if _FIXED_PASSPHRASE_JS.search(src.code) and not selected and not _CONFIG_PASSPHRASE_JS.search(text):
+        if _FIXED_PASSPHRASE_JS.search(src.code) and not selected and not configured:
             for m in _ENV_URL_JS.finditer(src.code):
-                if _host_net(m.group("url")) and re.search(r"Server\s*\(\s*" + re.escape(m.group("name")) + r"\b", text):
-                    line = _line(src.text, m.start())
-                    hits.append(Hit("security-network-endpoint-mismatch", src.name, line, _line_text(src.text, line),
-                                    Severity.LOW, f"the passphrase is fixed, but {m.group('name')} is configurable",
-                                    group=f"{src.name}:{m.group('name')}"))
+                name = m.group("name")
+                if name not in served:
+                    served[name] = bool(re.search(r"Server\s*\(\s*" + re.escape(name) + r"\b", text))
+                if _host_net(m.group("url")) and served[name]:
+                    line = src.line(m.start())
+                    hits.append(Hit("security-network-endpoint-mismatch", src.name, line, src.line_text(line),
+                                    Severity.LOW, f"the passphrase is fixed, but {name} is configurable",
+                                    group=f"{src.name}:{name}"))
         if _CONFIG_PASSPHRASE_JS.search(src.code):
             for m in _LITERAL_SERVER_JS.finditer(src.code):
                 if _host_net(m.group("url")):
-                    line = _line(src.text, m.start())
-                    hits.append(Hit("security-network-endpoint-mismatch", src.name, line, _line_text(src.text, line),
+                    line = src.line(m.start())
+                    hits.append(Hit("security-network-endpoint-mismatch", src.name, line, src.line_text(line),
                                     Severity.LOW, f"the passphrase is configurable, but the server is fixed to "
                                     f"{_host_net(m.group('url'))}", group=f"{src.name}:literal-server"))
                     break
     return hits
 
 
-def _py_fixed_pairs(src: _Source, group: list[_Source], selected: bool) -> list[Hit]:
+def _py_fixed_pairs(src: _Source, group: list[_Source], selected: bool, package_text: str) -> list[Hit]:
     try:
         tree = ast.parse(src.text)
-    except (SyntaxError, ValueError, RecursionError):
+    except PARSE_ERRORS:
         return []
     hits = []
-    package_text = "\n".join(s.code for s in group if s.python)
     # (b) a module-level fixed passphrase reaches a builder; the URL comes from the environment.
-    fixed = {t.id for n in tree.body if isinstance(n, ast.Assign) for t in n.targets
-             if isinstance(t, ast.Name) and re.search(r"PASSPHRASE|Test SDF|Public Global", unparse(n.value))
-             and net_of(unparse(n.value)) in {"testnet", "mainnet"} and "getenv" not in unparse(n.value)}
+    fixed: dict[str, str] = {}  # name -> the network of its value
+    for n in tree.body:
+        if not isinstance(n, ast.Assign):
+            continue
+        value = unparse(n.value)
+        net = net_of(value) if re.search(r"PASSPHRASE|Test SDF|Public Global", value) and "getenv" not in value else None
+        if net in {"testnet", "mainnet"}:
+            fixed.update({t.id: net for t in n.targets if isinstance(t, ast.Name)})
     configurable = re.search(r"getenv\(\s*[\"']\w*PASSPHRASE|environ(?:\.get\(|\[)\s*[\"']\w*PASSPHRASE", package_text)
-    if fixed and not configurable and not selected and any(
-            re.search(r"network_passphrase\s*=\s*" + re.escape(name) + r"\b", s.code) for s in group for name in fixed):
+    built = sorted({net for name, net in fixed.items()
+                    if re.search(r"network_passphrase\s*=\s*" + re.escape(name) + r"\b", package_text)})
+    if built and not configurable and not selected:
         for n in tree.body:
             if not (isinstance(n, ast.Assign) and isinstance(n.value, ast.Call) and len(n.targets) == 1
                     and isinstance(n.targets[0], ast.Name)):
@@ -1147,8 +1503,8 @@ def _py_fixed_pairs(src: _Source, group: list[_Source], selected: bool) -> list[
                     and isinstance(args[1].value, str) and _host_net(args[1].value):
                 name = n.targets[0].id
                 if re.search(r"(?:Server\w*|_client\w*)\s*\(\s*" + re.escape(name) + r"\b", package_text):
-                    hits.append(Hit("security-network-endpoint-mismatch", src.name, n.lineno, _line_text(src.text, n.lineno),
-                                    Severity.LOW, f"the passphrase is fixed to {net_of(next(iter(fixed)))} constants, but "
+                    hits.append(Hit("security-network-endpoint-mismatch", src.name, n.lineno, src.line_text(n.lineno),
+                                    Severity.LOW, f"the passphrase is fixed to {' and '.join(built)} constants, but "
                                     f"{name} is configurable", group=f"{src.name}:fixed-passphrase"))
     # (c) a configurable passphrase next to a server fixed to one network.
     for scope in ast.walk(tree):
@@ -1163,7 +1519,7 @@ def _py_fixed_pairs(src: _Source, group: list[_Source], selected: bool) -> list[
                                                               unparse(call.func))
             if server and call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str) \
                     and _host_net(call.args[0].value):
-                hits.append(Hit("security-network-endpoint-mismatch", src.name, call.lineno, _line_text(src.text, call.lineno),
+                hits.append(Hit("security-network-endpoint-mismatch", src.name, call.lineno, src.line_text(call.lineno),
                                 Severity.LOW, f"the passphrase is a parameter, but the server is fixed to "
                                 f"{_host_net(call.args[0].value)}", group=f"{src.name}:{call.lineno}"))
                 break
@@ -1226,6 +1582,26 @@ def _py_constants(node: ast.AST, consts: dict[str, tuple[str, str, int]]) -> lis
     return out
 
 
+def _holding(tree: ast.AST, marked: set[int]) -> dict[int, frozenset[int]]:
+    """id(node) -> the marked nodes in its subtree (itself included), in one bottom-up pass."""
+    out: dict[int, frozenset[int]] = {}
+    empty: frozenset[int] = frozenset()
+    stack: list[tuple[ast.AST, bool]] = [(tree, False)]
+    while stack:
+        node, done = stack.pop()
+        if not done:
+            stack.append((node, True))
+            stack.extend((child, False) for child in ast.iter_child_nodes(node))
+            continue
+        found = set()
+        for child in ast.iter_child_nodes(node):
+            found |= out.get(id(child), empty)
+        if id(node) in marked:
+            found.add(id(node))
+        out[id(node)] = frozenset(found) if found else empty
+    return out
+
+
 def cross_constant_hits(sources: list[_Source]) -> list[Hit]:
     """N5. A transaction whose passphrase can be one network carries a constant that exists
     only on the other (a payment in testnet USDC signed for mainnet), with no branch on the
@@ -1236,9 +1612,11 @@ def cross_constant_hits(sources: list[_Source]) -> list[Hit]:
             continue
         try:
             tree = ast.parse(src.text)
-        except (SyntaxError, ValueError, RecursionError):
+        except PARSE_ERRORS:
             continue
         nets = _PyNets(tree)
+        builders = {id(n) for n in ast.walk(tree) if isinstance(n, ast.Call) and unparse(n.func).endswith("TransactionBuilder")}
+        below = _holding(tree, builders)
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -1257,18 +1635,21 @@ def cross_constant_hits(sources: list[_Source]) -> list[Hit]:
                     found = _py_constants(node.value, consts)
                     if found and name not in branched:
                         consts[name] = found[0]
+            # The operations appended to each builder: every call whose receiver holds it.
+            chains: dict[int, list[ast.Call]] = {}
+            for op in ast.walk(fn):
+                if isinstance(op, ast.Call) and isinstance(op.func, ast.Attribute) and op.func.attr.startswith("append_"):
+                    for builder in below.get(id(op.func.value), ()):
+                        chains.setdefault(builder, []).append(op)
             for call in ast.walk(fn):
-                if not (isinstance(call, ast.Call) and unparse(call.func).endswith("TransactionBuilder")):
+                if not (isinstance(call, ast.Call) and id(call) in builders):
                     continue
                 passphrase = next((k.value for k in call.keywords if k.arg == "network_passphrase"),
                                   call.args[1] if len(call.args) > 1 else None)
                 if passphrase is None:
                     continue
                 signs_for = nets.passphrases(passphrase, local)
-                # The operations appended to this builder: every call whose receiver chain starts at it.
-                chain = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                         and n.func.attr.startswith("append_") and any(c is call for c in ast.walk(n.func.value))]
-                for op in chain:
+                for op in chains.get(id(call), []):
                     values = [*op.args, *(k.value for k in op.keywords)]
                     arguments = ast.Module(body=[ast.Expr(a) for a in values], type_ignores=[])
                     for net, value, line in _py_constants(arguments, consts):
@@ -1276,7 +1657,7 @@ def cross_constant_hits(sources: list[_Source]) -> list[Hit]:
                         if other in signs_for:
                             line = line or op.lineno
                             hits.append(Hit("security-network-cross-constant", src.name, line,
-                                            _line_text(src.text, line), _severity(Severity.MEDIUM, src.name),
+                                            src.line_text(line), _severity(Severity.LOW, src.name),
                                             f"a {net}-only constant ({value[:12]}…) reaches a transaction whose passphrase "
                                             f"can be {other}", group=f"{src.name}:{value}"))
     return hits
@@ -1335,7 +1716,8 @@ _RULES = {
         "A constant from one network reaches a transaction signed for the other",
         "A value that exists on one network only (Circle's testnet USDC issuer or contract, a testnet-only "
         "facilitator) is used in a transaction whose passphrase can be the other network, with no branch on the "
-        "network in between. On that network the payment names an asset or service that is not the intended one.",
+        "network in between. On that network the issuer, contract or service does not exist, so the trustline or "
+        "payment fails there.",
         "Select network-specific constants from the same network setting as the passphrase "
         "({testnet: ..., mainnet: ...}[net]).",
         ["Stellar assets and issuers"], EvidenceGrade.INFERRED),

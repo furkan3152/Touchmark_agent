@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
+from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, FindingKind, Severity
 from ..services.lockfiles import Lockset, below, spec_admits
 from ..stellar.canonical import NETWORK_MARKERS
 from .consolidate import stable_id
@@ -509,7 +509,20 @@ def _web_auth_findings(artifact: AgentArtifact, findings: list[Finding], by_cate
     signed = {(f.location.file, f.location.line) for f in by_category.get("foreign_signing", [])}
     out = list(findings)
     existing = next((f for f in out if f.id == "security-path-external-transaction-signed"), None)
-    for kind, file, line, text, severity, note in web_auth_hits(artifact.code_files):
+    hits = web_auth_hits(artifact.code_files)
+    unread = [f"{file} ({note})" for kind, file, _line, _text, _severity, note in hits if kind == "incomplete"]
+    if unread:  # a flow the analyser stopped reading is a blocking gap, like a rule family that failed
+        out.append(Finding(
+            id="security-rules-incomplete-web-auth", dimension=Dimension.SECURITY, severity=Severity.LOW,
+            title="The web-auth checks did not complete",
+            detail="These files nest more signing functions that read the web-auth response than the analyser reads, "
+                   "so a challenge or authorization entries signed there without the client checks may not be reported.",
+            evidence="; ".join(unread[:5])[:300], evidence_grade=EvidenceGrade.CONFIRMED,
+            remediation="Review the web-auth signing in these files by hand.", auditor=auditor, confidence=0.85,
+            kind=FindingKind.EVIDENCE_GAP))
+    for kind, file, line, text, severity, note in hits:
+        if kind == "incomplete":
+            continue
         rule, title, detail, remediation, refs = _WEB_AUTH[kind]
         # Folded only into a finding at least as severe (an unresolved caller origin is LOW).
         if (file, line) in signed and existing is not None and existing.severity.rank >= severity.rank:

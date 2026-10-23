@@ -351,7 +351,7 @@ class _Project:
                 continue
             try:
                 tree = ast.parse(content)
-            except (SyntaxError, ValueError, RecursionError):
+            except (SyntaxError, ValueError, RecursionError, MemoryError):  # MemoryError: parser stack overflow
                 self.profile.unparsed.append(path)
                 continue
             module = _module_name(path)

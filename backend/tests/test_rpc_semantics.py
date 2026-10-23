@@ -5,6 +5,8 @@ and a safe near miss; SDK versions come from a synthetic lockfile record."""
 
 from __future__ import annotations
 
+import time
+
 from backend.app.config import Settings
 from backend.app.models import AgentArtifact, SourceKind
 from backend.app.stellar import sdk_semantics as sdk
@@ -202,15 +204,189 @@ export async function POST(req: any) {
     assert found[FINAL].severity.value == "low"
 
 
-def test_a_tool_that_reports_the_send_status_is_low_and_one_that_says_pending_is_not_reported():
+def test_a_tool_that_hands_back_only_the_hash_is_low_and_one_that_reports_the_status_or_pending_is_not():
     tool = TS_HEAD + '''server2.registerTool("invoke", {}, async (args: any) => {
   const submission = await server.sendTransaction(args.tx);
-  return { content: [{ type: "text", text: JSON.stringify({ status: submission.status, hash: submission.hash }) }] };
+  return { content: [{ type: "text", text: JSON.stringify({ hash: submission.hash }) }] };
 });
 '''
     assert native({"src/tools.ts": tool}, npm())[FINAL].severity.value == "low"
-    honest = tool.replace("status: submission.status", 'note: "submitted, still pending"')
+    # The RPC's own status (PENDING, DUPLICATE, TRY_AGAIN_LATER, ERROR) tells the caller it is not final.
+    status = tool.replace("{ hash: submission.hash }", "{ status: submission.status, hash: submission.hash }")
+    assert FINAL not in native({"src/tools.ts": status}, npm())
+    logged = tool.replace("  return {", '  console.log("sent", submission.status);\n  return {')
+    assert FINAL not in native({"src/tools.ts": logged}, npm())
+    honest = tool.replace("hash: submission.hash", 'note: "submitted, still pending", hash: submission.hash')
     assert FINAL not in native({"src/tools.ts": honest}, npm())
+
+
+def test_a_status_handed_on_next_to_a_paid_write_or_a_success_label_is_still_reported():
+    checkout = TS_HEAD + '''export async function checkout(orderId: string, tx: any) {
+  const sent = await server.sendTransaction(tx);
+  console.log("send status", sent.status);
+  await db.orders.update({ id: orderId, paid: true, hash: sent.hash });
+}
+'''
+    # Logging the status does not undo the write that marks the order paid.
+    assert native({"src/checkout.ts": checkout}, npm())[FINAL].severity.value == "medium"
+    returned = checkout.replace('  console.log("send status", sent.status);\n', "").replace(
+        "hash: sent.hash });\n", "hash: sent.hash });\n  return { status: sent.status };\n")
+    assert native({"src/checkout.ts": returned}, npm())[FINAL].severity.value == "medium"
+    # A tool that hands back the status but calls the outcome a success is not the decided case.
+    tool = TS_HEAD + '''server2.registerTool("invoke", {}, async (args: any) => {
+  const submission = await server.sendTransaction(args.tx);
+  return { success: true, status: "confirmed", rpcStatus: submission.status, hash: submission.hash };
+});
+'''
+    assert native({"src/tools.ts": tool}, npm())[FINAL].severity.value == "low"
+    labelled = tool.replace('success: true, status: "confirmed", rpcStatus', "status")
+    assert FINAL not in native({"src/tools.ts": labelled}, npm())
+    # A status logged, or returned on another branch, does not hide a return that says confirmed.
+    mcp = TS_HEAD + "server2.tool('submit', {}, async (args: any) => {\n" \
+                    "  const r = await server.sendTransaction(args.tx);\n  BODY\n});\n"
+    for body in ("console.log('sent', r.status);\n  return { content: [{ type: 'text', text: `Payment confirmed: ${r.hash}` }] };",
+                 "if (r.status !== 'PENDING') return { content: [{ type: 'text', text: JSON.stringify({ status: r.status }) }] };\n"
+                 "  return { content: [{ type: 'text', text: 'Payment complete: ' + r.hash }] };"):
+        assert native({"src/tools.ts": mcp.replace("BODY", body)}, npm())[FINAL].severity.value == "low", body
+    # An instruction or an error next to the status is not a claim that the outcome is final.
+    for extra in ("next: 'Call get_transaction with this hash to confirm the result'",
+                  "error: r.errorResult ? 'Transaction failed to complete' : null",
+                  "note: r.status === 'ERROR' ? 'Payment was not successful' : ''"):
+        body = "return { content: [{ type: 'text', text: JSON.stringify({ status: r.status, hash: r.hash, " + extra + " }) }] };"
+        assert FINAL not in native({"src/tools.ts": mcp.replace("BODY", body)}, npm()), extra
+
+
+def test_rpc_clients_from_the_rpc_entry_point_a_destructured_class_or_a_factory_are_rpc_sends():
+    body = '''export async function checkout(order: string, tx: any) {
+  const r = await SEND(tx);
+  await markPaid(order, r.hash);
+}
+'''
+    heads = {
+        "server": 'import { Server } from "@stellar/stellar-sdk/rpc";\nconst server = new Server(process.env.RPC_URL!);\n',
+        "client": 'import { rpc } from "@stellar/stellar-sdk";\nconst { Server: RpcServer } = rpc;\n'
+                  'const client = new RpcServer(process.env.RPC_URL!);\n',
+        "rpcServer": 'import { rpc } from "@stellar/stellar-sdk";\n'
+                     'function getRpc() { return new rpc.Server(process.env.RPC_URL!); }\nconst rpcServer = getRpc();\n',
+        "chain": 'import { rpc } from "@stellar/stellar-sdk";\n'
+                 'async function connect(url: string): Promise<rpc.Server> { return makeIt(url); }\nconst chain = await connect(URL);\n',
+    }
+    for name, head in heads.items():
+        assert native({"src/pay.ts": head + body.replace("SEND", f"{name}.sendTransaction")}, npm())[FINAL].severity.value == "medium", name
+    # A factory of something else, or a `Server` from another package, is not one.
+    other = 'import { Server } from "./mock";\nimport { Keypair } from "@stellar/stellar-sdk";\nconst server = new Server(URL);\n'
+    assert FINAL not in native({"src/pay.ts": other + body.replace("SEND", "server.sendTransaction")}, npm())
+    horizon = 'import { Horizon } from "@stellar/stellar-sdk";\nfunction getRpc() { return new Horizon.Server(URL); }\n' \
+              'const rpcServer = getRpc();\n'
+    assert FINAL not in native({"src/pay.ts": horizon + body.replace("SEND", "rpcServer.sendTransaction")}, npm())
+    # A factory method called on `this`.
+    payer = '''import { rpc } from "@stellar/stellar-sdk";
+export class Payer {
+  private rpc: any;
+  private makeRpc() { return new rpc.Server(process.env.RPC_URL!); }
+  async init() { this.rpc = await this.makeRpc(); }
+  async checkout(order: string, tx: any) {
+    const r = await this.rpc.sendTransaction(tx);
+    await markPaid(order, r.hash);
+  }
+}
+'''
+    assert native({"src/pay.ts": payer}, npm())[FINAL].severity.value == "medium"
+
+
+def test_k1_costs_grow_with_the_sends_not_with_sends_times_function_size():
+    started = time.perf_counter()
+    sends = TS_HEAD + "export async function s(tx: any) {\n" + "".join(
+        f"  const r{i} = await server.sendTransaction(tx);\n  console.log(r{i}.status);\n  await markPaid(r{i}.hash);\n"
+        for i in range(1500)) + "}\n"
+    assert native({"src/a.ts": sends}, npm())[FINAL].severity.value == "medium"
+    # Many distinct receivers: the project's client bindings are read once, not once per name.
+    receivers = TS_HEAD + "".join(f"export async function s{i}(tx: any) {{ const r = await rpc{i}.sendTransaction(tx); "
+                                  f"await markPaid(r.hash); }}\n" for i in range(3000))
+    assert FINAL not in native({f"src/m{k}.ts": receivers.replace("function s", f"function s{k}_") for k in range(3)}, npm())
+    # One name reused by every send, and a getTransaction per send: still one walk per function.
+    reused = TS_HEAD + "export async function s(tx: any) {\n  let r: any;\n" + "".join(
+        "  r = await server.sendTransaction(tx);\n  await markPaid(r.hash);\n"
+        "  const g = await server.getTransaction(r.hash);\n  if (g.status !== 'FAILED') ok();\n" for _ in range(1500)) + "}\n"
+    native({"src/r.ts": reused}, npm())
+    assert time.perf_counter() - started < 10
+
+
+def test_k1_costs_stay_linear_in_nested_functions():
+    # Each nested function sends, marks paid, calls the next one with the result, or reads a
+    # getTransaction status under one shared name. Uses, callers, polling callees and status
+    # tests are read from per-file indexes, and no tree-sitter parent lookup (whose cost is the
+    # node's depth) runs per send: 1,500 levels took minutes before.
+    depth = 1500
+    started = time.perf_counter()
+    nested = TS_HEAD + "".join(f"async function g{i}(tx: any) {{ const r{i} = await server.sendTransaction(tx); "
+                               f"await markPaid(r{i}.hash);\n" for i in range(depth)) + "}\n" * depth
+    assert native({"src/a.ts": nested}, npm())[FINAL].severity.value == "medium"
+    calls = TS_HEAD + "".join(f"async function g{i}(tx: any) {{ const r{i} = await server.sendTransaction(tx); "
+                              f"await g{i + 1}(r{i}.hash);\n" for i in range(depth)) + "}\n" * depth
+    assert FINAL not in native({"src/b.ts": calls}, npm())
+    statuses = TS_HEAD + "".join(f"async function g{i}(h: any) {{ const r = await server.getTransaction(h); "
+                                 f"const ok{i} = r.status !== 'FAILED';\n" for i in range(depth)) + "}\n" * depth
+    assert "stellar_native-rpc-outcome-not-success-checked" in native({"src/c.ts": statuses}, npm())
+    assert time.perf_counter() - started < 10
+
+
+def test_k1b_judges_a_status_test_against_the_binding_it_reads():
+    # The inner function binds its own `r` and compares it with SUCCESS; the outer test reads
+    # the outer `r`, which nothing compares with SUCCESS.
+    source = TS_HEAD + '''export async function outer(h: string) {
+  const r = await server.getTransaction(h);
+  const done = r.status !== "FAILED";
+  async function inner(k: string) {
+    const r = await server.getTransaction(k);
+    const landed = r.status !== "FAILED";
+    if (r.status === "SUCCESS") return landed;
+  }
+  return done;
+}
+'''
+    found = native({"src/c.ts": source}, npm())["stellar_native-rpc-outcome-not-success-checked"]
+    assert "src/c.ts:5" in found.evidence and "src/c.ts:8" not in found.evidence
+
+
+def test_only_a_stellar_rpc_client_is_an_rpc_send():
+    evm = '''import { JsonRpcProvider } from "ethers";
+import { markPaid } from "./orders";
+const rpcClient = new JsonRpcClient(process.env.EVM_URL);
+export async function payOrder(order: any, signedTx: string) {
+  const r = await rpcClient.sendTransaction(signedTx);
+  await markPaid(order, r.hash);
+}
+'''
+    assert FINAL not in native({"src/evm.ts": evm}, npm())
+    # A name alone does not make a Stellar RPC client, even in a Stellar file.
+    named = 'import { Keypair } from "@stellar/stellar-sdk";\n' + evm
+    assert FINAL not in native({"src/evm.ts": named}, npm())
+    # A client built in the project's clients module is one.
+    clients = 'import { rpc } from "@stellar/stellar-sdk";\nexport const stellar = { rpc: new rpc.Server(process.env.RPC_URL!) };\n'
+    pay = '''import { TransactionBuilder } from "@stellar/stellar-sdk";
+import { stellar } from "./clients";
+export async function payOrder(order: any, tx: any) {
+  const r = await stellar.rpc.sendTransaction(tx);
+  await markPaid(order, r.hash);
+}
+'''
+    assert native({"src/clients.ts": clients, "src/pay.ts": pay}, npm())[FINAL].severity.value == "medium"
+    # A name bound to an RPC client in one file and to an EVM provider in another: in the second
+    # file its own binding wins.
+    stellar = 'import { rpc } from "@stellar/stellar-sdk";\nexport const client = new rpc.Server(process.env.RPC_URL!);\n'
+    multichain = '''import { ethers } from "ethers";
+import { Keypair } from "@stellar/stellar-sdk";
+const client = new ethers.JsonRpcProvider(URL);
+export async function payEvm(order: string, tx: any) {
+  const r = await client.sendTransaction(tx);
+  await markPaid(order, r.hash);
+}
+'''
+    assert FINAL not in native({"src/stellar.ts": stellar, "src/evm.ts": multichain}, npm())
+    same = multichain.replace("new ethers.JsonRpcProvider(URL)", "new rpc.Server(URL)").replace(
+        'import { Keypair } from "@stellar/stellar-sdk";', 'import { Keypair, rpc } from "@stellar/stellar-sdk";')
+    assert native({"src/stellar.ts": stellar, "src/evm.ts": same}, npm())[FINAL].severity.value == "medium"
 
 
 def test_an_evm_wallet_send_transaction_is_not_an_rpc_send():
@@ -310,7 +486,9 @@ def build_cmd(fn, args, send=None):
 
 
 def test_a_claim_released_after_a_cli_submission_fails_is_reported():
-    flow = '''def execute(repo, client, intent_id, amount):
+    flow = '''from escrow.chain import Client
+
+def execute(repo, client: Client, intent_id, amount):
     if not repo.claim_escrow(intent_id):
         return None
     try:
@@ -321,7 +499,283 @@ def test_a_claim_released_after_a_cli_submission_fails_is_reported():
     return result
 '''
     found = hardening({"escrow/chain.py": PY_CLI, "escrow/flow.py": flow})
-    assert found[RETRY].severity.value == "medium" and "escrow/flow.py:6" in found[RETRY].evidence
+    assert found[RETRY].severity.value == "medium" and "escrow/flow.py:8" in found[RETRY].evidence
+    # Typed as a Protocol: its stub stands for the classes the project builds where the
+    # Protocol is expected (a factory, an annotated name, an argument) or that subclass it.
+    protocol = "from typing import Protocol\n\nclass Chain(Protocol):\n    def create(self, amount): ...\n"
+    typed = flow.replace("from escrow.chain import Client", "from escrow.port import Chain").replace("client: Client", "client: Chain")
+    for wiring in ("from escrow.chain import Client\n\ndef make_chain() -> Chain:\n    return Client()\n",
+                   "from escrow.chain import Client\n\ndef make_chain():\n    chain: Chain = Client()\n    return chain\n",
+                   "from escrow.chain import Client\nfrom escrow.flow import execute\n\ndef main(repo):\n"
+                   "    client = Client()\n    return execute(repo, client, 'i1', 5)\n"):
+        files = {"escrow/chain.py": PY_CLI, "escrow/port.py": protocol, "escrow/flow.py": typed, "escrow/main.py": wiring}
+        assert RETRY in hardening(files), wiring
+    subclass = PY_CLI.replace("import subprocess\n", "import subprocess\nfrom escrow.port import Chain\n").replace("class Client:", "class Client(Chain):")
+    assert RETRY in hardening({"escrow/chain.py": subclass, "escrow/port.py": protocol, "escrow/flow.py": typed})
+    # A class that only shares the method name does not stand for the Protocol.
+    assert RETRY not in hardening({"escrow/chain.py": PY_CLI, "escrow/port.py": protocol, "escrow/flow.py": typed})
+    # An unknown receiver is not resolved by method name: `client.create` could be anything.
+    untyped = flow.replace("client: Client", "client")
+    assert RETRY not in hardening({"escrow/chain.py": PY_CLI, "escrow/flow.py": untyped})
+
+
+def test_a_method_name_shared_with_a_submitting_class_is_not_a_submission():
+    limits = '''import sqlite3
+
+class SpendLimits:
+    def __init__(self, path):
+        self.conn = sqlite3.connect(path)
+
+    def reserve(self, amount):
+        cur = self.conn.cursor()
+        try:
+            cur.execute("UPDATE budget SET reserved = reserved + ?", (amount,))
+            self.conn.commit()
+        except Exception:
+            self.release_budget(amount)
+            raise
+
+    def release_budget(self, amount):
+        self.conn.execute("UPDATE budget SET reserved = reserved - ?", (amount,))
+'''
+    submitter = '''from stellar_sdk import Server
+
+class Submitter:
+    def __init__(self, url):
+        self.server = Server(url)
+
+    def execute(self, envelope):
+        return self.server.submit_transaction(envelope)
+'''
+    assert RETRY not in hardening({"agent/limits.py": limits, "agent/submitter.py": submitter})
+    # The same release around a call that does reach the submitting class is reported.
+    owned = limits.replace("import sqlite3\n", "import sqlite3\nfrom agent.submitter import Submitter\n") \
+        .replace("        self.conn = sqlite3.connect(path)\n", "        self.conn = sqlite3.connect(path)\n        self.chain = Submitter(URL)\n") \
+        .replace("            cur.execute(\"UPDATE budget SET reserved = reserved + ?\", (amount,))\n",
+                 "            self.chain.execute(envelope)\n")
+    assert RETRY in hardening({"agent/limits.py": owned, "agent/submitter.py": submitter})
+    ts_limits = TS_HEAD + '''export class Limits {
+  async reserve(db: any, amount: string) {
+    try {
+      await db.execute("UPDATE budget SET reserved = reserved + ?", [amount]);
+    } catch (e) {
+      await this.releaseBudget(amount);
+      throw e;
+    }
+  }
+  async releaseBudget(amount: string) {}
+}
+'''
+    ts_submitter = TS_HEAD + "export class Submitter {\n  async execute(tx: any) { return server.sendTransaction(tx); }\n}\n"
+    assert RETRY not in hardening({"src/limits.ts": ts_limits, "src/submitter.ts": ts_submitter})
+    ts_owned = ts_limits.replace("async reserve(db: any, amount: string)", "async reserve(db: Submitter, amount: string)")
+    assert RETRY in hardening({"src/limits.ts": ts_owned, "src/submitter.ts": ts_submitter})
+    # A database cursor typed as a Protocol with an `execute` stub stands for no submitting class.
+    cursor = '''from typing import Protocol
+
+
+class Cursor(Protocol):
+    def execute(self, sql: str): ...
+
+
+class Budget:
+    def charge(self, cur: Cursor, amount):
+        self.reserve_budget(amount)
+        try:
+            cur.execute("UPDATE budget SET spent = spent + 1")
+        except Exception:
+            self.release_budget(amount)
+            raise
+'''
+    assert RETRY not in hardening({"agent/limits.py": cursor, "agent/submitter.py": submitter})
+    # The same Protocol does stand for the submitting class once the project passes one for it.
+    wired = cursor + "\n\ndef run(budget: Budget, url):\n    budget.charge(Submitter(url), 5)\n"
+    wired = "from agent.submitter import Submitter\n" + wired
+    assert RETRY in hardening({"agent/limits.py": wired, "agent/submitter.py": submitter})
+
+
+def test_a_protocol_parameter_stands_only_for_classes_passed_to_its_own_function():
+    # The submitting class is passed to another function or method that only shares the name
+    # (and the parameter position or keyword) of the one whose parameter is typed as the
+    # Protocol: the database cursor still stands for no submitting class.
+    chain = '''from stellar_sdk import Server
+
+class Submitter:
+    def __init__(self):
+        self.server = Server("https://horizon-testnet.stellar.org")
+
+    def execute(self, envelope):
+        return self.server.submit_transaction(envelope)
+'''
+    limits = '''from typing import Protocol
+
+
+class Cursor(Protocol):
+    def execute(self, sql: str): ...
+
+
+class Budget:
+    def charge(self, cur: Cursor, amount):
+        self.reserve_budget(amount)
+        try:
+            cur.execute("UPDATE budget SET spent = spent + 1")
+        except Exception:
+            self.release_budget(amount)
+            raise
+
+
+def settle(cur: Cursor, amount):
+    reserve_budget(amount)
+    try:
+        cur.execute("UPDATE budget SET spent = spent + 1")
+    except Exception:
+        release_budget(amount)
+        raise
+'''
+    wallet = "\n\nclass Wallet:\n    def charge(self, submitter: Submitter, amount):\n        return submitter.execute(amount)\n"
+    for wiring in (wallet + "\n\ndef run(wallet: Wallet):\n    wallet.charge(Submitter(), 5)\n",
+                   wallet + "\n\ndef run(wallet: Wallet):\n    s = Submitter()\n    wallet.charge(s, 5)\n",
+                   wallet.replace("submitter", "cur") + "\n\ndef run(wallet: Wallet):\n    wallet.charge(cur=Submitter(), amount=5)\n",
+                   wallet + "\n\ndef run(wallet):\n    wallet.charge(Submitter(), 5)\n",  # receiver unknown
+                   wallet + "\n    def run(self):\n        self.charge(Submitter(), 5)\n",
+                   "\n\ndef settle(sub: Submitter, amount):\n    return sub.execute(amount)\n\n\ndef run():\n    settle(Submitter(), 5)\n",
+                   # Two classes named Budget: the call may run either, so it says nothing.
+                   wallet.replace("Wallet", "Budget") + "\n\ndef run():\n    Budget().charge(Submitter(), 5)\n"):
+        assert RETRY not in hardening({"agent/chain.py": chain + wiring, "agent/limits.py": limits}), wiring
+    # Passed to the function whose parameter is typed as the Protocol, through a call that
+    # resolves to it, the submitting class does stand for the Protocol.
+    for wiring in ("\nfrom agent.limits import Budget\n\ndef run():\n    s = Submitter()\n    Budget().charge(s, 5)\n",
+                   "\nfrom agent.limits import Budget\n\ndef run(budget: Budget):\n    budget.charge(cur=Submitter(), amount=5)\n",
+                   "\nfrom agent.limits import settle\n\ndef run():\n    settle(Submitter(), 5)\n",
+                   "\nfrom agent import limits\n\ndef settle(sub: Submitter):\n    return sub\n\n\n"
+                   "def run():\n    limits.settle(Submitter(), 5)\n"):
+        assert hardening({"agent/chain.py": chain + wiring, "agent/limits.py": limits})[RETRY].severity.value == "medium", wiring
+
+
+def test_k3_passed_classes_resolve_each_file_imports_once():
+    # Every call that passes a project class is resolved through its receiver once a Protocol
+    # is in play; the receiver's imports come from one index per file, not one scan of the
+    # module body per receiver name (3,000 receivers over 20,000 statements took 9 s).
+    started = time.perf_counter()
+    body = "from typing import Protocol\nclass P(Protocol):\n    def go(self, tx): ...\n" + \
+        "".join(f"v{i} = {i}\n" for i in range(20000)) + \
+        "class C:\n    def take(self, p, tx):\n        return p\n\nclass D:\n    pass\n\ndef wire(tx):\n" + \
+        "".join(f"    c{i}.take(D(), tx)\n" for i in range(3000)) + \
+        "def run(c: P, tx):\n    try:\n        return c.go(tx)\n    except Exception:\n        release(tx)\n        raise\n"
+    assert RETRY not in hardening({"agent/a.py": "from stellar_sdk import Server\n" + body})
+    assert time.perf_counter() - started < 6
+
+
+def test_a_release_around_a_module_instance_an_inline_client_or_a_dotted_module_call_is_reported():
+    chain = '''from stellar_sdk import Server
+
+class StellarClient:
+    def __init__(self, url="https://horizon-testnet.stellar.org"):
+        self.server = Server(url)
+
+    def pay(self, envelope):
+        return self.server.submit_transaction(envelope)
+
+def submit_payment(envelope):
+    return Server("https://horizon-testnet.stellar.org").submit_transaction(envelope)
+
+client = StellarClient()
+'''
+    flow = '''HEAD
+def execute(budget, intent_id, envelope, amount):
+    budget.reserve(intent_id, amount)
+    try:
+        return CALL
+    except Exception:
+        budget.release(intent_id, amount)
+        raise
+'''
+    for head, call in (("from agent.chain import client", "client.pay(envelope)"),
+                       ("from agent.chain import StellarClient", "StellarClient().pay(envelope)"),
+                       ("import agent.chain", "agent.chain.submit_payment(envelope)")):
+        files = {"agent/chain.py": chain, "agent/flow.py": flow.replace("HEAD", head).replace("CALL", call)}
+        assert hardening(files)[RETRY].severity.value == "medium", call
+    # An instance of a class that does not submit is not a send.
+    quiet = chain.replace("client = StellarClient()", "class Ledger:\n    def pay(self, envelope):\n        return envelope\n\n"
+                                                      "client = Ledger()")
+    files = {"agent/chain.py": quiet, "agent/flow.py": flow.replace("HEAD", "from agent.chain import client")
+             .replace("CALL", "client.pay(envelope)")}
+    assert RETRY not in hardening(files)
+    service = TS_HEAD + '''export class StellarService {
+  async pay(tx: any) { return server.sendTransaction(tx); }
+}
+export const stellarService = new StellarService();
+'''
+    ts_flow = '''HEAD
+export async function execute(budget: any, id: string, tx: any) {
+  await budget.reserve(id);
+  try {
+    return await CALL;
+  } catch (e) {
+    await budget.release(id);
+    throw e;
+  }
+}
+'''
+    for head, call in (('import { stellarService } from "./chain";', "stellarService.pay(tx)"),
+                       ('import { StellarService } from "./chain";', "new StellarService().pay(tx)")):
+        files = {"src/chain.ts": service, "src/flow.ts": ts_flow.replace("HEAD", head).replace("CALL", call)}
+        assert hardening(files)[RETRY].severity.value == "medium", call
+    ledger = service.replace("return server.sendTransaction(tx);", "return tx;")
+    files = {"src/chain.ts": ledger, "src/flow.ts": ts_flow.replace("HEAD", 'import { stellarService } from "./chain";')
+             .replace("CALL", "stellarService.pay(tx)")}
+    assert RETRY not in hardening(files)
+
+
+def test_k3_resolution_reads_each_name_once_per_project():
+    started = time.perf_counter()
+    head = "from stellar_sdk import Server\n"
+    files = {f"agent/m{k}.py": head + "".join(f"class I{k}_{i}:\n    def go(self, tx):\n        return I{k}_{(i + 1) % 1500}().go(tx)\n"
+                                              for i in range(1500)) for k in range(3)}
+    files["agent/run.py"] = head + '''from typing import Protocol
+
+class P(Protocol):
+    def go(self, tx): ...
+
+def run(c: P, budget, tx):
+    try:
+        return c.go(tx)
+    except Exception:
+        budget.release_reserved(tx)
+        raise
+'''
+    assert RETRY not in hardening(files)
+    ts = TS_HEAD + "".join(f"class C{i} {{ async go(tx: any): Promise<any> {{ return new C{(i + 1) % 2500}().go(tx); }} }}\n"
+                           for i in range(2500)) + '''export async function run(c: C0, budget: any, tx: any) {
+  try { return await c.go(tx); } catch (e) { await budget.releaseReserved(tx); throw e; }
+}
+'''
+    assert RETRY not in hardening({"src/a.ts": ts})
+    assert time.perf_counter() - started < 15
+
+
+def test_k3_receiver_classes_are_read_once_per_function_and_file():
+    # One function with thousands of distinct receivers, each call in a try block that
+    # releases: the receiver's class comes from one index per function (Python) or per file
+    # (JavaScript), not one walk or two regex scans per name (2,000 receivers took 80 s).
+    count = 3000
+    started = time.perf_counter()
+    py = "from stellar_sdk import Server\nclass C:\n    def go(self, tx):\n        return 1\n\ndef run(tx):\n" + "".join(
+        f"    try:\n        c{i}.go(tx)\n    except Exception:\n        release(tx)\n        raise\n" for i in range(count))
+    assert RETRY not in hardening({"agent/a.py": py})
+    ts = TS_HEAD + "class C { go(tx: any) { return 1; } }\nexport async function run(tx: any) {\n" + "".join(
+        f"  try {{ await c{i}.go(tx); }} catch (e) {{ await release(tx); throw e; }}\n" for i in range(count)) + "}\n"
+    assert RETRY not in hardening({"src/a.ts": ts})
+    paid = TS_HEAD + "export async function run(tx: any) {\n" + "".join(
+        f"  try {{ await f{i}(tx); }} catch (e) {{ await release(tx); throw e; }}\n" for i in range(count)) + "}\n"
+    assert RETRY not in hardening({"src/b.ts": paid})
+    assert time.perf_counter() - started < 10
+    # The receiver index still resolves a built and a typed receiver.
+    service = TS_HEAD + "export class Payer { async go(tx: any) { return server.sendTransaction(tx); } }\n"
+    for line in ("  const p = new Payer();\n", ""):
+        flow = service + "export async function run(tx: any, q: Payer) {\n" + line + \
+            f"  try {{ await {'p' if line else 'q'}.go(tx); }} catch (e) {{ await releaseBudget(tx); throw e; }}\n}}\n"
+        assert RETRY in hardening({"src/c.ts": flow}), line
 
 
 def test_a_release_only_for_errors_raised_before_the_send_is_not_reported():
@@ -575,3 +1029,13 @@ def test_the_source_index_is_shared_by_copies_of_the_same_files():
     files = {"src/a.ts": TS_HEAD}
     assert index_for(files) is index_for(dict(files))
     assert index_for({"src/a.ts": TS_HEAD + "\n"}) is not index_for(files)
+
+
+def test_sdk_rules_skip_python_too_complex_to_parse():
+    # CPython raises MemoryError ("parser stack overflowed") for `a{{{...`, not SyntaxError.
+    deep = "x = a" + "{" * 3000 + "\n"
+    assert native({"agent.py": deep, "src/a.ts": TS_HEAD}, npm()) == {}
+    # The flow analysis and the hardening rules skip it too: the audit goes on.
+    from backend.app.swarm.codeflow import analyse_code
+    assert "agent.py" in analyse_code({"agent.py": deep, "pay.py": "x = 1\n"}).unparsed
+    assert isinstance(hardening({"agent.py": deep, "pay.py": "x = 1\n"}), dict)

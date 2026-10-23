@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import time
+
 from backend.app.models import AgentArtifact, SourceKind
 from backend.app.swarm.agentic_paths import analyse_agentic_paths
 from backend.app.swarm.auth_rules import classify_expiration
+from backend.app.swarm.codeflow import analyse_code
 from backend.app.swarm.hardening import analyse_hardening
 
 SIGNED = "security-path-external-transaction-signed"
@@ -357,3 +360,274 @@ def test_an_x402_scheme_registered_by_a_reported_wrapper_joins_that_finding():
     x402 = found["security-path-x402-payment-unbounded"]
     assert SIGNED not in found and EXPIRY not in found  # one finding per defect
     assert "mcp/src/stellar/scheme.ts:13" in x402.detail and "maxTimeoutSeconds" in x402.detail
+
+
+# ----------------------------------------------------------------- review: arithmetic, cost and depth
+def test_the_whole_offset_is_evaluated_with_operator_precedence():
+    def offset(expr, table=None):
+        found = classify_expiration(expr, lambda name: (table or {}).get(name))
+        return found and (found.severity.value, found.note.split(" ledgers")[0].rsplit(" ", 1)[-1])
+    # Seconds divided by the ledger time: 300 s is 60 ledgers, 3600 s is 720 (an hour: low).
+    assert offset("latest.sequence + 300 / LEDGER_SECONDS", {"LEDGER_SECONDS": "5"}) is None
+    assert offset("latest + 3600 / 5") == ("low", "720")
+    assert offset("latest + 1000 - 900") is None  # 100 ledgers: the default
+    assert offset("latest + 5000 - 100") == ("medium", "4900")
+    assert offset("latest + 60 * 12") == ("low", "720")
+    assert offset("latest + 1000 - window") is None  # not a constant: no partial offset
+    assert offset("latest_ledger.saturating_add(17_280)") == ("medium", "17280")
+    assert offset("latest + 100 if fast else latest + 5000") == ("medium", "5000")
+    ts = ("import { authorizeEntry, Keypair, rpc } from '@stellar/stellar-sdk';\nconst server = new rpc.Server(URL);\n"
+          "const LEDGER_SECONDS = 5;\nexport async function sign(entry: any, kp: Keypair) {\n"
+          "  const latest = await server.getLatestLedger();\n"
+          "  return authorizeEntry(entry, kp, latest.sequence + 300 / LEDGER_SECONDS, PASS);\n}\n")
+    assert EXPIRY not in paths({"src/pay.ts": ts})
+    assert paths({"src/pay.ts": ts.replace("300 / LEDGER_SECONDS", "3600 / LEDGER_SECONDS")})[EXPIRY].severity.value == "low"
+
+
+def test_a_huge_or_nested_expiry_costs_little():
+    started = time.perf_counter()
+    hostile = '"' + "+(" * 8000 + ")" * 8000 + '"'
+    assert classify_expiration("until", {"until": "latest + PAD", "PAD": hostile}.get) is None
+    assert classify_expiration("latest + " + "+(" * 50_000 + "1" + ")" * 50_000, lambda n: None) is None
+    assert classify_expiration("x" + ".saturating_add(x" * 5000 + ")" * 5000, lambda n: None) is None
+    many = " + ".join(f"a{i}" for i in range(3000))
+    assert classify_expiration(f"latest + {many}", lambda n: "1") is None
+    ts = ("import { authorizeEntry } from '@stellar/stellar-sdk';\n"
+          f"const PAD = {hostile};\nexport async function sign(entry: any, kp: any, latest: number) {{\n"
+          "  return authorizeEntry(entry, kp, latest + PAD, PASS);\n}\n")
+    paths({"src/pay.ts": ts})
+    assert time.perf_counter() - started < 5
+
+
+def test_python_expressions_too_deep_to_unparse_keep_the_flow_analysis():
+    deep = " + ".join(['"x"'] * 450)
+    cli = f"import subprocess\ndef run():\n    return subprocess.run('stellar contract invoke ' + {deep}, shell=False)\n"
+    profile = analyse_code({"cli.py": cli})
+    assert profile.error == "" and "code_execution" in profile.capabilities
+    signer = ("import os\nfrom stellar_sdk import Keypair, Network\nfrom stellar_sdk.auth import authorize_entry\n"
+              f"POLICY_TEXT = {deep}\n"
+              "def sign(entry, latest):\n    kp = Keypair.from_secret(os.environ['AGENT_SECRET'])\n"
+              f"    return authorize_entry(entry, kp, latest + {' + '.join(['1'] * 450)}, Network.TESTNET_NETWORK_PASSPHRASE)\n")
+    profile = analyse_code({"signer.py": signer})
+    assert profile.error == "" and {"key_custody", "stellar_signing"} <= set(profile.capabilities)
+    # The expiration, too deep to unparse, is read from the source: 450 ledgers.
+    assert [f.detail for f in profile.facts if f.kind == "auth_expiration"] == \
+        ["signatures stay valid for 450 ledgers, against 100 by default"]
+
+
+_PY_LOGIN_AND_DEPOSIT = '''import os
+import httpx
+from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder
+from stellar_sdk.auth import authorize_entry
+from stellar_sdk.sep.stellar_web_authentication import read_challenge_transaction
+
+KP = Keypair.from_secret(os.environ["AGENT_SECRET"])
+RPC = SorobanServer(os.environ["RPC_URL"])
+
+
+def anchor_login(web_auth_endpoint, home_domain, server_key):
+    challenge = httpx.get(web_auth_endpoint, params={"account": KP.public_key}).json()["transaction"]
+    read_challenge_transaction(challenge, server_key, home_domain, home_domain, Network.TESTNET_NETWORK_PASSPHRASE)
+
+
+def deposit(vault, amount):
+    tx = TransactionBuilder(RPC.load_account(KP.public_key), Network.TESTNET_NETWORK_PASSPHRASE, 100) \\
+        .append_invoke_contract_function_op(vault, "deposit", []).set_timeout(30).build()
+    authorization_entries = RPC.simulate_transaction(tx).results[0].auth
+    latest = RPC.get_latest_ledger().sequence
+    return [authorize_entry(e, KP, latest + 60, Network.TESTNET_NETWORK_PASSPHRASE) for e in authorization_entries]
+'''
+
+
+def test_entries_from_the_agents_own_simulation_are_not_sep45():
+    # A checked SEP-10 login and a deposit that signs its own simulation's entries: no SEP-45 flow.
+    assert "security-sep45-entries-unchecked" not in paths({"stellar_tools.py": _PY_LOGIN_AND_DEPOSIT})
+    # Entries that come from a contract web-auth server's response are.
+    sep45 = _PY_LOGIN_AND_DEPOSIT + '''
+
+def contract_login(toml, contract_account):
+    endpoint = toml["WEB_AUTH_FOR_CONTRACTS_ENDPOINT"]
+    entries = httpx.get(endpoint, params={"account": contract_account}).json()["authorization_entries"]
+    latest = RPC.get_latest_ledger().sequence
+    return [authorize_entry(e, KP, latest + 10, Network.TESTNET_NETWORK_PASSPHRASE) for e in entries]
+'''
+    assert paths({"stellar_tools.py": sep45})["security-sep45-entries-unchecked"].severity.value == "high"
+
+
+_TS_TOOLS = """
+import { Keypair, TransactionBuilder, Networks } from '@stellar/stellar-sdk';
+import { Wallet } from '@stellar/typescript-wallet-sdk';
+import { readFileSync } from 'node:fs';
+const kp = Keypair.fromSecret(process.env.AGENT_SECRET!);
+const wallet = Wallet.TestNet();
+export function registerTools(server: any) {
+  server.tool('login', { homeDomain: z.string() }, async (args: any) => {
+    // SEP-10 through the wallet SDK, which validates the challenge.
+    const auth = await wallet.anchor({ homeDomain: args.homeDomain }).sep10();
+    return { content: [{ type: 'text', text: (await auth.authenticate({ accountKp: wallet.signer })).token }] };
+  });
+  server.tool('history', {}, async () => {
+    const r = await fetch(`https://api.example.org/payments?account=${kp.publicKey()}`);
+    return { content: [{ type: 'text', text: await r.text() }] };
+  });
+  server.tool('sign_payout', {}, async () => {
+    const tx = TransactionBuilder.fromXDR(readFileSync('./queue/payout.xdr', 'utf8'), Networks.TESTNET);
+    tx.sign(kp);
+    return { content: [{ type: 'text', text: tx.toXDR() }] };
+  });
+}
+"""
+
+
+def test_an_account_query_and_a_later_signature_are_not_a_sep10_challenge():
+    assert "security-sep10-challenge-unchecked" not in paths({"src/tools.ts": _TS_TOOLS})
+    # The envelope that reaches the signature through helpers from WEB_AUTH_ENDPOINT is one.
+    flow = _TS_TOOLS.replace("    const tx = TransactionBuilder.fromXDR(readFileSync('./queue/payout.xdr', 'utf8'), Networks.TESTNET);\n",
+                             "    const toml = await fetchText(`https://${DOMAIN}/.well-known/stellar.toml`);\n"
+                             "    const webAuthEndpoint = parseToml(toml, 'WEB_AUTH_ENDPOINT');\n"
+                             "    const challenge = await fetchJson(challengeUrl(webAuthEndpoint, kp.publicKey()));\n"
+                             "    const payload = checkShape(challenge);\n"
+                             "    const tx = TransactionBuilder.fromXDR(payload.transaction, Networks.TESTNET);\n")
+    assert paths({"src/tools.ts": flow})["security-sep10-challenge-unchecked"].severity.value == "high"
+    py = ("import httpx\nfrom stellar_sdk import TransactionEnvelope\n"
+          "def login(web_auth_endpoint, kp, passphrase):\n"
+          "    challenge = httpx.get(web_auth_endpoint, params={'account': kp.public_key}).json()['transaction']\n"
+          "    envelope = TransactionEnvelope.from_xdr(challenge, passphrase)\n    envelope.sign(kp)\n"
+          "    return httpx.post(web_auth_endpoint, json={'transaction': envelope.to_xdr()}).json()['token']\n")
+    assert paths({"sep10.py": py})["security-sep10-challenge-unchecked"].severity.value == "high"
+
+
+def test_web_auth_evidence_quotes_the_line_it_numbers():
+    shifted = "const LABEL = 'a b\x0cc';" + _SEP10
+    finding = paths({"src/tools/seps.ts": shifted})["security-sep10-challenge-unchecked"]
+    assert "src/tools/seps.ts:9 `tx.sign(kp);`" in finding.evidence
+
+
+def test_one_tools_challenge_response_does_not_taint_anothers_signature():
+    tools = """
+server.tool('login', {}, async () => {
+  const webAuthEndpoint = parseToml(await fetchText(TOML_URL), 'WEB_AUTH_ENDPOINT');
+  const res = await fetchJson(`${webAuthEndpoint}?account=${kp.publicKey()}`);
+  return WebAuth.readChallengeTx(res.transaction, SERVER_KEY, PASS, DOMAIN, HOST);
+});
+server.tool('cosign', {}, async () => {
+  const res = await fetchJson(QUEUE_URL);
+  const tx = TransactionBuilder.fromXDR(res.xdr, PASS);
+  tx.sign(kp);
+  return tx.toXDR();
+});
+""".replace("WebAuth.readChallengeTx(res.transaction, SERVER_KEY, PASS, DOMAIN, HOST)", "res.transaction")
+    assert "security-sep10-challenge-unchecked" not in paths({"src/tools.ts": tools})
+
+
+def test_web_auth_skips_python_too_complex_to_parse():
+    # CPython raises MemoryError ("parser stack overflowed") for `a{{{...`, not SyntaxError.
+    from backend.app.swarm.auth_rules import web_auth_hits
+    assert web_auth_hits({"sep10.py": "WEB_AUTH_ENDPOINT = 1\nx = a" + "{" * 3000 + "\n"}) == []
+
+
+def test_web_auth_flow_is_linear_in_the_bindings_and_keeps_long_chains():
+    # Each function's flow reads the file's bindings once; a taint that grows by one name per
+    # binding never rebuilds a pattern, and a chain longer than 2,000 bindings still reaches
+    # the parse and the signature.
+    from backend.app.swarm.auth_rules import web_auth_hits
+    head = "import { Keypair, TransactionBuilder, Networks, authorizeEntry } from '@stellar/stellar-sdk';\n" \
+           "const kp = Keypair.fromSecret(process.env.S!);\n"
+    chain = "".join(
+        f"export async function login{k}(toml: any) {{\n  const a0 = await fetchJson(`${{toml.WEB_AUTH_ENDPOINT}}?account=x`);\n"
+        + "".join(f"  const a{i} = a{i - 1};\n" for i in range(1, 2500))
+        + "  const tx = TransactionBuilder.fromXDR(a2499.transaction, Networks.TESTNET);\n  tx.sign(kp);\n}\n" for k in range(4))
+    signs = "export async function enter(toml: any) {\n" \
+            "  const r = await fetch(`${toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT}?account=x`);\n" \
+            "  const { authorization_entries } = await r.json();\n" + "".join(
+                f"  const e{i} = authorization_entries[{i}];\n  await authorizeEntry(e{i}, kp, latest + 10, PASS);\n"
+                for i in range(3000)) + "}\n"
+    py = "import httpx\nfrom stellar_sdk import TransactionEnvelope\ndef login(web_auth_endpoint, kp):\n" \
+         "    a0 = httpx.get(web_auth_endpoint, params={'account': kp.public_key}).json()\n" \
+         + "".join(f"    a{i} = a{i - 1}\n" for i in range(1, 2500)) \
+         + "    env = TransactionEnvelope.from_xdr(a2499['transaction'], 'p')\n    env.sign(kp)\n"
+    started = time.perf_counter()
+    hits = web_auth_hits({"src/auth.ts": head + chain, "src/contracts.ts": head + signs, "agent/auth.py": py})
+    assert time.perf_counter() - started < 5
+    assert {(kind, name) for kind, name, *_ in hits} == {("sep10", "src/auth.ts"), ("sep45", "src/contracts.ts"),
+                                                          ("sep10", "agent/auth.py")}
+
+
+def test_web_auth_flow_is_linear_in_nested_signing_scopes():
+    # Thousands of nested functions that each sign: a scope reads only the bindings that can
+    # carry the web-auth response (found once per file), the pattern is matched once per
+    # binding, the SEP-45 request test reads offsets, and a budget bounds the re-reads nested
+    # scopes make. A never-closed binding (`x=[x=[...`) reads up to the next binding.
+    from backend.app.swarm.auth_rules import web_auth_hits
+    head = "import { Keypair, TransactionBuilder, Networks, authorizeEntry } from '@stellar/stellar-sdk';\n" \
+           "const kp = Keypair.fromSecret(process.env.S!);\nconst E = toml.WEB_AUTH_ENDPOINT;\n" \
+           "const F = toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT;\nconst q = await fetchJson(F);\n"
+    n = 3000
+    entries = head + "".join(f"function f{i}(e) {{ const a{i} = q.entries; const b{i} = a{i}; "
+                             f"authorizeEntry(e, kp, 10, Networks.TESTNET);\n" for i in range(n)) + "}\n" * n
+    challenges = head + "".join(f"function g{i}(x) {{ const t{i} = TransactionBuilder.fromXDR(x, Networks.TESTNET); "
+                                f"t{i}.sign(kp);\n" for i in range(n)) + "}\n" * n
+    brackets = head + "export async function login(x: any) {\n  const r = await fetchJson(`${E}?account=1`);\n  " + \
+        "x=[" * 60000 + "\n  const tx = TransactionBuilder.fromXDR(r.transaction, Networks.TESTNET);\n  tx.sign(kp);\n}\n"
+    started = time.perf_counter()
+    hits = web_auth_hits({"src/entries.ts": entries, "src/challenges.ts": challenges, "src/login.ts": brackets})
+    assert time.perf_counter() - started < 5
+    assert {(kind, name) for kind, name, *_ in hits} == {("sep10", "src/login.ts")}
+
+
+def test_a_web_auth_budget_never_drops_a_login_silently():
+    # Hundreds of nested signing functions that read the web-auth response spend the budget
+    # that keeps their re-reads linear. A login after them is a small scope and is still read;
+    # a file where a scope was left unread and nothing was found is a blocking gap, not clean.
+    from backend.app.models import FindingKind
+    from backend.app.swarm.auth_rules import web_auth_hits
+    from backend.app.swarm.policy import review_decision
+    head = "import { Keypair, TransactionBuilder, Networks, authorizeEntry } from '@stellar/stellar-sdk';\n" \
+           "const kp = Keypair.fromSecret(process.env.S!);\nconst E = toml.WEB_AUTH_ENDPOINT;\n" \
+           "const F = toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT;\n"
+    login = "export async function login(x: any) {\n  const r = await fetchJson(`${E}?account=1`);\n" \
+            "  const tx = TransactionBuilder.fromXDR(r.transaction, Networks.TESTNET);\n  tx.sign(kp);\n}\n"
+    enter = "export async function enter(x: any) {\n  const q = await fetchJson(`${F}?a=1`);\n" \
+            "  for (const e of q.authorizationEntries) { await authorizeEntry(e, kp, 10, Networks.TESTNET); }\n}\n"
+
+    def nested(n: int, body: str) -> str:
+        return "".join(f"async function f{i}(x) {{ {body.replace('I', str(i))}\n" for i in range(n)) + "}\n" * n
+    signs_nonce = nested(500, "const rI = await fetchJson(`${E}?a=I`); kp.sign(rI.nonce);")
+    # `tx` is parsed from a web-auth value in `other`, where it is unbound: no finding, yet
+    # every nested scope that signs `tx` has to be read.
+    def signing_tx(n: int) -> str:
+        return nested(n, "const rI = await fetchJson(`${E}?a=I`); const zI = rI.k; "
+                         "const tI = TransactionBuilder.fromXDR(zI.q, Networks.TESTNET); tx.sign(kp);") + \
+            "function other(y) { const tx = TransactionBuilder.fromXDR(z0.q, Networks.TESTNET); tx.sign(kp); }\n"
+    signs_tx = signing_tx(1000)
+    signs_ent = nested(1000, "const qI = await fetchJson(`${F}?a=I`); const eI = qI.k; "
+                             "authorizeEntry(ent, kp, 10, Networks.TESTNET);") + "function other(y) { const ent = q0.k; }\n"
+    started = time.perf_counter()
+    kinds = lambda text: [(h[0], h[5]) if h[0] == "incomplete" else h[0] for h in web_auth_hits({"src/auth.ts": head + text})]  # noqa: E731
+    assert kinds(signs_nonce + login) == ["sep10"]
+    assert kinds(signs_tx + login) == ["sep10"]
+    assert kinds(signs_tx) == [("incomplete", "SEP-10")]
+    assert kinds(signs_ent + enter) == ["sep45"]
+    assert kinds(signs_ent) == [("incomplete", "SEP-45")]
+    # Near misses: the same shapes small enough to read in full find nothing and leave no gap,
+    # and a login that reads the challenge with the SDK is not reported.
+    assert kinds(signing_tx(100)) == []
+    read = login.replace("TransactionBuilder.fromXDR(r.transaction, Networks.TESTNET)",
+                         "WebAuth.readChallengeTx(r.transaction, K, P, D, H).tx")
+    assert kinds(signs_tx + read) == []
+    assert time.perf_counter() - started < 15
+    # End to end: a blocking evidence gap.
+    gap = paths({"src/auth.ts": head + signs_tx})["security-rules-incomplete-web-auth"]
+    assert gap.kind is FindingKind.EVIDENCE_GAP and "src/auth.ts (SEP-10)" in gap.evidence
+    assert review_decision([gap], {"deep_core_complete": True}, 95.0) == "needs_evidence"
+
+
+def test_cli_auto_sign_words_are_read_in_source_order():
+    # ast.walk is breadth-first: a word inside an f-string element or a nested call came after
+    # its siblings, so `contract invoke --auto-sign` no longer read in order.
+    for command in ("['stellar', 'contract', 'invoke', '--auto-sign']", "f'stellar contract invoke --id {cid} --auto-sign'",
+                    "['stellar', 'contract', f'invoke', '--auto-sign']", "['stellar', 'contract', str('invoke'), '--auto-sign']"):
+        profile = analyse_code({"cli.py": f"import subprocess\ncid = 'C'\ndef run():\n    subprocess.run({command})\n"})
+        assert [f.kind for f in profile.facts if f.kind == "cli_auto_sign"] == ["cli_auto_sign"], command
+    profile = analyse_code({"cli.py": "import subprocess\ndef run():\n    subprocess.run(['stellar', 'contract', 'invoke'])\n"})
+    assert not [f for f in profile.facts if f.kind == "cli_auto_sign"]

@@ -119,7 +119,7 @@ EVIDENCE_GAP_RULES = frozenset({
     "security-no-auditable-surface", "security-no-isolation", "security-all-tools-networked",
     "security-source-analysis-incomplete", "compliance-pii-without-safeguards",
     "stellar_native-rules-incomplete-advisories", "stellar_native-rules-incomplete-rpc-semantics",
-    "security-rules-incomplete-network-binding",
+    "security-rules-incomplete-network-binding", "security-rules-incomplete-web-auth",
     "stellar_native-onchain-account-missing", "stellar_native-onchain-agent-key-undeclared",
     "stellar_native-onchain-identity-unbound", "stellar_native-onchain-source-unbound",
     "stellar_native-onchain-contract-code-unavailable", "stellar_native-onchain-contract-code-unresolved",
@@ -136,7 +136,7 @@ BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-a
                            "stellar_native-onchain-contract-bytecode-incomplete",
                            # A rule family that failed on this source (BaseAuditor.contained).
                            "stellar_native-rules-incomplete-advisories", "stellar_native-rules-incomplete-rpc-semantics",
-                           "security-rules-incomplete-network-binding"})
+                           "security-rules-incomplete-network-binding", "security-rules-incomplete-web-auth"})
 
 #: Rules that assert a control is absent. They are only evidence when the analyser can
 #: see controls in the language that holds the capability (Python data flow today).

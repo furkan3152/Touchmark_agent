@@ -307,7 +307,7 @@ def _tool_descriptions(name: str, text: str) -> list[tuple[int, str]]:
     if name.endswith(".py"):
         try:
             tree = ast.parse(text)
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
             return out
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
@@ -442,7 +442,7 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
         if name.endswith(".py"):
             try:
                 tree = ast.parse(text)
-            except (SyntaxError, ValueError):
+            except (SyntaxError, ValueError, RecursionError, MemoryError):
                 continue
             for node in ast.walk(tree):
                 body = None

@@ -17,6 +17,9 @@ from ..models import Severity
 from .codeflow import unparse  # noqa: F401  (re-exported for the rule modules)
 from .jsflow import _dotted, _parsers, _txt, _unwrap, is_js
 
+#: What ast.parse raises on source it cannot read: bad syntax, null bytes, or nesting too deep
+#: (RecursionError, or MemoryError "parser stack overflowed" for `a{{{...`).
+PARSE_ERRORS = (SyntaxError, ValueError, RecursionError, MemoryError)
 #: Paths whose code is not the agent: tests, fixtures, mocks, smoke tests and benches.
 TEST_PATH = re.compile(r"(^|/)(tests?|spec|__tests__|fixtures?|mocks?|e2e|benches)/|(^|/|[._-])(test|spec|smoke|mock|fixture)s?([._-]|$)",
                        re.I)
@@ -26,6 +29,8 @@ EXAMPLE_PATH = re.compile(r"(^|/)(examples?|demos?|samples?|templates?|playgroun
 BUNDLE_PATH = re.compile(r"(^|/)(dist|build|out|public/assets|vendor|node_modules)/|\.min\.js$|\.bundle\.js$", re.I)
 _JS_FUNCTIONS = {"function_declaration", "function_expression", "arrow_function", "method_definition",
                  "generator_function_declaration", "generator_function", "function"}
+#: A word of code (a name a function can be defined under).
+_WORD = re.compile(r"[\w$]+")
 _STELLAR_JS = re.compile(r"""["'](?:@stellar/stellar-sdk|stellar-sdk|@stellar/stellar-base|soroban-client)(?:/[\w/-]*)?["']""")
 
 
@@ -49,6 +54,7 @@ class JsFile:
     lines: list[str] = field(default_factory=list)
     _root: object = None
     _functions: dict | None = None
+    _tokens: frozenset | None = None
 
     @property
     def root(self):
@@ -72,6 +78,12 @@ class JsFile:
                 stack.extend(node.named_children)
             self._functions = found
         return self._functions
+
+    def tokens(self) -> frozenset:
+        """The words of the file: whether a name can be defined here, in one lookup."""
+        if self._tokens is None:
+            self._tokens = frozenset(_WORD.findall(self.text))
+        return self._tokens
 
     def line(self, node) -> int:
         return node.start_point[0] + 1
@@ -124,11 +136,12 @@ class SourceIndex:
                 if not parsers:
                     continue
                 parser = parsers["tsx" if lower.endswith(".tsx") else "ts" if lower.endswith((".ts", ".mts", ".cts")) else "js"]
-                self.js[path] = JsFile(path, text, parser, bool(_STELLAR_JS.search(text)), text.splitlines())
+                # tree-sitter numbers rows at \n only (str.splitlines also splits on \r, \f, U+2028, ...).
+                self.js[path] = JsFile(path, text, parser, bool(_STELLAR_JS.search(text)), text.split("\n"))
             elif lower.endswith(".py"):
                 try:
                     tree = ast.parse(text)
-                except (SyntaxError, ValueError, RecursionError):
+                except PARSE_ERRORS:
                     continue
                 # ast numbers lines by \n, \r\n and \r only (str.splitlines also splits on \f, \x85, ...).
                 py = PyFile(path, text, tree, "stellar_sdk" in text, re.split(r"\r\n|\r|\n", text))
@@ -158,7 +171,9 @@ class SourceIndex:
             return []
         found = self._js_defs.get(name)
         if found is None:
-            found = [(js, node) for js in self.js.values() if name in js.text for node in js.functions().get(name, [])]
+            word = bool(_WORD.fullmatch(name))  # a quoted key (`'pay-now': () =>`) is looked up in the text
+            found = [(js, node) for js in self.js.values() if (name in js.tokens() if word else name in js.text)
+                     for node in js.functions().get(name, [])]
             self._js_defs[name] = found
         return found
 
@@ -190,14 +205,18 @@ class SourceIndex:
             stack.extend(n.named_children)
 
 
-def js_function_name(node) -> str | None:
+_UNSET = object()
+
+
+def js_function_name(node, parent=_UNSET) -> str | None:
     """The name a function is called by: a declaration, `const f = () =>`, a method or an
-    object-literal property holding a function."""
+    object-literal property holding a function. A caller that knows the node's parent passes
+    it (a tree-sitter parent lookup costs the node's depth)."""
     if node.type in {"function_declaration", "generator_function_declaration", "method_definition"}:
         name = node.child_by_field_name("name")
         return _txt(name).lstrip("#") if name is not None else None
     if node.type in {"arrow_function", "function_expression", "function"}:
-        parent = node.parent
+        parent = node.parent if parent is _UNSET else parent
         if parent is not None and parent.type == "variable_declarator":
             name = parent.child_by_field_name("name")
             return _txt(name) if name is not None and name.type == "identifier" else None
