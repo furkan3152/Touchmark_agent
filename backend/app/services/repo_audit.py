@@ -182,10 +182,12 @@ _SEED = re.compile(rb"\bS[A-Z2-7]{55}\b")
 _COMMITTED_SKIP = SKIP_DIRS - {"test", "tests", "__tests__", "spec", "e2e", "examples", "example", "fixtures", "docs"}
 
 
-def committed_seeds(root: Path, selected: set[str], limit: int = 20, keys: dict[str, str] | None = None) -> list[str]:
+def committed_seeds(root: Path, selected: set[str], limit: int = 20,
+                    keys: dict[str, list[str]] | None = None) -> list[str]:
     """Valid Stellar secret seeds in committed files the source selection leaves out
     (key files, notes, .env copies). Locations only; the seed itself never leaves here.
-    ``keys`` collects the public key derived from each, by location, for seed triage."""
+    ``keys`` collects the public keys derived from them, by location (one line can hold
+    several), for seed triage."""
     from stellar_sdk import Keypair, StrKey
     found: list[str] = []
     for path in sorted(root.rglob("*")):
@@ -202,7 +204,7 @@ def committed_seeds(root: Path, selected: set[str], limit: int = 20, keys: dict[
                 line = data[:match.start()].count(b"\n") + 1
                 found.append(f"{rel.as_posix()}:{line} (S{seed[1:5]}…redacted)")
                 if keys is not None:
-                    keys[f"{rel.as_posix()}:{line}"] = Keypair.from_secret(seed).public_key
+                    keys.setdefault(f"{rel.as_posix()}:{line}", []).append(Keypair.from_secret(seed).public_key)
                 if len(found) >= limit:
                     return found
     return found
@@ -246,8 +248,10 @@ _DEV_TOOLING = re.compile(r"^(?:build(?:[-_.][\w-]+)?|smoke[-_]?tests?(?:[-_][\w
 def _skipped(rel: Path) -> bool:
     parts = [p.lower() for p in rel.parts[:-1]]
     name = rel.name.lower()
-    # In a tools/ directory a name like build_transaction.ts is an agent tool, not a build script.
-    tooling = bool(_DEV_TOOLING.match(name)) and not (parts and parts[-1] in {"tools", "tool"})
+    # In a tools/ directory under src/ (src/tools, packages/x/src/tools) a name like
+    # build_transaction.ts is an agent tool; a repository's own tools/ holds build scripts.
+    agent_tools = len(parts) >= 2 and parts[-1] in {"tools", "tool"} and "src" in parts[:-1]
+    tooling = bool(_DEV_TOOLING.match(name)) and not agent_tools
     return (any(p in SKIP_DIRS or p.startswith(".") for p in parts) or tooling
             or name.endswith((".d.ts", ".min.js", ".test.ts", ".spec.ts", ".test.js", ".spec.js", "_test.py", ".map"))
             or name.startswith("test_"))
@@ -344,7 +348,7 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
-    seed_keys: dict[str, str] = {}
+    seed_keys: dict[str, list[str]] = {}
     return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint,
                    "tmark": tmark_record, "deployment_markers": markers[:50],
                    "committed_seeds": committed_seeds(root, set(files), keys=seed_keys),
@@ -373,27 +377,38 @@ def registered_tools(files: dict[str, str]) -> list[ToolSpec]:
 
 def _dependencies(root: Path, lockset: Lockset | None = None) -> list[str]:
     """Direct dependencies, at the exact version the lockfile resolves when there is one."""
-    lockset = lockset or Lockset.read(root)
+    lockset = lockset or _read_lockset(root)
     deps: list[str] = []
     package = root / "package.json"
     if package.is_file():
         locked = {name: dep["version"] for name, dep in
                   ((lockset.importers.get("") or {}).get("deps") or {}).items() if dep.get("version")}
         try:
-            data = json.loads(package.read_text())
+            data = json.loads(package.read_text(errors="replace"))
             for section in ("dependencies", "peerDependencies"):
-                deps += [f"{k}@{locked.get(k) or v}" for k, v in sorted((data.get(section) or {}).items())]
-        except (ValueError, OSError):
+                listed = data.get(section) if isinstance(data, dict) else None
+                deps += [f"{k}@{locked.get(k) or v}" for k, v in sorted((listed if isinstance(listed, dict) else {}).items())]
+        except (ValueError, OSError, RecursionError):
             pass
     for name in ("requirements.txt",):
         req = root / name
         if req.is_file():
-            deps += [line.strip() for line in req.read_text().splitlines() if line.strip() and not line.startswith("#")]
+            deps += [line.strip() for line in req.read_text(errors="replace").splitlines()
+                     if line.strip() and not line.startswith("#")]
     cargo = root / "Cargo.toml"
     if cargo.is_file():
         deps += [f"{crate}=={version}" for crate, version in
-                 re.findall(r"^([A-Za-z0-9_-]+)\s*=\s*\"([^\"]+)\"", cargo.read_text(), re.M)]
+                 re.findall(r"^([A-Za-z0-9_-]+)\s*=\s*\"([^\"]+)\"", cargo.read_text(errors="replace"), re.M)]
     return deps[:200]
+
+
+def _read_lockset(root: Path) -> Lockset:
+    """Installed versions; a repository whose lockfiles cannot be read at all is audited
+    without them (version rules then see ranges only), never failed."""
+    try:
+        return Lockset.read(root)
+    except Exception:  # noqa: BLE001 - lockfiles are repository input; read_repository already skips bad files
+        return Lockset()
 
 
 #: The resolver's purpose when nothing better is known (agent_resolver.audit_reference).
@@ -466,7 +481,7 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     if declared_contract and not contract_facts:
         contract_facts = await _contract_facts(settings, network, declared_contract)
     chain = await _chain_facts(settings, network, stellar_address, agent_signing_key, files)
-    lockset = Lockset.read(root)
+    lockset = _read_lockset(root)
     if contract_facts:
         chain["contract"] = contract_facts
     tm = (declared.get("tmark") or {}).get("parsed")
@@ -568,7 +583,7 @@ async def _contract_facts(settings: Settings, network: str, contract_id: str) ->
 _SEED_TEXT = re.compile(r"\bS[A-Z2-7]{55}\b")
 
 
-def seed_public_keys(sources: dict[str, str], committed: dict[str, str]) -> dict[str, list[str]]:
+def seed_public_keys(sources: dict[str, str], committed: dict[str, list[str]]) -> dict[str, list[str]]:
     """{G...: [path:line, ...]} for every valid secret seed in the reviewed text and in the
     committed files outside it. The public key is derived here; the seed goes nowhere."""
     from stellar_sdk import Keypair
@@ -578,8 +593,9 @@ def seed_public_keys(sources: dict[str, str], committed: dict[str, str]) -> dict
             if StrKey.is_valid_ed25519_secret_seed(m.group(0)):
                 where = f"{name}:{text.count(chr(10), 0, m.start()) + 1}"
                 keys.setdefault(Keypair.from_secret(m.group(0)).public_key, []).append(where)
-    for where, public_key in committed.items():
-        keys.setdefault(public_key, []).append(where)
+    for where, found in committed.items():
+        for public_key in [found] if isinstance(found, str) else found:
+            keys.setdefault(public_key, []).append(where)
     return keys
 
 

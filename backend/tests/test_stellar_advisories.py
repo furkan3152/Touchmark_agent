@@ -131,6 +131,30 @@ def test_prng_gen_range_is_medium_but_rand_gen_range_off_chain_is_not(tmp_path):
     assert [f["severity"] for f in dep_findings(found, "ghsa-96xm")] == ["info"]
 
 
+@pytest.mark.parametrize("call,risk", [
+    ("e.prng().gen_range::<u64>(1..=6)", False),          # Included bounds: no arithmetic
+    ("e.prng().gen_range::<u64>(0..10)", False),          # Excluded(10) end: 10 - 1 cannot wrap
+    ("e.prng().gen_range::<u64>(0..n)", True),            # Excluded(n) end wraps when n is 0
+    ("e.prng().gen_range::<u64>(0..0)", True),
+    ("e.prng().gen_range::<u64>((Bound::Excluded(u64::MAX), Bound::Unbounded))", True),
+    ("e.prng().gen_range::<u64>((Bound::Excluded(5), Bound::Unbounded))", False),
+    ("e.prng().gen_range::<u64>(range)", True),           # bounds not visible
+    ("b.slice(0..=5)", False),
+    ("b.slice(0..=u32::MAX)", True),
+    ("b.slice(a..b)", False),                             # Included start, Excluded end: no arithmetic
+    ("b.slice(0..=end)", True),
+    ("b.slice((Bound::Excluded(start), Bound::Unbounded))", True),
+    ("b.slice(0..4).len() as u64 + (0..=n).count() as u64", False),  # the range after the call is not its argument
+])
+def test_only_a_range_bound_that_can_wrap_meets_the_overflow_condition(tmp_path, call, risk):
+    source = VAULT.replace("{ owner(&e).require_auth(); set_owner(&e, &new) }",
+                           f"{{ let b = load(&e); let n = count(&e); let _x = {call}; set_owner(&e, &new) }}")
+    [finding] = dep_findings(rust_repo(tmp_path, "22.0.8", source), "ghsa-96xm-fv9w-pf3f")
+    assert finding["severity"] == ("medium" if risk else "info"), call
+    if not risk:
+        assert "literal bounds that cannot wrap at src/lib.rs:8" in finding["evidence"]
+
+
 def test_overflow_checks_are_read_from_the_workspace_root(tmp_path):
     # An exact pin in a member, no lockfile: the profile that applies is the workspace root's.
     member = '[package]\nname = "vault"\nversion = "0.1.0"\n\n[dependencies]\nsoroban-sdk = "=22.0.8"\n'
@@ -166,6 +190,22 @@ def test_a_contract_delegated_signer_on_old_stellar_accounts_is_medium(tmp_path)
                                    "Cargo.lock": lock, "src/lib.rs": g_signer})
     [note] = dep_findings(found, "stellar-accounts")
     assert note["severity"] == "info" and "Delegates chosen at run time" in note["detail"]
+
+
+def test_sibling_lockfiles_with_one_affected_version_are_one_finding_with_a_path_free_id(tmp_path):
+    account = ('use soroban_sdk::{contract, contractimpl, Env};\nuse stellar_accounts::policies::Policy;\n'
+               '#[contract]\npub struct P;\n#[contractimpl]\nimpl P {\n    pub fn enforce(e: Env) {}\n}\n')
+    lock = cargo_lock(soroban_sdk="23.5.3", stellar_accounts="0.7.1")
+    files = {}
+    for crate in ("tx-cap", "spend-cap"):
+        files.update({f"contracts/{crate}/Cargo.toml": CARGO_TOML.format(sdk="23.5.3", extra='stellar-accounts = "0.7.1"\n'),
+                      f"contracts/{crate}/Cargo.lock": lock, f"contracts/{crate}/src/lib.rs": account})
+    [note] = dep_findings(audit(tmp_path / "a", files), "stellar-accounts")
+    assert note["severity"] == "info"
+    assert "contracts/tx-cap/Cargo.lock" in note["evidence"] and "contracts/spend-cap/Cargo.lock" in note["evidence"]
+    moved = {k.replace("contracts/", "crates/"): v for k, v in files.items()}
+    [again] = dep_findings(audit(tmp_path / "b", moved), "stellar-accounts")
+    assert again["id"] == note["id"]
 
 
 # ----------------------------------------------------------------- @stellar/mpp charge servers
@@ -207,6 +247,28 @@ def test_mainnet_in_a_comment_or_a_test_does_not_raise_an_mpp_server_to_high(tmp
     assert finding["severity"] == "high"
 
 
+def test_a_commented_out_charge_call_or_a_brace_in_a_string_is_not_a_server_without_fee_payer(tmp_path):
+    sponsored = ('import { stellar } from "@stellar/mpp/charge/server";\n'
+                 '// Without a sponsor you could write: stellar.charge({ recipient, currency })\n'
+                 '/* stellar({ recipient }) */\n'
+                 'export const method = stellar.charge({ recipient: "}", currency: USDC, feePayer: sponsor, '
+                 "network: 'stellar:pubnet' });\n")
+    assert not mpp_findings(tmp_path / "a", "0.4.0", sponsored)
+    # Near miss: the same server without the sponsor is still reported, at the call's line.
+    [finding] = mpp_findings(tmp_path / "b", "0.4.0", sponsored.replace("feePayer: sponsor, ", ""))
+    assert finding["severity"] == "high" and "src/server.ts:4" in finding["evidence"]
+
+
+def test_two_servers_on_one_mpp_version_are_one_finding(tmp_path):
+    files = {"package.json": json.dumps({"workspaces": ["packages/*"]}),
+             "package-lock.json": package_lock(stellar__mpp="0.3.0")}
+    for name in ("a", "b"):
+        files[f"packages/{name}/package.json"] = json.dumps({"dependencies": {"@stellar/mpp": "^0.3.0"}})
+        files[f"packages/{name}/src/server.ts"] = MPP_SERVER
+    [finding] = dep_findings(audit(tmp_path, files), "mpp-unsigned-hash-push-stellar-mpp")
+    assert "packages/a/src/server.ts:7" in finding["evidence"] and "packages/b/src/server.ts:7" in finding["evidence"]
+
+
 def test_mpp_fixed_release_fee_payer_or_client_import_is_not_matched(tmp_path):
     assert not mpp_findings(tmp_path / "a", "0.7.1", MPP_SERVER)
     sponsored = MPP_SERVER.replace("network: STELLAR_TESTNET", "network: STELLAR_TESTNET, feePayer: { envelopeSigner: kp }")
@@ -227,6 +289,26 @@ def test_old_passkey_kit_with_policy_signers_is_a_note_to_verify(tmp_path):
     assert not dep_findings(audit(tmp_path / "b", files), "passkey-kit")
     files.update({"package-lock.json": package_lock(passkey_kit="0.12.0"), "src/wallet.ts": wallet.split("\nexport")[0]})
     assert not dep_findings(audit(tmp_path / "c", files), "passkey-kit")
+
+
+def test_policy_signers_count_only_inside_the_package_root_that_installs_the_kit(tmp_path):
+    wallet = 'import { PasskeyKit } from "passkey-kit";\nexport const kit = (k: PasskeyKit) => k;\n'
+    policy = 'import { PasskeyKit } from "passkey-kit";\nexport const add = (kit: PasskeyKit, p: string) => kit.addPolicy(p, {});\n'
+    template = {"templates/wallet/package.json": json.dumps({"dependencies": {"passkey-kit": "^0.12.0"}}),
+                "templates/wallet/package-lock.json": package_lock(passkey_kit="0.12.0"),
+                "templates/wallet/src/passkey.ts": wallet}
+    root = {"package.json": json.dumps({"dependencies": {"passkey-kit": "^0.10.19"}}),
+            "package-lock.json": package_lock(passkey_kit="0.10.19"), "src/utils.ts": wallet,
+            "policy-cli/Cargo.toml": '[package]\nname = "policy-cli"\n',
+            "policy-cli/templates/contract/lib.rs.hbs": "use soroban_sdk::contract;\npub fn policy__(e: Env) {}\n"}
+    # The repository root's tree has a policy contract template; the browser template has none.
+    [note] = dep_findings(audit(tmp_path / "a", {**root, **template}), "passkey-kit-policy-signer")
+    assert "package-lock.json: passkey-kit 0.10.19" in note["evidence"] and "0.12.0" not in note["evidence"]
+    # Policies used inside the template's own tree do count for it.
+    template["templates/wallet/src/policy.ts"] = policy
+    found = dep_findings(audit(tmp_path / "b", {**template, "package.json": "{}", "src/utils.ts": "export {};\n"}),
+                         "passkey-kit-policy-signer")
+    assert [f["evidence"].split(";")[0] for f in found] == ["templates/wallet/package-lock.json: passkey-kit 0.12.0"]
 
 
 # ----------------------------------------------------------------- known-bad wallet WASM
@@ -263,6 +345,26 @@ def test_an_affected_sdk_in_contract_metadata_is_only_a_fact(settings, run):
 def test_deploying_from_a_known_vulnerable_hash_is_critical(settings, run, source, hits):
     assert len(stellar_native(settings, run, code_files={"src/kit.ts": source})) == hits
     assert not stellar_native(settings, run, code_files={"tests/kit.test.ts": source})
+
+
+@pytest.mark.parametrize("above,hits", [
+    ("// create the agent wallet on the blockchain\n", 1),   # 'blockchain' is not 'block'
+    ("const badge = 'unknown';\n", 1),                         # nor 'badge' 'bad', nor 'unknown' 'known'
+    ("// known bad hash, replace before release\n", 1),        # a comment is not a deny list
+    ("const DENY_LIST = new Set([\n", 0),
+    ("export const blockedWasm = [\n", 0),
+])
+def test_deny_words_count_only_as_whole_words_in_code(settings, run, above, hits):
+    source = above + f'export const w = await kit.createWallet({{ wasmHash: "{BAD_HASH}" }});\n'
+    assert len(stellar_native(settings, run, code_files={"src/wallet.ts": source})) == hits
+
+
+def test_hash_lines_are_counted_like_line_numbers_and_each_hash_is_one_finding(settings, run):
+    use = f'export const kit = new PasskeyKit({{ walletWasmHash: "{BAD_HASH}" }});\n'
+    # Characters that str.splitlines() treats as line breaks must not shift the line read.
+    shifted = "const a = 1;\u2028const b = 2;\x0cconst c = 3;\n" + use + use
+    [finding] = stellar_native(settings, run, code_files={"src/kit.ts": shifted})
+    assert finding.severity is Severity.CRITICAL and "src/kit.ts:2" in finding.evidence and "src/kit.ts:3" in finding.evidence
 
 
 # ----------------------------------------------------------------- the table itself
@@ -314,3 +416,24 @@ def test_masking_is_linear_and_only_affected_contract_code_is_masked(settings, m
     lock["importers"][""]["deps"]["soroban-sdk-macros"]["version"] = "23.5.1"
     advisory_findings(artifact, StellarNativeAuditor(settings), today=date.fromisoformat(advisories.ADVISORIES[0].reviewed_at))
     assert masked == [VAULT]  # the contract source, not the CLI
+
+
+def test_unclosed_calls_and_repeated_hashes_cost_one_pass(settings):
+    lock = {"importers": {"": {"lockfiles": ["Cargo.lock", "package-lock.json"], "deps": {
+        "soroban-sdk": {"spec": "22.0.8", "version": "22.0.8", "source": "Cargo.lock"},
+        "@stellar/mpp": {"spec": "0.4.0", "version": "0.4.0", "source": "package-lock.json"}}}},
+        "locked": {"Cargo.lock": {"soroban-sdk": ["22.0.8"]}}}
+    cases = {
+        "mpp": {"src/server.ts": 'import { stellar } from "@stellar/mpp/charge/server";\n' + "stellar({ a: 1, " * 8_000},
+        "slices": {"Cargo.toml": CARGO_TOML.format(sdk="22.0.8", extra=""), "src/lib.rs": VAULT + ".slice(" * 50_000},
+        "hashes": {"src/kit.ts": f'export const w = kit.createWallet({{ wasmHash: "{BAD_HASH}" }});\n' * 5_000},
+    }
+    for label, files in cases.items():
+        artifact = AgentArtifact(name="a", source_kind=SourceKind.REPO, source_ref="r", code_files=files,
+                                 raw_metadata={"resolved_versions": lock})
+        started = time.perf_counter()
+        found = advisory_findings(artifact, StellarNativeAuditor(settings),
+                                  today=date.fromisoformat(advisories.ADVISORIES[0].reviewed_at))
+        assert time.perf_counter() - started < 1.5, label
+        assert len({f.id for f in found}) == len(found), label  # duplicate ids fail the whole auditor
+    assert [f.severity for f in found] == [Severity.CRITICAL]

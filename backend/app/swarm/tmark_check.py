@@ -7,12 +7,14 @@ payment) that the code either keeps or breaks; a broken claim is reported as suc
 
 from __future__ import annotations
 
+import io
 import re
+import tokenize
 from bisect import bisect_right
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar.canonical import NETWORK_MARKERS
-from .network_rules import MAINNET_REACHABLE, network_hits as binding_hits
+from .network_rules import MAINNET_REACHABLE, mask, network_hits as binding_hits
 
 #: Signing against the public network: its passphrase, the SDK constants for it, its CAIP-2 id,
 #: the mainnet USDC issuer and contracts, and the mainnet x402 facilitator.
@@ -42,11 +44,23 @@ _AS_BLOCK = re.compile(_NET_KEY + r"""["'`\]]?\s*(?::|=>|=)\s*(?:\w+\s*\(\s*)?$"
 _TESTNET_SIBLING = re.compile(r"""(?:testnet|futurenet)\w*["'`\]]?\s*(?::|=>|,)""", re.I)
 #: How far before a match its key is looked for, and around a network block its testnet sibling.
 _KEY_REACH, _BLOCK_REACH = 200, 1500
-#: A comment line, or a line inside a block comment. '#' starts one in Python only: in JS it is
-#: a private field, in Rust an attribute.
-_COMMENT = re.compile(r"\s*(?://|\*|/\*)")
-_PY_COMMENT = re.compile(r"\s*#")
 _CODE = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts", ".rs")
+#: A guard that refuses a network is not a use of it: the marker is one side of an equality
+#: in an `if` whose branch starts by failing (logging first is allowed). `&&`/`and` or a negation
+#: make the refusal conditional, so such a condition is still a use; so is `!=`, which refuses
+#: every other network. The guard is looked for this many characters around the marker.
+_REFUSAL_REACH = 300
+_IF = re.compile(r"\bif\b")
+#: The marker (or the URL string it is in) right after or right before `==` / `===`.
+_EQUALS_BEFORE = re.compile(r"""(?<![!<>=])={2,3}\s*["'`]?[^"'`\s()!=]*$""")
+_EQUALS_AFTER = re.compile(r"""^[^"'`\s()!=]*["'`]?\s*={2,3}(?!=)""")
+#: One statement of the branch, a condition that makes the refusal conditional, logging, and
+#: the statements that fail.
+_STATEMENT = re.compile(r"[^;\n]*[^;\n\s][^;\n]*")
+_CONDITIONAL = re.compile(r"&&|!(?!=)|\band\b|\bnot\b")
+_LOGS = re.compile(r"^\s*(?:(?:console|logger|log|logging)\s*\.\s*\w+|print|e?println!|(?:log::)?(?:warn|error)!)\s*\(")
+_FAILS = re.compile(r"^\s*(?:throw\b|raise\b|panic!|panic_with_error!|bail!|return\s+(?:Err\s*\(|Promise\s*\.\s*reject\b|"
+                    r"""new\s+\w*Error\b|\w*Error\s*\()|(?:process|sys)\s*\.\s*exit\s*\(\s*(?:[1-9]|["']))""")
 #: How each network-binding rule lets mainnet in (network_rules.MAINNET_REACHABLE).
 _CHOOSES_MAINNET = {"security-network-chosen-per-call": "a tool argument picks the network",
                     "security-network-chosen-by-counterparty": "the paid server's challenge picks the network",
@@ -107,25 +121,131 @@ def _network_keyed(text: str, start: int, end: int, line_start: int, blocks: _Bl
     return blocks.network_block(start)
 
 
+def _without_docstrings(code: str) -> str:
+    """Blank Python string statements (docstrings and other bare string literals), keeping
+    offsets: they are text, not code. Source that does not tokenize is returned unchanged."""
+    starts = [0]
+    for line in code.split("\n"):
+        starts.append(starts[-1] + len(line) + 1)
+    spans, statement, previous = [], [], tokenize.NEWLINE
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+            if tok.type in (tokenize.NL, tokenize.COMMENT):
+                continue
+            if tok.type == tokenize.STRING and (statement or previous in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)):
+                statement.append(tok)
+            elif tok.type in (tokenize.NEWLINE, tokenize.ENDMARKER) and statement:
+                spans += [(starts[t.start[0] - 1] + t.start[1], starts[t.end[0] - 1] + t.end[1]) for t in statement]
+                statement = []
+            else:
+                statement = []
+            previous = tok.type
+    except (tokenize.TokenError, SyntaxError):
+        return code
+    out = list(code)
+    for start, end in spans:
+        for k in range(start, min(end, len(out))):
+            if out[k] != "\n":
+                out[k] = " "
+    return "".join(out)
+
+
+def _masked(name: str, text: str) -> tuple[str, str]:
+    """(code, skeleton): comments blanked in both, Python docstrings too, and string contents
+    also blanked in the skeleton; offsets are kept, so line numbers stay true."""
+    python = name.endswith(".py")
+    code, skel = mask(text, python=python)
+    return (_without_docstrings(code) if python else code), skel
+
+
+def _closing(skel: str, start: int, opening: str, closing: str) -> int:
+    depth = 0
+    for i in range(start, min(len(skel), start + 4 * _REFUSAL_REACH)):
+        depth += (skel[i] == opening) - (skel[i] == closing)
+        if depth == 0:
+            return i
+    return -1
+
+
+def _fails_first(skel: str) -> bool:
+    """The branch's first statement that is not logging makes it fail."""
+    for statement in _STATEMENT.finditer(skel):
+        if not _LOGS.match(statement.group()):
+            return bool(_FAILS.match(statement.group()))
+    return False
+
+
+def _refused(code: str, skel: str, start: int, end: int, python: bool, rust: bool) -> bool:
+    """The match at [start, end) is a guard that refuses its network (see _REFUSAL_REACH)."""
+    if python:
+        line_start = code.rfind("\n", 0, start) + 1
+        line_end = code.find("\n", end)
+        line_end = len(code) if line_end < 0 else line_end
+        m = re.match(r"(\s*)(?:el)?if\b(.*?):(.*)$", skel[line_start:line_end])
+        if not m or not (line_start + m.start(2) <= start and end <= line_start + m.end(2)):
+            return False
+        condition, branch, indent = m.group(2), m.group(3), len(m.group(1))
+        if not branch.strip():  # the branch is the indented block below
+            rest = []
+            for line in skel[line_end + 1:line_end + 1 + 4 * _REFUSAL_REACH].split("\n"):
+                if line.strip() and len(line) - len(line.lstrip()) <= indent:
+                    break
+                rest.append(line)
+            branch = "\n".join(rest)
+    else:
+        ifs = [m for m in _IF.finditer(skel, max(0, start - _REFUSAL_REACH), start)]
+        if not ifs:
+            return False
+        head = ifs[-1].end()
+        if rust:
+            brace = skel.find("{", end, end + _REFUSAL_REACH)
+            if brace < 0 or re.search(r"[;{}]", skel[head:brace]):
+                return False
+            condition, after = skel[head:brace], brace
+        else:
+            opening = skel.find("(", head, head + 40)
+            if opening < 0 or skel[head:opening].strip():
+                return False
+            close = _closing(skel, opening, "(", ")")
+            if close < end:
+                return False
+            condition, after = skel[opening + 1:close], close + 1
+            while after < len(skel) and skel[after] in " \t\r\n":
+                after += 1
+        window = skel[after:after + 4 * _REFUSAL_REACH]
+        if window.startswith("{"):
+            close = _closing(skel, after, "{", "}")
+            branch = window[1:close - after if close > 0 else len(window)]
+        else:
+            stop = re.search(r"[;\n]", window)
+            branch = window[:stop.end() if stop else len(window)]
+    if _CONDITIONAL.search(re.sub(r"!==?", "", condition)):
+        return False
+    before, after_text = code[max(0, start - 80):start], code[end:end + 80]  # operator and URL prefix
+    operand = bool(_EQUALS_BEFORE.search(before)) or bool(_EQUALS_AFTER.match(after_text))
+    return operand and _fails_first(branch)
+
+
 def network_hits(files: dict[str, str], pattern: re.Pattern, skip_keyed: bool = True) -> list[str]:
-    """First file:line per code file where ``pattern`` names a network in code, outside
-    comments and (with ``skip_keyed``) network-keyed maps."""
+    """First file:line per code file where ``pattern`` names a network in code: not in a
+    comment or a Python docstring, not in a guard that refuses it, and (with ``skip_keyed``)
+    not in a network-keyed map. Only a file the pattern matches at all is masked."""
     hits = []
     for name, text in files.items():
-        if not name.endswith(_CODE):
+        if not name.endswith(_CODE) or not pattern.search(text):
             continue
-        comment = _PY_COMMENT if name.endswith(".py") else _COMMENT
+        code, skel = _masked(name, text)
         line_start, scanned, blocks = 0, 0, None
-        for m in pattern.finditer(text):
-            newline = text.rfind("\n", scanned, m.start())
+        for m in pattern.finditer(code):
+            newline = code.rfind("\n", scanned, m.start())
             line_start, scanned = (newline + 1 if newline >= 0 else line_start), m.start()
-            if comment.match(text, line_start, m.start()):
-                continue
             if skip_keyed:
-                blocks = blocks or _Blocks(text)
-                if _network_keyed(text, m.start(), m.end(), line_start, blocks):
+                blocks = blocks or _Blocks(code)
+                if _network_keyed(code, m.start(), m.end(), line_start, blocks):
                     continue
-            hits.append(f"{name}:{text.count(chr(10), 0, m.start()) + 1}")
+            if _refused(code, skel, m.start(), m.end(), name.endswith(".py"), name.endswith(".rs")):
+                continue
+            hits.append(f"{name}:{code.count(chr(10), 0, m.start()) + 1}")
             break
     return hits
 

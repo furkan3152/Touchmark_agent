@@ -257,3 +257,42 @@ def test_a_network_the_paid_server_or_a_tool_picks_breaks_a_testnet_declaration(
     # Near miss: the RPC is pinned, so a pubnet challenge fails instead of paying.
     pinned = mpp.replace("process.env.STELLAR_SECRET", "process.env.STELLAR_SECRET, rpcUrl: process.env.RPC_URL")
     assert network_findings(tmp_path / "b", "testnet", pinned) is None
+
+
+def test_a_marker_in_a_trailing_comment_a_block_comment_or_a_docstring_is_not_use(tmp_path):
+    for name, text in {
+        "src/a.ts": "const url = 'https://horizon-testnet.stellar.org'; // not https://horizon.stellar.org\n",
+        "src/b.ts": "/*\n  Production uses https://horizon.stellar.org\n*/\nconst url = 'https://horizon-testnet.stellar.org';\n",
+        "src/c.py": 'def submit(tx):\n    """Testnet only; mainnet (horizon.stellar.org) is refused."""\n    return tx\n',
+        "src/d.py": '"""\nNotes:\n  horizon.stellar.org is mainnet\n"""\nURL = "https://horizon-testnet.stellar.org"\n',
+    }.items():
+        assert not network_hits({name: text}, _MAINNET), name
+    # Near misses: the same marker as a value, and a '//' inside a string, are code.
+    assert network_hits({"src/e.ts": "const url = 'https://horizon.stellar.org'; // mainnet\n"}, _MAINNET) == ["src/e.ts:1"]
+    assert network_hits({"src/f.py": "URL = 'https://horizon.stellar.org'  # not a docstring\n"}, _MAINNET) == ["src/f.py:1"]
+    trailing = "export const HORIZON = 'https://horizon-testnet.stellar.org'; // mainnet would be https://horizon.stellar.org\n"
+    assert network_findings(tmp_path, "testnet", trailing) is None
+
+
+def test_a_guard_that_refuses_mainnet_is_not_use_but_one_that_requires_it_is(tmp_path):
+    guard = ("import { Networks } from '@stellar/stellar-sdk';\nexport function assertTestnet(p: string) {\n"
+             "  if (p === Networks.PUBLIC) {\n    console.error('refused');\n    throw new Error('this agent refuses mainnet');\n  }\n}\n")
+    assert network_findings(tmp_path / "a", "testnet", guard) is None
+    python = ("from stellar_sdk import Network\n\ndef check(p):\n    if p == Network.PUBLIC_NETWORK_PASSPHRASE:\n"
+              "        raise ValueError('mainnet is not allowed')\n")
+    assert not network_hits({"agent.py": python}, _MAINNET)
+    for near_miss in (guard.replace("p === Networks.PUBLIC", "p !== Networks.PUBLIC"),          # mainnet only
+                      guard.replace("p === Networks.PUBLIC", "p === Networks.PUBLIC && !allow"),  # refusal can be lifted
+                      guard.replace("throw new Error('this agent refuses mainnet')", "server = mainnet()"),
+                      guard + "export const passphrase = Networks.PUBLIC;\n"):
+        assert network_hits({"src/net.ts": near_miss}, _MAINNET), near_miss
+    assert network_hits({"agent.py": python.replace("raise ValueError('mainnet is not allowed')", "submit()")}, _MAINNET)
+
+
+def test_many_refusal_guards_or_an_unclosed_guard_cost_linear_time():
+    for name, text in (("src/a.ts", "if (p === Networks.PUBLIC) throw new Error('x');\n" * 8_000),
+                       ("src/b.ts", "if (p === Networks.PUBLIC) {" + " x;" * 100_000),
+                       ("b.py", "if p == Network.PUBLIC_NETWORK_PASSPHRASE:\n    raise ValueError('x')\n" * 5_000)):
+        started = time.perf_counter()
+        network_hits({name: text}, _MAINNET)
+        assert time.perf_counter() - started < 1.0, name

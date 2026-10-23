@@ -158,12 +158,17 @@ def _seed_severity(exposure: dict | None, places: list[str]) -> tuple[Severity, 
     A seed whose key is a declared agent or owner key, or that controls an account on mainnet
     (its own or one it signs for), is critical wherever it sits. One found only on testnet, or
     nowhere, is medium, or low in test paths. Without a ledger answer for mainnet a seed keeps
-    the path-based severity: critical outside test paths, medium inside them."""
-    by_place = {where: item for item in (exposure or {}).get("keys", []) for where in item.get("locations", [])}
+    the path-based severity: critical outside test paths, medium inside them.
+
+    Several seeds can share a place (two on one line of a .env copy or minified JSON): each
+    key found there is judged, so the worst one decides."""
+    by_place: dict[str, dict[str, dict]] = {}
+    for item in (exposure or {}).get("keys", []):
+        for where in item.get("locations", []):
+            by_place.setdefault(where, {})[item.get("public_key", "")] = item
     worst, notes = Severity.INFO, []
-    for place in places:
+    for place, item in ((p, i) for p in dict.fromkeys(places) for i in (list(by_place.get(p, {}).values()) or [{}])):
         test = bool(_TEST_PATH.search(place.rsplit(":", 1)[0]))
-        item = by_place.get(place) or {}
         main, testnet = item.get("mainnet") or {}, item.get("testnet") or {}
         key = f"{item.get('public_key', '')[:8]}…"
         if item.get("declared"):

@@ -226,6 +226,33 @@ def test_seed_severity_falls_back_to_the_path_when_the_ledger_was_not_read():
     assert _seed_severity(None, ["tests/keys.ts:1", "src/agent.ts:9"]) == (Severity.CRITICAL, [])
 
 
+def test_two_seeds_on_one_line_are_each_judged_and_the_funded_one_decides(tmp_path):
+    from backend.app.services.repo_audit import committed_seeds, seed_public_keys
+
+    funded, empty = Keypair.random(), Keypair.random()
+    line = '{"funder": "%s", "agent": "%s"}\n' % (funded.secret, empty.secret)
+    (tmp_path / "keys.json").write_text(line)
+    keys: dict = {}
+    assert len(committed_seeds(tmp_path, set(), keys=keys)) == 2
+    assert keys == {"keys.json:1": [funded.public_key, empty.public_key]}
+    located = seed_public_keys({}, keys)
+    assert located == {funded.public_key: ["keys.json:1"], empty.public_key: ["keys.json:1"]}
+    exposure = {"status": "checked", "checked_at": "2026-10-23T00:00:00+00:00", "keys": [
+        {"public_key": key, "locations": where, "declared": "",
+         "mainnet": {"status": "found" if key == funded.public_key else "not_found",
+                     "balances": [{"asset": "XLM", "balance": "5000"}] if key == funded.public_key else []},
+         "testnet": {"status": "not_found"}} for key, where in located.items()]}
+    for order in (["keys.json:1", "keys.json:1"], ["keys.json:1"]):
+        severity, notes = _seed_severity(exposure, order)
+        assert severity is Severity.CRITICAL
+        assert any(funded.public_key[:8] in n and "controls mainnet funds" in n for n in notes)
+        assert any(empty.public_key[:8] in n and "no account" in n for n in notes)
+    # Near miss: both unfunded stays medium.
+    for item in exposure["keys"]:
+        item["mainnet"] = {"status": "not_found", "balances": []}
+    assert _seed_severity(exposure, ["keys.json:1"])[0] is Severity.MEDIUM
+
+
 def test_seed_exposure_sends_public_keys_only():
     seed = Keypair.random()
     asked: list[str] = []
