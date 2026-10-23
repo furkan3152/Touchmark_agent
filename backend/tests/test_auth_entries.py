@@ -575,6 +575,53 @@ def test_web_auth_flow_is_linear_in_nested_signing_scopes():
     assert {(kind, name) for kind, name, *_ in hits} == {("sep10", "src/login.ts")}
 
 
+def test_a_web_auth_budget_never_drops_a_login_silently():
+    # Hundreds of nested signing functions that read the web-auth response spend the budget
+    # that keeps their re-reads linear. A login after them is a small scope and is still read;
+    # a file where a scope was left unread and nothing was found is a blocking gap, not clean.
+    from backend.app.models import FindingKind
+    from backend.app.swarm.auth_rules import web_auth_hits
+    from backend.app.swarm.policy import review_decision
+    head = "import { Keypair, TransactionBuilder, Networks, authorizeEntry } from '@stellar/stellar-sdk';\n" \
+           "const kp = Keypair.fromSecret(process.env.S!);\nconst E = toml.WEB_AUTH_ENDPOINT;\n" \
+           "const F = toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT;\n"
+    login = "export async function login(x: any) {\n  const r = await fetchJson(`${E}?account=1`);\n" \
+            "  const tx = TransactionBuilder.fromXDR(r.transaction, Networks.TESTNET);\n  tx.sign(kp);\n}\n"
+    enter = "export async function enter(x: any) {\n  const q = await fetchJson(`${F}?a=1`);\n" \
+            "  for (const e of q.authorizationEntries) { await authorizeEntry(e, kp, 10, Networks.TESTNET); }\n}\n"
+
+    def nested(n: int, body: str) -> str:
+        return "".join(f"async function f{i}(x) {{ {body.replace('I', str(i))}\n" for i in range(n)) + "}\n" * n
+    signs_nonce = nested(500, "const rI = await fetchJson(`${E}?a=I`); kp.sign(rI.nonce);")
+    # `tx` is parsed from a web-auth value in `other`, where it is unbound: no finding, yet
+    # every nested scope that signs `tx` has to be read.
+    def signing_tx(n: int) -> str:
+        return nested(n, "const rI = await fetchJson(`${E}?a=I`); const zI = rI.k; "
+                         "const tI = TransactionBuilder.fromXDR(zI.q, Networks.TESTNET); tx.sign(kp);") + \
+            "function other(y) { const tx = TransactionBuilder.fromXDR(z0.q, Networks.TESTNET); tx.sign(kp); }\n"
+    signs_tx = signing_tx(1000)
+    signs_ent = nested(1000, "const qI = await fetchJson(`${F}?a=I`); const eI = qI.k; "
+                             "authorizeEntry(ent, kp, 10, Networks.TESTNET);") + "function other(y) { const ent = q0.k; }\n"
+    started = time.perf_counter()
+    kinds = lambda text: [(h[0], h[5]) if h[0] == "incomplete" else h[0] for h in web_auth_hits({"src/auth.ts": head + text})]  # noqa: E731
+    assert kinds(signs_nonce + login) == ["sep10"]
+    assert kinds(signs_tx + login) == ["sep10"]
+    assert kinds(signs_tx) == [("incomplete", "SEP-10")]
+    assert kinds(signs_ent + enter) == ["sep45"]
+    assert kinds(signs_ent) == [("incomplete", "SEP-45")]
+    # Near misses: the same shapes small enough to read in full find nothing and leave no gap,
+    # and a login that reads the challenge with the SDK is not reported.
+    assert kinds(signing_tx(100)) == []
+    read = login.replace("TransactionBuilder.fromXDR(r.transaction, Networks.TESTNET)",
+                         "WebAuth.readChallengeTx(r.transaction, K, P, D, H).tx")
+    assert kinds(signs_tx + read) == []
+    assert time.perf_counter() - started < 15
+    # End to end: a blocking evidence gap.
+    gap = paths({"src/auth.ts": head + signs_tx})["security-rules-incomplete-web-auth"]
+    assert gap.kind is FindingKind.EVIDENCE_GAP and "src/auth.ts (SEP-10)" in gap.evidence
+    assert review_decision([gap], {"deep_core_complete": True}, 95.0) == "needs_evidence"
+
+
 def test_cli_auto_sign_words_are_read_in_source_order():
     # ast.walk is breadth-first: a word inside an f-string element or a nested call came after
     # its siblings, so `contract invoke --auto-sign` no longer read in order.

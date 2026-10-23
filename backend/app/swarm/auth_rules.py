@@ -899,7 +899,8 @@ def web_auth_hits(files: dict[str, str]) -> list[tuple[str, str, int, str, Sever
     """(kind, file, line, text, severity, note) for SEP-10 challenges and SEP-45 entries signed
     without the checks the SEPs require of the client. The signed value must come from the
     web-auth response by data flow inside the signing function (through locals, loops and
-    callbacks); SEP-45 entries also count when that function itself makes the request."""
+    callbacks); SEP-45 entries also count when that function itself makes the request. Kind
+    "incomplete" names a file whose flow was not fully read (the note says which SEPs)."""
     files = {n: t for n, t in files.items() if n.endswith(_JS_PY)}
     key = sha1("\0".join(f"{k}\0{v}" for k, v in sorted(files.items())).encode("utf-8", "replace")).hexdigest()
     if key not in _WEB_AUTH_CACHE:
@@ -931,6 +932,11 @@ def _web_auth_hits(files: dict[str, str]) -> list[tuple[str, str, int, str, Seve
         if sep45 and missing and flows["sep45"] is not None:
             line = src.line(flows["sep45"])
             hits.append(("sep45", src.name, line, src.line_text(line).strip(), severity, "nothing checks " + ", ".join(missing)))
+        # A kind left unread and unreported is a gap, not a clean result.
+        unread = [k.upper().replace("SEP", "SEP-") for k in sorted(flows.get("incomplete", ()))
+                  if flows[k] is None and (sep10 if k == "sep10" else sep45 and missing)]
+        if unread:
+            hits.append(("incomplete", src.name, 1, "", Severity.LOW, " and ".join(unread)))
     return hits
 
 
@@ -1020,11 +1026,16 @@ def _js_events(src) -> list[tuple]:
     return found
 
 
-#: Binding visits one file's web-auth taint may spend across its signing scopes (each scope
-#: reads its relevant bindings twice), on top of a few reads of every relevant binding.
-#: Nested scopes re-read their inner ones, so the budget keeps a file of thousands of nested
-#: signing functions linear; past it, a scope reads as untainted (no finding).
-_TAINT_BUDGET = 200_000
+#: A scope with at most this many relevant bindings is always read (real signing functions
+#: read a few dozen): no padding before a login can starve it, and what such scopes cost is
+#: bounded by the file's signing calls.
+_SCOPE_FREE = 64
+#: Binding visits one file's web-auth taint may spend on larger scopes (each scope reads its
+#: relevant bindings twice), on top of a few reads of every relevant binding. Nested scopes
+#: re-read their inner ones; the budget keeps a file of thousands of them linear. A scope that
+#: does not fit is not read, later ones still are, and the file's analysis is incomplete (a
+#: blocking gap, never a silent "untainted").
+_TAINT_BUDGET = 1_000_000
 _TAINT_READS = 8
 
 
@@ -1061,17 +1072,22 @@ class _Taint:
                     fire(i)
         self.relevant = [i for i, f in enumerate(fired) if f]
         self.offsets = [events[i][0] for i in self.relevant]
-        self.budget, self.spent = _TAINT_BUDGET + _TAINT_READS * len(self.relevant), 0
+        # What any scope's taint can hold at most: a name no scope can bind needs no scope read.
+        self.bound = {n for i in self.relevant for n in events[i][2]}
+        self.parses = {n for i in self.relevant if events[i][5] for n in events[i][2]}
+        self.budget, self.spent, self.incomplete = _TAINT_BUDGET + _TAINT_READS * len(self.relevant), 0, False
 
     def scope(self, start: int, end: int, seeds: set[str], module: bool = False, src=None) -> tuple[set[str], set[str]]:
         """(names derived from the seeds or the source, those bound to a parsed transaction) in
         code[start:end], in source order (two passes for loops). With ``module``, only
-        bindings outside every function count."""
+        bindings outside every function count. A large scope over the budget is not read and
+        marks the analysis incomplete."""
         lo, hi = bisect_left(self.offsets, start), bisect_left(self.offsets, end)
-        self.spent += 2 * (hi - lo)
         tainted, parsed = set(seeds), set()
-        if self.spent > self.budget:
+        if not module and hi - lo > _SCOPE_FREE and self.spent + 2 * (hi - lo) > self.budget:
+            self.incomplete = True
             return tainted, parsed
+        self.spent += 2 * (hi - lo)
         steps = [i for i in self.relevant[lo:hi] if not module or src.function_at(self.events[i][0]) is None]
         for _ in range(2):
             for i in steps:
@@ -1083,10 +1099,12 @@ class _Taint:
         return tainted, parsed
 
 
-def _js_web_auth(src) -> dict[str, int | None]:
+def _js_web_auth(src) -> dict:
     """Offsets of a SEP-10 challenge signed from the web-auth response, and of SEP-45 entries
-    signed from the contract web-auth response, in a JS or TS file."""
-    found: dict[str, int | None] = {"sep10": None, "sep45": None}
+    signed from the contract web-auth response, in a JS or TS file; under "incomplete", the
+    kinds whose taint left a scope unread. A signing call whose names no scope can derive
+    reads no scope."""
+    found: dict = {"sep10": None, "sep45": None, "incomplete": set()}
     code, cache, requests = src.code, {}, {}
     # Module-level values first: `const ENDPOINT = toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT`.
     taint10 = _Taint(src, _SEP10_SOURCE, set()) if _SEP10_SOURCE.search(code) else None
@@ -1113,15 +1131,17 @@ def _js_web_auth(src) -> dict[str, int | None]:
                 cache[key] = taint45.scope(scope[0], scope[1], top45 | params)
         return cache[key]
     for m in re.finditer(r"(?<![\w$.])(?P<recv>[\w$]+)\s*\.\s*sign\s*\(", code):
-        _, parsed = flow(_flow_scope(src, m.start()), "sep10")
-        if m.group("recv") in parsed:
+        taint10 = taint10 or _Taint(src, _SEP10_SOURCE, top10)
+        if m.group("recv") in taint10.parses and m.group("recv") in flow(_flow_scope(src, m.start()), "sep10")[1]:
             found["sep10"] = m.start()
             break
-    asks = None
+    asks, reach45 = None, None
     for m in _SEP45_SIGN.finditer(code):
         scope = _flow_scope(src, m.start())
-        tainted, _ = flow(scope, "sep45")
-        close = src.pairs().get(m.end() - 1, m.end())
+        if reach45 is None:
+            taint45 = taint45 or _Taint(src, _SEP45_SOURCE, top45 | params45)
+            reach45 = taint45.bound | top45 | params45
+        signed = _ids(code[m.end():src.pairs().get(m.end() - 1, m.end())])
         if scope not in requests:  # the function itself asks the contract web-auth endpoint for entries
             if asks is None:  # where the endpoint (or a module value holding it) and the field occur: once per file
                 asks = ([m.start() for m in _SEP45_SOURCE.finditer(code)] +
@@ -1129,9 +1149,10 @@ def _js_web_auth(src) -> dict[str, int | None]:
                         [m.start() for m in _SEP45_FIELD.finditer(code)])
                 asks = (sorted(asks[0]), asks[1])
             requests[scope] = _occurs(asks[0], scope[0], scope[1]) and _occurs(asks[1], scope[0], scope[1])
-        if not _ids(code[m.end():close]).isdisjoint(tainted) or requests[scope]:
+        if requests[scope] or (not signed.isdisjoint(reach45) and not signed.isdisjoint(flow(scope, "sep45")[0])):
             found["sep45"] = m.start()
             break
+    found["incomplete"] = {kind for kind, taint in (("sep10", taint10), ("sep45", taint45)) if taint and taint.incomplete}
     return found
 
 

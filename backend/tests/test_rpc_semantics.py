@@ -594,6 +594,78 @@ class Budget:
     assert RETRY in hardening({"agent/limits.py": wired, "agent/submitter.py": submitter})
 
 
+def test_a_protocol_parameter_stands_only_for_classes_passed_to_its_own_function():
+    # The submitting class is passed to another function or method that only shares the name
+    # (and the parameter position or keyword) of the one whose parameter is typed as the
+    # Protocol: the database cursor still stands for no submitting class.
+    chain = '''from stellar_sdk import Server
+
+class Submitter:
+    def __init__(self):
+        self.server = Server("https://horizon-testnet.stellar.org")
+
+    def execute(self, envelope):
+        return self.server.submit_transaction(envelope)
+'''
+    limits = '''from typing import Protocol
+
+
+class Cursor(Protocol):
+    def execute(self, sql: str): ...
+
+
+class Budget:
+    def charge(self, cur: Cursor, amount):
+        self.reserve_budget(amount)
+        try:
+            cur.execute("UPDATE budget SET spent = spent + 1")
+        except Exception:
+            self.release_budget(amount)
+            raise
+
+
+def settle(cur: Cursor, amount):
+    reserve_budget(amount)
+    try:
+        cur.execute("UPDATE budget SET spent = spent + 1")
+    except Exception:
+        release_budget(amount)
+        raise
+'''
+    wallet = "\n\nclass Wallet:\n    def charge(self, submitter: Submitter, amount):\n        return submitter.execute(amount)\n"
+    for wiring in (wallet + "\n\ndef run(wallet: Wallet):\n    wallet.charge(Submitter(), 5)\n",
+                   wallet + "\n\ndef run(wallet: Wallet):\n    s = Submitter()\n    wallet.charge(s, 5)\n",
+                   wallet.replace("submitter", "cur") + "\n\ndef run(wallet: Wallet):\n    wallet.charge(cur=Submitter(), amount=5)\n",
+                   wallet + "\n\ndef run(wallet):\n    wallet.charge(Submitter(), 5)\n",  # receiver unknown
+                   wallet + "\n    def run(self):\n        self.charge(Submitter(), 5)\n",
+                   "\n\ndef settle(sub: Submitter, amount):\n    return sub.execute(amount)\n\n\ndef run():\n    settle(Submitter(), 5)\n",
+                   # Two classes named Budget: the call may run either, so it says nothing.
+                   wallet.replace("Wallet", "Budget") + "\n\ndef run():\n    Budget().charge(Submitter(), 5)\n"):
+        assert RETRY not in hardening({"agent/chain.py": chain + wiring, "agent/limits.py": limits}), wiring
+    # Passed to the function whose parameter is typed as the Protocol, through a call that
+    # resolves to it, the submitting class does stand for the Protocol.
+    for wiring in ("\nfrom agent.limits import Budget\n\ndef run():\n    s = Submitter()\n    Budget().charge(s, 5)\n",
+                   "\nfrom agent.limits import Budget\n\ndef run(budget: Budget):\n    budget.charge(cur=Submitter(), amount=5)\n",
+                   "\nfrom agent.limits import settle\n\ndef run():\n    settle(Submitter(), 5)\n",
+                   "\nfrom agent import limits\n\ndef settle(sub: Submitter):\n    return sub\n\n\n"
+                   "def run():\n    limits.settle(Submitter(), 5)\n"):
+        assert hardening({"agent/chain.py": chain + wiring, "agent/limits.py": limits})[RETRY].severity.value == "medium", wiring
+
+
+def test_k3_passed_classes_resolve_each_file_imports_once():
+    # Every call that passes a project class is resolved through its receiver once a Protocol
+    # is in play; the receiver's imports come from one index per file, not one scan of the
+    # module body per receiver name (3,000 receivers over 20,000 statements took 9 s).
+    started = time.perf_counter()
+    body = "from typing import Protocol\nclass P(Protocol):\n    def go(self, tx): ...\n" + \
+        "".join(f"v{i} = {i}\n" for i in range(20000)) + \
+        "class C:\n    def take(self, p, tx):\n        return p\n\nclass D:\n    pass\n\ndef wire(tx):\n" + \
+        "".join(f"    c{i}.take(D(), tx)\n" for i in range(3000)) + \
+        "def run(c: P, tx):\n    try:\n        return c.go(tx)\n    except Exception:\n        release(tx)\n        raise\n"
+    assert RETRY not in hardening({"agent/a.py": "from stellar_sdk import Server\n" + body})
+    assert time.perf_counter() - started < 6
+
+
 def test_a_release_around_a_module_instance_an_inline_client_or_a_dotted_module_call_is_reported():
     chain = '''from stellar_sdk import Server
 

@@ -192,6 +192,7 @@ class _PyRules:
         self._set_submits: dict[tuple, tuple[bool, int]] = {}
         self._defs: dict[str, _PyDefs] = {}
         self._imported: dict[tuple, tuple[str, str | None] | None] = {}
+        self._import_names: dict[str, dict[str, tuple]] = {}
         self._classes: dict[tuple, str | None] = {}
         self._frames: dict[str, dict[int, tuple]] = {}
         self._scope_classes: dict[int, dict] = {}
@@ -391,15 +392,15 @@ class _PyRules:
             self._defs[name] = _PyDefs(self.ctx.index.py_defs.get(name, []))
         return self._defs[name]
 
-    def _py_targets(self, py: PyFile, call: ast.Call) -> tuple[tuple | None, list[tuple[PyFile, ast.AST]]]:
+    def _py_targets(self, py: PyFile, call: ast.Call, standing: bool = True) -> tuple[tuple | None, list[tuple[PyFile, ast.AST]]]:
         """(a key when the list is shared by every call of the method, the project functions a
         call runs), resolved through its receiver: `self.m()` in the caller's class, `f()`
         defined in the module or imported by name, `mod.f()` / `pkg.mod.f()` from an imported
         module, `obj.m()` where obj is annotated or built as a project class (here, inline as
         `C().m()`, or as a module-level instance imported from another module), a Protocol's
-        stub standing for the classes that stand for the Protocol (_py_standing_for). A method
-        called on anything else (`cur.execute()`) is not followed: its name may belong to
-        another class."""
+        stub standing for the classes that stand for the Protocol (_py_standing_for; with
+        `standing` false, the stub itself). A method called on anything else (`cur.execute()`)
+        is not followed: its name may belong to another class."""
         name = _py_name(call.func)
         if name not in self.ctx.index.py_defs:
             return None, []
@@ -444,7 +445,7 @@ class _PyRules:
         if not kind:
             return None, []
         own = defs.by_class.get(kind, [])
-        if own and all(_py_stub(d) for _, d in own):
+        if standing and own and all(_py_stub(d) for _, d in own):
             # A Protocol or an abstract base: the methods of the classes that stand for it.
             return ("standing", kind, name), [d for c in sorted(self._py_standing_for(kind))
                                               for d in defs.by_class.get(c, []) if not _py_stub(d[1])]
@@ -557,10 +558,11 @@ class _PyRules:
 
     def _py_expected(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
         """(base -> its subclasses, annotated class -> the classes built for it) over the
-        project's non-test modules, in one walk per module."""
+        project's non-test modules, in one walk per module. A class passed for an annotated
+        parameter counts only when the call resolves to its function (_py_targets): a project
+        name index would merge every function of that name."""
         subclasses: dict[str, set[str]] = {}
         expected: dict[str, set[str]] = {}
-        passed: list[tuple[str, bool, int | str, str]] = []  # (callee, called as a method, position or keyword, class)
         classes: set[str] = set()
         for py in self.ctx.index.py.values():
             if TEST_PATH.search(py.path):
@@ -590,55 +592,62 @@ class _PyRules:
                     if (built := _py_built_class(node.value)) and (wanted := _py_annotation_class(node.annotation)):
                         expected.setdefault(wanted, set()).add(built)
                 elif isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute)):
-                    callee, method = _py_name(node.func), isinstance(node.func, ast.Attribute)
+                    table = None
                     for at, value in [*enumerate(node.args), *((k.arg, k.value) for k in node.keywords if k.arg)]:
                         built = _py_built_class(value)
                         if built is None and isinstance(value, ast.Name):
                             fn, _ = self._py_frame(py, node)
                             built = self._py_scope_classes(fn if fn is not None else py.tree).get(value.id)
                         if isinstance(built, str):
-                            passed.append((callee, method, at, built))
-        params: dict[tuple[str, bool], dict[int | str, set[str]]] = {}
-        for callee, method, at, built in passed:
-            key = (callee, method)
-            if key not in params:  # each callee's annotated parameters, once per name
-                table: dict[int | str, set[str]] = {}
-                for py, fn in self.ctx.index.py_defs.get(callee, []):
-                    positional = [*fn.args.posonlyargs, *fn.args.args]
-                    if method and isinstance(_py_owner(py, fn), ast.ClassDef):
-                        positional = positional[1:]  # self
-                    for i, arg in enumerate(positional):
-                        if arg.annotation is not None and (wanted := _py_annotation_class(arg.annotation)):
-                            table.setdefault(i, set()).add(wanted)
-                            table.setdefault(arg.arg, set()).add(wanted)
-                    for arg in fn.args.kwonlyargs:
-                        if arg.annotation is not None and (wanted := _py_annotation_class(arg.annotation)):
-                            table.setdefault(arg.arg, set()).add(wanted)
-                params[key] = table
-            for wanted in params[key].get(at, ()):
-                expected.setdefault(wanted, set()).add(built)
+                            table = self._py_param_classes(py, node) if table is None else table
+                            if (wanted := table.get(at)):
+                                expected.setdefault(wanted, set()).add(built)
         return subclasses, {wanted: built & classes for wanted, built in expected.items()}
+
+    def _py_param_classes(self, py: PyFile, call: ast.Call) -> dict[int | str, str]:
+        """position or keyword -> the class its parameter is annotated with, in the functions
+        the call resolves to (_py_targets, the Protocol's stub itself); a parameter they do not
+        all annotate with the same class is left out, as is any call that does not resolve."""
+        tables = []
+        for other, fn in self._py_targets(py, call, standing=False)[1]:
+            table: dict[int | str, str] = {}
+            positional = [*fn.args.posonlyargs, *fn.args.args]
+            if isinstance(_py_owner(other, fn), ast.ClassDef):
+                positional = positional[1:]  # self
+            for i, arg in enumerate(positional):
+                if arg.annotation is not None and (wanted := _py_annotation_class(arg.annotation)):
+                    table[i] = table[arg.arg] = wanted
+            for arg in fn.args.kwonlyargs:
+                if arg.annotation is not None and (wanted := _py_annotation_class(arg.annotation)):
+                    table[arg.arg] = wanted
+            tables.append(table)
+        if not tables:
+            return {}
+        return {at: wanted for at, wanted in tables[0].items() if all(t.get(at) == wanted for t in tables[1:])}
 
     def _py_imported(self, py: PyFile, name: str) -> tuple[str, str | None] | None:
         """(module, imported name) a local name comes from: `from a.b import name` -> ("a.b",
         "name"); `import a.b as name`, `import a.b` (for the name `a.b`), or `from a import b`
-        where a/b.py is a project module -> ("a.b", None). Once per file and name."""
+        where a/b.py is a project module -> ("a.b", None). Once per file and name, from one
+        index of the file's imports (the first statement that binds the name)."""
         key = (py.path, name)
         if key not in self._imported:
-            found = None
-            for node in py.tree.body:
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    for alias in node.names:
-                        if (alias.asname or alias.name) == name:
-                            dotted = f"{node.module}.{alias.name}"
-                            module = any(_module_is(path, dotted) for path in self.ctx.index.py)
-                            found = (dotted, None) if module else (node.module, alias.name)
-                elif isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.asname == name or (alias.asname is None and alias.name == name):
-                            found = (alias.name, None)
-                if found:
-                    break
+            names = self._import_names.get(py.path)
+            if names is None:
+                names = self._import_names[py.path] = {}
+                for node in py.tree.body:
+                    if isinstance(node, ast.Import) or (isinstance(node, ast.ImportFrom) and node.module):
+                        bound = {alias.asname or alias.name: (node, alias) for alias in node.names}  # the last alias wins
+                        for local, entry in bound.items():
+                            names.setdefault(local, entry)
+            found, entry = None, names.get(name)
+            if entry and isinstance(entry[0], ast.ImportFrom):
+                node, alias = entry
+                dotted = f"{node.module}.{alias.name}"
+                module = any(_module_is(path, dotted) for path in self.ctx.index.py)
+                found = (dotted, None) if module else (node.module, alias.name)
+            elif entry:
+                found = (entry[1].name, None)
             self._imported[key] = found
         return self._imported[key]
 
