@@ -19,8 +19,8 @@ from ..services.lockfiles import Lockset, version_key
 from ..stellar.canonical import strkey_valid
 from .consolidate import stable_id
 from .jsflow import _args, _param_names, _props, _string_value, _txt, _unwrap
-from .source_index import (EXAMPLE_PATH, TEST_PATH, JsFile, PyFile, SourceIndex, callee_name, index_for,
-                           js_functions_type, receiver)
+from .source_index import (TEST_PATH, JsFile, PyFile, SourceIndex, callee_name, drop, index_for,
+                           js_functions_type, receiver, unparse)
 
 #: The all-zero ed25519 key: nobody holds its secret, so a payment to it is lost.
 NULL_ACCOUNT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
@@ -32,6 +32,10 @@ _RUN = re.compile(r"(.)\1{9,}")
 #: Names that make a literal a payment value: who is paid, in which asset.
 _PAYMENT_NAME = re.compile(r"asset|token|usdc|eurc|sac|pay_?to|payee|destination|recipient|merchant|seller|issuer|"
                            r"receiver|treasury|currency", re.I)
+#: Names of credentials and caches: a base32 value bound to SESSION_TOKEN is not a token contract.
+_CREDENTIAL_NAME = re.compile(r"session|auth|access|refresh|bearer|jwt|api|secret|csrf|oauth|totp|otp|cache|nonce", re.I)
+#: The file is Stellar code: it names the network, an SDK or a payment protocol.
+_STELLAR_TEXT = re.compile(r"stellar|soroban|horizon|x402|@stellar/mpp|StrKey", re.I)
 _PAYEE_NAME = re.compile(r"pay_?to|payee|recipient|destination|seller|merchant|receiver|treasury", re.I)
 _EXEMPT_KEY = re.compile(r"example|placeholder|description|sample|dummy|mock", re.I)
 #: Demo data loaded into a database: its addresses are placeholders, not configuration.
@@ -51,20 +55,30 @@ _LEDGER_READ = re.compile(r"/operations|/payments|\.payments\(\)|\.operations\(\
 _CODE_FIELDS = {"asset_code", "assetCode"}
 _ISSUER_FIELD = re.compile(r"\b(?:asset_issuer|assetIssuer|issuer)\b")
 _NATIVE = {"native", "XLM", "xlm"}
-_ISSUER_COMPARED = re.compile(r"""(?:asset_issuer|assetIssuer|\.issuer)["'\]]*\s*(?:===?|!==?)|(?:===?|!==?)\s*[\w$.]*"""
-                              r"""(?:asset_issuer|assetIssuer|\.issuer)\b|\.equals\(""")
+_ISSUER_COMPARED = re.compile(r"""(?:asset_issuer|assetIssuer|\.issuer|getIssuer\(\))["'\]]*\s*(?:===?|!==?)|(?:===?|!==?)\s*"""
+                              r"""[\w$.]*(?:asset_issuer|assetIssuer|\.issuer\b|getIssuer\(\))|\.equals\(""")
+#: A receipt check reaches a verdict: it throws or rejects, returns a boolean or a verdict, or
+#: records the payment. Display code that filters and maps payment records does none of these.
+_OUTCOME = re.compile(r"\bthrow\b|\breturn\s+(?:true|false)\b|\b(?:verified|valid|isValid|ok|paid|success|confirmed|settled|"
+                      r"accepted|matched?)\s*:|\.(?:some|every|find|findIndex|includes)\s*\(|\breject\s*\(|\.status\(\s*4\d\d|"
+                      r"\b(?:mark|settle|fulfil|deliver|grant|credit|record)\w*\s*\(")
+_PY_OUTCOME = re.compile(r"\braise\b|\breturn\s+(?:True|False)\b|[\"'](?:verified|valid|ok|paid|success|confirmed|settled|"
+                         r"accepted)[\"']\s*:|\b(?:any|all)\s*\(|\b(?:mark|settle|fulfil|deliver|grant|credit|record)\w*\s*\(")
 #: Parsers that read '0x10' as 0 (the cap side) and sinks that read it as 16 (the signer side).
 _FLOAT_PARSE = re.compile(r"^(?:parseFloat|Number\.parseFloat)$")
+#: Parsers that read '0x10' as 16, as BigInt does: a cap computed with them agrees with the signer.
+_SOUND_PARSE = re.compile(r"^(?:Number|BigInt)$")
+#: The other side of a spending cap: a maximum, limit, budget or what remains of one (not a
+#: floor such as a minimum, zero or dust amount).
+_CAP_BOUND = re.compile(r"cap(?!ital|tur|tion|abilit)|max|limit|budget|remaining|ceiling|allowance|quota", re.I)
+_FLOOR_BOUND = re.compile(r"(?:^|[^A-Za-z])[Mm]in|[a-z]Min|MIN|[Ff]loor|FLOOR|[Dd]ust|DUST|[Ll]ower")
+_ARITHMETIC = frozenset({"+", "-", "*", "/", "%", "**"})
+#: Calls that refuse a request in the too-large branch.
+_REJECT_CALL = re.compile(r"^(?:reject|deny|abort|exit|fail\w*|refuse\w*)$", re.I)
 _BIGINT_SINKS = {"BigInt", "nativeToScVal", "ScInt", "XdrLargeInt"}
 #: The value is an amount (the last name of `req.amount`, `value`, `priceStroops`, ...).
 _AMOUNT_NAME = re.compile(r"amount|price|value|cost|fee|total|sum|qty|quantity|stroops|units", re.I)
 _DIGITS_ONLY = re.compile(r"\^\\d|\^\[0-9\]|\^\(\?:\\d|\^\(\\d")
-
-
-def _drop(severity: Severity, path: str) -> Severity:
-    if EXAMPLE_PATH.search(path):
-        return Severity.LOW if severity.rank >= Severity.MEDIUM.rank else Severity.INFO
-    return severity
 
 
 def _js_binder(node) -> str:
@@ -126,7 +140,7 @@ class AssetRules:
     def bad_strkeys(self) -> list[tuple[str, int, str, str, Severity]]:
         out = []
         for js in self.index.js.values():
-            if TEST_PATH.search(js.path) or _SEED_DATA.search(js.path):
+            if TEST_PATH.search(js.path) or _SEED_DATA.search(js.path) or not _STRKEY_LIKE.search(js.text):
                 continue
             for node in SourceIndex.walk(js.root):
                 if node.type not in {"string", "template_string"}:
@@ -137,7 +151,10 @@ class AssetRules:
                 binder = _js_binder(node)
                 if _js_exempt(node) or _EXEMPT_KEY.search(binder):
                     continue
-                out.append(self._strkey_place(js.path, js.line(node), js.snippet(node), value, binder))
+                place = self._strkey_place(js.path, js.line(node), js.snippet(node), value, binder,
+                                           bool(_STELLAR_TEXT.search(js.text)))
+                if place:
+                    out.append(place)
         for py in self.index.py.values():
             if TEST_PATH.search(py.path) or _SEED_DATA.search(py.path):
                 continue
@@ -153,7 +170,10 @@ class AssetRules:
                 binder = _py_binder(node, py)
                 if _EXEMPT_KEY.search(binder) or _py_exempt(node, py):
                     continue
-                out.append(self._strkey_place(py.path, node.lineno, py.snippet(node), value, binder))
+                place = self._strkey_place(py.path, node.lineno, py.snippet(node), value, binder,
+                                           bool(_STELLAR_TEXT.search(py.text)))
+                if place:
+                    out.append(place)
         for path, text in self.index.rust.items():
             if TEST_PATH.search(path):
                 continue
@@ -166,21 +186,30 @@ class AssetRules:
                     continue
                 binder = re.search(r"(?:const|static|let)\s+(?:mut\s+)?(\w+)", prefix)
                 line = code.count("\n", 0, m.start()) + 1
-                out.append(self._strkey_place(path, line, " ".join(code[start:code.find("\n", m.end())].split())[:160],
-                                              value, binder.group(1) if binder else ""))
+                place = self._strkey_place(path, line, " ".join(code[start:code.find("\n", m.end())].split())[:160],
+                                           value, binder.group(1) if binder else "", True)
+                if place:
+                    out.append(place)
         return out
 
-    def _strkey_place(self, path: str, line: int, snippet: str, value: str, binder: str):
+    def _strkey_place(self, path: str, line: int, snippet: str, value: str, binder: str, stellar: bool):
+        """The finding place for an invalid literal, or None when nothing makes it a Stellar
+        value (no payment name and no Stellar code in the file: a base32 id or secret)."""
         name = binder.rsplit(".", 1)[-1]
+        words = {m.group(0).lower() for m in _PAYMENT_NAME.finditer(binder or "")}
+        if words == {"token"} and (not stellar or _CREDENTIAL_NAME.search(binder)):
+            words = set()  # SESSION_TOKEN, AUTH_TOKEN: a credential, not a token contract
+        if not words and not stellar:
+            return None
         used = bool(name) and self._uses(name) > 1
-        severity = Severity.MEDIUM if _PAYMENT_NAME.search(binder or "") and used else Severity.LOW
+        severity = Severity.MEDIUM if words and used else Severity.LOW
         why = f"{len(value)} characters" if len(value) not in (56, 69) else "bad checksum"
-        return path, line, snippet, why, _drop(severity, path)
+        return path, line, snippet, why, drop(severity, path)
 
     def mpp_constants(self) -> list[tuple[str, int, str, str]]:
         out = []
         for js in self.index.js.values():
-            if TEST_PATH.search(js.path):
+            if TEST_PATH.search(js.path) or "@stellar/mpp" not in js.text:
                 continue
             for node in SourceIndex.walk(js.root):
                 if node.type != "import_statement":
@@ -205,7 +234,7 @@ class AssetRules:
     def asset_is_account(self) -> list[tuple[str, int, str]]:
         out = []
         for js in self.index.js.values():
-            if TEST_PATH.search(js.path):
+            if TEST_PATH.search(js.path) or not re.search(r"G[A-Z2-7]{55}", js.text):
                 continue
             for node in SourceIndex.walk(js.root):
                 if node.type != "object":
@@ -221,7 +250,7 @@ class AssetRules:
     def null_payee(self) -> list[tuple[str, int, str, Severity]]:
         out = []
         for js in self.index.js.values():
-            if TEST_PATH.search(js.path):
+            if TEST_PATH.search(js.path) or NULL_ACCOUNT not in js.text:
                 continue
             nulls = {_txt(d.child_by_field_name("name")) for d in SourceIndex.walk(js.root)
                      if d.type == "variable_declarator" and _string_value(d.child_by_field_name("value")) == NULL_ACCOUNT}
@@ -234,13 +263,13 @@ class AssetRules:
                 binder = _js_binder(node)
                 named = binder if binder else _txt(right)
                 if (_PAYEE_NAME.search(named) or _PAYEE_NAME.search(_txt(right))) and not _SIMULATION.search(binder or ""):
-                    out.append((js.path, js.line(node), js.snippet(node), _drop(Severity.MEDIUM, js.path)))
+                    out.append((js.path, js.line(node), js.snippet(node), drop(Severity.MEDIUM, js.path)))
         for py in self.index.py.values():
             if TEST_PATH.search(py.path):
                 continue
             for node in ast.walk(py.tree):
                 default = None
-                if isinstance(node, ast.Call) and ast.unparse(node.func) in {"os.getenv", "os.environ.get", "getenv"} \
+                if isinstance(node, ast.Call) and unparse(node.func) in {"os.getenv", "os.environ.get", "getenv"} \
                         and len(node.args) > 1:
                     default = node.args[1]
                 elif isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
@@ -249,14 +278,14 @@ class AssetRules:
                     continue
                 binder = _py_binder(node, py)
                 if _PAYEE_NAME.search(binder) and not _SIMULATION.search(binder):
-                    out.append((py.path, node.lineno, py.snippet(node), _drop(Severity.MEDIUM, py.path)))
+                    out.append((py.path, node.lineno, py.snippet(node), drop(Severity.MEDIUM, py.path)))
         return out
 
     # ================================================================= A4: missing issuer becomes XLM
     def native_fallback(self) -> list[tuple[str, int, str]]:
         out = []
         for js in self.index.js.values():
-            if TEST_PATH.search(js.path):
+            if TEST_PATH.search(js.path) or "native" not in js.text:
                 continue
             for call in SourceIndex.calls(js.root):
                 recv = receiver(call)
@@ -266,30 +295,30 @@ class AssetRules:
                 fn = SourceIndex.enclosing_function(call) or js.root
                 if cond is None or not re.search(r"new\s+(?:[\w$]+\.)?Asset\s*\(", _txt(fn)):
                     continue
-                atoms: list = []
-                expr = _js_condition(cond, atoms)
-                if expr is not None and _missing_issuer_goes_native(expr, atoms, taken):
+                if _falls_back(cond, taken, _js_guards(call), _js_condition):
                     out.append((js.path, js.line(call), js.snippet(cond)))
         for py in self.index.py.values():
             if TEST_PATH.search(py.path):
                 continue
             for node in ast.walk(py.tree):
                 if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "native"
-                        and ast.unparse(node.func.value).endswith("Asset")):
+                        and unparse(node.func.value).endswith("Asset")):
                     continue
                 cond, taken = _py_branch(node, py)
                 fn = _py_function(node, py)
-                if cond is None or "Asset(" not in ast.unparse(fn).replace("Asset.native()", ""):
+                if cond is None or not re.search(r"\bAsset\s*\(", py.source(fn)):
                     continue
-                atoms = []
-                expr = _py_condition(cond, atoms)
-                if expr is not None and _missing_issuer_goes_native(expr, atoms, taken):
+                if _falls_back(cond, taken, _py_guards(node, py), _py_condition):
                     out.append((py.path, node.lineno, py.snippet(cond)))
         return out
 
     # ================================================================= A5: amount parsed two ways
     def dual_parse(self) -> list[tuple[str, int, str]]:
         out = []
+        texts = [js.text for js in self.index.js.values()]
+        if not any("parseFloat" in t for t in texts) or \
+                not any(re.search(r"BigInt|nativeToScVal|ScInt|XdrLargeInt|createPaymentPayload", t) for t in texts):
+            return out  # no cap parsed with parseFloat, or no BigInt signer, anywhere in the project
         for js in self.index.js.values():
             if TEST_PATH.search(js.path):
                 continue
@@ -351,25 +380,40 @@ class AssetRules:
                        for c in [node, *SourceIndex.calls(node)] if c.type == "call_expression")
 
     def _float_cap(self, js: JsFile, fn, seed: str, depth: int) -> bool:
+        """The value is capped through parseFloat here or in a callee (and not also capped
+        through Number or BigInt, which parse it as the signer does)."""
         key = (js.path, fn.start_byte, fn.end_byte, seed, "float")
         if key in self._float_memo:
             return self._float_memo[key]
         self._float_memo[key] = False
         names = self._derived(fn, seed)
+        float_side, sound_side = self._parsed(fn, names, _FLOAT_PARSE), self._parsed(fn, names, _SOUND_PARSE)
+        capped = False
+        for node in SourceIndex.walk(fn):
+            if node.type != "binary_expression" or _txt(node.child_by_field_name("operator")) not in {"<", ">", "<=", ">="}:
+                continue
+            if _upper_bound(node, sound_side):
+                return False  # a sound cap on the same value: the parseFloat one is only advisory
+            capped = capped or _upper_bound(node, float_side)
+        result = capped or (depth < 2 and self._through_calls(js, fn, names, depth, self._float_cap))
+        self._float_memo[key] = result
+        return result
+
+    def _parsed(self, fn, names: set[str], parser):
+        """A test for an expression that holds the value as `parser` reads it: a parser call
+        on the value, or a local computed from one (`const price = parseFloat(x) / 1e7`)."""
         parsed: set[str] = set()
         for call in SourceIndex.calls(fn):
-            if _FLOAT_PARSE.match(_txt(call.child_by_field_name("function"))) and \
+            if parser.match(_txt(call.child_by_field_name("function"))) and \
                     any(self._mentions(_txt(a), names) for a in _args(call)[:1]):
                 holder = call.parent
-                while holder is not None and holder.type in {"binary_expression", "parenthesized_expression", "await_expression"}:
-                    if holder.type == "binary_expression" and _txt(holder.child_by_field_name("operator")) in {"<", ">", "<=", ">="}:
-                        self._float_memo[key] = True
-                        return True
+                while holder is not None and (holder.type in {"parenthesized_expression", "await_expression"} or (
+                        holder.type == "binary_expression" and _txt(holder.child_by_field_name("operator")) in _ARITHMETIC)):
                     holder = holder.parent
                 if holder is not None and holder.type == "variable_declarator":
                     parsed.add(_txt(holder.child_by_field_name("name")))
         changed = True
-        while changed and parsed:  # const price = parseFloat(x) / 1e7; const total = spent + price
+        while changed and parsed:  # const total = spent + price
             changed = False
             for node in SourceIndex.walk(fn):
                 if node.type == "variable_declarator" and node.child_by_field_name("value") is not None and \
@@ -377,14 +421,16 @@ class AssetRules:
                         self._mentions(_txt(node.child_by_field_name("value")), parsed):
                     parsed.add(_txt(node.child_by_field_name("name")))
                     changed = True
-        for node in SourceIndex.walk(fn):
-            if node.type == "binary_expression" and _txt(node.child_by_field_name("operator")) in {"<", ">", "<=", ">="} \
-                    and parsed and self._mentions(_txt(node), parsed):
-                self._float_memo[key] = True
-                return True
-        result = depth < 2 and self._through_calls(js, fn, names, depth, self._float_cap)
-        self._float_memo[key] = result
-        return result
+
+        def holds(side) -> bool:
+            if side is None:
+                return False
+            for call in [side, *SourceIndex.calls(side)]:
+                if call.type == "call_expression" and parser.match(_txt(call.child_by_field_name("function"))) and \
+                        any(self._mentions(_txt(a), names) for a in _args(call)[:1]):
+                    return True
+            return bool(parsed) and self._mentions(_txt(side), parsed)
+        return holds
 
     def _bigint(self, js: JsFile, fn, seed: str, depth: int) -> bool:
         key = (js.path, fn.start_byte, fn.end_byte, seed, "bigint")
@@ -417,7 +463,7 @@ class AssetRules:
             for position, arg in enumerate(_args(call)):
                 if not self._raw(arg, names):
                     continue
-                for other, target in self.index.js_defs.get(callee_name(call), []):
+                for other, target in self.index.defs(callee_name(call)):
                     if other.path == js.path and target == fn:
                         continue
                     params = target.child_by_field_name("parameters")
@@ -456,11 +502,22 @@ class AssetRules:
         return False
 
     # ================================================================= A6: payment accepted by asset code
+    def _helper_compares_issuer(self, scope, root: str) -> bool:
+        """A project function that receives the record compares its issuer:
+        `op.asset_code === code && sameIssuer(op, expected)`."""
+        for call in SourceIndex.calls(scope):
+            if not any(_txt(_unwrap(a)) == root for a in _args(call)):
+                continue
+            for _, target in self.index.defs(callee_name(call)):
+                if _ISSUER_COMPARED.search(_txt(target)):
+                    return True
+        return False
+
     def code_only_checks(self) -> list[tuple[str, int, str, bool]]:
         """(file, line, code, compared with a literal code) for received payments checked by code."""
         out = []
         for js in self.index.js.values():
-            if TEST_PATH.search(js.path):
+            if TEST_PATH.search(js.path) or not re.search(r"asset_code|assetCode|getCode|\.code\b", js.text):
                 continue
             for node in SourceIndex.walk(js.root):
                 if node.type != "binary_expression" or _txt(node.child_by_field_name("operator")) not in {"===", "==", "!==", "!="}:
@@ -479,15 +536,16 @@ class AssetRules:
                     outer = _outer_function(fn) or js.root
                     if not _RECEIPT.search(_txt(outer)[:4000] + js.path) or not _LEDGER_READ.search(_txt(outer)):
                         break
-                    if re.search(r"balance", root, re.I) or _in_balances_callback(fn):
+                    if re.search(r"balance", root, re.I) or _in_balances_callback(fn) or not _js_decides(outer, node):
                         break
                     equality = _txt(node.child_by_field_name("operator")) in {"===", "=="}
                     either = equality and _in_disjunction(node)
                     # An issuer comparison anywhere in the verifier counts (it may test another
-                    # handle on the same record); only the `||` fallback fires regardless.
-                    checked = re.search(r"(?<![\w$])" + re.escape(root) + r"(?:\.asset)?\.(?:asset_issuer|assetIssuer|issuer)\b|"
-                                        + re.escape(root) + r"(?:\.asset)?\.equals\(", _txt(fn or outer)) or \
-                        _ISSUER_COMPARED.search(_txt(outer))
+                    # handle on the same record, or call a helper that does); only the `||`
+                    # fallback fires regardless.
+                    checked = re.search(r"(?<![\w$])" + re.escape(root) + r"(?:\.asset)?\.(?:asset_issuer|assetIssuer|issuer|"
+                                        r"getIssuer)\b|" + re.escape(root) + r"(?:\.asset)?\.equals\(", _txt(fn or outer)) or \
+                        _ISSUER_COMPARED.search(_txt(outer)) or self._helper_compares_issuer(outer, root)
                     if either or not checked:
                         out.append((js.path, js.line(node), js.snippet(node), literal is not None))
                     break
@@ -497,8 +555,9 @@ class AssetRules:
             for fn in ast.walk(py.tree):
                 if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
-                text = ast.unparse(fn)
-                if not _RECEIPT.search(fn.name + text[:4000] + py.path) or not _LEDGER_READ.search(text):
+                text = py.source(fn)
+                if not _RECEIPT.search(fn.name + text[:4000] + py.path) or not _LEDGER_READ.search(text) or \
+                        not _py_decides(fn, py):
                     continue
                 for node in ast.walk(fn):
                     if not (isinstance(node, ast.Compare) and len(node.ops) == 1 and
@@ -510,7 +569,7 @@ class AssetRules:
                         if root is None or re.search(r"balance", root, re.I):
                             continue
                         literal = other.value if isinstance(other, ast.Constant) and isinstance(other.value, str) else None
-                        if literal is not None and literal in _NATIVE or _ISSUER_FIELD.search(ast.unparse(other)):
+                        if literal is not None and literal in _NATIVE or _ISSUER_FIELD.search(unparse(other)):
                             break
                         parent = py.parents.get(node)
                         either = isinstance(node.ops[0], ast.Eq) and isinstance(parent, ast.BoolOp) and isinstance(parent.op, ast.Or)
@@ -522,22 +581,116 @@ class AssetRules:
         return out
 
 
+# --------------------------------------------------------------------------- spending caps
+def _upper_bound(cmp, holds) -> bool:
+    """`cmp` (<, >, <= or >=) caps the value `holds` recognises: the value is alone on one side,
+    the other side is a positive literal or a cap, limit or budget, and the too-large outcome
+    is refused. A positivity check (`parseFloat(x) <= 0`) or a minimum is not a cap: hex
+    reads as 0 there and fails closed."""
+    op = _txt(cmp.child_by_field_name("operator"))
+    left, right = cmp.child_by_field_name("left"), cmp.child_by_field_name("right")
+    in_left, in_right = holds(left), holds(right)
+    if in_left == in_right:
+        return False
+    value, bound = (left, right) if in_left else (right, left)
+    too_large = (value == left) == (op in {">", ">="})  # the comparison's value for a huge amount
+    text = _txt(bound)
+    named = bool(_CAP_BOUND.search(text)) and not _FLOOR_BOUND.search(text)
+    if not (named or _positive_literal(bound)):
+        return False
+    node = cmp
+    while True:
+        parent = node.parent
+        if parent is None:
+            return False
+        if parent.type == "parenthesized_expression":
+            node = parent
+            continue
+        if parent.type == "unary_expression" and _txt(parent.child_by_field_name("operator")) == "!":
+            node, too_large = parent, not too_large
+            continue
+        if parent.type == "binary_expression" and _txt(parent.child_by_field_name("operator")) in {"||", "&&"}:
+            if (_txt(parent.child_by_field_name("operator")) == "||") != too_large:
+                return False  # `x <= cap || override`: the other term decides
+            node = parent
+            continue
+        break
+    if parent.type == "if_statement" and parent.child_by_field_name("condition") == node:
+        if too_large:
+            return _rejects(parent.child_by_field_name("consequence"))
+        alternative = parent.child_by_field_name("alternative")
+        if alternative is not None:
+            return any(_rejects(c) for c in alternative.named_children)
+        return _js_exits(parent.child_by_field_name("consequence"))  # `if (x <= cap) return pay(); throw ...`
+    # A boolean that is returned or kept (`return amount <= this.remaining`): only a named cap.
+    return named and parent.type in {"return_statement", "variable_declarator", "assignment_expression", "arrow_function",
+                                     "arguments", "pair", "ternary_expression"}
+
+
+def _positive_literal(node) -> bool:
+    node = _unwrap(node)
+    if node is None:
+        return False
+    if node.type == "number":
+        text = _txt(node).replace("_", "").rstrip("n")
+        try:
+            return (int(text, 0) if re.fullmatch(r"0[xXoObB][0-9a-fA-F]+|\d+", text) else float(text)) > 0
+        except ValueError:
+            return False
+    if node.type == "binary_expression" and _txt(node.child_by_field_name("operator")) in _ARITHMETIC:
+        return _positive_literal(node.child_by_field_name("left")) and _positive_literal(node.child_by_field_name("right"))
+    return False
+
+
+def _rejects(branch) -> bool:
+    """The branch refuses: it throws, returns, leaves the loop or calls reject (a warning
+    alone does not)."""
+    stack = [branch] if branch is not None else []
+    while stack:
+        node = stack.pop()
+        if node.type in {"throw_statement", "return_statement", "break_statement", "continue_statement"}:
+            return True
+        if node.type == "call_expression" and _REJECT_CALL.match(callee_name(node)):
+            return True
+        stack.extend(c for c in node.named_children if not js_functions_type(c))
+    return False
+
+
 # --------------------------------------------------------------------------- condition evaluation
 _ISSUER_PRESENT, _ISSUER_ABSENT, _CODE_NATIVE, _CODE_OTHER, _CODE_PRESENT, _UNKNOWN = range(6)
 
 
-def _missing_issuer_goes_native(expr, atoms: list, taken: bool) -> bool:
-    """With a credit code (say USDC) and no issuer, the branch that builds Asset.native()
-    is taken whatever the condition's other terms are."""
-    if not any(kind in (_ISSUER_PRESENT, _ISSUER_ABSENT) for kind in atoms):
+def _falls_back(cond, taken: bool, guards, parse) -> bool:
+    """A credit code without an issuer reaches the Asset.native() branch: the branch's
+    condition sends it there, and no statement that runs first exits (throw, raise or
+    return) for it, such as `if (code !== 'XLM' && !issuer) throw ...`. Conditions too deeply
+    nested to evaluate count as not reaching it."""
+    try:
+        atoms: list = []
+        expr = parse(cond, atoms)
+        if expr is None or not any(kind in (_ISSUER_PRESENT, _ISSUER_ABSENT) for kind in atoms) or \
+                not _always(expr, atoms, taken):
+            return False
+        for guard in guards:
+            atoms = []
+            expr = parse(guard, atoms)
+            if expr is not None and _always(expr, atoms, True):
+                return False
+        return True
+    except RecursionError:
         return False
+
+
+def _always(expr, atoms: list, want: bool) -> bool:
+    """With a credit code (say USDC) and no issuer, the condition is `want` whatever its
+    other terms are."""
     unknown = [i for i, kind in enumerate(atoms) if kind == _UNKNOWN][:4]
     for values in itertools.product((False, True), repeat=len(unknown)):
         assignment = dict(zip(unknown, values))
         fixed = {i: {_ISSUER_PRESENT: False, _ISSUER_ABSENT: True, _CODE_NATIVE: False, _CODE_OTHER: True,
                      _CODE_PRESENT: True}.get(kind) for i, kind in enumerate(atoms)}
         fixed.update(assignment)
-        if _evaluate(expr, fixed) is not taken:
+        if _evaluate(expr, fixed) is not want:
             return False
     return True
 
@@ -600,7 +753,7 @@ def _py_condition(node, atoms: list):
             expr = ("and" if isinstance(node.op, ast.And) else "or", expr, part)
         return expr
     if isinstance(node, ast.Compare) and len(node.ops) == 1:
-        text = ast.unparse(node)
+        text = unparse(node)
         other = node.comparators[0]
         if re.search(r"issuer", text, re.I) and isinstance(other, ast.Constant) and other.value in (None, ""):
             return _atom(atoms, _ISSUER_PRESENT if isinstance(node.ops[0], (ast.IsNot, ast.NotEq)) else _ISSUER_ABSENT)
@@ -609,7 +762,7 @@ def _py_condition(node, atoms: list):
             return _atom(atoms, _CODE_OTHER if isinstance(node.ops[0], (ast.NotEq, ast.IsNot)) else _CODE_NATIVE)
         return _atom(atoms, _UNKNOWN)
     if isinstance(node, (ast.Name, ast.Attribute)):
-        text = ast.unparse(node)
+        text = unparse(node)
         if re.search(r"issuer", text, re.I):
             return _atom(atoms, _ISSUER_PRESENT)
         if re.search(r"code", text, re.I):
@@ -630,6 +783,44 @@ def _js_branch(call) -> tuple[object, bool]:
             return parent.parent.child_by_field_name("condition"), False
         node = parent
     return None, False
+
+
+def _js_exits(node) -> bool:
+    node = _unwrap(node)
+    if node is not None and node.type == "statement_block":
+        stmts = [c for c in node.named_children if c.type != "comment"]
+        node = stmts[-1] if stmts else None
+    return node is not None and node.type in {"throw_statement", "return_statement"}
+
+
+def _js_guards(call):
+    """Conditions of the `if (...) throw/return` statements that run before the call, in
+    each enclosing block up to its function."""
+    node = call
+    while node.parent is not None and not js_functions_type(node.parent):
+        parent = node.parent
+        if parent.type in {"statement_block", "program", "switch_case", "switch_default"}:
+            for stmt in parent.named_children:
+                if stmt.start_byte >= node.start_byte:
+                    break
+                if stmt.type == "if_statement" and _js_exits(stmt.child_by_field_name("consequence")):
+                    yield stmt.child_by_field_name("condition")
+        node = parent
+
+
+def _py_guards(node, py: PyFile):
+    """Python's `if ...: raise/return` statements that run before the node."""
+    child, parent = node, py.parents.get(node)
+    while parent is not None:
+        for name in ("body", "orelse", "finalbody"):
+            block = getattr(parent, name, None)
+            if isinstance(block, list) and any(stmt is child for stmt in block):
+                for stmt in block[:next(i for i, s in enumerate(block) if s is child)]:
+                    if isinstance(stmt, ast.If) and stmt.body and isinstance(stmt.body[-1], (ast.Raise, ast.Return)):
+                        yield stmt.test
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return
+        child, parent = parent, py.parents.get(parent)
 
 
 def _py_branch(call, py: PyFile) -> tuple[object, bool]:
@@ -654,13 +845,13 @@ def _py_function(node, py: PyFile):
 def _py_binder(node, py: PyFile) -> str:
     parent = py.parents.get(node)
     while isinstance(parent, (ast.BoolOp, ast.IfExp, ast.Call)) and not (
-            isinstance(parent, ast.Call) and node in parent.args and ast.unparse(parent.func) not in
+            isinstance(parent, ast.Call) and node in parent.args and unparse(parent.func) not in
             {"os.getenv", "os.environ.get", "getenv"}):
         node, parent = parent, py.parents.get(parent)
     if isinstance(parent, ast.Assign):
-        return " ".join(ast.unparse(t) for t in parent.targets)
+        return " ".join(unparse(t) for t in parent.targets)
     if isinstance(parent, ast.AnnAssign):
-        return ast.unparse(parent.target)
+        return unparse(parent.target)
     if isinstance(parent, ast.keyword):
         return parent.arg or ""
     if isinstance(parent, ast.Dict):
@@ -718,14 +909,41 @@ def _code_access(node) -> str | None:
         index = _string_value(node.child_by_field_name("index"))
         if index in _CODE_FIELDS:
             return _txt(_unwrap(node.child_by_field_name("object")))
+    if node.type == "call_expression" and callee_name(node) == "getCode" and not _args(node):  # op.asset.getCode()
+        obj = receiver(node)
+        if obj is not None and obj.type == "member_expression" and _txt(obj.child_by_field_name("property")) == "asset":
+            return _txt(_unwrap(obj.child_by_field_name("object")))
+        return _txt(obj) if obj is not None else None
     return None
+
+
+def _js_decides(outer, node) -> bool:
+    """The receipt function reaches a verdict (see _OUTCOME), or returns the comparison itself."""
+    body = outer.child_by_field_name("body") if js_functions_type(outer) else outer
+    if body is not None and _OUTCOME.search(_txt(body)):
+        return True
+    expr = node
+    while expr.parent is not None and (expr.parent.type == "parenthesized_expression" or (
+            expr.parent.type == "binary_expression" and _txt(expr.parent.child_by_field_name("operator")) in {"&&", "||"})):
+        expr = expr.parent
+    parent = expr.parent
+    if parent is not None and parent.type == "arrow_function":  # (r) => r.asset_code === ...: a callback's verdict
+        host = parent.parent.parent if parent.parent is not None and parent.parent.type == "arguments" else None
+        return host is None or callee_name(host) not in {"filter", "map", "forEach", "flatMap", "sort", "reduce"}
+    return parent is not None and parent.type == "return_statement"
+
+
+def _py_decides(fn, py: PyFile) -> bool:
+    body = "\n".join(py.lines[fn.body[0].lineno - 1:fn.end_lineno]) if fn.body else ""
+    return bool(_PY_OUTCOME.search(body)) or any(
+        isinstance(n, ast.Return) and isinstance(n.value, (ast.Compare, ast.BoolOp)) for n in ast.walk(fn))
 
 
 def _py_code_access(node) -> str | None:
     if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value in _CODE_FIELDS:
-        return ast.unparse(node.value)
+        return unparse(node.value)
     if isinstance(node, ast.Attribute) and node.attr in _CODE_FIELDS:
-        return ast.unparse(node.value)
+        return unparse(node.value)
     return None
 
 
@@ -746,10 +964,26 @@ def _in_balances_callback(fn) -> bool:
 
 
 def _in_disjunction(node) -> bool:
-    parent = node.parent
-    while parent is not None and parent.type == "parenthesized_expression":
-        parent = parent.parent
-    return parent is not None and parent.type == "binary_expression" and _txt(parent.child_by_field_name("operator")) == "||"
+    """The code test is one alternative of an `||`, alone or AND-ed only with terms that do not
+    compare the issuer: `full === expected || (op.asset.getCode && op.asset.getCode() === expected)`."""
+    child, parent = node, node.parent
+    while parent is not None:
+        if parent.type == "parenthesized_expression":
+            child, parent = parent, parent.parent
+            continue
+        if parent.type != "binary_expression":
+            return False
+        op = _txt(parent.child_by_field_name("operator"))
+        if op == "||":
+            return True
+        if op != "&&":
+            return False
+        left, right = parent.child_by_field_name("left"), parent.child_by_field_name("right")
+        sibling = right if child == left else left
+        if _ISSUER_FIELD.search(_txt(sibling)) or re.search(r"getIssuer|\.equals\(", _txt(sibling)):
+            return False
+        child, parent = parent, parent.parent
+    return False
 
 
 def asset_findings(rules: AssetRules, make) -> list:
@@ -759,14 +993,15 @@ def asset_findings(rules: AssetRules, make) -> list:
 
     def per_file(rule: str, places: list[tuple], severity_of, title: str, detail: str, remediation: str, refs: list[str]):
         by_file: dict[str, list[tuple]] = {}
-        for place in places:
+        for place in sorted(places, key=lambda p: (p[0], p[1])):
             by_file.setdefault(place[0], []).append(place)
         for path, items in by_file.items():
             severity = max((severity_of(item) for item in items), key=lambda s: s.rank)
             if severity is Severity.INFO:
                 continue
             evidence = [f"{path}:{item[1]} `{item[2][:150]}`" + (f" ({item[3]})" if len(item) > 3 and isinstance(item[3], str)
-                                                                    else "") for item in items[:6]]
+                                                                    and not isinstance(item[3], Severity) else "")
+                        for item in items[:6]]
             findings.append(make(stable_id(rule, path, items[0][2]), severity, title, detail, evidence, remediation, refs))
 
     per_file("security-strkey-invalid", rules.bad_strkeys(), lambda item: item[4],
@@ -776,13 +1011,13 @@ def asset_findings(rules: AssetRules, make) -> list:
              "paid, and a client cannot pay it.",
              "Replace it with the real StrKey (StrKey.isValidContract / isValidEd25519PublicKey), and validate configured "
              "addresses at startup.", ["Stellar StrKey (SEP-23)"])
-    per_file("security-sac-constant-invalid", rules.mpp_constants(), lambda item: _drop(Severity.MEDIUM, item[0]),
+    per_file("security-sac-constant-invalid", rules.mpp_constants(), lambda item: drop(Severity.MEDIUM, item[0]),
              "MPP's mainnet SAC constant is not a valid contract id",
              "@stellar/mpp up to 0.7.1 exports USDC_SAC_MAINNET with 54 characters and XLM_SAC_MAINNET with 55: neither "
              "is a contract id, so a mainnet charge priced in them cannot be paid or verified.",
              "Use the SAC ids derived from the asset (Asset('USDC', issuer).contractId(Networks.PUBLIC)).",
              ["@stellar/mpp dist/constants.js"])
-    per_file("security-payment-asset-is-account", rules.asset_is_account(), lambda item: _drop(Severity.LOW, item[0]),
+    per_file("security-payment-asset-is-account", rules.asset_is_account(), lambda item: drop(Severity.LOW, item[0]),
              "A payment's asset is an account address, not a token contract",
              "x402 and MPP name the asset by its contract id (C...). An account address (G...) is not an asset: clients "
              "reject the requirement, so the route cannot be paid.",
@@ -792,12 +1027,12 @@ def asset_findings(rules: AssetRules, make) -> list:
              "When the variable is unset the payee falls back to GAAAA...WHF, the all-zero key. Nobody holds its secret, "
              "so every payment made to it is lost and the operator receives nothing.",
              "Fail at startup when the payee is not configured.", ["CWE-1188 Insecure Default Initialization"])
-    per_file("security-missing-issuer-pays-xlm", rules.native_fallback(), lambda item: _drop(Severity.MEDIUM, item[0]),
+    per_file("security-missing-issuer-pays-xlm", rules.native_fallback(), lambda item: drop(Severity.MEDIUM, item[0]),
              "An asset without an issuer silently becomes XLM",
              "When a credit asset code (USDC, EURC, ...) arrives without its issuer, this branch builds Asset.native(). "
              "The operation then moves XLM in the amount meant for the other asset, with no error.",
              "Use native only when the code is XLM; reject a credit code that has no issuer.", ["Stellar assets"])
-    per_file("security-amount-parsed-two-ways", rules.dual_parse(), lambda item: Severity.HIGH,
+    per_file("security-amount-parsed-two-ways", rules.dual_parse(), lambda item: drop(Severity.HIGH, item[0]),
              "The spending cap and the signer read the amount differently",
              "The cap parses the amount with parseFloat, but the signed amount comes from BigInt (directly, through "
              "nativeToScVal or through @x402/stellar createPaymentPayload). parseFloat('0x3B9ACA00') is 0 while "

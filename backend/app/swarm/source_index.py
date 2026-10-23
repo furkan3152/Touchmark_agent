@@ -13,6 +13,7 @@ import ast
 import re
 from dataclasses import dataclass, field
 
+from ..models import Severity
 from .jsflow import _dotted, _parsers, _txt, _unwrap, is_js
 
 #: Paths whose code is not the agent: tests, fixtures, mocks, smoke tests and benches.
@@ -31,13 +32,54 @@ def js_functions_type(node) -> bool:
     return node is not None and node.type in _JS_FUNCTIONS
 
 
+def drop(severity: Severity, path: str) -> Severity:
+    """Example and template code drops one level (a HIGH becomes MEDIUM)."""
+    return severity.downgrade() if EXAMPLE_PATH.search(path) else severity
+
+
+def unparse(node) -> str:
+    """ast.unparse for small nodes. It recurses, so a deeply nested expression (a long `+`
+    chain that ast.parse accepts) raises RecursionError; that reads as no text."""
+    try:
+        return ast.unparse(node)
+    except (RecursionError, ValueError, AttributeError):
+        return ""
+
+
 @dataclass
 class JsFile:
+    """A JavaScript or TypeScript file, parsed on first use: most rules first test the text
+    for a name they need, so most files of a large project are never parsed."""
     path: str
     text: str
-    root: object
+    parser: object
     stellar: bool
     lines: list[str] = field(default_factory=list)
+    _root: object = None
+    _functions: dict | None = None
+
+    @property
+    def root(self):
+        if self._root is None:
+            try:
+                self._root = self.parser.parse(self.text.encode("utf-8", "replace")).root_node
+            except (ValueError, RecursionError):
+                self._root = self.parser.parse(b"").root_node
+        return self._root
+
+    def functions(self) -> dict[str, list]:
+        """Function name -> the functions in this file called by that name."""
+        if self._functions is None:
+            found: dict[str, list] = {}
+            stack = [self.root]
+            while stack:
+                node = stack.pop()
+                name = js_function_name(node)
+                if name:
+                    found.setdefault(name, []).append(node)
+                stack.extend(node.named_children)
+            self._functions = found
+        return self._functions
 
     def line(self, node) -> int:
         return node.start_point[0] + 1
@@ -60,13 +102,20 @@ class PyFile:
         row = getattr(node, "lineno", 1) - 1
         return " ".join(self.lines[row].split())[:limit] if row < len(self.lines) else ""
 
+    def source(self, node) -> str:
+        """The lines a node spans, sliced from the file rather than unparsed (no recursion)."""
+        start, end = getattr(node, "lineno", None), getattr(node, "end_lineno", None)
+        if node is self.tree or start is None or end is None:
+            return self.text
+        return "\n".join(self.lines[start - 1:end])
+
 
 class SourceIndex:
     def __init__(self, files: dict[str, str]):
         self.js: dict[str, JsFile] = {}
         self.py: dict[str, PyFile] = {}
-        #: function name -> [(file, function node)] for name-based call resolution.
-        self.js_defs: dict[str, list[tuple[JsFile, object]]] = {}
+        #: function name -> [(file, function node)] for name-based call resolution (see defs()).
+        self._js_defs: dict[str, list[tuple[JsFile, object]]] = {}
         self.py_defs: dict[str, list[tuple[PyFile, ast.AST]]] = {}
         self.rust: dict[str, str] = {}
         parsers = None
@@ -83,19 +132,14 @@ class SourceIndex:
                 if not parsers:
                     continue
                 parser = parsers["tsx" if lower.endswith(".tsx") else "ts" if lower.endswith((".ts", ".mts", ".cts")) else "js"]
-                try:
-                    root = parser.parse(text.encode("utf-8", "replace")).root_node
-                except (ValueError, RecursionError):
-                    continue
-                js = JsFile(path, text, root, bool(_STELLAR_JS.search(text)), text.splitlines())
-                self.js[path] = js
-                self._index_js(js)
+                self.js[path] = JsFile(path, text, parser, bool(_STELLAR_JS.search(text)), text.splitlines())
             elif lower.endswith(".py"):
                 try:
                     tree = ast.parse(text)
                 except (SyntaxError, ValueError, RecursionError):
                     continue
-                py = PyFile(path, text, tree, "stellar_sdk" in text, text.splitlines())
+                # ast numbers lines by \n, \r\n and \r only (str.splitlines also splits on \f, \x85, ...).
+                py = PyFile(path, text, tree, "stellar_sdk" in text, re.split(r"\r\n|\r|\n", text))
                 for node in ast.walk(tree):
                     for child in ast.iter_child_nodes(node):
                         py.parents[child] = node
@@ -105,16 +149,26 @@ class SourceIndex:
                         self.py_defs.setdefault(node.name, []).append((py, node))
             elif lower.endswith(".rs"):
                 self.rust[path] = text
+        self._bigint_json: bool | None = None
+
+    def bigint_json_patched(self) -> bool:
+        """The project installs a BigInt.prototype.toJSON, so JSON.stringify accepts BigInt."""
+        if self._bigint_json is None:
+            self._bigint_json = any(re.search(r"BigInt\.prototype\b[^;\n]{0,30}\btoJSON\b", js.text)
+                                    for js in self.js.values())
+        return self._bigint_json
 
     # ------------------------------------------------------------------ JavaScript
-    def _index_js(self, js: JsFile) -> None:
-        stack = [js.root]
-        while stack:
-            node = stack.pop()
-            name = js_function_name(node)
-            if name:
-                self.js_defs.setdefault(name, []).append((js, node))
-            stack.extend(node.named_children)
+    def defs(self, name: str) -> list[tuple[JsFile, object]]:
+        """The project's JavaScript functions called `name` (only files that contain the name
+        are parsed for it)."""
+        if not name:
+            return []
+        found = self._js_defs.get(name)
+        if found is None:
+            found = [(js, node) for js in self.js.values() if name in js.text for node in js.functions().get(name, [])]
+            self._js_defs[name] = found
+        return found
 
     @staticmethod
     def walk(node):
@@ -185,12 +239,14 @@ _LAST: tuple | None = None
 
 
 def index_for(files: dict[str, str]) -> SourceIndex:
-    """One index per audit: the auditors share the artifact's file dict. The (files, index)
-    pair is replaced as a whole, so a concurrent audit never reads another one's index."""
+    """One index per audit: the auditors read the same files (the artifact's dict or a copy, so
+    contents are compared, not the dict's identity). The (key, index) pair is replaced as a
+    whole, so a concurrent audit never reads another one's index; only the latest is kept."""
     global _LAST
     last = _LAST
-    if last is not None and last[0] is files:
+    key = tuple(sorted((path, len(text), hash(text)) for path, text in files.items()))  # str hashes are cached
+    if last is not None and last[0] == key:
         return last[1]
     index = SourceIndex(files)
-    _LAST = (files, index)
+    _LAST = (key, index)
     return index

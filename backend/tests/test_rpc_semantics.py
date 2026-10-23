@@ -419,3 +419,159 @@ export function render(value: any) {
     assert "stellar_native-bigint-to-json" not in native({"src/render.ts": replacer}, npm())
     patched = source + "(BigInt.prototype as any).toJSON = function () { return this.toString(); };\n"
     assert "stellar_native-bigint-to-json" not in native({"src/render.ts": patched}, npm())
+
+
+# ----------------------------------------------------------------------------- review near misses
+def test_a_send_wrapped_in_a_helper_that_polls_is_not_reported():
+    source = TS_HEAD + '''async function waitForConfirmation(p: Promise<any>) {
+  const r = await p;
+  return server.pollTransaction(r.hash);
+}
+export async function pay(order: string, tx: any) {
+  const res = await waitForConfirmation(server.sendTransaction(tx));
+  if (res.status === "SUCCESS") await markPaid(order, res.txHash);
+}
+'''
+    assert FINAL not in native({"src/pay.ts": source}, npm())
+    library = source.replace("waitForConfirmation(server", "waitForTx(server")
+    assert FINAL not in native({"src/pay.ts": library}, npm())  # a library wrapper named for waiting: unknown
+    labelled = source.replace("waitForConfirmation(server.sendTransaction(tx))", 'runRpc(server.sendTransaction(tx), "pay")') \
+        + 'async function runRpc(p: Promise<any>, label: string) { return await p; }\n'
+    assert native({"src/pay.ts": labelled}, npm())[FINAL].severity.value == "medium"
+
+
+def test_a_hash_recorded_as_pending_is_not_reported():
+    source = TS_HEAD + '''export async function pay(order: string, tx: any) {
+  const sent = await server.sendTransaction(tx);
+  await db.payments.insert({ order, hash: sent.hash, status: "pending" });
+}
+'''
+    assert FINAL not in native({"src/pay.ts": source}, npm())
+    settled = source.replace('status: "pending"', 'status: "paid"')
+    assert native({"src/pay.ts": settled}, npm())[FINAL].severity.value == "medium"
+
+
+def test_sends_mapped_in_a_batch_and_polled_afterwards_are_not_reported():
+    source = TS_HEAD + '''export async function payAll(txs: any[]) {
+  const sent = await Promise.all(txs.map(async (tx) => {
+    return server.sendTransaction(tx);
+  }));
+  for (const s of sent) {
+    await server.pollTransaction(s.hash);
+  }
+  return sent;
+}
+'''
+    assert FINAL not in native({"src/batch.ts": source}, npm())
+
+
+def test_a_polling_flag_followed_by_a_success_check_is_not_reported():
+    flag = TS_HEAD + '''export async function wait(hash: string) {
+  for (let i = 0; i < 10; i++) {
+    const r = await server.getTransaction(hash);
+    const finished = r.status !== rpc.Api.GetTransactionStatus.NOT_FOUND;
+    if (finished) {
+      if (r.status !== rpc.Api.GetTransactionStatus.SUCCESS) throw new Error("failed");
+      return r;
+    }
+  }
+  throw new Error("timeout");
+}
+'''
+    pair = TS_HEAD + '''export async function check(hash: string) {
+  const r = await server.getTransaction(hash);
+  return { done: r.status !== "NOT_FOUND", ok: r.status === "SUCCESS" };
+}
+'''
+    found = native({"src/wait.ts": flag, "src/check.ts": pair}, npm())
+    assert "stellar_native-rpc-outcome-not-success-checked" not in found
+    verdict = pair.replace('ok: r.status === "SUCCESS"', 'paid: r.status !== "FAILED"')
+    assert "stellar_native-rpc-outcome-not-success-checked" in native({"src/check.ts": verdict}, npm())
+
+
+def test_a_transmitted_flag_on_an_object_or_an_exception_type_test_guards_the_release():
+    field = TS_HEAD + '''export class Payer {
+  private transmitted = false;
+  async pay(tx: any, reservation: string) {
+    try {
+      this.transmitted = true;
+      await server.sendTransaction(tx);
+    } catch (e) {
+      if (!this.transmitted) await this.budget.release(reservation);
+      throw e;
+    }
+  }
+}
+'''
+    ctx = TS_HEAD + '''export async function pay(state: any, tx: any) {
+  const ctx = { sent: false };
+  try {
+    ctx.sent = true;
+    await server.sendTransaction(tx);
+  } catch (e) {
+    if (!ctx.sent) await releaseReservation(state.reservation);
+    throw e;
+  }
+}
+'''
+    py = PY_HEAD + '''class BeforeBroadcast(Exception):
+    pass
+
+def pay(repo, tx, claim):
+    try:
+        soroban.send_transaction(tx)
+    except Exception as e:
+        if isinstance(e, BeforeBroadcast):
+            repo.release_claim(claim)
+        raise
+'''
+    assert RETRY not in hardening({"src/payer.ts": field, "src/ctx.ts": ctx, "agent.py": py})
+    unguarded = py.replace("        if isinstance(e, BeforeBroadcast):\n            repo.release_claim(claim)",
+                           "        repo.release_claim(claim)")
+    assert RETRY in hardening({"agent.py": unguarded})
+
+
+def test_a_builder_handed_to_a_helper_module_that_sets_the_timeout_is_not_reported():
+    agent = '''from stellar_sdk import TransactionBuilder, Keypair
+from helpers import add_ops
+
+def pay(server, kp, account):
+    builder = TransactionBuilder(account, "Test", base_fee=100)
+    add_ops(builder)
+    tx = builder.build()
+    tx.sign(kp)
+    return server.submit_transaction(tx)
+'''
+    helpers = 'def add_ops(builder):\n    builder.set_timeout(30)\n    builder.append_payment_op("G", "1")\n'
+    assert EXPIRY not in hardening({"agent.py": agent, "helpers.py": helpers})
+    assert EXPIRY in hardening({"agent.py": agent, "helpers.py": helpers.replace("    builder.set_timeout(30)\n", "")})
+
+
+def test_low_rule_near_misses_are_not_reported():
+    converted = '''import { scValToNative } from "@stellar/stellar-sdk";
+export function show(x: any) { const n = scValToNative(x); return JSON.stringify({ n: String(n), m: n.toString() }); }
+'''
+    stripe = 'export function f() { return stripe.payment({ amount: "99999999999999999999" }); }\n'
+    typed = 'import type { SorobanRpc } from "@stellar/stellar-sdk";\n' \
+            'export function f(x: SorobanRpc.Api.GetTransactionResponse) { return x; }\n'
+    found = native({"src/show.ts": converted, "src/stripe.ts": stripe, "src/types.ts": typed}, npm())
+    assert not {"stellar_native-bigint-to-json", "stellar_native-amount-above-int64", "stellar_native-sdk-removed-symbol"} & set(found)
+    py = 'import stripe\ndef charge():\n    return stripe.Charge.create(amount="99999999999999999999")\n'
+    assert "stellar_native-amount-above-int64" not in native({"billing.py": py + "import stellar_sdk\n"}, pypi())
+
+
+def test_every_sdk_finding_names_the_resolved_release():
+    weak = TS_HEAD + '''export async function settled(hash: string) {
+  const r = await server.getTransaction(hash);
+  return { success: r.status !== "FAILED" };
+}
+'''
+    found = native({"src/check.ts": weak}, npm())
+    assert "@stellar/stellar-sdk 14.6.1" in found["stellar_native-rpc-outcome-not-success-checked"].evidence
+
+
+def test_the_source_index_is_shared_by_copies_of_the_same_files():
+    from backend.app.swarm.source_index import index_for
+    files = {"src/a.ts": TS_HEAD}
+    assert index_for(files) is index_for(dict(files))
+    assert index_for({"src/a.ts": TS_HEAD + "\n"}) is not index_for(files)

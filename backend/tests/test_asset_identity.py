@@ -242,3 +242,102 @@ def test_code_only_receipts_and_queued_payments_count_as_payment_bypasses():
     assert payment_bypass(finding("stellar_native-rpc-send-treated-as-final-1a2b3c4d"))
     assert not payment_bypass(finding("security-strkey-invalid-1a2b3c4d"))
     assert not payment_bypass(finding("security-sac-constant-invalid-1a2b3c4d"))
+
+
+# ----------------------------------------------------------------------------- review near misses
+def test_a_function_too_deep_to_unparse_does_not_stop_the_audit():
+    """ast.parse accepts a 600-term `+` chain that ast.unparse cannot print (RecursionError)."""
+    chain = " + ".join(['"="'] * 600)
+    py = (f'from stellar_sdk import Asset\ndef banner():\n    return {chain}\n'
+          f'def verify_payment(server, h):\n    banner_text = {chain}\n'
+          '    for op in server.operations().for_transaction(h).call()["_embedded"]["records"]:\n'
+          '        if op["asset_code"] == "USDC":\n            return True\n    return False\n'
+          f'def to_asset(code, issuer=None):\n    if issuer is None or ({chain}) == code:\n        return Asset.native()\n'
+          '    return Asset(code, issuer)\n')
+    js_chain = " || ".join(f'code === "X{i}"' for i in range(1500))
+    ts = (f'import {{ Asset }} from "@stellar/stellar-sdk";\nexport function a(code: string, issuer?: string) {{\n'
+          f'  if ({js_chain} || !issuer) return Asset.native();\n  return new Asset(code, issuer);\n}}\n')
+    found = hardening({"agent.py": py, "src/asset.ts": ts})
+    assert found[CODE_ONLY].severity.value == "high"
+
+
+def test_amount_positivity_checks_and_minimums_are_not_spending_caps():
+    head = 'import { nativeToScVal } from "@stellar/stellar-sdk";\nexport async function pay(req: any) {\n  const amount = req.amount;\n'
+    tail = '  return nativeToScVal(amount, { type: "i128" });\n}\n'
+    for check in ('  if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) throw new Error("positive");\n',
+                  '  if (!(parseFloat(amount) > 0)) throw new Error("bad");\n',
+                  '  if (parseFloat(amount) < MIN_AMOUNT) throw new Error("too small");\n',
+                  # A sound cap through Number (which parses hex as BigInt does), and parseFloat only warns.
+                  '  if (Number(amount) > MAX) throw new Error("cap");\n  if (parseFloat(amount) > 50) console.warn("large");\n'):
+        assert DUAL not in hardening({"src/pay.ts": head + check + tail}), check
+    capped = head + '  if (parseFloat(amount) <= this.remaining) {\n    return nativeToScVal(amount, { type: "i128" });\n  }\n' \
+                    '  throw new Error("over budget");\n}\n'
+    assert hardening({"src/pay.ts": capped})[DUAL].severity.value == "high"
+
+
+def test_a_dual_parse_in_an_example_drops_one_level():
+    assert hardening({"examples/pay.ts": PAYER})[DUAL].severity.value == "medium"
+
+
+def test_native_after_a_guard_that_rejects_credit_codes_without_issuer_is_not_reported():
+    nested = ('import { Asset } from "@stellar/stellar-sdk";\nexport function toAsset(code: string, issuer?: string) {\n'
+              '  if (!issuer) {\n    if (code.toUpperCase() !== "XLM") throw new Error("issuer required for " + code);\n'
+              '    return Asset.native();\n  }\n  return new Asset(code, issuer);\n}\n')
+    early = ('import { Asset } from "@stellar/stellar-sdk";\nexport function toAsset(code: string, issuer?: string) {\n'
+             '  if (code !== "XLM" && !issuer) throw new Error("issuer required");\n'
+             '  return !issuer ? Asset.native() : new Asset(code, issuer);\n}\n')
+    py = ('from stellar_sdk import Asset\ndef to_asset(code, issuer=None):\n    if issuer is None:\n'
+          '        if code != "XLM":\n            raise ValueError("issuer required")\n        return Asset.native()\n'
+          '    return Asset(code, issuer)\n')
+    assert FALLBACK not in hardening({"src/a.ts": nested, "src/b.ts": early, "assets.py": py})
+    # A guard that does not cover a credit code without issuer leaves the fallback reported.
+    weak = early.replace('if (code !== "XLM" && !issuer)', 'if (code === "")')
+    assert FALLBACK in hardening({"src/b.ts": weak})
+
+
+def test_an_issuer_compared_in_a_helper_counts_and_get_code_fallbacks_are_reported():
+    helper = """export async function verifyPayment(h: string, txHash: string, expected: any) {
+  const ops = await (await fetch(`${h}/transactions/${txHash}/operations`)).json();
+  for (const op of ops._embedded.records) {
+    if (op.asset_code === expected.code && sameIssuer(op, expected)) return true;
+  }
+  return false;
+}
+function sameIssuer(op: any, expected: any) { return op["asset_issuer"] === expected["issuer"]; }
+"""
+    assert CODE_ONLY not in hardening({"src/verify.ts": helper})
+    envelope = """export async function verifyEnvelope(h: string, txHash: string, expectedAsset: string) {
+  const tx = await (await fetch(`${h}/transactions/${txHash}`)).json();
+  for (const op of tx.operations) {
+    const full = `${op.asset.getCode()}:${op.asset.getIssuer()}`;
+    const ok = full === expectedAsset || (op.asset.getCode && op.asset.getCode() === expectedAsset);
+    if (ok) return { verified: true };
+  }
+  return { verified: false };
+}
+"""
+    assert hardening({"src/verify.ts": envelope})[CODE_ONLY].severity.value == "medium"
+
+
+def test_a_payment_history_display_is_not_a_receipt_check():
+    history = """export async function getRecentPayments(server: any, account: string) {
+  const page = await server.payments().forAccount(account).order("desc").limit(20).call();
+  return page.records
+    .filter((r: any) => r.type === "payment" && r.asset_code === "USDC")
+    .map((r: any) => ({ from: r.from, amount: r.amount, incoming: r.to === account }));
+}
+"""
+    assert CODE_ONLY not in hardening({"src/tools/history.ts": history})
+
+
+def test_base32_credentials_outside_stellar_code_are_not_strkeys():
+    secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBV"
+    assert not strkey_valid(secret)
+    source = (f"export const SESSION_TOKEN = '{secret}';\nexport const CACHE_KEY = 'C{secret[1:]}';\n"
+              "export function f() { return SESSION_TOKEN + SESSION_TOKEN + CACHE_KEY; }\n")
+    assert STRKEY not in hardening({"src/session.ts": source})
+
+
+def test_null_payee_evidence_names_no_severity():
+    py = f'import os\nPAY_TO = os.getenv("PAY_TO", "{NULL_ACCOUNT}")\n'
+    assert "Severity" not in hardening({"server.py": py})[NULL_PAYEE].evidence
