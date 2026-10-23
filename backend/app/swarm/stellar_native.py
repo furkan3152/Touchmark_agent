@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 
 from ..models import FindingKind, AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioResult, Severity, SourceKind
 from ..stellar.wasm_profile import (AUTH, AUTH_CALLS, CALL, DELEGATED_SIGNERS, EXECUTABLE_TAG, EXTERNAL_REF,
@@ -59,42 +60,74 @@ def _rust_code(source: str) -> str:
     return ''.join(out)
 
 
-_FUNCTION = re.compile(r'\b(?P<public>pub(?:\s*\([^)]*\))?\s+)?(?:(?:async|unsafe|const)\s+)*fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b')
+#: `pub(...)` restrictions are short (crate, super, in a::b); the bound keeps `pub(pub(pub(` linear.
+_FUNCTION = re.compile(r'\b(?P<public>pub(?:\s*\([^)]{0,128}\))?\s+)?(?:(?:async|unsafe|const)\s+)*fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b')
 _PERSISTENT = r'\.\s*storage\s*\(\s*\)\s*\.\s*persistent\s*\(\s*\)'
 _MUTATION = re.compile(r'\.\s*(?:set|remove|update|try_update|transfer|transfer_from|mint|burn|approve|'
                        r'update_current_contract|update_current_contract_wasm)\s*\(')
 _MUTATING_NAME = re.compile(r'^(?:set|reg|upd|upg|fund|submit|complete|refund|initialize|init|mint|burn|transfer|approve|revoke|publish|issue|pause|withdraw|deposit|bind|add|remove)')
 _AUTH = re.compile(r'\.\s*require_auth(?:_for_args)?\s*\(')
+_BRACE_OR_STOP = re.compile(r'[{};]')
+#: Functions nested deeper than this inside other functions stay inside their parent's body:
+#: real contracts nest one or two levels, and each level copies its parent's text.
+_MAX_NESTING = 4
+#: At most this many `fn` headers share one body (a template's {{#if}} branches can give one
+#: function two signatures); the earlier ones are not code.
+_MAX_SHARED_BODY = 4
 
 
 def _rust_functions(source: str, include_private: bool = False, code: str | None = None) -> list[dict]:
-    """Bound public function bodies conservatively, without resolving Rust types/macros.
-    ``code`` is the already masked source, when the caller has it."""
+    """Bound function bodies conservatively, without resolving Rust types/macros. Linear: braces
+    are paired in one pass, and each function's nested functions are blanked from its body in one
+    more. ``code`` is the already masked source, when the caller has it."""
     code = _rust_code(source) if code is None else code
+    closing, stack, stops = {}, [], []
+    for m in _BRACE_OR_STOP.finditer(code):
+        if m.group() == '{':
+            stack.append(m.start()); stops.append(m.start())
+        elif m.group() == '}':
+            if stack: closing[stack.pop()] = m.start() + 1
+        else:
+            stops.append(m.start())
+    newlines = [m.start() for m in re.finditer('\n', code)]
     functions = []
     for match in _FUNCTION.finditer(code):
-        start = code.find('{', match.end())
-        semicolon = code.find(';', match.end())
-        if start < 0 or 0 <= semicolon < start: continue
-        depth, end = 1, start + 1
-        while end < len(code) and depth:
-            if code[end] == '{': depth += 1
-            elif code[end] == '}': depth -= 1
-            end += 1
-        if depth: continue
+        # The body is the block the first '{' after the name opens; a ';' first means a declaration.
+        k = bisect_left(stops, match.end())
+        if k == len(stops) or code[stops[k]] != '{' or stops[k] not in closing: continue
+        start = stops[k]
         functions.append({'name': match['name'], 'public': bool(match['public']),
-                          'start': match.start(), 'body_start': start + 1, 'end': end,
-                          'line': code.count('\n', 0, match.start()) + 1})
+                          'start': match.start(), 'body_start': start + 1, 'end': closing[start],
+                          'line': bisect_left(newlines, match.start()) + 1})
+    shared: dict[int, int] = {}
+    for fn in reversed(functions):
+        shared[fn['body_start']] = shared.get(fn['body_start'], 0) + 1
+        fn['spare'] = shared[fn['body_start']] > _MAX_SHARED_BODY
+    functions = [fn for fn in functions if not fn.pop('spare')]
+    # Merely defining a protected nested function does not guard its parent: a function's
+    # directly nested functions are blanked from its body (theirs from theirs, and so on).
+    children: list[list[int]] = [[] for _ in functions]
+    depth, open_ = [], []
+    for i, fn in enumerate(functions):
+        while open_ and functions[open_[-1]]['end'] <= fn['start']:
+            open_.pop()
+        parent = functions[open_[-1]] if open_ else None
+        if parent and parent['body_start'] <= fn['start'] and fn['end'] < parent['end']:
+            children[open_[-1]].append(i)
+            depth.append(depth[open_[-1]] + 1)
+        else:
+            depth.append(0)
+        open_.append(i)
     results = []
-    for fn in functions:
-        if not fn['public'] and not include_private: continue
-        # Merely defining a protected nested function does not guard its parent.
-        body = list(code[fn['body_start']:fn['end'] - 1])
-        for nested in functions:
-            if fn['body_start'] <= nested['start'] < nested['end'] < fn['end']:
-                for i in range(nested['start'] - fn['body_start'], nested['end'] - fn['body_start']):
-                    if body[i] != '\n': body[i] = ' '
-        results.append({**fn, 'body': ''.join(body)})
+    for i, fn in enumerate(functions):
+        if depth[i] > _MAX_NESTING or (not fn['public'] and not include_private): continue
+        parts, last = [], fn['body_start']
+        for c in children[i]:
+            nested = functions[c]
+            parts += [code[last:nested['start']], _NOT_NEWLINE.sub(' ', code[nested['start']:nested['end']])]
+            last = nested['end']
+        parts.append(code[last:fn['end'] - 1])
+        results.append({**fn, 'body': ''.join(parts)})
     return results
 
 
@@ -102,18 +135,25 @@ def _has_persistent_ttl(body: str) -> bool:
     if re.search(_PERSISTENT + r'\s*\.\s*extend_ttl\s*\(', body): return True
     # Recognize a local storage binding, but do not mistake instance TTL for
     # persistent-entry TTL. Key matching/path reachability still need review.
-    aliases = re.findall(r'\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[A-Za-z_][A-Za-z0-9_]*' + _PERSISTENT + r'\s*;', body)
-    return any(re.search(r'\b' + re.escape(alias) + r'\s*\.\s*extend_ttl\s*\(', body) for alias in aliases)
+    aliases = set(re.findall(r'\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[A-Za-z_][A-Za-z0-9_]*' + _PERSISTENT + r'\s*;', body))
+    return bool(aliases & set(re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*extend_ttl\s*\(', body)))
+
+
+#: A call by name: bare, or through Self:: or self. (a helper call, as ST-001 reads it).
+_CALLED = re.compile(r'(?:\bSelf::|\bself\.|(?<![\w.:]))([A-Za-z_]\w*)\s*\(')
+
+
+def _called(body: str) -> set[str]:
+    """The names a body calls, read once (a regex per helper name would be quadratic)."""
+    return set(_CALLED.findall(body))
 
 
 def _providers(functions: list[dict], direct) -> set[str]:
     """Names of functions that perform a check directly or through a helper they call."""
-    names = {fn['name'] for fn in functions}
+    calls = [_called(fn['body']) for fn in functions]
     providing = {fn['name'] for fn in functions if direct(fn['body'])}
     for _ in range(4):  # helpers of helpers; bounded, no full call graph
-        grew = {fn['name'] for fn in functions if fn['name'] not in providing and any(
-            re.search(r'(?:\bSelf::|\bself\.|(?<![\w.:]))' + re.escape(h) + r'\s*\(', fn['body'])
-            for h in providing if h in names)}
+        grew = {fn['name'] for fn, called in zip(functions, calls) if fn['name'] not in providing and called & providing}
         if not grew:
             break
         providing |= grew
@@ -121,7 +161,7 @@ def _providers(functions: list[dict], direct) -> set[str]:
 
 
 def _calls_any(body: str, names: set[str]) -> bool:
-    return any(re.search(r'(?:\bSelf::|\bself\.|(?<![\w.:]))' + re.escape(n) + r'\s*\(', body) for n in names)
+    return bool(_called(body) & names)
 
 
 def contract_sources(artifact: AgentArtifact) -> dict[str, str]:
@@ -198,17 +238,12 @@ class StellarNativeAuditor(BaseAuditor):
     ) -> tuple[list[Finding], list[ScenarioResult], str]:
         findings: list[Finding] = []
         surface = artifact.text_surface()
-        from .soroban_rules import _STRONG_ATTR, SorobanRules, placed_in_package  # builds on this module
+        from .soroban_rules import _STRONG_ATTR, SorobanRules, placed_in_package, release as release_index  # builds on this module
         rust_files = contract_sources(artifact)
         templates = [name for name in rust_files if name.endswith('.rs.hbs')]
         # Each file is masked once; every rule below reads the masked text.
         masked = {name: _rust_code(content) for name, content in rust_files.items()}
         rust = '\n'.join(masked.values())
-        # Entry points are the public functions of a #[contractimpl] block; a crate's client or
-        # helper modules that only use soroban_sdk types expose none.
-        functions = [{**fn, 'file': name} for name, content in rust_files.items()
-                     if artifact.source_kind != SourceKind.REPO or '#[contractimpl' in content
-                     for fn in _rust_functions(content, code=masked[name])]
         lower = surface.lower()
 
         from stellar_sdk import StrKey
@@ -250,8 +285,14 @@ class StellarNativeAuditor(BaseAuditor):
                                masked=masked, context=artifact.code_files).run()
         findings += soroban.findings
         # Test code (src/test.rs, #[cfg(test)] modules, tests/) is never deployed: its mock
-        # contracts are not entry points.
-        functions = [fn for fn in functions if fn['file'] not in soroban.tests]
+        # contracts are not entry points. soroban_rules split every other file once, with inline
+        # test modules blanked; the checks below read that split.
+        built = soroban.crate.code
+        everything = [{**fn, 'file': name} for name in built for fn in soroban.crate.raw[name]]
+        # Entry points are the public functions of a #[contractimpl] block; a crate's client or
+        # helper modules that only use soroban_sdk types expose none.
+        functions = [fn for fn in everything if fn['public']
+                     and (artifact.source_kind != SourceKind.REPO or '#[contractimpl' in rust_files[fn['file']])]
         # Constructor deployment authorization and custom-account __check_auth
         # are separate boundaries; requiring require_auth inside them is unsound.
         mutating = [fn for fn in functions if fn['name'] not in {'__constructor', '__check_auth'}
@@ -259,32 +300,38 @@ class StellarNativeAuditor(BaseAuditor):
                     and (_MUTATING_NAME.search(fn['name']) or _MUTATION.search(fn['body']))]
         # Authorization and TTL renewal are often done in a helper (`Self::create_task`,
         # `extend_persistent_ttl`); a call to a helper that performs them counts.
-        everything = [{**fn, 'file': name} for name, content in rust_files.items() if name not in soroban.tests
-                      for fn in _rust_functions(content, include_private=True, code=masked[name])]
         auth_helpers = _providers(everything, lambda body: bool(_AUTH.search(body)))
         ttl_helpers = _providers(everything, lambda body: bool(re.search(r'\.\s*extend_ttl\s*\(', body)))
         # Conservative: a gap stays a gap unless the check is in the function's own body.
         # Severity separates "no check anywhere" (high) from "only through a helper, or a
         # read that cannot create state" (medium, needs review).
         def attributed(fn):  # OpenZeppelin #[only_owner]/#[only_admin]/#[only_role] require the auth
-            code = masked[fn['file']]
+            code = built[fn['file']]
             return bool(_STRONG_ATTR.search(code[max(code.rfind(c, 0, fn['start']) for c in '{};') + 1:fn['start']]))
         auth_gaps = [fn for fn in mutating if not _AUTH.search(fn['body']) and not attributed(fn)]
         auth_hard = [fn for fn in auth_gaps if not _calls_any(fn['body'], auth_helpers)]
         # An initializer with no once-only guard in a built package: anyone can call it again and
         # replace the administrator, whatever authorization it asks of the address it is given.
-        reinit = [{'file': fn.file, 'line': fn.line, 'name': fn.name} for fn in soroban.reinit
-                  if placed_in_package(fn.file, artifact.code_files, soroban.tests)]
+        placed: dict[str, bool] = {}
+        def in_package(name):
+            if name not in placed:
+                placed[name] = placed_in_package(name, artifact.code_files, soroban.tests)
+            return placed[name]
+        reinit = [{'file': fn.file, 'line': fn.line, 'name': fn.name} for fn in soroban.reinit if in_package(fn.file)]
         persistent = [fn for fn in functions if re.search(_PERSISTENT, fn['body'])]
         ttl_gaps = [fn for fn in persistent if not _has_persistent_ttl(fn['body'])]
         ttl_hard = [fn for fn in ttl_gaps
                     if _MUTATION.search(fn['body']) and not _calls_any(fn['body'], ttl_helpers)]
+        hard_ttl = {id(fn) for fn in ttl_hard}
+        ttl_soft = [fn for fn in ttl_gaps if id(fn) not in hard_ttl]
         def locations(items):
             return '; '.join(f"{fn['file']}:{fn['line']} {fn['name']}" for fn in items)
         if auth_gaps or reinit:
             first_caller = [fn for fn in auth_hard if re.fullmatch(r'init(?:ialize)?', fn['name'])]
-            lexical = [fn for fn in auth_hard + [g for g in auth_gaps if g not in auth_hard]
-                       if not any(fn['file'] == r['file'] and fn['name'] == r['name'] for r in reinit)]
+            hard = {id(fn) for fn in auth_hard}
+            reinitialized = {(r['file'], r['name']) for r in reinit}
+            lexical = [fn for fn in auth_hard + [g for g in auth_gaps if id(g) not in hard]
+                       if (fn['file'], fn['name']) not in reinitialized]
             finding = self.finding(
                 "soroban-auth-missing",
                 # Hand audits rated these medium or low: a lexical gap, not a shown bypass. An
@@ -315,40 +362,55 @@ class StellarNativeAuditor(BaseAuditor):
 
         # Per-record entries (a key with an id: Channel(id), Balance(addr)) in instance storage:
         # the instance is one ledger entry, loaded on every call and size-limited, so records
-        # that grow with use make every call costlier and can lock the contract.
-        records = [(name, m.start(), f"{name}:{content[:m.start()].count(chr(10)) + 1}")
-                   for name, content in rust_files.items() if '#[contractimpl' in content
-                   for m in re.finditer(r"\.instance\(\)\s*\.set\(\s*&\s*(?:\w+::)?\w+\(\s*[^)\s]", masked[name])]
-        # Records any caller can create, in a contract that holds tokens: filling the instance
-        # locks every deposit in it, not only the caller's (skipped for samples and tests).
-        open_records = [where for name, offset, where in records
-                        if placed_in_package(name, artifact.code_files, soroban.tests) and soroban.open_writer(name, offset)]
-        records = open_records + [where for _, _, where in records if where not in open_records]
+        # that grow with use make every call costlier and, once it is full, cannot be added.
+        records = []
+        for name, code in built.items():
+            if '#[contractimpl' not in rust_files[name]:
+                continue
+            newlines = None
+            for m in re.finditer(r"\.instance\(\)\s*\.set\(\s*&\s*(?:\w+::)?\w+\(\s*[^)\s]", code):
+                newlines = newlines or [n.start() for n in re.finditer('\n', code)]
+                records.append((name, m.start(), f"{name}:{bisect_left(newlines, m.start()) + 1}"))
+        # Records any caller can create, in a contract that holds tokens (skipped for samples):
+        # anyone can fill the instance, after which no new record can be created.
+        open_records = [where for name, offset, where in records if in_package(name) and soroban.open_writer(name, offset)]
+        opened = set(open_records)
+        records = open_records + [where for _, _, where in records if where not in opened]
         if records:
             findings.append(self.finding(
                 "instance-storage-records",
-                Severity.HIGH if open_records else Severity.MEDIUM,
+                # Blind adjudication: a full instance blocks new records; existing ones (same-size
+                # rewrites, claims, closes) still work, so deposits are not locked.
+                Severity.MEDIUM,
                 "Per-record state is kept in instance storage",
                 "Entries keyed by an id or address are written to the contract instance. The instance is a single "
                 "ledger entry that every call loads and that has a size limit, so records that grow with use raise the "
-                "cost of every call and can make the contract unusable; they also share the instance's lifetime."
-                + (" Any caller can create these records, and the contract holds deposited tokens: filling the "
-                   "instance makes every call fail and locks every deposit." if open_records else ""),
+                "cost of every call, and once the entry is full no further record can be written; they also share the "
+                "instance's lifetime."
+                + (" Any caller can create these records, so anyone can fill the instance: after that, creating a new "
+                   "record fails, and until then every call pays to load the larger instance." if open_records else ""),
                 evidence="; ".join(records[:6]),
                 remediation="Keep per-user and per-record data in persistent storage, each entry with its own TTL "
                             "extension, and keep instance storage for small contract-wide configuration.",
                 grade=EvidenceGrade.CONFIRMED,
                 confidence=0.85,
             ))
+        release_index()  # the Soroban checks are done with their text indexes
 
         if ttl_gaps:
             finding = self.finding(
                 "persistent-ttl",
-                # Archived entries can be restored: a liveness and cost risk, not a loss of funds.
-                Severity.MEDIUM if ttl_hard else Severity.LOW,
+                # Since Protocol 23 (CAP-66) an archived persistent entry is restored automatically
+                # when a transaction's footprint names it: a cost and liveness risk, not a loss.
+                # Hand audits rate a TTL-only gap low.
+                Severity.LOW,
                 "Persistent state lifetime paths require review",
-                "These public functions reference persistent storage without a recognized persistent-entry extend_ttl call in the same body. A helper or external maintenance policy may handle lifetime; its effectiveness was not verified.",
-                evidence=locations(ttl_hard + [fn for fn in ttl_gaps if fn not in ttl_hard]),
+                "These public functions reference persistent storage without a recognized persistent-entry extend_ttl "
+                "call in the same body. A helper or external maintenance policy may handle lifetime; its effectiveness "
+                "was not verified. The severity is low because, since Protocol 23, an archived persistent entry is "
+                "restored automatically the next time a transaction touches it: a lapsed lifetime costs the caller a "
+                "restore fee, not the stored state.",
+                evidence=locations(ttl_hard + ttl_soft),
                 remediation="Trace the lifetime policy for each affected key, distinguish instance TTL from persistent-entry TTL, and test archival, restoration and missing-state behavior.",
                 grade=EvidenceGrade.INFERRED,
                 confidence=0.75,
@@ -357,7 +419,7 @@ class StellarNativeAuditor(BaseAuditor):
 
         # Temporary storage is right for counters, allowances, nonces and caches. Report
         # only keys whose names say they hold state that must not silently expire.
-        temporary_keys = re.findall(r'\.\s*temporary\s*\(\s*\)\s*\.\s*set\s*\(\s*&?\s*(?:DataKey::)?([A-Za-z_]\w*)', rust)
+        temporary_keys = re.findall(r'\.\s*temporary\s*\(\s*\)\s*\.\s*set\s*\(\s*(?:&\s*)?(?:DataKey::)?([A-Za-z_]\w*)', rust)
         critical_keys = [k for k in temporary_keys
                          if re.search(r"balance|escrow|owner|admin|limit|deposit|vault|task|grant|valid|signer|policy", k, re.I)
                          and not re.search(r"allowance|spent|nonce|cache|session|lock|count|seen", k, re.I)]
