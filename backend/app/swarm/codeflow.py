@@ -884,7 +884,8 @@ class _Interp:
             self._cap("process_spawn" if fixed else "code_execution", node)
             if every & UNTRUSTED and not fixed:
                 self._flow("command", node, every, "shell=True" if shell else "")
-            if self.record and CLI_AUTO_SIGN.search(" ".join(unparse(a) for a in node.args)):
+            words = (n.value for a in node.args for n in ast.walk(a) if isinstance(n, ast.Constant) and isinstance(n.value, str))
+            if self.record and CLI_AUTO_SIGN.search(" ".join(words)):  # the command's words, at any depth
                 self.p.profile.add_fact("cli_auto_sign", self.p.location(self.module, node),
                                         "stellar contract invoke --auto-sign", direct=bool(every & DIRECT))
             return set()

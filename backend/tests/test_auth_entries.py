@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import time
+
 from backend.app.models import AgentArtifact, SourceKind
 from backend.app.swarm.agentic_paths import analyse_agentic_paths
 from backend.app.swarm.auth_rules import classify_expiration
+from backend.app.swarm.codeflow import analyse_code
 from backend.app.swarm.hardening import analyse_hardening
 
 SIGNED = "security-path-external-transaction-signed"
@@ -357,3 +360,56 @@ def test_an_x402_scheme_registered_by_a_reported_wrapper_joins_that_finding():
     x402 = found["security-path-x402-payment-unbounded"]
     assert SIGNED not in found and EXPIRY not in found  # one finding per defect
     assert "mcp/src/stellar/scheme.ts:13" in x402.detail and "maxTimeoutSeconds" in x402.detail
+
+
+# ----------------------------------------------------------------- review: arithmetic, cost and depth
+def test_the_whole_offset_is_evaluated_with_operator_precedence():
+    def offset(expr, table=None):
+        found = classify_expiration(expr, lambda name: (table or {}).get(name))
+        return found and (found.severity.value, found.note.split(" ledgers")[0].rsplit(" ", 1)[-1])
+    # Seconds divided by the ledger time: 300 s is 60 ledgers, 3600 s is 720 (an hour: low).
+    assert offset("latest.sequence + 300 / LEDGER_SECONDS", {"LEDGER_SECONDS": "5"}) is None
+    assert offset("latest + 3600 / 5") == ("low", "720")
+    assert offset("latest + 1000 - 900") is None  # 100 ledgers: the default
+    assert offset("latest + 5000 - 100") == ("medium", "4900")
+    assert offset("latest + 60 * 12") == ("low", "720")
+    assert offset("latest + 1000 - window") is None  # not a constant: no partial offset
+    assert offset("latest_ledger.saturating_add(17_280)") == ("medium", "17280")
+    assert offset("latest + 100 if fast else latest + 5000") == ("medium", "5000")
+    ts = ("import { authorizeEntry, Keypair, rpc } from '@stellar/stellar-sdk';\nconst server = new rpc.Server(URL);\n"
+          "const LEDGER_SECONDS = 5;\nexport async function sign(entry: any, kp: Keypair) {\n"
+          "  const latest = await server.getLatestLedger();\n"
+          "  return authorizeEntry(entry, kp, latest.sequence + 300 / LEDGER_SECONDS, PASS);\n}\n")
+    assert EXPIRY not in paths({"src/pay.ts": ts})
+    assert paths({"src/pay.ts": ts.replace("300 / LEDGER_SECONDS", "3600 / LEDGER_SECONDS")})[EXPIRY].severity.value == "low"
+
+
+def test_a_huge_or_nested_expiry_costs_little():
+    started = time.perf_counter()
+    hostile = '"' + "+(" * 8000 + ")" * 8000 + '"'
+    assert classify_expiration("until", {"until": "latest + PAD", "PAD": hostile}.get) is None
+    assert classify_expiration("latest + " + "+(" * 50_000 + "1" + ")" * 50_000, lambda n: None) is None
+    assert classify_expiration("x" + ".saturating_add(x" * 5000 + ")" * 5000, lambda n: None) is None
+    many = " + ".join(f"a{i}" for i in range(3000))
+    assert classify_expiration(f"latest + {many}", lambda n: "1") is None
+    ts = ("import { authorizeEntry } from '@stellar/stellar-sdk';\n"
+          f"const PAD = {hostile};\nexport async function sign(entry: any, kp: any, latest: number) {{\n"
+          "  return authorizeEntry(entry, kp, latest + PAD, PASS);\n}\n")
+    paths({"src/pay.ts": ts})
+    assert time.perf_counter() - started < 5
+
+
+def test_python_expressions_too_deep_to_unparse_keep_the_flow_analysis():
+    deep = " + ".join(['"x"'] * 450)
+    cli = f"import subprocess\ndef run():\n    return subprocess.run('stellar contract invoke ' + {deep}, shell=False)\n"
+    profile = analyse_code({"cli.py": cli})
+    assert profile.error == "" and "code_execution" in profile.capabilities
+    signer = ("import os\nfrom stellar_sdk import Keypair, Network\nfrom stellar_sdk.auth import authorize_entry\n"
+              f"POLICY_TEXT = {deep}\n"
+              "def sign(entry, latest):\n    kp = Keypair.from_secret(os.environ['AGENT_SECRET'])\n"
+              f"    return authorize_entry(entry, kp, latest + {' + '.join(['1'] * 450)}, Network.TESTNET_NETWORK_PASSPHRASE)\n")
+    profile = analyse_code({"signer.py": signer})
+    assert profile.error == "" and {"key_custody", "stellar_signing"} <= set(profile.capabilities)
+    # The expiration, too deep to unparse, is read from the source: 450 ledgers.
+    assert [f.detail for f in profile.facts if f.kind == "auth_expiration"] == \
+        ["signatures stay valid for 450 ledgers, against 100 by default"]

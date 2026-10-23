@@ -6,6 +6,8 @@ near miss. Keys are generated per test."""
 
 from __future__ import annotations
 
+import time
+
 from stellar_sdk import Keypair
 
 from backend.app.models import AgentArtifact, SourceKind
@@ -341,3 +343,25 @@ def test_base32_credentials_outside_stellar_code_are_not_strkeys():
 def test_null_payee_evidence_names_no_severity():
     py = f'import os\nPAY_TO = os.getenv("PAY_TO", "{NULL_ACCOUNT}")\n'
     assert "Severity" not in hardening({"server.py": py})[NULL_PAYEE].evidence
+
+
+def test_a_cap_written_as_a_long_sum_neither_crashes_nor_hides_the_dual_parse():
+    """A 1,500-term bound used to recurse once per term in _positive_literal (RecursionError)."""
+    bound = "+".join(["1"] * 1500)
+    pay = (f"export async function pay(amount) {{\n  if (parseFloat(amount) > {bound}) throw new Error('cap');\n"
+           "  return BigInt(amount);\n}\n")
+    started = time.perf_counter()
+    found = hardening({"src/pay.js": pay})
+    assert found[DUAL].severity.value == "high" and time.perf_counter() - started < 5
+
+
+def test_many_amount_arguments_in_one_function_cost_little():
+    """Each amount-named argument used to re-walk the function and build a fresh regex (65 s
+    for 2,000 of them); only values that can reach parseFloat and a BigInt sink are judged."""
+    logs = "\n".join(f"  log(req.amount{i});" for i in range(2000))
+    pay = f"export function f(req) {{\n  const cap = parseFloat(req.amount);\n{logs}\n  return BigInt(req.amount);\n}}\n"
+    parsed = "\n".join(f"  if (parseFloat(req.amount{i}) > 5) log(BigInt(req.amount{i}));" for i in range(2000))
+    for name, text in (("src/logs.js", pay), ("src/parsed.js", f"export function g(req) {{\n{parsed}\n}}\n")):
+        started = time.perf_counter()
+        hardening({name: text})
+        assert time.perf_counter() - started < 5, name

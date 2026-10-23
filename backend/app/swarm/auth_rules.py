@@ -41,8 +41,8 @@ _NAME = re.compile(r"(?<![\w$])[A-Za-z_$][\w$]*")
 #: Names never inlined: language words and the clock and arithmetic helpers the classes test for.
 _KEEP = frozenset({"await", "new", "this", "self", "return", "Math", "Date", "time", "datetime", "int", "len", "min",
                    "max", "u32", "u64", "as", "and", "or", "not", "if", "else", "None", "true", "false", "True", "False"})
-#: Inlined text beyond this is not expanded further.
-_INLINE_LIMIT = 4000
+#: Inlined text beyond this is not expanded further, and at most this many names are looked up.
+_INLINE_LIMIT, _INLINE_NAMES = 4000, 64
 #: The parts of an authorization tree a check must compare (stellar-base and stellar_sdk names):
 #: the sub-invocations, the root's contract address and its function name.
 _PARTS = {"subInvocations": "sub", "sub_invocations": "sub", "contractAddress": "contract",
@@ -61,7 +61,9 @@ def classify_expiration(expr: str, resolve, depth: int = 3) -> Expiry | None:
     ``resolve(name)`` returns what a name stands for: a local's initializer, or the return
     expression of a helper (never a whole body). Clock and counterparty tokens are looked for
     in the expression with those inlined; an offset counts only when it is added to the term
-    that reads the ledger."""
+    that reads the ledger. An expression longer than _INLINE_LIMIT is not read."""
+    if len(expr) > _INLINE_LIMIT:
+        return None
     text = _inline(expr, resolve, depth)
     ledger = bool(_LEDGER_TERM.search(text))
     if _WALL_CLOCK.search(text) and not ledger:
@@ -83,31 +85,44 @@ def classify_expiration(expr: str, resolve, depth: int = 3) -> Expiry | None:
 
 def _inline(expr: str, resolve, depth: int) -> str:
     """The expression with each name replaced by `(what it stands for)`, ``depth`` levels deep.
-    A name after a dot is replaced only when it is called (a helper method)."""
+    A name after a dot is replaced only when it is called (a helper method). The text never
+    grows past _INLINE_LIMIT: a substitution that would pass it is skipped, and at most
+    _INLINE_NAMES names are looked up."""
     seen: set[str] = set()
     text = expr
     for _ in range(depth):
         changed = False
         for name in dict.fromkeys(m.group() for m in _NAME.finditer(text)):
-            if name in seen or name in _KEEP or len(text) > _INLINE_LIMIT:
+            if len(text) > _INLINE_LIMIT or len(seen) >= _INLINE_NAMES:
+                break
+            if name in seen or name in _KEEP:
                 continue
             seen.add(name)
             value = resolve(name)
-            if not value or not value.strip():
+            if not value or len(value) > _INLINE_LIMIT or not value.strip():
                 continue
             value = " ".join(value.split())
-            pattern = r"(?<![\w$.])" + re.escape(name) + r"(?![\w$])|(?<=\.)" + re.escape(name) + r"(?=\s*\()"
-            text = re.sub(pattern, lambda _m, v=value: f"({v})", text)
+            pattern = re.compile(r"(?<![\w$.])" + re.escape(name) + r"(?![\w$])|(?<=\.)" + re.escape(name) + r"(?=\s*\()")
+            uses = sum(1 for _ in pattern.finditer(text))
+            if not uses or len(text) + uses * (len(value) + 2) > _INLINE_LIMIT:
+                continue
+            text = pattern.sub(lambda _m, v=value: f"({v})", text)
             changed = True
         if not changed:
             break
     return text
 
 
+#: Calls and casts that keep a constant a constant: `Math.ceil(3600 / 5)`, `720u32`, `100n`.
+_NUMERIC_WRAPPER = re.compile(r"\b(?:Math\.(?:floor|ceil|round|trunc)|Number|BigInt|int)\s*\(")
+_NUMERIC_SUFFIX = re.compile(r"(?<=\d)(?:n|_?[ui](?:8|16|32|64|128|size))\b")
+
+
 def _constant(text: str) -> int | None:
-    """The value of an integer constant expression (`5_000`, `60 * 12`, `(720)`), else None."""
-    text = text.strip()
-    if not text or len(text) > 60 or not re.fullmatch(r"[\d_\s*+()-]+", text) or not re.search(r"\d", text):
+    """The value of an integer constant expression (`5_000`, `60 * 12`, `(720)`, `3600 / 5`),
+    else None. Division keeps its fraction until the end; the result is truncated."""
+    text = _NUMERIC_SUFFIX.sub("", _NUMERIC_WRAPPER.sub("(", text.strip()))
+    if not text or len(text) > 60 or not re.fullmatch(r"[\d_\s*+()/%.-]+", text) or not re.search(r"\d", text):
         return None
     try:
         tree = ast.parse(text.replace("_", ""), mode="eval")
@@ -115,31 +130,57 @@ def _constant(text: str) -> int | None:
         return None
 
     def value(node):
-        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
             return node.value
-        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mult, ast.Sub)):
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            inner = value(node.operand)
+            return None if inner is None else inner if isinstance(node.op, ast.UAdd) else -inner
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod)):
             a, b = value(node.left), value(node.right)
             if a is None or b is None or abs(a) > 10**9 or abs(b) > 10**9:
                 return None
-            return a + b if isinstance(node.op, ast.Add) else a * b if isinstance(node.op, ast.Mult) else a - b
+            if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)) and b == 0:
+                return None
+            if isinstance(node.op, ast.Add):
+                return a + b
+            if isinstance(node.op, ast.Sub):
+                return a - b
+            if isinstance(node.op, ast.Mult):
+                return a * b
+            if isinstance(node.op, ast.Div):
+                return a / b
+            return a // b if isinstance(node.op, ast.FloorDiv) else a % b
         return None
-    return value(tree.body)
+    try:
+        found = value(tree.body)
+    except RecursionError:
+        return None
+    return int(found) if found is not None else None
 
 
 _OPEN, _CLOSE = "([{", ")]}"
+#: Operators that bind more loosely than + and -: they end an additive expression.
+_LOOSER = frozenset(",;?:|&<>=!")
+#: Python and Rust words that do the same (`a + 1 if fast else a + 5000`), and Rust casts.
+_WORD_OPERATOR = re.compile(r"\b(?:if|else|and|or|not|in|is|for|lambda|return|await)\b")
+_CAST = re.compile(r"\s+as\s+[ui](?:8|16|32|64|128|size)\b")
+#: The longest operand read as the ledger term, and the window searched back from `.saturating_add(`.
+_OPERAND_LIMIT = 300
 
 
 def _left_operand(text: str, end: int) -> str:
-    """The operand that ends just before ``end``: names, member chains, calls and brackets."""
+    """The operand that ends just before ``end``: names, member chains, calls and brackets
+    (at most _OPERAND_LIMIT characters back)."""
+    floor = max(0, end - _OPERAND_LIMIT)
     i = end
-    while i > 0 and text[i - 1] == " ":
+    while i > floor and text[i - 1] == " ":
         i -= 1
     stop = i
-    while i > 0:
+    while i > floor:
         ch = text[i - 1]
         if ch in _CLOSE:
             depth, j = 0, i - 1
-            while j >= 0:
+            while j >= floor:
                 if text[j] in _CLOSE:
                     depth += 1
                 elif text[j] in _OPEN:
@@ -147,7 +188,7 @@ def _left_operand(text: str, end: int) -> str:
                     if depth == 0:
                         break
                 j -= 1
-            if j < 0:
+            if j < floor:
                 break
             i = j
         elif ch.isalnum() or ch in "_$.":
@@ -159,39 +200,100 @@ def _left_operand(text: str, end: int) -> str:
     return text[i:stop]
 
 
-def _right_operand(text: str, start: int) -> str:
-    """The operand that starts at ``start``, up to the next operator or separator at depth 0."""
-    depth, i = 0, start
-    while i < len(text):
-        ch = text[i]
-        if ch in _OPEN:
-            depth += 1
-        elif ch in _CLOSE:
-            if depth == 0:
-                break
-            depth -= 1
-        elif depth == 0 and ch in "+-,;|&?:<>=/%":
-            break
-        i += 1
-    return text[start:i]
+def _blank_strings(text: str) -> str:
+    """String literal contents blanked, quotes kept: a `+` inside a string is not an operator."""
+    out, i, n = list(text), 0, len(text)
+    while i < n:
+        quote = text[i]
+        if quote in "'\"`":
+            j = i + 1
+            while j < n and text[j] != quote:
+                j += 2 if text[j] == "\\" else 1
+            for k in range(i + 1, min(j, n)):
+                out[k] = " "
+            i = j + 1
+        else:
+            i += 1
+    return "".join(out)
 
 
 def _ledger_offsets(text: str) -> list[int]:
-    """Constants added to a term that reads the ledger: `latest + 500`, `100 + seq`,
-    `latest_ledger.saturating_add(720)`."""
-    out = []
-    for m in re.finditer(r"(?<![+=])\+(?![+=])", text):
-        left, right = _left_operand(text, m.start()), _right_operand(text, m.end())
-        for term, other in ((left, right), (right, left)):
-            n = _constant(other)
-            if n is not None and _LEDGER_TERM.search(term) and _constant(term) is None:
-                out.append(n)
-                break
+    """The offsets added to a term that reads the ledger: each additive expression (`latest +
+    500`, `100 + seq`, `latest + 3600 / 5`, `latest + 1000 - 900`) whose one ledger term is
+    added to constant terms gives their sum; an expression with any other non-constant term
+    gives nothing. `latest_ledger.saturating_add(720)` counts too. One pass over the text."""
+    text = _CAST.sub(lambda m: " " * len(m.group()), _blank_strings(text))
+    text = _WORD_OPERATOR.sub(lambda m: "," + " " * (len(m.group()) - 1), text)
+    out: list[int] = []
+    closes: dict[int, int] = {}
+    frames: list[tuple[int, list]] = [(0, [])]
+    prev = ""
+    for i, ch in enumerate(text):
+        if ch in _OPEN:
+            frames.append((i + 1, []))
+        elif ch in _CLOSE:
+            if len(frames) > 1:
+                start, cuts = frames.pop()
+                closes[start - 1] = i
+                _group_offsets(text, start, i, cuts, out)
+        elif ch in "+-":
+            # Binary only after an operand; not ++, --, +=, -= or ->.
+            if prev and (prev.isalnum() or prev in "_$)]}.'\"`") and text[i + 1:i + 2] not in (ch, "=", ">"):
+                frames[-1][1].append((i, ch))
+        elif ch in "*/%":
+            frames[-1][1].append((i, "*"))
+        elif ch in _LOOSER:
+            member = ch == "?" and text[i + 1:i + 2] == "."  # optional chaining
+            path = ch == ":" and ":" in (text[i - 1:i], text[i + 1:i + 2])  # Rust `u32::MAX`
+            if not (member or path):
+                frames[-1][1].append((i, ","))
+        if not ch.isspace():
+            prev = ch
+    for start, cuts in frames:
+        _group_offsets(text, start, len(text), cuts, out)
     for m in re.finditer(r"\.(?:saturating|checked|wrapping)_add\s*\(", text):
-        n = _constant(_right_operand(text, m.end()))
-        if n is not None and _LEDGER_TERM.search(_left_operand(text, m.start())):
+        close = closes.get(m.end() - 1)
+        n = _constant(text[m.end():close]) if close is not None and close - m.end() <= 60 else None
+        if n is not None and n > 0 and _LEDGER_TERM.search(_left_operand(text, m.start())):
             out.append(n)
     return out
+
+
+def _group_offsets(text: str, start: int, end: int, cuts: list, out: list[int]) -> None:
+    """_ledger_offsets for one bracket group: its segments between looser operators, each an
+    additive expression of signed terms."""
+    if not any(op in "+-" for _, op in cuts):
+        return
+    segment: list[tuple[str, int, int, bool]] = []  # (sign, start, end, holds a * / or %)
+    sign, at, product = "+", start, False
+    for pos, op in cuts + [(end, ",")]:
+        if op == "*":
+            product = True
+            continue
+        segment.append((sign, at, pos, product))
+        sign, at, product = op, pos + 1, False
+        if op == ",":
+            _segment_offset(text, segment, out)
+            segment, sign = [], "+"
+
+
+def _segment_offset(text: str, terms: list[tuple[str, int, int, bool]], out: list[int]) -> None:
+    if len(terms) < 2:
+        return
+    ledger, total = None, 0
+    for sign, a, b, product in terms:
+        if b - a > _OPERAND_LIMIT:
+            return
+        term = text[a:b]
+        n = _constant(term)
+        if n is not None:
+            total += n if sign == "+" else -n
+        elif sign == "+" and not product and ledger is None and _LEDGER_TERM.search(term) and term.strip():
+            ledger = term
+        else:
+            return  # another value: the offset is not a constant
+    if ledger is not None and total > 0:
+        out.append(total)
 
 
 # --------------------------------------------------------------------------- tree inspection
@@ -448,7 +550,8 @@ def js_call(interp, node, label: str, short: str, receiver_node, receiver: set[s
 
 def _js_resolver(interp):
     """Local initializers in the function (and its parents), module constants, then the
-    return expression of a project helper with that name."""
+    return expression of a project helper with that name. Each scope's declarations are
+    indexed once per project, not searched again for every name."""
     from . import jsflow as J
     scopes = []
     fn = interp.fn
@@ -456,27 +559,46 @@ def _js_resolver(interp):
         scopes.append(fn.node)
         fn = interp.p.functions.get(fn.parent) if fn.parent else None
     scopes.append(interp.module.root)
+    cache = interp.p.__dict__.setdefault("_expiry_scopes", {})
+    helpers = interp.p.__dict__.get("_expiry_helpers")
+    if helpers is None:
+        helpers = {}
+        for key, f in interp.p.functions.items():
+            helpers.setdefault(key.rsplit(":", 1)[-1].rsplit(".", 1)[-1], f.node)
+        interp.p.__dict__["_expiry_helpers"] = helpers
 
-    def resolve(name: str) -> str | None:
-        for scope in scopes:
+    def declarations(scope) -> tuple[dict, list]:
+        """(name -> initializer node, [(destructuring pattern text, value node)]) in ``scope``,
+        not inside nested functions; the first one found wins, as a search would find it."""
+        key = (interp.module.path, scope.start_byte, scope.end_byte)
+        if key not in cache:
+            names, patterns = {}, []
             stack = [scope]
             while stack:
                 n = stack.pop()
                 if n.type == "variable_declarator":
-                    target = n.child_by_field_name("name")
-                    value = n.child_by_field_name("value")
+                    target, value = n.child_by_field_name("name"), n.child_by_field_name("value")
                     if target is not None and value is not None:
-                        if target.type == "identifier" and J._txt(target) == name:
-                            return _js_returns(value) if J._is_function(value) else J._txt(value)
-                        named = re.search(r"(?<![\w$])" + re.escape(name) + r"(?![\w$])", J._txt(target))
-                        if target.type == "object_pattern" and named:
-                            return f"{J._txt(value)}.{name}"  # const { maxTimeoutSeconds } = requirements
+                        if target.type == "identifier":
+                            names.setdefault(J._txt(target), value)
+                        elif target.type == "object_pattern":
+                            patterns.append((J._txt(target), value))
                 if n is scope or not J._is_function(n):
                     stack.extend(n.named_children)
-        for key, fn in interp.p.functions.items():
-            if key.rsplit(":", 1)[-1].rsplit(".", 1)[-1] == name:
-                return _js_returns(fn.node)
-        return None
+            cache[key] = (names, patterns)
+        return cache[key]
+
+    def resolve(name: str) -> str | None:
+        for scope in scopes:
+            names, patterns = declarations(scope)
+            value = names.get(name)
+            if value is not None:
+                return _js_returns(value) if J._is_function(value) else J._txt(value)
+            for target, value in patterns:
+                if re.search(r"(?<![\w$])" + re.escape(name) + r"(?![\w$])", target):
+                    return f"{J._txt(value)}.{name}"  # const { maxTimeoutSeconds } = requirements
+        helper = helpers.get(name)
+        return _js_returns(helper) if helper is not None else None
     return resolve
 
 
@@ -553,9 +675,10 @@ def py_call(interp, node: ast.Call, state) -> tuple[set[str], bool]:
         contract = next((k.value for k in node.keywords if k.arg == "contract_id"), node.args[0] if node.args else None)
         if contract is not None and _quiet_tags(interp, contract, state) & DIRECT:
             add.add("contract_untrusted")
-    if short == "SorobanAuthorizationEntry" and _EMPTY_SUBS.search(unparse(node)) \
-            and not re.search(r"from_xdr\s*\(", unparse(node)):
-        add.add("auth_built")
+    if short == "SorobanAuthorizationEntry":
+        text = _py_text(interp, node)
+        if _EMPTY_SUBS.search(text) and not re.search(r"from_xdr\s*\(", text):
+            add.add("auth_built")
     if short in _PY_SIMULATES:
         add.add("sim_auth")
     if short not in {"authorize_entry", "sign_auth_entries"}:
@@ -572,10 +695,19 @@ def py_call(interp, node: ast.Call, state) -> tuple[set[str], bool]:
     expiry = next((k.value for k in node.keywords if k.arg in {"valid_until_ledger_sequence", "valid_until_ledger_seq"}),
                   node.args[2] if len(node.args) > 2 else None)
     if expiry is not None and interp.record:
-        found = classify_expiration(unparse(expiry), _py_resolver(interp))
+        found = classify_expiration(_py_text(interp, expiry), _py_resolver(interp))
         if found:
             interp.p.profile.add_fact("auth_expiration", location, found.note, severity=found.severity.value)
     return add, (inspected or built) and bool(entry & UNTRUSTED)
+
+
+def _py_text(interp, node: ast.AST) -> str:
+    """A node's code: unparsed, or (when it is too deep to unparse) sliced from the file."""
+    text = unparse(node)
+    if not text:
+        path = interp.p.module_of.get(interp.module)
+        text = ast.get_source_segment(interp.p.files.get(path, ""), node) or "" if path else ""
+    return text
 
 
 def _py_assigns(body) -> dict[str, str]:
@@ -607,17 +739,30 @@ def _py_returns(fn: ast.AST) -> str:
 
 
 def _py_resolver(interp):
-    """Locals of the signing function, module constants, then a helper's return expression."""
+    """Locals of the signing function, module constants, then a helper's return expression.
+    Module constants are unparsed only when a name asks for them."""
     local = _py_assigns(_py_own_nodes(interp.fn.node)) if interp.fn is not None else {}
     tree = interp.p.trees.get(interp.module)
-    module = _py_assigns(tree.body) if tree is not None else {}
-    functions = {f.node.name: f.node for f in interp.p.functions.values()}
+    cache = interp.p.__dict__.setdefault("_expiry_modules", {})
+    if id(tree) not in cache:
+        nodes: dict[str, ast.AST] = {}
+        for n in tree.body if tree is not None else []:
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+                nodes.setdefault(n.targets[0].id, n.value)
+            elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
+                nodes.setdefault(n.target.id, n.value)
+        cache[id(tree)] = (tree, nodes)
+    module = cache[id(tree)][1]
+    functions = interp.p.__dict__.get("_expiry_py_helpers")
+    if functions is None:
+        functions = {f.node.name: f.node for f in interp.p.functions.values()}
+        interp.p.__dict__["_expiry_py_helpers"] = functions
 
     def resolve(name: str) -> str | None:
         if name in local:
             return local[name]
         if name in module:
-            return module[name]
+            return unparse(module[name])
         if name in functions:
             return _py_returns(functions[name])
         return None

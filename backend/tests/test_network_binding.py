@@ -186,7 +186,8 @@ def test_python_pairs_fixed_on_one_side_are_low():
     server = ('import os\nHORIZON_URL = os.getenv("HORIZON_URL", "https://horizon-testnet.stellar.org")\n'
               "PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE\nhorizon = Server(HORIZON_URL)\n"
               "def pay():\n    TransactionBuilder(acct, network_passphrase=PASSPHRASE, base_fee=100)\n")
-    assert found({"server.py": server})["security-network-endpoint-mismatch"]["severity"] == "low"
+    pair = found({"server.py": server})["security-network-endpoint-mismatch"]
+    assert pair["severity"] == "low" and "fixed to testnet constants" in pair["detail"]
     wallet = ('class Wallet:\n    def __init__(self, kp, network_passphrase: str = "Test SDF Network ; September 2015"):\n'
               '        self.network_passphrase = network_passphrase\n'
               '        self.server = Server("https://horizon-testnet.stellar.org")\n')
@@ -211,9 +212,10 @@ class Client:
 '''
 
 
-def test_a_testnet_issuer_in_a_payment_that_can_be_signed_for_mainnet_is_medium():
+def test_a_testnet_issuer_in_a_payment_that_can_be_signed_for_mainnet_is_low():
+    # It fails closed: the testnet issuer does not exist on mainnet, so nothing can be paid in it.
     finding = found({"sdk/client.py": _CROSS})["security-network-cross-constant"]
-    assert finding["severity"] == "medium" and "sdk/client.py:8" in finding["evidence"]
+    assert finding["severity"] == "low" and "sdk/client.py:8" in finding["evidence"]
 
 
 def test_a_network_keyed_issuer_is_not_a_cross_constant():
@@ -329,3 +331,101 @@ def test_long_word_runs_cost_little():
         started = time.perf_counter()
         network_hits({name: text})
         assert time.perf_counter() - started < 1.0, name
+
+
+# ----------------------------------------------------------------- review: depth, cost and scope
+_PY_TOOL = '''import os
+from stellar_sdk import Keypair, Network, Server, TransactionBuilder
+PASSPHRASES = {"testnet": Network.TESTNET_NETWORK_PASSPHRASE, "mainnet": Network.PUBLIC_NETWORK_PASSPHRASE}
+HORIZON = {"testnet": "https://horizon-testnet.stellar.org", "mainnet": "https://horizon.stellar.org"}
+
+@mcp.tool()
+def pay(network: str, destination: str):
+    banner = BANNER
+    kp = Keypair.from_secret(os.environ["OPERATOR_SECRET"])
+    server = Server(HORIZON[network])
+    tx = TransactionBuilder(server.load_account(kp.public_key), PASSPHRASES[network], 100).build()
+    tx.sign(kp)
+    return server.submit_transaction(tx)
+'''
+
+
+def test_python_expressions_too_deep_to_unparse_neither_crash_nor_hide_a_tool():
+    deep = " + ".join(['"x"'] * 1500)
+    files = {"prompt.py": f"SYSTEM_PROMPT = {deep}\n",
+             "pick.py": f"net = Network.PUBLIC_NETWORK_PASSPHRASE if {deep} else Network.TESTNET_NETWORK_PASSPHRASE\n",
+             "attr.py": f"class A:\n    def __init__(self):\n        self.p = {deep}\n",
+             "cross.py": f"def f():\n    x = {deep}\n    if {deep}:\n        y = 1\n    TransactionBuilder(a, x).append_payment_op({deep})\n"}
+    _CACHE.clear()
+    started = time.perf_counter()
+    network_hits(files)
+    assert time.perf_counter() - started < 5
+    # A tool function too deep to unparse is read from its source.
+    tool = _PY_TOOL.replace("BANNER", " + ".join(['"="'] * 600))
+    assert found({"tools.py": tool})["security-network-chosen-per-call"]["severity"] == "medium"
+
+
+def test_long_statements_and_repeated_arguments_cost_little():
+    # Each `name =` used to rescan its 1,200-character window once per line (90 s for 390 KB),
+    # and each `args.network` rescanned the file for its top-level declaration (62 s); at
+    # 200 KB these shapes took 20 s or more each.
+    size = 200_000
+    shapes = {"comma.js": "x = y,\n" * (size // 7),
+              "args.js": "function f(args) {\n" + "  g(args.network);\n" * (size // 19) + "}\n",
+              "ternary.js": "x = a === 'futurenet' ? Networks.FUTURENET : a === 'local' ? Networks.TESTNET : Networks.PUBLIC\n" * 2000,
+              "switch.js": "switch (n) { case 'a': x = Networks.PUBLIC;\n" * 4500,
+              "keys.js": "const HORIZON_URL = process.env.H || 'https://horizon-testnet.stellar.org';\nconst NETWORK = process.env.N;\n" * 1500,
+              "chain.py": ("def f(n):\n    if n == 'testnet':\n        return Network.TESTNET_NETWORK_PASSPHRASE\n"
+                           "    return Network.PUBLIC_NETWORK_PASSPHRASE\n") * 1500}
+    for name, text in shapes.items():
+        _CACHE.clear()
+        started = time.perf_counter()
+        network_hits({f"src/{name}": text})
+        assert time.perf_counter() - started < 5, name
+
+
+_TWO_TOOLS = """
+import { Horizon, Keypair, Networks, TransactionBuilder, Operation, Asset } from '@stellar/stellar-sdk';
+import { z } from 'zod';
+import { config } from './config';
+const PASSPHRASES = { testnet: Networks.TESTNET, mainnet: Networks.PUBLIC };
+const HORIZON_URLS = { testnet: 'https://horizon-testnet.stellar.org', mainnet: 'https://horizon.stellar.org' };
+export function registerTools(server) {
+  server.tool('draft_payment', { network: z.enum(['testnet', 'mainnet']), from: z.string() }, async (args) => {
+    const net = args.network;
+    const horizon = new Horizon.Server(HORIZON_URLS[net]);
+    const source = await horizon.loadAccount(args.from);
+    const tx = new TransactionBuilder(source, { fee: '100', networkPassphrase: PASSPHRASES[net] }).setTimeout(60).build();
+    return { content: [{ type: 'text', text: tx.toXDR() }] };
+  });
+  server.tool('collect_fee', {}, async () => {
+    const kp = Keypair.fromSecret(process.env.OPERATOR_SECRET);
+    const horizon = new Horizon.Server(config.horizonUrl);
+    const tx = new TransactionBuilder(await horizon.loadAccount(kp.publicKey()), { fee: '100', networkPassphrase: config.passphrase })
+      .addOperation(Operation.payment({ destination: config.feeAccount, asset: Asset.native(), amount: '1' })).setTimeout(60).build();
+    tx.sign(kp);
+    return { content: [{ type: 'text', text: (await horizon.submitTransaction(tx)).hash }] };
+  });
+}
+"""
+
+
+def test_a_tool_that_signs_nothing_is_not_judged_by_another_tools_key():
+    # One tool picks the network for an unsigned draft; another signs with the operator key on
+    # the configured network. Neither lets a caller move a signature to mainnet.
+    assert "security-network-chosen-per-call" not in found({"src/tools.ts": _TWO_TOOLS})
+    # The drafting tool signing with a key loaded once for all tools is the defect.
+    signing = _TWO_TOOLS.replace("export function registerTools(server) {\n",
+                                 "export function registerTools(server) {\n  const operator = Keypair.fromSecret(config.secret);\n") \
+        .replace("    return { content: [{ type: 'text', text: tx.toXDR() }] };", "    tx.sign(operator);\n"
+                 "    return { content: [{ type: 'text', text: (await horizon.submitTransaction(tx)).hash }] };", 1)
+    assert found({"src/tools.ts": signing})["security-network-chosen-per-call"]["severity"] == "medium"
+
+
+def test_a_fixed_passphrase_message_names_the_network_of_its_value():
+    server = ('import os\nfrom stellar_sdk import Network, Server, TransactionBuilder\n'
+              "TESTNET_PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE\nLIVE_PASSPHRASE = Network.PUBLIC_NETWORK_PASSPHRASE\n"
+              'HORIZON_URL = os.getenv("HORIZON_URL", "https://horizon-testnet.stellar.org")\nserver = Server(HORIZON_URL)\n'
+              "def build(source):\n    return TransactionBuilder(source, network_passphrase=TESTNET_PASSPHRASE, base_fee=100)\n")
+    detail = found({"server.py": server})["security-network-endpoint-mismatch"]["detail"]
+    assert "fixed to testnet constants" in detail  # the constant that reaches the builder, whatever the set order

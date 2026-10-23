@@ -11,6 +11,7 @@ with parseFloat while the signer parses it with BigInt (so '0x3B9ACA00' is 0 to 
 from __future__ import annotations
 
 import ast
+import functools
 import itertools
 import re
 
@@ -81,6 +82,23 @@ _AMOUNT_NAME = re.compile(r"amount|price|value|cost|fee|total|sum|qty|quantity|s
 _DIGITS_ONLY = re.compile(r"\^\\d|\^\[0-9\]|\^\(\?:\\d|\^\(\\d")
 
 
+def _names(node) -> set[str]:
+    """The identifiers and member chains an expression reads."""
+    return {_txt(n) for n in SourceIndex.walk(node) if n.type in {"identifier", "member_expression"}} \
+        if node is not None else set()
+
+
+#: At most this many amount values are judged per function (A5).
+_SEEDS = 32
+
+
+@functools.lru_cache(maxsize=4096)
+def _mention_pattern(names: frozenset[str]) -> re.Pattern:
+    """One pattern for a set of names: any of them as a whole name or member chain."""
+    return re.compile(r"(?<![\w$.])(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+                      + r")(?![\w$])")
+
+
 def _js_binder(node) -> str:
     """The name a value is bound to: `key: value`, `const NAME = value`, `x.y = value`,
     through `||`, `??`, parentheses and ternaries."""
@@ -110,6 +128,9 @@ class AssetRules:
         self.locks = Lockset(artifact.raw_metadata.get("resolved_versions"))
         self._float_memo: dict[tuple, bool] = {}
         self._bigint_memo: dict[tuple, bool] = {}
+        self._fn_parts: dict[tuple, dict[str, list]] = {}
+        self._derived_memo: dict[tuple, set[str]] = {}
+        self._side_memo: dict[tuple, list[tuple[str, str]]] = {}
         self._used: dict[str, int] | None = None
 
     def _uses(self, name: str) -> int:
@@ -322,19 +343,54 @@ class AssetRules:
         for js in self.index.js.values():
             if TEST_PATH.search(js.path):
                 continue
-            validated = re.search(r"\.regex\(\s*/" + r"[^/\n]*(?:\\d|\[0-9\])", js.text)
+            if re.search(r"\.regex\(\s*/" + r"[^/\n]*(?:\\d|\[0-9\])", js.text):
+                continue
             for fn in SourceIndex.walk(js.root):
                 if not js_functions_type(fn):
                     continue
+                float_side, sink_side, payloads = self._reach(fn)
+                judged = 0
                 for seed, line in self._seeds(js, fn):
-                    if not _AMOUNT_NAME.search(seed.rsplit(".", 1)[-1]) or validated or self._tested(fn, seed):
+                    if not _AMOUNT_NAME.search(seed.rsplit(".", 1)[-1]):
                         continue
-                    if not self._external(js, fn, seed):
+                    # Only a value that can reach a parseFloat and a BigInt sink (here, through a
+                    # local, or through a project function) is judged, and at most _SEEDS of them.
+                    paid = seed in sink_side or (seed.endswith(".amount") and seed.split(".", 1)[0] in payloads)
+                    if seed not in float_side or not paid or judged >= _SEEDS:
+                        continue
+                    judged += 1
+                    if self._tested(js, fn, seed) or not self._external(js, fn, seed):
                         continue
                     if self._float_cap(js, fn, seed, 0) and self._bigint(js, fn, seed, 0):
                         out.append((js.path, line, f"{seed}: {js.lines[line - 1].strip()[:120]}"))
                         break
         return out
+
+    def _reach(self, fn) -> tuple[set[str], set[str], set[str]]:
+        """The names and member chains that can reach a parseFloat call, or a BigInt sink, in this
+        function: those in the parser's or sink's first argument, in a local's initializer (it
+        may derive the raw string) or in an argument to a project function; and the payload
+        objects passed to createPaymentPayload. One walk per function."""
+        names = _names
+        shared: set[str] = set()
+        floats, sinks, payloads = set(), set(), set()
+        for node in SourceIndex.walk(fn):
+            if node.type == "variable_declarator":
+                shared |= names(node.child_by_field_name("value"))
+            elif node.type == "call_expression":
+                args = _args(node)
+                name = callee_name(node)
+                if args and _FLOAT_PARSE.match(_txt(node.child_by_field_name("function"))):
+                    floats |= names(args[0])
+                if name in _BIGINT_SINKS and args:
+                    sinks |= names(args[1] if name == "XdrLargeInt" and len(args) > 1 else args[0])
+                if name == "createPaymentPayload" and len(args) > 1:
+                    sinks |= names(args[1])
+                    payloads.add(_txt(_unwrap(args[1])))
+                if args and self.index.defs(name):
+                    for arg in args:
+                        shared |= names(arg)
+        return floats | shared, sinks | shared, payloads
 
     @staticmethod
     def _seeds(js: JsFile, fn) -> list[tuple[str, int]]:
@@ -353,22 +409,58 @@ class AssetRules:
 
     @staticmethod
     def _mentions(text: str, names: set[str]) -> bool:
-        return any(re.search(r"(?<![\w$.])" + re.escape(n) + r"(?![\w$])", text) for n in names)
+        return bool(names) and bool(_mention_pattern(frozenset(names)).search(text))
 
-    def _derived(self, fn, seed: str) -> set[str]:
+    def _parts(self, js: JsFile, fn) -> dict[str, list]:
+        """The nodes of a function the A5 checks read, collected in one walk: calls (``own``: not
+        inside nested functions), local declarations and size comparisons."""
+        key = (js.path, fn.start_byte, fn.end_byte, fn.type)
+        if key not in self._fn_parts:
+            parts: dict[str, list] = {"calls": [], "own": [], "decls": [], "compares": [], "parsers": []}
+            stack = [(c, False) for c in reversed(fn.named_children)]
+            while stack:
+                node, nested = stack.pop()
+                if node.type == "call_expression":
+                    parts["calls"].append(node)
+                    if not nested and self.index.defs(callee_name(node)):
+                        parts["own"].append(node)  # a call into the project: the value may be capped there
+                    callee, args = _txt(node.child_by_field_name("function")), _args(node)
+                    if args and (_FLOAT_PARSE.match(callee) or _SOUND_PARSE.match(callee)):
+                        parts["parsers"].append((node, callee, _txt(args[0])))
+                elif node.type == "variable_declarator":
+                    parts["decls"].append(node)
+                elif node.type == "binary_expression" and _txt(node.child_by_field_name("operator")) in {"<", ">", "<=", ">="}:
+                    parts["compares"].append((node, _names(node)))
+                inner = nested or js_functions_type(node)
+                stack.extend((c, inner) for c in reversed(node.named_children))
+            self._fn_parts[key] = parts
+        return self._fn_parts[key]
+
+    def _side_calls(self, js: JsFile, node) -> list[tuple[str, str]]:
+        """(callee, first argument) of the calls in an expression, itself included; once per node."""
+        key = (js.path, node.start_byte, node.end_byte, node.type)
+        if key not in self._side_memo:
+            self._side_memo[key] = [(_txt(c.child_by_field_name("function")), _txt(_args(c)[0]))
+                                    for c in [node, *SourceIndex.calls(node)] if c.type == "call_expression" and _args(c)]
+        return self._side_memo[key]
+
+    def _derived(self, js: JsFile, fn, seed: str) -> set[str]:
         """Locals that still hold the raw string: `parts = amount.split('.')`, `whole = parts[0] || '0'`
         (a conversion such as atomicToUsdc(amount) or Number(amount) ends the chain)."""
+        key = (js.path, fn.start_byte, fn.end_byte, seed)
+        if key in self._derived_memo:
+            return self._derived_memo[key]
         names = {seed}
-        for node in SourceIndex.walk(fn):
-            if node.type == "variable_declarator":
-                value, target = node.child_by_field_name("value"), node.child_by_field_name("name")
-                if value is None or target is None or not self._raw(value, names):
-                    continue
-                if target.type == "identifier":
-                    names.add(_txt(target))
-                elif target.type in {"array_pattern", "object_pattern"}:  # const [whole, frac] = v.split(".")
-                    names |= {_txt(n) for n in SourceIndex.walk(target)
-                              if n.type in {"identifier", "shorthand_property_identifier_pattern"}}
+        for node in self._parts(js, fn)["decls"]:
+            value, target = node.child_by_field_name("value"), node.child_by_field_name("name")
+            if value is None or target is None or not self._raw(value, names):
+                continue
+            if target.type == "identifier":
+                names.add(_txt(target))
+            elif target.type in {"array_pattern", "object_pattern"}:  # const [whole, frac] = v.split(".")
+                names |= {_txt(n) for n in SourceIndex.walk(target)
+                          if n.type in {"identifier", "shorthand_property_identifier_pattern"}}
+        self._derived_memo[key] = names
         return names
 
     def _raw(self, node, names: set[str]) -> bool:
@@ -386,12 +478,13 @@ class AssetRules:
         if key in self._float_memo:
             return self._float_memo[key]
         self._float_memo[key] = False
-        names = self._derived(fn, seed)
-        float_side, sound_side = self._parsed(fn, names, _FLOAT_PARSE), self._parsed(fn, names, _SOUND_PARSE)
+        names = self._derived(js, fn, seed)
+        float_side, sound_side = self._parsed(js, fn, names, _FLOAT_PARSE), self._parsed(js, fn, names, _SOUND_PARSE)
         capped = False
-        for node in SourceIndex.walk(fn):
-            if node.type != "binary_expression" or _txt(node.child_by_field_name("operator")) not in {"<", ">", "<=", ">="}:
-                continue
+        read = names | float_side.parsed | sound_side.parsed
+        for node, used in self._parts(js, fn)["compares"] if float_side.found or sound_side.found else []:
+            if not used & read:
+                continue  # the comparison names none of the value's forms
             if _upper_bound(node, sound_side):
                 return False  # a sound cap on the same value: the parseFloat one is only advisory
             capped = capped or _upper_bound(node, float_side)
@@ -399,13 +492,16 @@ class AssetRules:
         self._float_memo[key] = result
         return result
 
-    def _parsed(self, fn, names: set[str], parser):
+    def _parsed(self, js: JsFile, fn, names: set[str], parser):
         """A test for an expression that holds the value as `parser` reads it: a parser call
-        on the value, or a local computed from one (`const price = parseFloat(x) / 1e7`)."""
+        on the value, or a local computed from one (`const price = parseFloat(x) / 1e7`). Its
+        ``found`` says whether the function parses the value that way at all."""
         parsed: set[str] = set()
-        for call in SourceIndex.calls(fn):
-            if parser.match(_txt(call.child_by_field_name("function"))) and \
-                    any(self._mentions(_txt(a), names) for a in _args(call)[:1]):
+        parts = self._parts(js, fn)
+        found = False
+        for call, callee, first in parts["parsers"]:
+            if parser.match(callee) and self._mentions(first, names):
+                found = True
                 holder = call.parent
                 while holder is not None and (holder.type in {"parenthesized_expression", "await_expression"} or (
                         holder.type == "binary_expression" and _txt(holder.child_by_field_name("operator")) in _ARITHMETIC)):
@@ -415,8 +511,8 @@ class AssetRules:
         changed = True
         while changed and parsed:  # const total = spent + price
             changed = False
-            for node in SourceIndex.walk(fn):
-                if node.type == "variable_declarator" and node.child_by_field_name("value") is not None and \
+            for node in parts["decls"]:
+                if node.child_by_field_name("value") is not None and \
                         _txt(node.child_by_field_name("name")) not in parsed and \
                         self._mentions(_txt(node.child_by_field_name("value")), parsed):
                     parsed.add(_txt(node.child_by_field_name("name")))
@@ -425,11 +521,10 @@ class AssetRules:
         def holds(side) -> bool:
             if side is None:
                 return False
-            for call in [side, *SourceIndex.calls(side)]:
-                if call.type == "call_expression" and parser.match(_txt(call.child_by_field_name("function"))) and \
-                        any(self._mentions(_txt(a), names) for a in _args(call)[:1]):
-                    return True
+            if any(parser.match(callee) and self._mentions(first, names) for callee, first in self._side_calls(js, side)):
+                return True
             return bool(parsed) and self._mentions(_txt(side), parsed)
+        holds.found, holds.parsed = found, parsed
         return holds
 
     def _bigint(self, js: JsFile, fn, seed: str, depth: int) -> bool:
@@ -437,9 +532,9 @@ class AssetRules:
         if key in self._bigint_memo:
             return self._bigint_memo[key]
         self._bigint_memo[key] = False
-        names = self._derived(fn, seed)
+        names = self._derived(js, fn, seed)
         root = seed.split(".", 1)[0]
-        for call in SourceIndex.calls(fn):
+        for call in self._parts(js, fn)["calls"]:
             name = callee_name(call)
             args = _args(call)
             if name in _BIGINT_SINKS and args:
@@ -459,7 +554,7 @@ class AssetRules:
 
     def _through_calls(self, js: JsFile, fn, names: set[str], depth: int, check) -> bool:
         """The value reaches a project function's parameter that has the property."""
-        for call in SourceIndex.calls(fn, include_nested=False):
+        for call in self._parts(js, fn)["own"]:
             for position, arg in enumerate(_args(call)):
                 if not self._raw(arg, names):
                     continue
@@ -476,10 +571,9 @@ class AssetRules:
                         return True
         return False
 
-    @staticmethod
-    def _tested(fn, seed: str) -> bool:
+    def _tested(self, js: JsFile, fn, seed: str) -> bool:
         """A digits-only regular expression is tested against the value first."""
-        for call in SourceIndex.calls(fn):
+        for call in self._parts(js, fn)["calls"]:
             if callee_name(call) == "test" and any(seed in _txt(a) for a in _args(call)):
                 recv = receiver(call)
                 if recv is not None and _DIGITS_ONLY.search(_txt(recv)):
@@ -491,8 +585,8 @@ class AssetRules:
         root = seed.split(".", 1)[0]
         if root in _param_names(fn):
             return True
-        for node in SourceIndex.walk(fn):
-            if node.type == "variable_declarator" and _txt(node.child_by_field_name("name")) == root:
+        for node in self._parts(js, fn)["decls"]:
+            if _txt(node.child_by_field_name("name")) == root:
                 value = _txt(node.child_by_field_name("value"))
                 if re.search(r"\.json\(\)|JSON\.parse|accepts|\.body\b|headers\.get|decode\w*\(|\breq\b|\brequest\b", value):
                     return True
@@ -628,18 +722,25 @@ def _upper_bound(cmp, holds) -> bool:
 
 
 def _positive_literal(node) -> bool:
-    node = _unwrap(node)
-    if node is None:
-        return False
-    if node.type == "number":
-        text = _txt(node).replace("_", "").rstrip("n")
-        try:
-            return (int(text, 0) if re.fullmatch(r"0[xXoObB][0-9a-fA-F]+|\d+", text) else float(text)) > 0
-        except ValueError:
+    """A positive number, or arithmetic on positive numbers only (`5 * 1e7`). Walked with an
+    explicit stack: a bound written as a long sum must not exhaust the call stack."""
+    stack = [node]
+    while stack:
+        node = _unwrap(stack.pop())
+        if node is None:
             return False
-    if node.type == "binary_expression" and _txt(node.child_by_field_name("operator")) in _ARITHMETIC:
-        return _positive_literal(node.child_by_field_name("left")) and _positive_literal(node.child_by_field_name("right"))
-    return False
+        if node.type == "number":
+            text = _txt(node).replace("_", "").rstrip("n")
+            try:
+                if not (int(text, 0) if re.fullmatch(r"0[xXoObB][0-9a-fA-F]+|\d+", text) else float(text)) > 0:
+                    return False
+            except ValueError:
+                return False
+        elif node.type == "binary_expression" and _txt(node.child_by_field_name("operator")) in _ARITHMETIC:
+            stack += [node.child_by_field_name("left"), node.child_by_field_name("right")]
+        else:
+            return False
+    return True
 
 
 def _rejects(branch) -> bool:
