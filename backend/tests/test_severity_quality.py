@@ -123,3 +123,12 @@ def test_a_rule_family_that_fails_becomes_a_blocking_gap_not_a_failed_audit():
     assert [f.id for f in kept] == ["security-x"]
     assert gap[0].id == "security-rules-incomplete-network-binding" and gap[0].kind is FindingKind.EVIDENCE_GAP
     assert review_decision(gap, {"deep_core_complete": True}, 95.0) == "needs_evidence"
+
+
+def test_new_stellar_rules_in_sandbox_scripts_are_low_warnings():
+    from backend.app.swarm.consolidate import harness_notes
+    sandbox = _f("security-network-endpoint-mismatch-8e604d75", Severity.LOW, "scripts/e2e-happy-path.ts:12 `rpc`")
+    server = _f("security-network-endpoint-mismatch-1a2b3c4d", Severity.LOW, "src/server.ts:12 `rpc`")
+    older = _f("security-path-untrusted-to-financial-sink", Severity.HIGH, "src/sandbox/pay.ts:3 `pay()`")
+    out = harness_notes([sandbox, server, older])
+    assert out[0].kind is FindingKind.WARNING and out[1].kind is FindingKind.RISK and out[2].kind is FindingKind.RISK

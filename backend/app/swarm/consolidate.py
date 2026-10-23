@@ -126,5 +126,28 @@ def fold_absence_notes(findings: list[Finding]) -> list[Finding]:
             if f.id in _ABSENCE and f.kind is not FindingKind.EVIDENCE_GAP else f for f in findings]
 
 
+#: Stellar rules added with the lockfile, payment, RPC, asset and network checks. On repositories
+#: never seen while building them, most of their false findings sat in test harnesses.
+_HARNESS_RULES = re.compile(r"^(?:security-(?:network|mpp|x402|tx-hash|strkey|missing-issuer|payee|payment-asset|"
+                            r"amount-parsed|sep10|sep45|auth-expiration|path-fee-bump|path-sponsor)-|"
+                            r"stellar_native-(?:rpc|bigint|amount-above|memo-required-check|sdk-removed|transaction-meta)-)")
+_HARNESS_PATH = re.compile(r"(?:^|/)(?:sandbox|e2e|redteam|red-team|fixtures?|smoke[-_]?tests?|demo-scripts?)(?:/|$)|"
+                           r"(?:^|/)[\w.-]*(?:[-_.](?:e2e|test|spec|fixture|sandbox))\.[cm]?[jt]sx?$|"
+                           r"(?:^|/)(?:e2e|redteam|smoke)[-_.][\w.-]*\.[cm]?[jt]sx?$")
+
+
+def harness_notes(findings: list[Finding]) -> list[Finding]:
+    """A finding of those rules whose every cited place is a sandbox, end-to-end or fixture
+    script is a low warning: the script is not the agent that runs."""
+    out = []
+    for f in findings:
+        places = _locations(f)
+        if f.is_risk and _HARNESS_RULES.search(f.id) and places and all(_HARNESS_PATH.search(p) for p, _ in places):
+            f = f.model_copy(update={"kind": FindingKind.WARNING, "severity": Severity.LOW,
+                                     "detail": f.detail + " Every cited place is test or sandbox code."})
+        out.append(f)
+    return out
+
+
 def consolidate(findings: list[Finding]) -> list[Finding]:
-    return fold_absence_notes(merge_duplicates(findings))
+    return harness_notes(fold_absence_notes(merge_duplicates(findings)))
