@@ -171,3 +171,8 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px;margi
   h1{letter-spacing:-1.6px}
 }
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
+
+/* ---------- the touchmark card (the credential as an image) ---------- */
+.touchmark-card{margin:6px 0 12px;border:2px solid var(--ink);border-radius:6px;overflow:hidden;box-shadow:6px 6px 0 var(--offset);background:var(--paper)}
+.touchmark-card img{display:block;width:100%;height:auto}
+.card-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}

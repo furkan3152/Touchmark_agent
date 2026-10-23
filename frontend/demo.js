@@ -202,6 +202,12 @@ function aiLine(ai) {
       $("cred-idle").hidden = true;
       $("cred-done").hidden = false;
       $("token").textContent = cred.token_id;
+      if (cred.card_svg) {
+        const card = new Blob([cred.card_svg], { type: "image/svg+xml" });
+        $("cred-card").src = URL.createObjectURL(card);
+        $("dl-card").onclick = () => save(card, `touchmark-${cred.token_id.slice(0, 12)}.svg`);
+        $("dl-meta").onclick = () => save(new Blob([JSON.stringify(cred.metadata, null, 2)], { type: "application/json" }), `touchmark-${cred.token_id.slice(0, 12)}.json`);
+      }
       $("chain-score").textContent = `${cred.score} / 100${cred.is_current ? " · current" : ""}`;
       $("chain-hash").textContent = cred.report_matches ? "matches this report ✓" : "does not match this report";
       $("expires").textContent = new Date(cred.expires_at * 1000).toISOString().slice(0, 10);
@@ -245,11 +251,13 @@ function aiLine(ai) {
 
   $("recheck").addEventListener("submit", recheck);
   $("issue").addEventListener("click", issueCredential);
+  function save(blob, name) {
+    const link = el("a", { href: URL.createObjectURL(blob), download: name });
+    document.body.append(link); link.click(); link.remove();
+  }
   $("download").addEventListener("click", () => {
     if (!current) return;
-    const blob = new Blob([current.report_json], { type: "application/json" });
-    const link = el("a", { href: URL.createObjectURL(blob), download: `touchmark-${current.report_sha256.slice(0, 12)}.json` });
-    document.body.append(link); link.click(); link.remove();
+    save(new Blob([current.report_json], { type: "application/json" }), `touchmark-${current.report_sha256.slice(0, 12)}.json`);
   });
   const preset = new URLSearchParams(location.search).get("ref");
   if (preset) { input.value = preset; audit(preset); }
