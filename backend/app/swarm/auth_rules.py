@@ -19,6 +19,7 @@ import ast
 import re
 from bisect import bisect_left
 from dataclasses import dataclass
+from hashlib import sha1
 
 from ..models import Severity
 from .codeflow import DIRECT, UNTRUSTED, unparse
@@ -890,14 +891,28 @@ _WEB_AUTH_FILE = re.compile(r"WEB_AUTH|web_?auth|webAuth|\bsep-?(?:10|45)\b|\bSE
 _HARNESS = re.compile(r"(?:^|/)(?:interop|tests?|__tests__|e2e)/|roundtrip|round_trip|smoke|\.test\.|\.spec\.|_test\.py$", re.I)
 
 
+#: web_auth_hits per code tree (digest of the files): an audit asks more than once.
+_WEB_AUTH_CACHE: dict[str, list] = {}
+
+
 def web_auth_hits(files: dict[str, str]) -> list[tuple[str, str, int, str, Severity, str]]:
     """(kind, file, line, text, severity, note) for SEP-10 challenges and SEP-45 entries signed
     without the checks the SEPs require of the client. The signed value must come from the
     web-auth response by data flow inside the signing function (through locals, loops and
     callbacks); SEP-45 entries also count when that function itself makes the request."""
+    files = {n: t for n, t in files.items() if n.endswith(_JS_PY)}
+    key = sha1("\0".join(f"{k}\0{v}" for k, v in sorted(files.items())).encode("utf-8", "replace")).hexdigest()
+    if key not in _WEB_AUTH_CACHE:
+        if len(_WEB_AUTH_CACHE) > 16:
+            _WEB_AUTH_CACHE.clear()
+        _WEB_AUTH_CACHE[key] = _web_auth_hits(files)
+    return list(_WEB_AUTH_CACHE[key])
+
+
+def _web_auth_hits(files: dict[str, str]) -> list[tuple[str, str, int, str, Severity, str]]:
     from .network_rules import _sources
     hits = []
-    for src in _sources({n: t for n, t in files.items() if n.endswith(_JS_PY)}):
+    for src in _sources(files):
         code = src.code
         if not _WEB_AUTH_FILE.search(code):
             continue
@@ -932,6 +947,8 @@ def _ids(text: str) -> set[str]:
 #: JS bindings: `const x =`, `const { a, b } =`, `x =`; `for (const x of ...)`; `xs.map((x) =>`.
 _JS_BIND = re.compile(r"(?:\b(?:const|let|var)\s+(?P<pat>[\w$]+|\{[^}]{0,400}\}|\[[^\]]{0,400}\])|(?<![\w$.])(?P<bare>[\w$]+))"
                       r"\s*(?::[^=;\n]{0,200})?=(?![=>])\s*")
+#: network_rules._statement's window: a statement that reaches it was never closed.
+_STATEMENT_WINDOW = 1200
 _JS_LOOP = re.compile(r"\bfor\s*\(\s*(?:const|let|var)\s+(?P<pat>[\w$]+|\{[^}]{0,400}\}|\[[^\]]{0,400}\])\s+of\b")
 _JS_EACH = re.compile(r"(?P<iter>[\w$.]+)\s*\.\s*(?:map|forEach|flatMap|filter|some|every|reduce|find)\s*\(\s*(?:async\s*)?\(?\s*"
                       r"(?P<pat>[\w$]+)")
@@ -984,8 +1001,13 @@ def _js_events(src) -> list[tuple]:
     if found is None:
         from .network_rules import _statement
         code, found = src.code, []
-        for m in _JS_BIND.finditer(code):
+        binds = list(_JS_BIND.finditer(code))
+        for k, m in enumerate(binds):
             stop, _marks = _statement(src, m.end())
+            if stop >= m.end() + _STATEMENT_WINDOW and k + 1 < len(binds):
+                # Never closed within the window (`x=[x=[...`): it reads only up to the next binding,
+                # or every such binding would read the whole window.
+                stop = min(stop, max(m.end(), binds[k + 1].start()))
             found.append((m.start(), "bind", _js_bound(m.group("pat") or m.group("bare")), code[m.end():stop]))
         for m in _JS_LOOP.finditer(code):
             close = src.pairs().get(code.find("(", m.start()), m.end())
@@ -998,26 +1020,67 @@ def _js_events(src) -> list[tuple]:
     return found
 
 
-def _js_taint(src, start: int, end: int, seeds: set[str], source: re.Pattern,
-              module: bool = False) -> tuple[set[str], set[str]]:
-    """(names derived from the seeds or from text ``source`` matches, those of them bound to a
-    parsed transaction) in code[start:end], in source order (two passes for loops). With
-    ``module``, only bindings outside every function count: one function's locals never seed
-    another's. Each binding is read once per file (_js_events), so a function costs its own
-    bindings, whatever the size of the taint."""
-    events = _js_events(src)
-    lo = bisect_left(events, start, key=lambda e: e[0])
-    hi = bisect_left(events, end, key=lambda e: e[0])
-    steps = [e for e in events[lo:hi] if not module or src.function_at(e[0]) is None]
-    matched = [bool(source.search(e[4])) for e in steps]
-    tainted, parsed = set(seeds), set()
-    for _ in range(2):
-        for (_pos, _kind, names, read, _expr, parses), hit in zip(steps, matched):
-            if hit or not read.isdisjoint(tainted):
-                tainted |= names
-                if parses:
-                    parsed |= names
-    return tainted, parsed
+#: Binding visits one file's web-auth taint may spend across its signing scopes (each scope
+#: reads its relevant bindings twice), on top of a few reads of every relevant binding.
+#: Nested scopes re-read their inner ones, so the budget keeps a file of thousands of nested
+#: signing functions linear; past it, a scope reads as untainted (no finding).
+_TAINT_BUDGET = 200_000
+_TAINT_READS = 8
+
+
+class _Taint:
+    """One file's web-auth taint for one source pattern: which bindings the pattern matches
+    (searched once per binding, not once per scope), and the bindings that can take part in
+    any scope's taint at all, found by one worklist pass over the whole file from every seed a
+    scope can have. A binding outside that set never fires in a scope (a scope's taint is a
+    subset of the file's), so a scope reads only the relevant bindings in its range."""
+
+    def __init__(self, src, source: re.Pattern, seeds: set[str]):
+        events = _js_events(src)
+        self.events = events
+        self.matched = [bool(source.search(e[4])) for e in events]
+        readers: dict[str, list[int]] = {}
+        for i, e in enumerate(events):
+            for name in e[3]:
+                readers.setdefault(name, []).append(i)
+        fired = [False] * len(events)
+        tainted, todo = set(seeds), list(seeds)
+
+        def fire(i: int) -> None:
+            fired[i] = True
+            for name in events[i][2]:
+                if name not in tainted:
+                    tainted.add(name)
+                    todo.append(name)
+        for i, hit in enumerate(self.matched):
+            if hit and not fired[i]:
+                fire(i)
+        while todo:
+            for i in readers.get(todo.pop(), ()):
+                if not fired[i]:
+                    fire(i)
+        self.relevant = [i for i, f in enumerate(fired) if f]
+        self.offsets = [events[i][0] for i in self.relevant]
+        self.budget, self.spent = _TAINT_BUDGET + _TAINT_READS * len(self.relevant), 0
+
+    def scope(self, start: int, end: int, seeds: set[str], module: bool = False, src=None) -> tuple[set[str], set[str]]:
+        """(names derived from the seeds or the source, those bound to a parsed transaction) in
+        code[start:end], in source order (two passes for loops). With ``module``, only
+        bindings outside every function count."""
+        lo, hi = bisect_left(self.offsets, start), bisect_left(self.offsets, end)
+        self.spent += 2 * (hi - lo)
+        tainted, parsed = set(seeds), set()
+        if self.spent > self.budget:
+            return tainted, parsed
+        steps = [i for i in self.relevant[lo:hi] if not module or src.function_at(self.events[i][0]) is None]
+        for _ in range(2):
+            for i in steps:
+                _pos, _kind, names, read, _expr, parses = self.events[i]
+                if self.matched[i] or not read.isdisjoint(tainted):
+                    tainted |= names
+                    if parses:
+                        parsed |= names
+        return tainted, parsed
 
 
 def _js_web_auth(src) -> dict[str, int | None]:
@@ -1026,36 +1089,56 @@ def _js_web_auth(src) -> dict[str, int | None]:
     found: dict[str, int | None] = {"sep10": None, "sep45": None}
     code, cache, requests = src.code, {}, {}
     # Module-level values first: `const ENDPOINT = toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT`.
-    top10, _ = _js_taint(src, 0, len(code), set(), _SEP10_SOURCE, module=True) if _SEP10_SOURCE.search(code) else (set(), set())
-    top45, _ = _js_taint(src, 0, len(code), set(), _SEP45_SOURCE, module=True) if _SEP45_SOURCE.search(code) else (set(), set())
+    taint10 = _Taint(src, _SEP10_SOURCE, set()) if _SEP10_SOURCE.search(code) else None
+    top10 = taint10.scope(0, len(code), set(), module=True, src=src)[0] if taint10 else set()
+    # Every seed a SEP-45 scope can have: the module-level values and the parameters named
+    # for the entries (`authorizationEntries`), wherever they are declared.
+    params45 = set(re.findall(r"[\w$]*" + _SEP45_FIELD.pattern + r"[\w$]*", code))
+    top45 = set()
+    if _SEP45_SOURCE.search(code):
+        top45 = _Taint(src, _SEP45_SOURCE, set()).scope(0, len(code), set(), module=True, src=src)[0]
+    taint45 = None
 
     def flow(scope, kind):
+        nonlocal taint10, taint45
         key = (scope, kind)
         if key not in cache:
             head = code[max(0, scope[0] - 300):scope[0]]
             if kind == "sep10":
-                cache[key] = _js_taint(src, scope[0], scope[1], top10, _SEP10_SOURCE)
+                taint10 = taint10 or _Taint(src, _SEP10_SOURCE, top10)
+                cache[key] = taint10.scope(scope[0], scope[1], top10)
             else:
+                taint45 = taint45 or _Taint(src, _SEP45_SOURCE, top45 | params45)
                 params = set(re.findall(r"[\w$]*" + _SEP45_FIELD.pattern + r"[\w$]*", head))
-                cache[key] = _js_taint(src, scope[0], scope[1], top45 | params, _SEP45_SOURCE)
+                cache[key] = taint45.scope(scope[0], scope[1], top45 | params)
         return cache[key]
     for m in re.finditer(r"(?<![\w$.])(?P<recv>[\w$]+)\s*\.\s*sign\s*\(", code):
         _, parsed = flow(_flow_scope(src, m.start()), "sep10")
         if m.group("recv") in parsed:
             found["sep10"] = m.start()
             break
+    asks = None
     for m in _SEP45_SIGN.finditer(code):
         scope = _flow_scope(src, m.start())
         tainted, _ = flow(scope, "sep45")
         close = src.pairs().get(m.end() - 1, m.end())
         if scope not in requests:  # the function itself asks the contract web-auth endpoint for entries
-            region = code[scope[0]:scope[1]]
-            requests[scope] = bool((_SEP45_SOURCE.search(region) or not _ids(region).isdisjoint(top45))
-                                   and _SEP45_FIELD.search(region))
+            if asks is None:  # where the endpoint (or a module value holding it) and the field occur: once per file
+                asks = ([m.start() for m in _SEP45_SOURCE.finditer(code)] +
+                        [m.start() for m in _IDENT.finditer(code) if m.group() in top45],
+                        [m.start() for m in _SEP45_FIELD.finditer(code)])
+                asks = (sorted(asks[0]), asks[1])
+            requests[scope] = _occurs(asks[0], scope[0], scope[1]) and _occurs(asks[1], scope[0], scope[1])
         if not _ids(code[m.end():close]).isdisjoint(tainted) or requests[scope]:
             found["sep45"] = m.start()
             break
     return found
+
+
+def _occurs(offsets: list[int], start: int, end: int) -> bool:
+    """Some offset of a sorted list falls in [start, end)."""
+    i = bisect_left(offsets, start)
+    return i < len(offsets) and offsets[i] < end
 
 
 def _py_web_auth(src) -> dict[str, int | None]:

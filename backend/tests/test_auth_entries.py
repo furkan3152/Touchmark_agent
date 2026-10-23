@@ -553,6 +553,28 @@ def test_web_auth_flow_is_linear_in_the_bindings_and_keeps_long_chains():
                                                           ("sep10", "agent/auth.py")}
 
 
+def test_web_auth_flow_is_linear_in_nested_signing_scopes():
+    # Thousands of nested functions that each sign: a scope reads only the bindings that can
+    # carry the web-auth response (found once per file), the pattern is matched once per
+    # binding, the SEP-45 request test reads offsets, and a budget bounds the re-reads nested
+    # scopes make. A never-closed binding (`x=[x=[...`) reads up to the next binding.
+    from backend.app.swarm.auth_rules import web_auth_hits
+    head = "import { Keypair, TransactionBuilder, Networks, authorizeEntry } from '@stellar/stellar-sdk';\n" \
+           "const kp = Keypair.fromSecret(process.env.S!);\nconst E = toml.WEB_AUTH_ENDPOINT;\n" \
+           "const F = toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT;\nconst q = await fetchJson(F);\n"
+    n = 3000
+    entries = head + "".join(f"function f{i}(e) {{ const a{i} = q.entries; const b{i} = a{i}; "
+                             f"authorizeEntry(e, kp, 10, Networks.TESTNET);\n" for i in range(n)) + "}\n" * n
+    challenges = head + "".join(f"function g{i}(x) {{ const t{i} = TransactionBuilder.fromXDR(x, Networks.TESTNET); "
+                                f"t{i}.sign(kp);\n" for i in range(n)) + "}\n" * n
+    brackets = head + "export async function login(x: any) {\n  const r = await fetchJson(`${E}?account=1`);\n  " + \
+        "x=[" * 60000 + "\n  const tx = TransactionBuilder.fromXDR(r.transaction, Networks.TESTNET);\n  tx.sign(kp);\n}\n"
+    started = time.perf_counter()
+    hits = web_auth_hits({"src/entries.ts": entries, "src/challenges.ts": challenges, "src/login.ts": brackets})
+    assert time.perf_counter() - started < 5
+    assert {(kind, name) for kind, name, *_ in hits} == {("sep10", "src/login.ts")}
+
+
 def test_cli_auto_sign_words_are_read_in_source_order():
     # ast.walk is breadth-first: a word inside an f-string element or a nested call came after
     # its siblings, so `contract invoke --auto-sign` no longer read in order.
