@@ -243,7 +243,9 @@ def test_a_long_line_before_a_network_marker_costs_little():
     # Minified code or a hex blob before the marker; then thousands of keyed markers on one line.
     for line, limit in (("a" * 100_000 + " https://horizon.stellar.org", 0.1), ("x." * 50_000 + "horizon.stellar.org", 0.1),
                         ("mainnet: 'https://horizon.stellar.org', testnet: 'x', " * 3_000, 0.5),
-                        ("{ mainnet: {" + " u: 'https://horizon.stellar.org'," * 3_000 + " }, testnet: {} }", 0.5)):
+                        ("{ mainnet: {" + " u: 'https://horizon.stellar.org'," * 3_000 + " }, testnet: {} }", 0.5),
+                        # Nested keyed blocks, each with a marker, whose testnet sibling follows them all.
+                        ("c = " + "mainnet: { u: 'https://horizon.stellar.org', " * 1_400 + "}" * 1_400 + " testnet: {}", 0.5)):
         started = time.perf_counter()
         network_hits({"src/min.js": line + "\n"}, _MAINNET)
         assert time.perf_counter() - started < limit, line[:20]
@@ -257,3 +259,68 @@ def test_a_network_the_paid_server_or_a_tool_picks_breaks_a_testnet_declaration(
     # Near miss: the RPC is pinned, so a pubnet challenge fails instead of paying.
     pinned = mpp.replace("process.env.STELLAR_SECRET", "process.env.STELLAR_SECRET, rpcUrl: process.env.RPC_URL")
     assert network_findings(tmp_path / "b", "testnet", pinned) is None
+
+
+def test_a_marker_in_a_trailing_comment_a_block_comment_or_a_docstring_is_not_use(tmp_path):
+    for name, text in {
+        "src/a.ts": "const url = 'https://horizon-testnet.stellar.org'; // not https://horizon.stellar.org\n",
+        "src/b.ts": "/*\n  Production uses https://horizon.stellar.org\n*/\nconst url = 'https://horizon-testnet.stellar.org';\n",
+        "src/c.py": 'def submit(tx):\n    """Testnet only; mainnet (horizon.stellar.org) is refused."""\n    return tx\n',
+        "src/d.py": '"""\nNotes:\n  horizon.stellar.org is mainnet\n"""\nURL = "https://horizon-testnet.stellar.org"\n',
+    }.items():
+        assert not network_hits({name: text}, _MAINNET), name
+    # Near misses: the same marker as a value, and a '//' inside a string, are code.
+    assert network_hits({"src/e.ts": "const url = 'https://horizon.stellar.org'; // mainnet\n"}, _MAINNET) == ["src/e.ts:1"]
+    assert network_hits({"src/f.py": "URL = 'https://horizon.stellar.org'  # not a docstring\n"}, _MAINNET) == ["src/f.py:1"]
+    # A Rust lifetime or a quote in a regular-expression literal opens no string: the comment after it is a comment.
+    assert not network_hits({"src/g.rs": "fn f(x: &'static str) {} // PUBLIC_NETWORK_PASSPHRASE\n"}, _MAINNET)
+    assert not network_hits({"src/h.ts": "const q = /'/; // https://horizon.stellar.org\n"}, _MAINNET)
+    assert network_hits({"src/i.rs": "fn f(x: &'static str) { PUBLIC_NETWORK_PASSPHRASE }\n"}, _MAINNET) == ["src/i.rs:1"]
+    trailing = "export const HORIZON = 'https://horizon-testnet.stellar.org'; // mainnet would be https://horizon.stellar.org\n"
+    assert network_findings(tmp_path, "testnet", trailing) is None
+
+
+def test_a_guard_that_refuses_mainnet_is_not_use_but_one_that_requires_it_is(tmp_path):
+    guard = ("import { Networks } from '@stellar/stellar-sdk';\nexport function assertTestnet(p: string) {\n"
+             "  if (p === Networks.PUBLIC) {\n    console.error('refused');\n    throw new Error('this agent refuses mainnet');\n  }\n}\n")
+    assert network_findings(tmp_path / "a", "testnet", guard) is None
+    python = ("from stellar_sdk import Network\n\ndef check(p):\n    if p == Network.PUBLIC_NETWORK_PASSPHRASE:\n"
+              "        raise ValueError('mainnet is not allowed')\n")
+    assert not network_hits({"agent.py": python}, _MAINNET)
+    for near_miss in (guard.replace("p === Networks.PUBLIC", "p !== Networks.PUBLIC"),          # mainnet only
+                      guard.replace("p === Networks.PUBLIC", "p === Networks.PUBLIC && !allow"),  # refusal can be lifted
+                      guard.replace("throw new Error('this agent refuses mainnet')", "server = mainnet()"),
+                      guard + "export const passphrase = Networks.PUBLIC;\n"):
+        assert network_hits({"src/net.ts": near_miss}, _MAINNET), near_miss
+    assert network_hits({"agent.py": python.replace("raise ValueError('mainnet is not allowed')", "submit()")}, _MAINNET)
+
+
+def test_many_refusal_guards_or_an_unclosed_guard_cost_linear_time():
+    for name, text in (("src/a.ts", "if (p === Networks.PUBLIC) throw new Error('x');\n" * 8_000),
+                       ("src/b.ts", "if (p === Networks.PUBLIC) {" + " x;" * 100_000),
+                       ("b.py", "if p == Network.PUBLIC_NETWORK_PASSPHRASE:\n    raise ValueError('x')\n" * 5_000)):
+        started = time.perf_counter()
+        network_hits({name: text}, _MAINNET)
+        assert time.perf_counter() - started < 1.0, name
+
+
+def test_a_guard_branch_of_blanks_costs_one_look_per_blank():
+    # Branches whose first statement follows a long run of blanks: a Python block with a
+    # whitespace-only line, and a JS block `{<blanks>;throw ...}`. Both still refuse mainnet.
+    for name, text in (("a.py", ("if p == Network.PUBLIC_NETWORK_PASSPHRASE:\n" + " " * 1_190 + "\n    raise ValueError('x')\n") * 800),
+                       ("a.ts", ("if (p === Networks.PUBLIC) {" + " " * 1_150 + ";throw new Error('x') }\n") * 800)):
+        started = time.perf_counter()
+        assert network_hits({name: text}, _MAINNET) == [], name
+        assert time.perf_counter() - started < 1.5, name  # each blank run was re-read per start: 10 s
+    # Near miss: blanks, then a statement that does not fail, is use.
+    assert network_hits({"a.ts": "if (p === Networks.PUBLIC) {" + " " * 500 + "; submit() }\n"}, _MAINNET) == ["a.ts:1"]
+
+
+def test_one_python_guard_with_thousands_of_markers_is_read_once():
+    # 4000 or-ed markers in one `if` (160 KB on one line), and a long inline branch.
+    chained = "if " + " or ".join(["p == Network.PUBLIC_NETWORK_PASSPHRASE"] * 4_000) + ":\n    raise ValueError('no')\n"
+    for text, expected in ((chained, []), (chained.replace(":\n", " and strict:\n", 1), ["a.py:1"]),
+                           ("if p == Network.PUBLIC_NETWORK_PASSPHRASE:" + " " * 200_000 + ";\n", ["a.py:1"])):
+        started = time.perf_counter()
+        assert network_hits({"a.py": text}, _MAINNET) == expected
+        assert time.perf_counter() - started < 1.0

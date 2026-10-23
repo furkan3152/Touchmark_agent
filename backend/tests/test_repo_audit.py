@@ -38,6 +38,17 @@ def test_selection_ranks_agent_code_and_skips_tests_and_vendored_code(tmp_path):
     assert manifest["instruction_files"] == ["SKILL.md"]
 
 
+def test_build_and_release_scripts_in_a_tools_directory_stay_out_unless_it_is_under_src():
+    from backend.app.services.repo_audit import _skipped
+
+    for script in ("tools/build.js", "tools/build-wasm.js", "tools/release.js", "tools/smoke-test.js", "scripts/build.js",
+                   "tool/publish.ts"):
+        assert _skipped(Path(script)), script
+    for tool in ("src/tools/build_transaction.ts", "packages/mcp/src/tools/build-deposit.ts", "src/agent/tool/generate_invoice.py",
+                 "tools/pay.ts"):
+        assert not _skipped(Path(tool)), tool
+
+
 def test_selection_budget_is_reported(tmp_path):
     files, selection = select_repository(make_repo(tmp_path), max_files=1)
     assert list(files) == ["src/pay.ts", "package.json"]

@@ -3,9 +3,12 @@ lockfile format the study corpus uses and pick the one the package manager would
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
-from backend.app.services.lockfiles import Lockset, exact_pin, spec_admits
+from backend.app.services import lockfiles
+from backend.app.services.lockfiles import Lockset, exact_pin, read_repository, spec_admits, spec_intervals, version_key
 
 
 def test_ranges_admit_exactly_the_versions_their_package_manager_would_install():
@@ -105,3 +108,154 @@ def test_paths_deeper_than_any_real_repository_are_not_selected(tmp_path):
     files, _ = select_repository(tmp_path)
     assert "src/agent.ts" in files and not any(name.endswith("/x.ts") for name in files)
     assert time.monotonic() - started < 5
+
+
+def test_pep440_and_prerelease_versions_resolve_instead_of_failing_the_read(tmp_path):
+    assert version_key("2.9.0.post0") == (2, 9, 0) and version_key("2.31.0.20240406") == (2, 31, 0)
+    assert version_key("2.0.0rc1") == (2, 0, 0) and version_key("1.0.0-rc.1+b") == (1, 0, 0)
+    assert version_key("2023.3.post1") == (2023, 3, 0) and version_key("1" * 200) is None
+    assert spec_admits(">=2.8", "not-a-version") is None
+    cases = {"poetry.lock": ('[tool.poetry.dependencies]\nstellar-sdk = "^12"\npytz = "*"\n',
+                             '[[package]]\nname = "pytz"\nversion = "2023.3.post1"\n\n'
+                             '[[package]]\nname = "stellar-sdk"\nversion = "12.0.0"\n'),
+             "uv.lock": ('[project]\nname = "x"\ndependencies = ["stellar-sdk>=12", "python-dateutil>=2.8"]\n',
+                         '[[package]]\nname = "python-dateutil"\nversion = "2.9.0.post0"\n\n'
+                         '[[package]]\nname = "stellar-sdk"\nversion = "12.1.0"\n')}
+    for lock, (manifest, text) in cases.items():
+        repo = tmp_path / lock
+        repo.mkdir()
+        (repo / "pyproject.toml").write_text(manifest)
+        (repo / lock).write_text(text)
+        assert Lockset.read(repo).resolve("stellar-sdk", "agent.py").versions in {("12.0.0",), ("12.1.0",)}
+
+
+#: Files that parse but have the wrong shape, or nest deeper than a parser recurses.
+HOSTILE = {
+    "package.json": "[]", "a/package.json": '{"dependencies": ["x"]}', "b/package.json": "{}",
+    "b/package-lock.json": "[1]", "c/Cargo.toml": 'dependencies = "x"\nworkspace = "x"\n',
+    "d/pyproject.toml": '[project]\ndependencies = [1, 2]\n[tool.poetry]\ndependencies = ["a"]\n',
+    "e/package.json": "{}", "e/bun.lock": "[]", "f/requirements.txt": "x\n", "f/Pipfile.lock": "[]",
+    "g/requirements.txt": "x\n", "g/Pipfile.lock": '{"default": {"stellar-sdk": "13.0.0"}, "develop": [1]}',
+    "h/Cargo.toml": '[dependencies]\nsoroban-sdk = { version = 22, package = 7 }\n', "h/Cargo.lock": "package = 3\n",
+    "i/package.json": "{}",
+    "i/package-lock.json": '{"dependencies":' + '{"a":{"version":"1.0.0","dependencies":' * 3000 + "{}" + "}}" * 3000 + "}",
+    "j/package.json": "[" * 100_000 + "]" * 100_000,
+}
+
+
+def test_wrong_shaped_or_deeply_nested_files_cost_only_their_own_versions(tmp_path):
+    for name, text in HOSTILE.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text)
+    good = tmp_path / "ok"
+    good.mkdir()
+    (good / "package.json").write_text(json.dumps({"dependencies": {"@stellar/mpp": "^0.4.0"}}))
+    (good / "package-lock.json").write_text(json.dumps({"packages": {"node_modules/@stellar/mpp": {"version": "0.4.0"}}}))
+    started = time.monotonic()
+    locks = Lockset.read(tmp_path)
+    assert time.monotonic() - started < 5
+    assert locks.resolve("@stellar/mpp", "ok/src/server.ts").versions == ("0.4.0",)
+    assert locks.resolve("soroban-sdk", "h/src/lib.rs").versions == ()
+
+
+def test_a_repository_with_broken_lockfiles_is_still_audited(tmp_path):
+    from backend.app.config import Settings
+    from backend.app.services.repo_audit import audit_repository
+
+    for name, text in HOSTILE.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "agent.ts").write_text('import { Horizon } from "@stellar/stellar-sdk";\nexport const h = 1;\n')
+    out = asyncio.run(audit_repository(tmp_path, name="x", purpose="", settings=Settings(_env_file=None), deep=False))
+    assert out["decision"] and out["report"]["findings"] is not None
+
+
+def test_each_lockfile_is_parsed_once_however_many_workspaces_use_it(tmp_path, monkeypatch):
+    packages = {"": {}}
+    for i in range(150):
+        ws = tmp_path / "packages" / f"p{i}"
+        ws.mkdir(parents=True)
+        (ws / "package.json").write_text(json.dumps({"dependencies": {"@stellar/mpp": "^0.4.0", f"dep{i}": "^1.0.0"}}))
+        packages[f"packages/p{i}/node_modules/@stellar/mpp"] = {"version": f"0.4.{i}"}
+        for j in range(60):
+            packages[f"node_modules/lib{i}-{j}"] = {"version": "1.0.0"}
+    packages["node_modules/@stellar/mpp"] = {"version": "0.3.0"}
+    (tmp_path / "package.json").write_text(json.dumps({"workspaces": ["packages/*"]}))
+    (tmp_path / "package-lock.json").write_text(json.dumps({"lockfileVersion": 3, "packages": packages}))
+    parsed = []
+    real = lockfiles._package_lock
+    monkeypatch.setattr(lockfiles, "_package_lock", lambda text: parsed.append(1) or real(text))
+    started = time.monotonic()
+    locks = Lockset(read_repository(tmp_path))
+    assert len(parsed) == 1 and time.monotonic() - started < 3
+    assert locks.resolve("@stellar/mpp", "packages/p7/src/a.ts").versions == ("0.4.7",)
+
+
+def test_pnpm_single_project_lockfiles_list_the_root_dependencies_at_the_top_level(tmp_path):
+    v5 = ("lockfileVersion: 5.4\n\nspecifiers:\n  '@stellar/mpp': ^0.4.0\n\ndependencies:\n  '@stellar/mpp': 0.4.0\n\n"
+          "packages:\n\n  /@stellar/mpp/0.4.0:\n    resolution: {integrity: sha512-x}\n    dev: false\n")
+    v6 = ("lockfileVersion: '6.0'\n\ndependencies:\n  '@stellar/mpp':\n    specifier: ^0.4.0\n    version: 0.4.0\n\n"
+          "devDependencies:\n  typescript:\n    specifier: ^5.0.0\n    version: 5.4.0\n\n"
+          "packages:\n\n  /@stellar/mpp@0.4.0:\n    resolution: {integrity: sha512-x}\n")
+    for label, text in (("v5", v5), ("v6", v6)):
+        repo = tmp_path / label
+        repo.mkdir()
+        (repo / "package.json").write_text(json.dumps({"dependencies": {"@stellar/mpp": "^0.4.0"}}))
+        (repo / "pnpm-lock.yaml").write_text(text)
+        found = Lockset.read(repo).resolve("@stellar/mpp", "src/server.ts")
+        assert found.versions == ("0.4.0",) and found.source == "pnpm-lock.yaml", label
+
+
+def test_a_declared_dependency_without_its_own_entry_takes_only_locked_versions_its_range_admits():
+    record = {"importers": {"": {"lockfiles": ["yarn.lock"], "deps": {
+                  "@stellar/mpp": {"spec": "^0.4.0", "version": None, "source": "package.json"},
+                  "@x402/core": {"spec": "^2.30.0", "version": None, "source": "package.json"},
+                  "@x402/fetch": {"spec": "workspace:*", "version": None, "source": "package.json"}}}},
+              "locked": {"yarn.lock": {"@stellar/mpp": ["0.3.0", "0.4.2"], "@x402/core": ["2.17.0"],
+                                       "@x402/fetch": ["2.17.0"]}}}
+    locks = Lockset(record)
+    mpp = locks.resolve("@stellar/mpp", "src/a.ts")
+    assert mpp.versions == ("0.4.2",) and mpp.source == "yarn.lock"
+    assert locks.resolve("@x402/core", "src/a.ts").versions == ()      # the locked copy is not this range's
+    assert locks.resolve("@x402/fetch", "src/a.ts").versions == ()     # an unreadable range admits nothing
+
+
+def test_a_lockfile_above_a_directory_it_does_not_list_says_nothing_about_it(tmp_path):
+    # A scaffold template below a pnpm workspace that does not list it: the root lockfile has no
+    # importer for it, so its declared range takes no version from there.
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"@stellar/stellar-sdk": "^14.0.0"}}))
+    (tmp_path / "pnpm-workspace.yaml").write_text("packages:\n  - 'packages/*'\n")
+    (tmp_path / "pnpm-lock.yaml").write_text(
+        "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      other:\n        specifier: 1.0.0\n"
+        "        version: 1.0.0\n\npackages:\n\n  '@stellar/stellar-sdk@14.6.1':\n    resolution: {integrity: x}\n")
+    template = tmp_path / "packages/cli/templates/bot"
+    template.mkdir(parents=True)
+    (template / "package.json").write_text(json.dumps({"dependencies": {"@stellar/stellar-sdk": "^14.0.0"}}))
+    locks = Lockset.read(tmp_path)
+    assert locks.resolve("@stellar/stellar-sdk", "packages/cli/templates/bot/src/a.ts").versions == ()
+    # The lockfile in the root's own directory still stands for the root.
+    assert locks.resolve("@stellar/stellar-sdk", "src/a.ts").versions == ("14.6.1",)
+
+
+def test_a_cargo_workspace_member_takes_every_copy_its_range_admits_from_the_workspace_lock(tmp_path):
+    (tmp_path / "Cargo.toml").write_text('[workspace]\nmembers = ["contracts/a"]\n')
+    (tmp_path / "contracts/a").mkdir(parents=True)
+    (tmp_path / "contracts/a/Cargo.toml").write_text('[dependencies]\nsoroban-sdk = ">=21"\n')
+    (tmp_path / "Cargo.lock").write_text('[[package]]\nname = "soroban-sdk"\nversion = "21.7.7"\n\n'
+                                         '[[package]]\nname = "soroban-sdk"\nversion = "22.0.8"\n')
+    locks = Lockset.read(tmp_path)
+    found = locks.resolve("soroban-sdk", "contracts/a/src/lib.rs")
+    assert found.versions == ("21.7.7", "22.0.8") and found.source == "Cargo.lock" and found.root == "contracts/a"
+    # One admitted copy resolves as before; an npm lockfile above still says nothing (above).
+    (tmp_path / "contracts/a/Cargo.toml").write_text('[dependencies]\nsoroban-sdk = "22"\n')
+    assert Lockset.read(tmp_path).resolve("soroban-sdk", "contracts/a/src/lib.rs").versions == ("22.0.8",)
+
+
+def test_long_ranges_are_unreadable_at_once():
+    for spec in (">=0.1" + " " * 120_000 + "<1", " " * 20_000 + "x", "1" + " || 1" * 10_000):
+        started = time.monotonic()
+        assert spec_intervals(spec) is None and exact_pin(spec) is None and spec_admits(spec, "0.4.0") is None
+        assert time.monotonic() - started < 0.1
+    assert spec_intervals(">=1.2.3 <2.0.0 || ^3.0.0") == [((1, 2, 3), (2, 0, 0)), ((3, 0, 0), (4, 0, 0))]
+    assert exact_pin(" ==2.8.0 ") == "2.8.0"
