@@ -9,7 +9,8 @@ does not match the source is recorded as unverifiable.
 
 Verification annotates every finding and runs before the decision. A pattern-rule finding
 it refutes, quoting a code line (not a comment) that contradicts the claim, is lowered one
-level and marked disputed; nothing is removed, and model-review findings are not lowered,
+level and marked disputed; a candidate-rule finding (swarm/policy.py) is dismissed instead,
+kept in the report at no weight. Model-review findings are not lowered,
 so source comments cannot talk the audit out of a risk. On an unseen set of 23 agents every
 rule finding it refuted was also false by hand (docs/EVIDENCE.md).
 """
@@ -234,9 +235,11 @@ class FindingVerifier:
 
 
 def selectable(findings: list[Finding], limit: int = 30) -> list[Finding]:
-    """Risks of medium severity or above, most severe first."""
+    """Risks of medium severity or above, most severe first. Candidate-rule findings come
+    first at each severity: the verifier is what decides them (swarm/policy.py)."""
+    from ..swarm.policy import candidate
     risks = [f for f in findings if f.is_risk and f.severity.rank >= Severity.MEDIUM.rank]
-    return sorted(risks, key=lambda f: (-f.severity.rank, f.id))[:limit]
+    return sorted(risks, key=lambda f: (-f.severity.rank, not candidate(f), f.id))[:limit]
 
 
 def verifier_from_settings(settings) -> FindingVerifier | None:

@@ -188,6 +188,22 @@ PAYMENT_BYPASS_RULES = re.compile(
     r"(?:-[0-9a-f]{8})?$")
 
 
+#: Candidate rules: heuristic flow and semantics rules whose precision on code no rule author
+#: had seen (held-out sets, docs/EVIDENCE.md) is below that of the structural rules. Their
+#: pattern is evidence that a defect may exist, not proof: the independent verifier decides.
+#: A candidate it refutes, quoting the code that contradicts it, is dismissed (kept in the
+#: report at no weight); one it confirms or cannot check stays a risk. A family leaves this
+#: list only when it measures well on a held-out set it was not tuned on.
+CANDIDATE_RULES = re.compile(
+    r"^security-(?:x402|mpp|tx-hash|network|missing-issuer|payee|amount-parsed|strkey|path-fee-bump|"
+    r"path-sponsor|per-call-cap|retry-may-pay|soroban-overflow)-|"
+    r"^stellar_native-(?:rpc|bigint|transaction-meta|amount-above|memo-required|sdk-removed|soroban)-")
+
+
+def candidate(finding: Finding) -> bool:
+    return bool(CANDIDATE_RULES.search(finding.id))
+
+
 def payment_bypass(finding: Finding) -> bool:
     return bool(BYPASS_CATEGORIES.search(finding.id) or PAYMENT_BYPASS_RULES.search(finding.id))
 

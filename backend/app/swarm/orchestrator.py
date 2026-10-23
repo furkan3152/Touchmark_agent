@@ -14,6 +14,7 @@ from ..models import (
     AuditTier,
     AuditorVerdict,
     EvidenceGrade,
+    FindingKind,
     Severity,
     SwarmMemberStats,
 )
@@ -31,6 +32,7 @@ from .policy import (
     AUDIT_POLICY_VERSION,
     artifact_commitment,
     audit_surface_coverage,
+    candidate,
     evidence_summary,
     finding_set_commitment,
     review_decision,
@@ -336,8 +338,8 @@ class AuditSwarm:
     @staticmethod
     def _apply_disputes(verdicts, verification: dict):
         """Record each verdict on its finding. A rule finding that independent verification
-        refutes, quoting the code that contradicts it, is lowered one level and marked as disputed. It is never removed,
-        and model-review findings are not lowered: the verifier is a second opinion on the
+        refutes, quoting the code that contradicts it, is lowered one level and marked as disputed. It is never removed;
+        a candidate-rule finding (policy.CANDIDATE_RULES) is dismissed to a zero-weight note instead. Model-review findings are not lowered: the verifier is a second opinion on the
         pattern rules, which cannot read intent, not a way to talk a risk away."""
         results = {r["finding_id"]: r for r in verification.get("results", []) if r.get("quote_verified")
                    and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
@@ -362,15 +364,26 @@ class AuditSwarm:
                         "severity": reviewed,
                         "detail": f.detail + f" Independent verification rates this {reviewed.value}: "
                                   f"{str(r.get('reason', ''))[:240]}"})
-                if (r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk
-                        and not f.id.startswith("stellar_native-onchain-contract-")):  # a source quote cannot refute bytecode
+                refuted = (r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk
+                           and not f.id.startswith("stellar_native-onchain-contract-"))  # a source quote cannot refute bytecode
+                if refuted and candidate(f) and not _KEEPS_SEVERITY.search(f.id):
+                    # A candidate rule only proposes a defect; refuted at a quoted code line it is
+                    # dismissed. It stays in the report, visible, but carries no weight.
+                    f = f.model_copy(update={
+                        "kind": FindingKind.WARNING, "severity": Severity.INFO,
+                        "title": "Dismissed candidate: " + f.title,
+                        "detail": f.detail + f" Independent verification refutes this candidate ({r.get('file', '')}:"
+                                  f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.3)})
+                elif refuted:
                     f = f.model_copy(update={
                         "severity": f.severity.downgrade(1),
                         "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"
                                   f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.5)})
                 findings.append(f)
-            out.append(verdict.model_copy(update={"findings": findings}))
+            out.append(AuditSwarm._rescore(verdict, findings) if findings != verdict.findings
+                       else verdict.model_copy(update={"findings": findings}))
         return out
 
     def _consolidate(self, verdicts):
