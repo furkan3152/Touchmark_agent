@@ -488,11 +488,15 @@ def _manifest_deps(path: Path) -> tuple[str, dict[str, str]]:
     return "pypi", deps
 
 
+#: Manifests deeper than this are not read (see repo_audit.MAX_PATH_DEPTH).
+_MAX_DEPTH = 64
+
+
 def _walk(root: Path) -> list[Path]:
     found = []
-    stack = [root]
+    stack = [(root, 0)]
     while stack:
-        here = stack.pop()
+        here, depth = stack.pop()
         try:
             entries = sorted(here.iterdir())
         except OSError:
@@ -502,8 +506,8 @@ def _walk(root: Path) -> list[Path]:
                 if entry.is_symlink():
                     continue
                 if entry.is_dir():
-                    if entry.name not in _SKIP_DIRS and not entry.name.startswith("."):
-                        stack.append(entry)
+                    if entry.name not in _SKIP_DIRS and not entry.name.startswith(".") and depth + 1 < _MAX_DEPTH:
+                        stack.append((entry, depth + 1))
                 elif entry.name in _MANIFESTS + _NPM_LOCKS + _CARGO_LOCKS + _PY_LOCKS and entry.stat().st_size < 30_000_000:
                     found.append(entry)
             except OSError:
@@ -541,7 +545,9 @@ def read_repository(root: Path) -> dict:
     """Each lockfile is parsed once; each manifest then looks its dependencies up in the
     lockfile nearest to it. Files are taken nearest the root first, within _LOCK_BUDGET bytes
     of lockfiles and _MAX_MANIFESTS manifests."""
-    rel = {p.relative_to(root).as_posix(): p for p in _walk(root)}
+    root = root.resolve()  # paths are cut from it by length, so it must be absolute
+    prefix = len(str(root)) + 1
+    rel = {str(p)[prefix:]: p for p in _walk(root)}
     locks: dict[str, _Lock] = {}
     budget = _LOCK_BUDGET
     for path in sorted((r for r, p in rel.items() if p.name not in _MANIFESTS), key=_depth_first):
