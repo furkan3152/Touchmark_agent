@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 
 from ..models import FindingKind, AgentArtifact, Dimension, EvidenceGrade, Finding, ScenarioResult, Severity, SourceKind
+from ..stellar.wasm_profile import (AUTH, AUTH_CALLS, CALL, DELEGATED_SIGNERS, EXECUTABLE_TAG, EXTERNAL_REF,
+                                    HOST_ENTRY_POINTS, PUT_DATA, SDK_EXPORTS, UPGRADE)
 from .base import BaseAuditor
 
 
@@ -476,23 +478,7 @@ class StellarNativeAuditor(BaseAuditor):
                     remediation="Attach the destination's required memo, and refuse to pay memo-required accounts without one."))
             # A literal missing on the audited network is usually an asset issuer, a documentation
             # example or a mainnet address checked on testnet; a payment to it fails without loss.
-        contract = facts.get("contract") or {}
-        if contract.get("status") == "found" and contract.get("executable") == "wasm":
-            if contract.get("upgradeable"):
-                out.append(self.finding("onchain-contract-upgradeable", Severity.LOW,
-                    "The deployed contract can replace its own code",
-                    "The contract exposes an upgrade entry point, so its administrator can swap the WASM after this "
-                    "review. The review applies to the WASM hash recorded below only.",
-                    evidence=f"{contract.get('contract_id')}: wasm {contract.get('wasm_hash')}",
-                    remediation="Bind credentials to the WASM hash, gate upgrade behind a timelock or multisig, "
-                                "and re-review after every upgrade."))
-            if contract.get("code") in {"archived_or_missing", "too_large"}:
-                out.append(self.finding("onchain-contract-code-unavailable", Severity.MEDIUM,
-                    "The deployed contract code could not be read",
-                    "The ledger references a WASM that is archived or too large to fetch, so its functions were not inspected.",
-                    evidence=f"{contract.get('contract_id')}: {contract.get('code')}",
-                    remediation="Restore the contract code entry or supply the source and build attestation."
-                    ).model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
+        out += self._contract_findings(artifact, facts.get("contract") or {})
         binding = facts.get("source_binding") or {}
         if binding.get("onchain") and not binding.get("verified"):
             how = {"wasm_metadata": "only named in the WASM metadata", "unbound_card": "named in an unregistered card",
@@ -507,3 +493,300 @@ class StellarNativeAuditor(BaseAuditor):
                             "with a card that pins the commit and whose hash the registry records."
                 ).model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
         return out
+
+    # ------------------------------------------------------------ deployed contract code
+    def _contract_findings(self, artifact: AgentArtifact, contract: dict) -> list[Finding]:
+        """Findings from the deployed executable: who can replace it, and what its bytecode lets
+        a caller reach without authentication (wasm_profile call graph)."""
+        cid = contract.get("contract_id", "")
+        if contract.get("status") == "unreadable" or contract.get("executable") == "unknown":
+            return [_gap(self.finding("onchain-contract-code-unresolved", Severity.MEDIUM,
+                "The deployed contract's executable could not be read",
+                "The contract instance on the ledger could not be decoded, so the code it runs is unknown.",
+                evidence=f"{cid}: {contract.get('error') or 'executable ' + str(contract.get('executable'))}",
+                remediation="Re-run the review when the instance can be read, or supply the WASM and its hash."))]
+        if contract.get("status") != "found" or contract.get("executable") not in {"wasm", "external_ref"}:
+            return []
+        out: list[Finding] = []
+        if contract.get("executable") == "external_ref":
+            out += self._external_ref_findings(artifact, contract)
+            if contract["external_ref"].get("status") != "resolved":
+                return out
+        profile = contract.get("profile") or {}
+        exports: dict = profile.get("exports") or {}
+        where = f"{cid}: wasm {contract.get('wasm_hash')}"
+        risks, notes = _upgrade_risks(profile, contract.get("functions"))
+        if risks:
+            out.append(self._unauthenticated_upgrade(risks, where))
+        elif contract.get("upgradeable"):
+            paths = [p for r in exports.values() for c, p in sorted(r["paths"].items()) if c in UPGRADE]
+            if paths:
+                how = "; ".join(paths[:4])
+            elif profile:
+                how = "imports " + ", ".join(sorted(set(profile.get("imports", [])) & UPGRADE))
+            else:
+                how = "an upgrade entry point is named in the spec (the imports could not be read)"
+            out.append(self.finding("onchain-contract-upgradeable", Severity.LOW,
+                "The deployed contract can replace its own code",
+                "The contract can call update_current_contract_wasm or update_current_contract_executable_ref, so "
+                "whoever controls its upgrade path can swap the WASM after this review. The review applies to the "
+                "WASM hash recorded below only."
+                + (" Not proven from the bytecode: " + "; ".join(notes[:3]) + "." if notes else ""),
+                evidence=f"{where}; {how}",
+                remediation="Bind credentials to the WASM hash, gate upgrade behind a timelock or multisig, "
+                            "and re-review after every upgrade."))
+        if contract.get("code") in {"archived_or_missing", "too_large"}:
+            out.append(_gap(self.finding("onchain-contract-code-unavailable", Severity.MEDIUM,
+                "The deployed contract code could not be read",
+                "The ledger references a WASM that is archived or too large to fetch, so its functions were not inspected.",
+                evidence=f"{cid}: {contract.get('code')}",
+                remediation="Restore the contract code entry or supply the source and build attestation.")))
+        if not profile:
+            return out
+        if profile.get("manages_external_refs"):
+            out.append(self.finding("onchain-contract-manages-external-refs", Severity.INFO,
+                "The contract publishes executable references (CAP-85)",
+                "It imports create_executable_tag or create_external_ref_contract, so other contracts can run code "
+                "this contract names, and it can deploy contracts whose code it controls.",
+                evidence=f"{where}; imports " + ", ".join(i for i in profile.get("imports", []) if i in EXTERNAL_REF),
+                remediation="Declare which contracts run code from this contract's entries and who may change them."))
+        out += self._interface_findings(profile, exports, where, {name for _, name, _ in risks})
+        check = exports.get("__check_auth")
+        if (check and profile.get("delegates_read", DELEGATED_SIGNERS in check["reaches"])
+                and not set(check["reaches"]) & AUTH_CALLS and not check["indirect"]):
+            out.append(self.finding("onchain-contract-delegates-unauthenticated", Severity.HIGH,
+                "The custom account reads delegated signers but never authenticates them",
+                "__check_auth calls get_delegated_signers_for_current_auth_check, whose addresses come from whoever "
+                "submits the transaction, and no call path reaches delegate_account_auth or require_auth. If the "
+                "account counts those signers toward authorization, anyone can name a signer it trusts.",
+                evidence=f"{where}; {check['paths'].get(DELEGATED_SIGNERS)}",
+                remediation="Call delegate_account_auth for every delegated signer, after checking that it belongs "
+                            "to the account.", grade=EvidenceGrade.INFERRED))
+        return out
+
+    def _external_ref_findings(self, artifact: AgentArtifact, contract: dict) -> list[Finding]:
+        cid, ref = contract.get("contract_id", ""), contract["external_ref"]
+        owner, tag, status = ref.get("owner", ""), ref.get("tag", ""), ref.get("status")
+        out: list[Finding] = []
+        if status != "resolved":
+            why = {"missing": "the owner has no entry for this tag (or it was never published)",
+                   "malformed": "the entry does not hold a 32-byte WASM hash",
+                   "unavailable": "the RPC could not read the entry"}.get(status, str(status))
+            out.append(_gap(self.finding("onchain-contract-code-unresolved", Severity.MEDIUM,
+                "The code this contract runs could not be resolved",
+                f"Its executable is a CAP-85 reference to tag {tag!r} of {owner or 'an unreadable owner'}, and {why}. "
+                "The contract runs whatever WASM that entry names when it is called, so its code was not reviewed.",
+                evidence=f"{cid}: external_ref owner={owner} tag={tag!r} status={status}",
+                remediation="Publish the entry (or restore it), or deploy the agent with its own WASM executable.")))
+        if not owner:
+            return out
+        declared = owner == cid or owner in _declared_addresses(artifact)
+        owner_facts = ref.get("owner_contract") or {}
+        owner_profile = contract.get("profile") if owner == cid else owner_facts.get("profile")
+        notes = []
+        if not declared and owner_facts.get("executable") == "external_ref":
+            nested = owner_facts.get("external_ref") or {}
+            notes.append(f"the owner's own code is a reference to tag {nested.get('tag')!r} of {nested.get('owner')}, "
+                         "which was not followed")
+        if not declared and (owner_profile or {}).get("can_upgrade"):
+            notes.append("the owner can also replace its own code")
+        if owner_facts.get("status") in {"unavailable", "unreadable", "not_a_contract", "not_found"}:
+            notes.append(f"the owner could not be inspected ({owner_facts['status']})")
+        severity, grade = (Severity.LOW if declared else Severity.MEDIUM), EvidenceGrade.CONFIRMED
+        writer = _unauthenticated_tag_writer(owner_profile)
+        if writer:
+            severity, grade = Severity.HIGH, EvidenceGrade.INFERRED
+            notes.append("an owner entry point can write executable entries with no authentication on its call "
+                         f"paths, so anyone may be able to repoint this contract: {writer} (an owner that refuses to "
+                         "overwrite a published tag would be safe; the bytecode does not show that)")
+        owner_risks = _upgrade_risks(owner_profile, owner_facts.get("functions"))[0] if owner != cid else []
+        if owner_risks:
+            severity, grade = Severity.HIGH, EvidenceGrade.INFERRED
+            notes.append("the owner's own upgrade needs no authentication, so anyone may be able to replace the "
+                         f"owner's code and then rewrite its entries: {owner_risks[0][2]}")
+        who = ("the contract itself" if owner == cid else "the declared authority" if declared
+               else "a contract the .tmark does not declare")
+        out.append(self.finding("onchain-contract-code-externally-controlled", severity,
+            "The contract runs code that another contract's entry names" if owner != cid
+            else "The contract runs code named by its own executable entry",
+            f"Its executable is a CAP-85 external reference: each call runs the WASM named by tag {tag!r} in the "
+            f"storage of {owner}, which is {who}. Whoever can rewrite that entry changes this agent's code for every "
+            "later call, with no action by the agent. The review applies to the WASM the entry named when it was read."
+            + (" Also: " + "; ".join(notes) + "." if notes else ""),
+            evidence=f"{cid}: external_ref owner={owner} tag={tag!r} resolved wasm {ref.get('resolved_wasm_hash', '-')} "
+                     f"(entry last modified at ledger {ref.get('tag_last_modified_ledger')})",
+            remediation="Declare the executable owner and who controls its entries, bind credentials to the resolved "
+                        "WASM hash and re-review when the entry changes, or deploy the agent with its own WASM.",
+            grade=grade))
+        return out
+
+    def _unauthenticated_upgrade(self, risks: list[tuple[Severity, str, str]], where: str) -> Finding:
+        severity = max((s for s, _, _ in risks), key=lambda s: s.rank)
+        critical = severity is Severity.CRITICAL
+        return self.finding("onchain-contract-upgrade-unauthenticated", severity,
+            "Anyone can replace the deployed contract's code" if critical
+            else "The contract's upgrade can be steered without authentication",
+            "An exported function reaches update_current_contract_wasm or update_current_contract_executable_ref, and "
+            "none of its call paths reaches require_auth, a signature check, another contract or an indirect call. "
+            + ("It installs the WASM hash its caller passes and nothing checks that hash, so anyone can install "
+               "their own code and take whatever the contract holds or controls." if critical else
+               "The code it installs is read from storage or checked against a stored value, and an export with no "
+               "authentication either stores a caller-supplied value of that kind, so anyone may be able to choose "
+               "the code. Check whether that export writes the entry the upgrade reads."),
+            evidence=f"{where}; " + "; ".join(text for _, _, text in risks[:4]),
+            remediation="Require the administrator's authorization (require_auth) in every upgrade path, or a "
+                        "timelock whose schedule step is authenticated.",
+            grade=EvidenceGrade.CONFIRMED if critical else EvidenceGrade.INFERRED)
+
+    def _interface_findings(self, profile: dict, exports: dict, where: str, upgrade_reported: set[str]) -> list[Finding]:
+        """The exports compared with the contract spec (contractspecv0) the WASM publishes."""
+        out: list[Finding] = []
+        hidden = profile.get("hidden_exports") or []
+        callable_exports = [n for n in profile.get("function_exports", []) if n not in SDK_EXPORTS]
+        if "hidden_exports" not in profile and callable_exports:
+            out.append(_gap(self.finding("onchain-contract-spec-missing", Severity.LOW,
+                "The deployed contract publishes no interface spec",
+                "The WASM has no readable contractspecv0 functions, so its exports cannot be compared with a "
+                "published interface and hidden entry points cannot be ruled out.",
+                evidence=f"{where}; exports " + ", ".join(callable_exports[:10]),
+                remediation="Build with the Soroban SDK so the spec is embedded, and keep it in the deployed WASM.")))
+        if hidden:
+            # An unlisted export that writes storage, calls out or upgrades with no authentication on its
+            # paths is HIGH; one whose upgrade is already reported, or that authenticates, is MEDIUM.
+            risky = {n: p for n in hidden if n not in upgrade_reported
+                     and not set((exports.get(n) or {}).get("reaches", [])) & AUTH
+                     for c, p in sorted((exports.get(n) or {}).get("paths", {}).items()) if c in UPGRADE | CALL | {PUT_DATA}}
+            reported = [n for n in hidden if n in upgrade_reported]
+            out.append(self.finding("onchain-contract-hidden-export", Severity.HIGH if risky else Severity.MEDIUM,
+                "The deployed contract exports functions its published interface does not list",
+                "Wallets, clients and reviewers see the contractspecv0 interface; these exports are not in it but "
+                "anyone can still invoke them by name."
+                + (" With no authentication on their call paths, they can write storage, call other contracts or "
+                   "replace the code." if risky else "")
+                + (f" The unauthenticated upgrade in {', '.join(reported)} is reported separately." if reported else ""),
+                evidence=f"{where}; hidden: {', '.join(hidden[:10])}"
+                         + (f"; {'; '.join(list(risky.values())[:3])}" if risky else ""),
+                remediation="Remove the unlisted exports or publish them in the spec, and explain why they exist."))
+        if profile.get("spec_only"):
+            out.append(self.finding("onchain-contract-spec-only", Severity.INFO,
+                "The contract spec lists functions the code does not export",
+                "Calls to them fail: the published interface does not match the deployed code.",
+                evidence=f"{where}; spec only: {', '.join(profile['spec_only'][:10])}",
+                remediation="Publish the spec generated from the deployed source."))
+        return out
+
+
+def _gap(finding: Finding) -> Finding:
+    return finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP})
+
+
+def _declared_addresses(artifact: AgentArtifact) -> set[str]:
+    """Addresses the .tmark names for the agent: its owner account and its agent account."""
+    declared = ((artifact.raw_metadata or {}).get("tmark") or {}).get("declared") or {}
+    return {a for a in ((declared.get("owner") or {}).get("stellar_account"),
+                        (declared.get("authority") or {}).get("agent_account"), artifact.agent_contract_id) if a}
+
+
+#: Exports that write their arguments once before the contract is used (old-style initialisers).
+_INITIALIZER = re.compile(r"^_*init(?:iali[sz]e)?(?:_|$)", re.IGNORECASE)
+#: Spec input types the code an upgrade installs can be stored as: the WASM hash for
+#: update_current_contract_wasm, the owner or tag for update_current_contract_executable_ref.
+_CODE_TYPES = {"l.6": frozenset({"bytes32", "bytes"}), "l.j": frozenset({"address", "string"})}
+
+
+def _open(reach: dict) -> bool:
+    """No authentication, signature check, contract call or indirect call on any call path."""
+    return not set(reach["reaches"]) & (AUTH | CALL) and not reach["indirect"]
+
+
+def _upgrade_risks(profile: dict | None, functions: list[dict] | None) -> tuple[list[tuple[Severity, str, str]], list[str]]:
+    """Upgrade exports the bytecode shows anyone can steer, as (severity, export, evidence),
+    and notes on unauthenticated upgrade exports it cannot decide (those raise no risk).
+
+    CRITICAL: the WASM hash (or executable owner) comes from the caller's argument and no host
+    function that could check it sees that argument. HIGH: the code comes from storage, or
+    the argument is checked against something, and another unauthenticated export stores a
+    caller-supplied value of a type the code is stored as. Anything else is a note."""
+    exports = (profile or {}).get("exports") or {}
+    inputs = {f["name"]: f.get("inputs", []) for f in functions or []}
+    risks: list[tuple[Severity, str, str]] = []
+    notes: list[str] = []
+    for name, reach in sorted(exports.items()):
+        upgrades = set(reach["reaches"]) & UPGRADE
+        if name in HOST_ENTRY_POINTS or not upgrades or set(reach["reaches"]) & AUTH:
+            continue
+        if not _open(reach):
+            notes.append(f"{name} has no authentication of its own, and another contract or an indirect call "
+                         "may hold the check")
+            continue
+        flows = reach.get("flows")
+        if flows is None:
+            notes.append(f"{name} needs no authentication, and where the code it installs comes from was not traced")
+            continue
+        path = "; ".join(reach["paths"][c] for c in sorted(upgrades))
+        args = inputs.get(name)
+        named = ", ".join(_argument(args, i) for i in flows["upgrade_code"])
+        if flows["upgrade_code"] and not flows.get("upgrade_code_checked"):
+            risks.append((Severity.CRITICAL, name, f"{path} (installs the {named} its caller passes, unchecked)"))
+            continue
+        writers = _code_writers(exports, inputs, upgrades)
+        if flows["upgrade_code"]:
+            how = f"installs the {named} its caller passes after passing it to a host function that can check it"
+        elif flows["upgrade_tag"]:
+            how = "installs the owner's tag its caller names"
+        elif flows["upgrade_from_storage"]:
+            how = "installs code read from storage"
+        else:
+            how = "installs code that does not come from its arguments"
+        if writers and (flows["upgrade_code"] or flows["upgrade_from_storage"]):
+            risks.append((Severity.HIGH, name, f"{path} ({how}; {', '.join(writers[:3])} without authentication)"))
+        else:
+            notes.append(f"{name} needs no authentication and {how}; no unauthenticated export stores a value it "
+                         "could install")
+    return risks, notes
+
+
+def _argument(args: list[dict] | None, index: int) -> str:
+    if args and index < len(args):
+        return f"argument {args[index]['name']} ({args[index]['type']})"
+    return f"argument {index}"
+
+
+def _code_writers(exports: dict, inputs: dict, upgrades: set[str]) -> list[str]:
+    """Unauthenticated exports (not initialisers) that store one of their own arguments, of a
+    type the upgrade's code can be stored as (any type when the export is not in the spec).
+    The upgrade export itself counts only this way: writing a constant (an operation marked
+    done) is not choosing code."""
+    kinds = frozenset().union(*(_CODE_TYPES[c] for c in upgrades))
+    out = []
+    for name, reach in sorted(exports.items()):
+        if name in HOST_ENTRY_POINTS or _INITIALIZER.match(name) or not _open(reach):
+            continue
+        args = inputs.get(name)
+        stored = [i for i in (reach.get("flows") or {}).get("stores", [])
+                  if args is None or (i < len(args) and args[i]["type"] in kinds)]
+        if stored:
+            out.append(f"{name} stores its {', '.join(_argument(args, i) for i in stored)}")
+    return out
+
+
+def _unauthenticated_tag_writer(profile: dict | None) -> str:
+    """An owner entry point (not an initialiser) that writes a caller-supplied value under a
+    create_executable_tag key, with no authentication, contract call or indirect call on its
+    paths. Without a data flow the reach alone counts; without a call graph, the imports."""
+    if not profile:
+        return ""
+    exports = profile.get("exports")
+    if exports is not None:
+        for name, reach in exports.items():
+            flows = reach.get("flows")
+            if (name not in HOST_ENTRY_POINTS and not _INITIALIZER.match(name)
+                    and {EXECUTABLE_TAG, PUT_DATA} <= set(reach["reaches"]) and _open(reach)
+                    and (flows is None or flows["tag_writes"])):
+                return f"{reach['paths'][EXECUTABLE_TAG]}; {reach['paths'][PUT_DATA]}"
+        return ""
+    imports = set(profile.get("imports", []))
+    if {EXECUTABLE_TAG, PUT_DATA} <= imports and not imports & (AUTH | CALL):
+        return ("the owner imports create_executable_tag and put_contract_data and no authentication, signature "
+                "check or contract call")
+    return ""
