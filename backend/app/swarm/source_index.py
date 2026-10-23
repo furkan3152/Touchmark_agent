@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 
 from ..models import Severity
+from .codeflow import unparse  # noqa: F401  (re-exported for the rule modules)
 from .jsflow import _dotted, _parsers, _txt, _unwrap, is_js
 
 #: Paths whose code is not the agent: tests, fixtures, mocks, smoke tests and benches.
@@ -35,15 +36,6 @@ def js_functions_type(node) -> bool:
 def drop(severity: Severity, path: str) -> Severity:
     """Example and template code drops one level (a HIGH becomes MEDIUM)."""
     return severity.downgrade() if EXAMPLE_PATH.search(path) else severity
-
-
-def unparse(node) -> str:
-    """ast.unparse for small nodes. It recurses, so a deeply nested expression (a long `+`
-    chain that ast.parse accepts) raises RecursionError; that reads as no text."""
-    try:
-        return ast.unparse(node)
-    except (RecursionError, ValueError, AttributeError):
-        return ""
 
 
 @dataclass

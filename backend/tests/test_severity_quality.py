@@ -108,3 +108,18 @@ def test_a_deep_review_that_times_out_keeps_every_deterministic_finding():
     reviewed = asyncio.run(swarm().run(artifact, "b", AuditTier.DEEP, deep_reviewer=TimedOut()))
     assert [(f.id, f.severity) for f in reviewed.findings] == [(f.id, f.severity) for f in plain.findings]
     assert reviewed.deep_review["status"] == "timeout"
+
+
+def test_a_rule_family_that_fails_becomes_a_blocking_gap_not_a_failed_audit():
+    from backend.app.config import Settings
+    from backend.app.swarm.policy import review_decision
+    from backend.app.swarm.security import SecurityAuditor
+
+    auditor = SecurityAuditor(Settings(_env_file=None))
+    def broken():
+        raise RecursionError("maximum recursion depth exceeded")
+    kept = auditor.contained("network-binding", lambda: [_f("security-x")])
+    gap = auditor.contained("network-binding", broken)
+    assert [f.id for f in kept] == ["security-x"]
+    assert gap[0].id == "security-rules-incomplete-network-binding" and gap[0].kind is FindingKind.EVIDENCE_GAP
+    assert review_decision(gap, {"deep_core_complete": True}, 95.0) == "needs_evidence"

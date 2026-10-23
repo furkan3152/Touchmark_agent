@@ -134,7 +134,7 @@ class SecurityAuditor(BaseAuditor):
         if deep:
             findings += analyse_agentic_paths(artifact, self.name)
         findings += analyse_hardening(artifact, self.name)
-        findings += network_findings(artifact, self.name)
+        findings += self.contained("network-binding", lambda: network_findings(artifact, self.name))
 
         if artifact.code_files and not any(k in surface for k in ISOLATION_SIGNALS):
             findings.append(

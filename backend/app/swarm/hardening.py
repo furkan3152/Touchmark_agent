@@ -18,6 +18,7 @@ from collections import Counter
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from .asset_rules import AssetRules, asset_findings
 from .consolidate import stable_id
+from .codeflow import unparse
 from .sdk_rules import hardening_evidence
 from .source_index import EXAMPLE_PATH
 
@@ -226,7 +227,7 @@ def _tool_descriptions(name: str, text: str) -> list[tuple[int, str]]:
             return out
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-                    _TOOL_DECORATOR.search(ast.unparse(d.func if isinstance(d, ast.Call) else d)) for d in node.decorator_list):
+                    _TOOL_DECORATOR.search(unparse(d.func if isinstance(d, ast.Call) else d)) for d in node.decorator_list):
                 doc = ast.get_docstring(node, clean=False)
                 if doc:
                     out.append((node.body[0].lineno, doc))
@@ -362,13 +363,13 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             for node in ast.walk(tree):
                 body = None
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-                        _RETRY_DECORATOR.search(ast.unparse(d)) for d in node.decorator_list):
+                        _RETRY_DECORATOR.search(unparse(d)) for d in node.decorator_list):
                     body = node
                 elif isinstance(node, (ast.For, ast.AsyncFor, ast.While)) and re.search(
-                        r"attempt|retr|tries", ast.unparse(node.target if isinstance(node, (ast.For, ast.AsyncFor)) else node.test), re.I):
+                        r"attempt|retr|tries", unparse(node.target if isinstance(node, (ast.For, ast.AsyncFor)) else node.test), re.I):
                     body = node
                 if body is not None:
-                    src = ast.unparse(body)
+                    src = unparse(body)
                     if _REBUILD.search(src) and _SUBMIT.search(src):
                         double.append(f"{name}:{node.lineno}")
         else:

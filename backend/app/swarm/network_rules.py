@@ -23,6 +23,7 @@ from hashlib import sha1
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar.canonical import MAINNET_PASSPHRASE, NETWORK_MARKERS, TESTNET_PASSPHRASE, USDC_ISSUER, USDC_SAC
 from .consolidate import stable_id
+from .codeflow import unparse
 
 _JS = (".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts")
 #: Example, test and development code: findings there drop one level.
@@ -393,7 +394,7 @@ def _py_selectors(src: _Source) -> list[Selector]:
         while isinstance(expr, ast.IfExp):
             pieces.append((expr.test, expr.body))
             expr = expr.orelse
-        nets = [net_of(ast.unparse(v)) for _, v in pieces] + [net_of(ast.unparse(expr))]
+        nets = [net_of(unparse(v)) for _, v in pieces] + [net_of(unparse(expr))]
         if not any(nets):
             continue
         explicit, guess, subject = [], False, ""
@@ -403,23 +404,23 @@ def _py_selectors(src: _Source) -> list[Selector]:
             if isinstance(test, ast.Compare) and len(test.ops) == 1:
                 left, right = test.left, test.comparators[0]
                 if isinstance(test.ops[0], ast.In) and isinstance(left, ast.Constant) and isinstance(left.value, str):
-                    subject = ast.unparse(right)
+                    subject = unparse(right)
                     explicit.append(left.value.lower())
                     guess = guess or bool(_URLISH.search(subject.rsplit(".", 1)[-1]))
                     continue
                 for a, b in ((left, right), (right, left)):
                     if isinstance(b, ast.Constant) and isinstance(b.value, str):
-                        subject = ast.unparse(a)
+                        subject = unparse(a)
                         explicit.append(b.value.lower())
                         break
                 else:
-                    explicit.append(ast.unparse(test))
+                    explicit.append(unparse(test))
             else:
-                explicit.append(ast.unparse(test))
-        target = ast.unparse(node.targets[0] if isinstance(node, ast.Assign) else node.target)
-        out.append(Selector(src.name, node.lineno, " ".join(ast.unparse(node).split())[:400], subject, explicit,
+                explicit.append(unparse(test))
+        target = unparse(node.targets[0] if isinstance(node, ast.Assign) else node.target)
+        out.append(Selector(src.name, node.lineno, " ".join(unparse(node).split())[:400], subject, explicit,
                             nets[-1], {x for x in nets if x}, guess, target,
-                            passphrase=_passphrases([ast.unparse(v) for _, v in pieces] + [ast.unparse(expr)])))
+                            passphrase=_passphrases([unparse(v) for _, v in pieces] + [unparse(expr)])))
     return out
 
 
@@ -559,7 +560,7 @@ def _py_chains(tree: ast.Module, src: _Source) -> list[Selector]:
             name = t.id if isinstance(t, ast.Name) else t.attr if isinstance(t, ast.Attribute) else None
             keys = [k.value.lower() for k in node.value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
             if name and keys and len(keys) == len(node.value.keys):
-                tables[name] = (keys, ast.unparse(node.value))
+                tables[name] = (keys, unparse(node.value))
 
     def returns(body):
         return body[0].value if len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is not None else None
@@ -585,7 +586,7 @@ def _py_chains(tree: ast.Module, src: _Source) -> list[Selector]:
             i = j + 1
             if not chain or final is None:
                 continue
-            nets = [net_of(ast.unparse(v)) for _, v in chain] + [net_of(ast.unparse(final))]
+            nets = [net_of(unparse(v)) for _, v in chain] + [net_of(unparse(final))]
             if sum(1 for x in nets if x) < 2:
                 continue
             explicit, guess, subject = [], False, ""
@@ -593,29 +594,29 @@ def _py_chains(tree: ast.Module, src: _Source) -> list[Selector]:
                 if isinstance(test, ast.Compare) and len(test.ops) == 1:
                     left, right = test.left, test.comparators[0]
                     if isinstance(test.ops[0], ast.In) and isinstance(left, ast.Constant) and isinstance(left.value, str):
-                        subject, guess = ast.unparse(right), guess or bool(_URLISH.search(ast.unparse(right).rsplit(".", 1)[-1]))
+                        subject, guess = unparse(right), guess or bool(_URLISH.search(unparse(right).rsplit(".", 1)[-1]))
                         explicit.append(left.value.lower())
                         continue
                     const = next((x for x in (right, left) if isinstance(x, ast.Constant) and isinstance(x.value, str)), None)
                     if const is not None:
-                        subject = ast.unparse(left if const is right else right)
+                        subject = unparse(left if const is right else right)
                         explicit.append(const.value.lower())
                         continue
-                explicit.append(ast.unparse(test))
+                explicit.append(unparse(test))
             lines = src.text.splitlines()[start.lineno - 1:getattr(final, "end_lineno", start.lineno) or start.lineno]
             out.append(Selector(src.name, start.lineno, " ".join(" ".join(lines).split())[:400], subject, explicit,
                                 nets[-1], {x for x in nets if x}, guess,
-                                passphrase=_passphrases([ast.unparse(v) for _, v in chain] + [ast.unparse(final)])))
+                                passphrase=_passphrases([unparse(v) for _, v in chain] + [unparse(final)])))
     seen = set()
     for node in ast.walk(tree):
         call = node.values[0] if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or) else node
         if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "get"):
             continue
-        table = ast.unparse(call.func.value).rsplit(".", 1)[-1]
+        table = unparse(call.func.value).rsplit(".", 1)[-1]
         default = call.args[1] if len(call.args) == 2 else node.values[-1] if call is not node and len(call.args) == 1 else None
         if default is None or table not in tables:
             continue
-        fallback = _fallback_value(ast.unparse(call.func.value), ast.unparse(default))
+        fallback = _fallback_value(unparse(call.func.value), unparse(default))
         if fallback is None:
             continue
         keys, body = tables[table]
@@ -625,8 +626,8 @@ def _py_chains(tree: ast.Module, src: _Source) -> list[Selector]:
             continue
         seen.add(id(call))
         nets = {fallback} | {n for n in (net_of(f'"{k}"') for k in keys) if n}
-        out.append(Selector(src.name, node.lineno, " ".join(ast.unparse(node).split())[:400], ast.unparse(call.args[0]),
-                            keys, fallback, nets, False, passphrase=_passphrases([body, ast.unparse(default)])))
+        out.append(Selector(src.name, node.lineno, " ".join(unparse(node).split())[:400], unparse(call.args[0]),
+                            keys, fallback, nets, False, passphrase=_passphrases([body, unparse(default)])))
     return out
 
 
@@ -950,11 +951,11 @@ def _py_per_call(src: _Source) -> list[Hit]:
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        tool = any(re.search(r"(?:^|\.)(?:tool|function_tool|mcp_tool)\b", ast.unparse(d)) for d in fn.decorator_list)
+        tool = any(re.search(r"(?:^|\.)(?:tool|function_tool|mcp_tool)\b", unparse(d)) for d in fn.decorator_list)
         params = {a.arg for a in [*fn.args.args, *fn.args.kwonlyargs]}
         if not tool or "network" not in params:
             continue
-        body = ast.unparse(fn)
+        body = unparse(fn)
         if not _PY_OPERATOR_KEY.search(body) or not re.search(r"\.sign\s*\(|authorize_entry\s*\(", body):
             continue
         passphrase = re.search(r"(?:PASSPHRASE\w*|passphrase\w*)\s*\[\s*network\b|\w*passphrase\w*\(\s*network\b|"
@@ -1122,8 +1123,8 @@ def _py_fixed_pairs(src: _Source, group: list[_Source], selected: bool) -> list[
     package_text = "\n".join(s.code for s in group if s.python)
     # (b) a module-level fixed passphrase reaches a builder; the URL comes from the environment.
     fixed = {t.id for n in tree.body if isinstance(n, ast.Assign) for t in n.targets
-             if isinstance(t, ast.Name) and re.search(r"PASSPHRASE|Test SDF|Public Global", ast.unparse(n.value))
-             and net_of(ast.unparse(n.value)) in {"testnet", "mainnet"} and "getenv" not in ast.unparse(n.value)}
+             if isinstance(t, ast.Name) and re.search(r"PASSPHRASE|Test SDF|Public Global", unparse(n.value))
+             and net_of(unparse(n.value)) in {"testnet", "mainnet"} and "getenv" not in unparse(n.value)}
     configurable = re.search(r"getenv\(\s*[\"']\w*PASSPHRASE|environ(?:\.get\(|\[)\s*[\"']\w*PASSPHRASE", package_text)
     if fixed and not configurable and not selected and any(
             re.search(r"network_passphrase\s*=\s*" + re.escape(name) + r"\b", s.code) for s in group for name in fixed):
@@ -1131,7 +1132,7 @@ def _py_fixed_pairs(src: _Source, group: list[_Source], selected: bool) -> list[
             if not (isinstance(n, ast.Assign) and isinstance(n.value, ast.Call) and len(n.targets) == 1
                     and isinstance(n.targets[0], ast.Name)):
                 continue
-            call = ast.unparse(n.value.func)
+            call = unparse(n.value.func)
             args = n.value.args
             if call in {"os.getenv", "os.environ.get", "getenv"} and len(args) == 2 and isinstance(args[1], ast.Constant) \
                     and isinstance(args[1].value, str) and _host_net(args[1].value):
@@ -1150,7 +1151,7 @@ def _py_fixed_pairs(src: _Source, group: list[_Source], selected: bool) -> list[
             continue
         for call in ast.walk(scope):
             server = isinstance(call, ast.Call) and re.search(r"(?:^|\.)(?:Server|SorobanServer|ServerAsync)$",
-                                                              ast.unparse(call.func))
+                                                              unparse(call.func))
             if server and call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str) \
                     and _host_net(call.args[0].value):
                 hits.append(Hit("security-network-endpoint-mismatch", src.name, call.lineno, _line_text(src.text, call.lineno),
@@ -1198,7 +1199,7 @@ class _PyNets:
             return set(local.get(node.id, set()))
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
             return set(self.attrs.get(node.attr, set()))
-        text = ast.unparse(node)
+        text = unparse(node)
         if re.search(r"PASSPHRASE|Test SDF|Public Global", text):
             found = net_of(text)
             return {found} if found in {"testnet", "mainnet"} else set()
@@ -1236,7 +1237,7 @@ def cross_constant_hits(sources: list[_Source]) -> list[Hit]:
             consts: dict[str, tuple[str, str, int]] = {}
             branched: set[str] = set()
             for node in ast.walk(fn):
-                if isinstance(node, ast.If) and re.search(r"network|testnet|mainnet|pubnet|passphrase", ast.unparse(node.test),
+                if isinstance(node, ast.If) and re.search(r"network|testnet|mainnet|pubnet|passphrase", unparse(node.test),
                                                           re.I):
                     branched |= {t.id for n in ast.walk(node) if isinstance(n, ast.Assign) for t in n.targets
                                  if isinstance(t, ast.Name)}
@@ -1248,7 +1249,7 @@ def cross_constant_hits(sources: list[_Source]) -> list[Hit]:
                     if found and name not in branched:
                         consts[name] = found[0]
             for call in ast.walk(fn):
-                if not (isinstance(call, ast.Call) and ast.unparse(call.func).endswith("TransactionBuilder")):
+                if not (isinstance(call, ast.Call) and unparse(call.func).endswith("TransactionBuilder")):
                     continue
                 passphrase = next((k.value for k in call.keywords if k.arg == "network_passphrase"),
                                   call.args[1] if len(call.args) > 1 else None)

@@ -506,11 +506,11 @@ class StellarNativeAuditor(BaseAuditor):
                  "branch contains counts as always present, and a defect of a single configuration can be missed."
                  if templates else "")
         from .advisory_check import advisory_findings  # it reuses this module's Rust helpers
-        findings += _one_per_id(advisory_findings(artifact, self, masked=masked))
+        findings += self.contained("advisories", lambda: _one_per_id(advisory_findings(artifact, self, masked=masked)))
         # SDK semantics: RPC results read as final or misread, removed symbols (sdk_rules.py).
         # They replace the prose rule that looked for "tx hash ... success" in the text.
         from .sdk_rules import rpc_findings
-        findings += rpc_findings(artifact, self)
+        findings += self.contained("rpc-semantics", lambda: rpc_findings(artifact, self))
         return findings, scenarios, f"Stellar/Soroban source review; onchain source={source}. Rust checks are bounded lexical evidence, not a compiler, call graph, authorization proof or runtime test. Constructor and custom-account authorization need separate verification.{delegated}{union}"
 
     # ------------------------------------------------------------ ledger authority

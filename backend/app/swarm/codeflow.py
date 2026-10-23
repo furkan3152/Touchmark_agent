@@ -27,6 +27,16 @@ import json
 import re
 from dataclasses import dataclass, field
 
+
+def unparse(node) -> str:
+    """ast.unparse that never raises. It recurses, so a deeply nested expression (a long `+`
+    chain that ast.parse accepts) raises RecursionError; that reads as no text."""
+    try:
+        return ast.unparse(node)
+    except (RecursionError, ValueError, AttributeError):
+        return ""
+
+
 UNTRUSTED = frozenset({"model", "external", "chain", "caller"})
 DIRECT = frozenset({"model", "external", "chain"})
 
@@ -874,7 +884,7 @@ class _Interp:
             self._cap("process_spawn" if fixed else "code_execution", node)
             if every & UNTRUSTED and not fixed:
                 self._flow("command", node, every, "shell=True" if shell else "")
-            if self.record and CLI_AUTO_SIGN.search(" ".join(ast.unparse(a) for a in node.args)):
+            if self.record and CLI_AUTO_SIGN.search(" ".join(unparse(a) for a in node.args)):
                 self.p.profile.add_fact("cli_auto_sign", self.p.location(self.module, node),
                                         "stellar contract invoke --auto-sign", direct=bool(every & DIRECT))
             return set()

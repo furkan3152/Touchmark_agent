@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 
 from ..models import Severity
-from .codeflow import DIRECT, UNTRUSTED
+from .codeflow import DIRECT, UNTRUSTED, unparse
 
 #: The SDK default validity of a signed authorization entry: signAuthEntries signs until the
 #: latest ledger + 100 (js-stellar-sdk contract/assembled_transaction.js).
@@ -553,8 +553,8 @@ def py_call(interp, node: ast.Call, state) -> tuple[set[str], bool]:
         contract = next((k.value for k in node.keywords if k.arg == "contract_id"), node.args[0] if node.args else None)
         if contract is not None and _quiet_tags(interp, contract, state) & DIRECT:
             add.add("contract_untrusted")
-    if short == "SorobanAuthorizationEntry" and _EMPTY_SUBS.search(ast.unparse(node)) \
-            and not re.search(r"from_xdr\s*\(", ast.unparse(node)):
+    if short == "SorobanAuthorizationEntry" and _EMPTY_SUBS.search(unparse(node)) \
+            and not re.search(r"from_xdr\s*\(", unparse(node)):
         add.add("auth_built")
     if short in _PY_SIMULATES:
         add.add("sim_auth")
@@ -572,7 +572,7 @@ def py_call(interp, node: ast.Call, state) -> tuple[set[str], bool]:
     expiry = next((k.value for k in node.keywords if k.arg in {"valid_until_ledger_sequence", "valid_until_ledger_seq"}),
                   node.args[2] if len(node.args) > 2 else None)
     if expiry is not None and interp.record:
-        found = classify_expiration(ast.unparse(expiry), _py_resolver(interp))
+        found = classify_expiration(unparse(expiry), _py_resolver(interp))
         if found:
             interp.p.profile.add_fact("auth_expiration", location, found.note, severity=found.severity.value)
     return add, (inspected or built) and bool(entry & UNTRUSTED)
@@ -582,9 +582,9 @@ def _py_assigns(body) -> dict[str, str]:
     out: dict[str, str] = {}
     for n in body:
         if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
-            out.setdefault(n.targets[0].id, ast.unparse(n.value))
+            out.setdefault(n.targets[0].id, unparse(n.value))
         elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
-            out.setdefault(n.target.id, ast.unparse(n.value))
+            out.setdefault(n.target.id, unparse(n.value))
     return out
 
 
@@ -602,7 +602,7 @@ def _py_returns(fn: ast.AST) -> str:
     """What a Python function returns, with the locals its return expressions use inlined."""
     nodes = list(_py_own_nodes(fn))
     local = _py_assigns(nodes)
-    returns = [ast.unparse(n.value) for n in nodes if isinstance(n, ast.Return) and n.value is not None]
+    returns = [unparse(n.value) for n in nodes if isinstance(n, ast.Return) and n.value is not None]
     return " , ".join(_inline(r, local.get, 1) for r in returns)[:_INLINE_LIMIT]
 
 
