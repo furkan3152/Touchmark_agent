@@ -461,23 +461,6 @@ class StellarNativeAuditor(BaseAuditor):
                             "operations, and verify the payment operation itself.",
                 grade=EvidenceGrade.INFERRED, confidence=0.8))
 
-
-        # `successful`, a SUCCESS comparison); a comment alone is weak evidence.
-        confirms = re.search(r"gettransaction\s*\(|get_transaction\s*\(|\.successful\b|"
-                             r"[\"']success[\"']|status\s*===?\s*[\"']success", lower)
-        if re.search(r"tx[_ -]?hash.*(?:success|complete|confirmed)", lower) and not confirms:
-            findings.append(
-                self.finding(
-                    "hash-is-not-confirmation",
-                    Severity.MEDIUM,
-                    "Transaction hash başarı kanıtı sayılıyor olabilir",
-                    "Hash üretimi/yayın, ledger inclusion ve beklenen contract state/event anlamına gelmez.",
-                    remediation="getTransaction sonucu, success status ve contract state/event readback birlikte doğrulansın.",
-                    grade=EvidenceGrade.INFERRED,
-                    confidence=0.78,
-                )
-            )
-
         scenarios = []
         if mutating:
             scenarios.append(ScenarioResult(
@@ -524,6 +507,10 @@ class StellarNativeAuditor(BaseAuditor):
                  if templates else "")
         from .advisory_check import advisory_findings  # it reuses this module's Rust helpers
         findings += _one_per_id(advisory_findings(artifact, self, masked=masked))
+        # SDK semantics: RPC results read as final or misread, removed symbols (sdk_rules.py).
+        # They replace the prose rule that looked for "tx hash ... success" in the text.
+        from .sdk_rules import rpc_findings
+        findings += rpc_findings(artifact, self)
         return findings, scenarios, f"Stellar/Soroban source review; onchain source={source}. Rust checks are bounded lexical evidence, not a compiler, call graph, authorization proof or runtime test. Constructor and custom-account authorization need separate verification.{delegated}{union}"
 
     # ------------------------------------------------------------ ledger authority

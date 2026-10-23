@@ -3,7 +3,8 @@
 Each check looks for one concrete defect with a known exploit: instructions hidden in
 text the model reads, credentials committed to the repository, signed transactions that
 never expire, ledger traffic without TLS, retries that pay twice, payments accepted by
-asset code alone and Soroban arithmetic that wraps. They report locations, never the
+asset code alone, payment addresses, assets and amounts that are wrong by construction
+(asset_rules.py) and Soroban arithmetic that wraps. They report locations, never the
 secret or the hidden text itself.
 """
 
@@ -15,7 +16,10 @@ import re
 from collections import Counter
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
+from .asset_rules import AssetRules, asset_findings
 from .consolidate import stable_id
+from .sdk_rules import hardening_evidence
+from .source_index import EXAMPLE_PATH
 
 _CODE = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", ".go", ".sol")
 _TESTLIKE = re.compile(r"(^|/)(tests?|spec|fixtures?|examples?|mocks?|__tests__)/|(test|spec|mock|fixture|example)", re.I)
@@ -110,9 +114,6 @@ _REBUILD = re.compile(r"\bload_account\(|\bloadAccount\(|TransactionBuilder\(|ge
 _SUBMIT = re.compile(r"\bsubmit_transaction\(|\bsubmitTransaction\(|\bsendTransaction\(|\bsend_transaction\(")
 _JS_RETRY_WRAPPER = re.compile(r"\b(?:pRetry|asyncRetry|retry|backoff|withRetry|retryAsync)\s*\(")
 _ATTEMPT_LOOP = re.compile(r"\b(?:for|while)\s*\([^)\n]*\b(?:attempt|retr|tries|tryCount)\w*", re.I)
-_ASSET_CODE_CMP = re.compile(
-    r"""\b(?:asset_code|assetCode|asset(?:\.|\[["'])code(?:["']\])?)\s*(?:===?|!==?)\s*["'](?!native\b|XLM\b)[A-Za-z0-9]{3,12}["']|"""
-    r"""["'](?!native\b|XLM\b)[A-Za-z0-9]{3,12}["']\s*(?:===?|!==?)\s*\b(?:asset_code|assetCode|asset(?:\.|\[["'])code(?:["']\])?)""")
 _SECRET_VAR = r"\w*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD)\w*"
 _DEFAULT_SECRET = re.compile(
     r"\$\{(?P<a>" + _SECRET_VAR + r"):-(?P<av>[^}\s]+)\}"
@@ -132,7 +133,6 @@ _DYNAMIC = re.compile(r"\$\{|[\"'`]\s*\+\s*[A-Za-z_$]|\+\s*[A-Za-z_$]")
 _FUNCTION_HEAD = re.compile(r"(?:function\s+(?P<a>[\w$]+)\s*\((?P<ap>[^)]*)\)|(?:const|let|var)\s+(?P<b>[\w$]+)\s*=\s*"
                             r"(?:async\s*)?\((?P<bp>[^)]*)\)\s*=>)")
 _ESCAPED = re.compile(r"escape|sanitiz|DOMPurify|purify|encode|marked\.parse|textContent", re.I)
-_RECEIPT_CONTEXT = re.compile(r"payment|paid|deposit|incoming|receiv|operations|x402|verify|settle", re.I)
 
 
 def _block(text: str, start: int, limit: int = 6000) -> str:
@@ -322,14 +322,19 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     # Signed transactions with no expiry: a held or leaked envelope stays valid forever.
     forever = [f"{n}:{_line(t, m.start())}" for n, t in code.items() if n in signing_files
                for m in _INFINITE_TIMEOUT.finditer(t) if not _commented(t, m.start())]
-    if forever:
+    # The Python SDK builds an envelope with no time bounds when none are set (it only warns).
+    sdk_evidence = hardening_evidence(artifact)
+    unbounded = sdk_evidence["no_expiry"]
+    if forever or unbounded:
         findings.append(_finding(
-            "security-transaction-never-expires", Severity.MEDIUM,
+            "security-transaction-never-expires", Severity.MEDIUM if forever else Severity.LOW,
             "Signed transactions are built without an expiry",
-            "The transaction's time bounds are infinite (timeout 0). An envelope that is signed but not submitted at "
+            ("The transaction's time bounds are infinite (timeout 0). " if forever else
+             "The transaction is built with no time bounds (stellar_sdk TransactionBuilder.build() only warns). ")
+            + "An envelope that is signed but not submitted at "
             "once — after a timeout, in a queue, in a log or with a relayer — can be submitted at any later time, "
             "long after the user or the agent decided otherwise.",
-            forever, "Set a short timeout (for example 30 to 180 seconds) on every transaction the agent signs.",
+            forever + unbounded, "Set a short timeout (for example 30 to 180 seconds) on every transaction the agent signs.",
             ["Stellar transaction time bounds"], auditor, confidence=0.9))
 
     # Ledger traffic without TLS: whoever is on the path chooses the simulation the agent signs.
@@ -374,42 +379,47 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
                     if _REBUILD.search(window) and _SUBMIT.search(window):
                         double.append(f"{name}:{_line(text, m.start())}")
                         break
-    if double:
+    # The same defect without a loop: the failure handler of a send frees the reservation or budget
+    # it held, or a paid x402 request is repeated, although the payment may have gone through.
+    released = sdk_evidence["released"]
+    if double or released:
         findings.append(_finding(
             "security-retry-may-pay-twice", Severity.MEDIUM,
-            "A failed submission is retried with a newly built transaction",
-            "The retry reloads the account and builds a new transaction. A submission that timed out may still have "
-            "been applied; the rebuilt transaction gets the next sequence number and is applied too, so the payment "
-            "is made twice.",
-            double, "On a timeout, resubmit the same signed envelope or look it up by hash; build a new one only after "
-            "the first is known to have failed (expired time bounds or a bad sequence number).",
+            "A failed submission is retried with a newly built transaction" if double else
+            "A payment that may have gone through is treated as not made",
+            ("The retry reloads the account and builds a new transaction. A submission that timed out may still have "
+             "been applied; the rebuilt transaction gets the next sequence number and is applied too, so the payment "
+             "is made twice. " if double else "")
+            + ("An error raised after the transaction or paid request was sent (a timeout, a failed poll, an error "
+               "response after settlement) releases the reservation, claim or budget held for it, or repeats the paid "
+               "request, without checking whether the first one landed. The next attempt pays again." if released else ""),
+            double + released, "On a timeout, resubmit the same signed envelope or look it up by hash; build a new one "
+            "(or release what was reserved) only after the first is known to have failed (expired time bounds or a "
+            "bad sequence number). Keep a flag set just before sending and release only while it is unset.",
             ["Stellar transaction submission and timeouts"], auditor, grade=EvidenceGrade.INFERRED, confidence=0.7))
 
-    # Incoming payments checked by asset code only: anyone can issue a token with that code.
-    by_code = []
-    for name, text in code.items():
-        if not _RECEIPT_CONTEXT.search(text):
-            continue
-        lines = text.splitlines()
-        for m in _ASSET_CODE_CMP.finditer(text):
-            if _commented(text, m.start()):
-                continue
-            line = _line(text, m.start())
-            near = "\n".join(lines[max(0, line - 13):line + 12])
-            # The agent's own balances only hold trustlines it opened; an incoming payment
-            # record carries whatever asset the sender chose.
-            close = "\n".join(lines[max(0, line - 4):line + 1])
-            if not re.search(r"issuer", near, re.I) and not re.search(r"balance", close, re.I) \
-                    and re.search(r"\b(?:payment|operation|record|transfer|from|deposit|received?)\b", near, re.I):
-                by_code.append(f"{name}:{line}")
+    # Incoming payments checked by asset code only: anyone can issue a token with that code. Only
+    # receipt and verification code that reads ledger records counts; the agent's own balances
+    # only hold trustlines it opened. An `||` with a full-asset comparison is the same bypass.
+    assets = AssetRules(artifact)
+    by_code = assets.code_only_checks()
     if by_code:
+        literal = any(item[3] for item in by_code)
+        severity = Severity.HIGH if literal else Severity.MEDIUM
+        if all(EXAMPLE_PATH.search(item[0]) for item in by_code):  # templates and examples drop one level
+            severity = Severity.MEDIUM if literal else Severity.LOW
         findings.append(_finding(
-            "security-asset-checked-by-code-only", Severity.HIGH,
+            "security-asset-checked-by-code-only", severity,
             "A payment is accepted by asset code without checking the issuer",
             "The code compares an asset's code (for example \"USDC\") but not its issuer. Anyone can issue an asset "
-            "with any code, so a payment in a worthless look-alike passes the check.",
-            by_code, "Compare code and issuer together against a configured asset (Asset.equals, or both fields).",
+            "with any code, so a payment in a worthless look-alike passes the check."
+            + ("" if literal else " Here the code is compared with a configured value, so the bypass works whenever "
+               "that value is a bare code."),
+            [f"{path}:{line} `{snippet[:120]}`" for path, line, snippet, _ in by_code],
+            "Compare code and issuer together against a configured asset (Asset.equals, or both fields).",
             ["Stellar assets and issuers"], auditor, confidence=0.8))
+    findings += asset_findings(assets, lambda fid, severity, title, detail, evidence, remediation, refs: _finding(
+        fid, severity, title, detail, evidence, remediation, refs, auditor, confidence=0.85))
 
     # Soroban contracts whose release build wraps on overflow.
     manifests = {n: t for n, t in files.items() if n.endswith("Cargo.toml")}

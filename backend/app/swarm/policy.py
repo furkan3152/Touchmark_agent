@@ -172,10 +172,12 @@ BYPASS_CATEGORIES = re.compile(
 
 #: Rule findings that show a payment accepted, settled or sponsored without the check that
 #: makes it a payment: x402 and MPP server rules, settlement and hash-proof binding, fee
-#: sponsorship paths, and an MPP release whose server accepts unsigned hash credentials.
+#: sponsorship paths, an MPP release whose server accepts unsigned hash credentials, a
+#: received payment matched by asset code alone, and a queued transaction counted as paid.
 #: Matched by pattern, so each rule's stable-id suffix is covered.
 PAYMENT_BYPASS_RULES = re.compile(
     r"^security-(?:x402|mpp|path-sponsor)-|^stellar_native-dep-mpp-unsigned-hash-push-|"
+    r"^security-asset-checked-by-code-only$|^stellar_native-rpc-send-treated-as-final-|"
     r"(?:^|-)(?:x402-settle-unchecked|x402-verify-without-settle|x402-requirements-from-payer|tx-hash-proof-unbound)"
     r"(?:-[0-9a-f]{8})?$")
 
