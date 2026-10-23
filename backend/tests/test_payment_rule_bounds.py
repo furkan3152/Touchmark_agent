@@ -159,3 +159,32 @@ def test_sequential_ifs_stay_linear():
               + "}\n" * 280 + "}\n")
     _, seconds = timed(code, {"src/n.ts": nested})
     assert seconds < 1.0
+
+
+def test_many_request_fields_are_looked_up_in_one_index():
+    # A verifier that sets 2000 request fields, read by four modules that submit something
+    # else: 53 s (every field rescanned every module and walked each function's body).
+    fields = 2000
+    paywall = ('import { verifier } from "./verifier";\n'
+               'export function paywall() {\n  return async (req: any, res: any, next: any) => {\n'
+               "    const xdr = req.headers['x-payment'];\n"
+               '    const result = await verifier.verifyEnvelope(xdr, { payee: R });\n'
+               '    if (!result.verified) return res.status(402).json(result);\n'
+               + "".join(f"    req.f{i} = xdr;\n" for i in range(fields)) + '    next();\n  };\n}\n')
+    other = ("export async function s(req) {\n  log(" + ", ".join(f"req.f{i}" for i in range(fields)) + ");\n"
+             "  await server.sendTransaction(buildRefund());\n}\n")
+    found, seconds = timed(paths, {"src/paywall.ts": paywall, **{f"src/o{j}.ts": other for j in range(4)}})
+    assert seconds < 4.0 and any("verify-without-settle" in f.id for f in found)
+
+
+def test_sequential_and_nested_loops_stay_linear():
+    # 4000 loops (or switches) in a row: 10 s each (every loop copied and merged the whole
+    # state); 18 nested loops: 24 s (each loop body ran twice per pass of the one around it).
+    for line in ("  const v{i} = g({i});\n  for (const x of v{i}) h(x);\n",
+                 "  const v{i} = g({i});\n  switch (v{i}) {{ case 1: h(); }}\n"):
+        source = "export function f(a) {\n" + "".join(line.format(i=i) for i in range(4000)) + "}\n"
+        _, seconds = timed(code, {"src/c.ts": source})
+        assert seconds < 4.0, line
+    nested = "export function f(a) {\n" + "".join(f"for (const x{i} of a{i}) {{\n" for i in range(18)) + "h(a);\n" + "}\n" * 18 + "}\n"
+    _, seconds = timed(code, {"src/n.ts": nested})
+    assert seconds < 1.0

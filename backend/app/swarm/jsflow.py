@@ -258,15 +258,27 @@ def _txt(node) -> str:
     return node.text.decode("utf-8", "replace") if node is not None else ""
 
 
+_WRAPPERS = {"parenthesized_expression", "await_expression", "as_expression", "non_null_expression",
+             "satisfies_expression", "type_assertion"}
+_TYPE_NODES = {"type_annotation", "type_identifier", "predefined_type", "generic_type", "object_type", "union_type"}
+
+
 def _unwrap(node):
-    while node is not None and node.type in {"parenthesized_expression", "await_expression", "as_expression",
-                                             "non_null_expression", "satisfies_expression", "type_assertion"}:
-        named = [c for c in node.named_children if c.type not in {"type_annotation", "type_identifier", "predefined_type",
-                                                                  "generic_type", "object_type", "union_type"}]
+    while node is not None and node.type in _WRAPPERS:
+        named = [c for c in node.named_children if c.type not in _TYPE_NODES]
         if not named:
             return None
         node = named[0]
     return node
+
+
+def _awaits(node) -> bool:
+    """Among the wrappers `_unwrap` strips from ``node`` is an await: `await f()`, `(await f())`."""
+    while node is not None and node.type in _WRAPPERS:
+        if node.type == "await_expression":
+            return True
+        node = next((c for c in node.named_children if c.type not in _TYPE_NODES), None)
+    return False
 
 
 def _dotted(node) -> str:
@@ -409,27 +421,68 @@ def _passes(node) -> bool:
 def _amount_ceiling(fn_node, hook: bool, resolve=None) -> bool:
     """An x402 policy, selector or hook that refuses requirements above a ceiling. A policy
     or selector keeps requirements through a predicate (filter, find, every) whose truth puts
-    the requirement's `.amount` (or `.maxAmountRequired`) at or below a bound, or refuses them
-    all (throws, returns `[]`) where one exceeds it; a hook refuses (`return { abort: true }`,
-    a ternary to it, or throw) where the amount exceeds one, or lets the payment on only where
-    it is within one (`if (amount <= MAX) return; return { abort: true }`). Sorting by price,
-    dropping zero amounts, filtering networks, or logging a large payment caps nothing.
-    ``resolve`` maps a named predicate (`reqs.filter(isCheap)`, `(r) => isCheap(r)`) to its
-    function node; that function's parameters are requirements too."""
+    the requirement's `.amount` (or `.maxAmountRequired`) at or below a bound, and does not
+    hand back the whole list where none passes; or it refuses them all (throws, returns `[]`)
+    where one exceeds it. A hook refuses (`return { abort: true }`, a ternary to it, or throw)
+    where the amount exceeds one, or lets the payment on only where it is within one
+    (`if (amount <= MAX) return; return { abort: true }`). Sorting by price, dropping zero
+    amounts, filtering networks, or logging a large payment caps nothing. ``resolve`` maps a
+    named predicate (`reqs.filter(isCheap)`, `(r) => isCheap(r)`) to its function node; that
+    function's parameters are requirements too when it is given one."""
     params: set[str] = set()
+    loops, declared = [], []
     stack = [fn_node]
     while stack:
         n = stack.pop()
         if _is_function(n):
             params |= _param_names(n)
         elif n.type == "for_in_statement":
-            left = _unwrap(n.child_by_field_name("left"))  # for (const r of reqs)
-            if left is not None and left.type == "identifier":
-                params.add(_txt(left))
-            elif left is not None and left.type == "object_pattern":
-                params |= {_txt(c) for c in left.named_children if c.type == "shorthand_property_identifier_pattern"}
+            loops.append(n)
+        elif n.type == "variable_declarator":
+            declared.append(n)
         stack.extend(n.named_children)
+
+    def mentions(node, names: set[str]) -> bool:
+        """`node` names one of ``names`` outside a nested function (a declarator's value holds
+        another declarator only inside one, so each node is read once)."""
+        todo = [node]
+        while todo:
+            m = todo.pop()
+            if m is None or _is_function(m):
+                continue
+            if m.type == "identifier" and _txt(m) in names:
+                return True
+            todo.extend(m.named_children)
+        return False
+    # `for (const r of reqs)`, or of `sorted` from `const sorted = [...reqs].sort(...)`: a loop
+    # over the requirements binds one (a loop over a payment history does not).
+    derived = set(params)
+    for n in sorted(declared, key=lambda d: d.start_byte):
+        name = n.child_by_field_name("name")
+        if name is not None and name.type == "identifier" and mentions(n.child_by_field_name("value"), derived):
+            derived.add(_txt(name))
+    for n in sorted(loops, key=lambda d: d.start_byte):
+        if not mentions(n.child_by_field_name("right"), derived):
+            continue
+        left = _unwrap(n.child_by_field_name("left"))
+        if left is not None and left.type in {"lexical_declaration", "variable_declaration"}:
+            decl = next((c for c in left.named_children if c.type == "variable_declarator"), None)
+            left = decl.child_by_field_name("name") if decl is not None else None
+        if left is not None and left.type == "identifier":
+            params.add(_txt(left))
+            derived.add(_txt(left))
+        elif left is not None and left.type == "object_pattern":
+            params |= {_txt(c) for c in left.named_children if c.type == "shorthand_property_identifier_pattern"}
     resolving: set[tuple[int, int]] = set()
+    #: Parameters of a named predicate given a requirement's amount (`amountOk(r.amount)`).
+    amounts: set[str] = set()
+
+    def given(arg) -> bool:
+        """An argument that is a requirement or reads one (`r`, `r.amount`, `amount`)."""
+        root = _unwrap(arg)
+        while root is not None and root.type in {"member_expression", "subscript_expression"}:
+            root = _unwrap(root.child_by_field_name("object"))
+        return root is not None and root.type == "identifier" and _txt(root) in params
 
     def reads(side) -> bool:
         todo = [side]
@@ -443,7 +496,7 @@ def _amount_ceiling(fn_node, hook: bool, resolve=None) -> bool:
                     root = _unwrap(root.child_by_field_name("object"))
                 if root is not None and root.type == "identifier" and _txt(root) in params:
                     return True
-            if m.type == "identifier" and _txt(m) in params & _REQUIREMENT_AMOUNT:
+            if m.type == "identifier" and (_txt(m) in params & _REQUIREMENT_AMOUNT or _txt(m) in amounts):
                 return True  # ({ amount }) => amount <= MAX
             todo.extend(m.named_children)
         return False
@@ -463,8 +516,19 @@ def _amount_ceiling(fn_node, hook: bool, resolve=None) -> bool:
                 if (method == "every") == holds and _args(expr):
                     return verdict(_args(expr)[0], holds)
                 return False
-            # `(r) => isAffordable(r)`: a named predicate given the requirement.
-            return bool(_args(expr)) and verdict(fn, holds)
+            # `(r) => isAffordable(r)`: a named predicate given the requirement (not given
+            # another value: `isAffordable(budget)` holds or fails for every requirement alike).
+            if not any(given(a) for a in _args(expr)):
+                return False
+            target = resolve(fn) if resolve is not None and fn is not None and not _is_function(fn) else fn
+            if _is_function(target):
+                formal = target.child_by_field_name("parameters")
+                formal = [c for c in formal.named_children if c.type != "comment"] if formal is not None else []
+                for a, p in zip(_args(expr), formal):
+                    p = p.child_by_field_name("pattern") if p.type in {"required_parameter", "optional_parameter"} else p
+                    if p is not None and p.type == "identifier" and reads(a):
+                        amounts.add(_txt(p))  # amountOk(a) given r.amount: `a` is the amount
+            return verdict(fn, holds)
         if expr.type != "binary_expression":
             return False
         op = _txt(expr.child_by_field_name("operator"))
@@ -513,11 +577,27 @@ def _amount_ceiling(fn_node, hook: bool, resolve=None) -> bool:
         return refusal(body, _abort_value)  # async (ctx) => (over(ctx) ? { abort: true } : undefined)
     nodes = list(_own_nodes(body))
     refuses = _returns_abort if hook else _refuses_all
+    own = _param_names(fn_node)
+
+    def unfiltered(value) -> bool:
+        """`ok.length ? ok : reqs`, `c ? [c] : reqs`: where nothing passes the filter, a branch
+        hands back every requirement anyway."""
+        value = _unwrap(value)
+        if value is not None and value.type == "ternary_expression":
+            branches = [value.child_by_field_name("consequence"), value.child_by_field_name("alternative")]
+        elif value is not None and value.type == "binary_expression" and _txt(value.child_by_field_name("operator")) in {"??", "||"}:
+            branches = [value.child_by_field_name("right")]
+        else:
+            return False
+        return any(b is not None and b.type == "identifier" and _txt(b) in own for b in map(_unwrap, branches))
+    results = [r.named_children[0] for r in nodes if r.type == "return_statement" and r.named_children]
+    falls_back = any(map(unfiltered, results + ([body] if body is not None and body.type != "statement_block" else [])))
     for n in nodes:
         if not hook and n.type == "call_expression":
             fn = _unwrap(n.child_by_field_name("function"))
             method = _txt(fn.child_by_field_name("property")) if fn is not None and fn.type == "member_expression" else ""
-            if method in {"filter", "find", "findLast", "every"} and _args(n) and not _with_fallback(n) and verdict(_args(n)[0]):
+            if method in {"filter", "find", "findLast", "every"} and _args(n) and not _with_fallback(n) \
+                    and not falls_back and verdict(_args(n)[0]):
                 return True
         elif hook and n.type == "return_statement" and n.named_children and refusal(n.named_children[0], _abort_value):
             return True
@@ -696,7 +776,11 @@ class JsProject:
         self._settle_text: dict = {}
         self._proof_text: dict[str, tuple[bool, bool]] = {}
         self._field_settled: dict[tuple[str, str], bool] = {}
-        self._module_functions: dict[str, list[str]] | None = None
+        self._field_modules: dict[str, list[str]] | None = None
+        self._module_functions: dict[str, list[str]] = {}
+        self._module_submitted: dict[str, set[str]] = {}
+        self._submitted: dict[tuple[str, int], tuple[frozenset[str], frozenset[int]]] = {}
+        self._nested: dict[str, list[str]] | None = None
         self._declared: dict[tuple, dict[str, str]] = {}
         self._validators: dict[str, set[int]] = {}
         self._seller_scope: dict[str, bool] = {}
@@ -1612,45 +1696,125 @@ class JsProject:
                 return True
         return False
 
+    #: A settle or submit call by its callee's last name: `facilitator.settle(`, `settlePayment(`,
+    #: `server.sendTransaction(` (as `_SETTLE_CALL` reads a call's text; `isSettled(` settles nothing).
+    _SETTLE_NAME = re.compile(r"(?i:settle)(?!d)\w{0,64}\Z")
+    _SUBMIT_NAMES = {"submitTransaction", "sendTransaction", "submitAsyncTransaction"}
+    #: `.name` property reads, and names that are not a property (variables, parameters, `...rest`).
+    _PROPERTY = re.compile(r"\.([\w$]+)")
+    _NAME = re.compile(r"(?<![\w$])(?<!(?<!\.\.)\.)[A-Za-z_$][\w$]*")
+
     def _field_submitted(self, field_name: str, verifier: str) -> bool:
         """A function in another module passes the request field to a settle or submit call:
-        `sendTransaction(TransactionBuilder.fromXDR(req.paymentXdr, NET))`, or through a
-        variable it declares from the field. Reading the field and submitting something else
-        (a refund it builds) settles nothing."""
-        needle = re.compile(r"\." + re.escape(field_name) + r"\b")
-        if self._module_functions is None:
-            self._module_functions = {}
+        `sendTransaction(TransactionBuilder.fromXDR(req.paymentXdr, NET))`, through variables it
+        declares from the field, or through a project helper that submits its parameter
+        (`submitPayment(req.paymentXdr)`). Reading the field and submitting something else (a
+        refund it builds) settles nothing. Each module is indexed once, so a verifier that sets
+        many fields looks each one up instead of rescanning the modules per field."""
+        if self._field_modules is None:
+            self._field_modules, self._module_functions = {}, {}
+            for path, other in self.modules.items():
+                for name in set(self._PROPERTY.findall(other.text)):
+                    self._field_modules.setdefault(name, []).append(path)
             for key, f in self.functions.items():
                 self._module_functions.setdefault(f.module, []).append(key)
-        for path, other in self.modules.items():
-            if path == verifier or not needle.search(other.text) or not self._SETTLE_CALL.search(other.text):
+        for path in self._field_modules.get(field_name, ()):
+            if path == verifier:
                 continue
-            for key in self._module_functions.get(path, []):
-                fn = self.functions[key]
-                text = _txt(fn.node)
-                if not needle.search(text) or not self._SETTLE_CALL.search(text):
-                    continue
-                declared = self.declarations(other, fn.node)
-                for n in _own_nodes(fn.node.child_by_field_name("body")):
-                    if n.type != "call_expression":
-                        continue
-                    callee = n.child_by_field_name("function")
-                    if not self._SETTLE_CALL.search(_txt(callee) + "("):
-                        continue
-                    for a in map(_unwrap, _args(n)):
-                        if a is not None and (needle.search(_txt(a)) or a.type == "identifier"
-                                              and needle.search(declared.get(_txt(a), ""))):
-                            return True
-        return False
-
-    def _step_settles(self, keys) -> bool:
-        """A project function among ``keys`` settles or submits (its text searched once)."""
-        for k in keys:
-            if k in self.functions and k not in self._settle_text:
-                self._settle_text[k] = bool(self._SETTLE_CALL.search(_txt(self.functions[k].node)))
-            if self._settle_text.get(k):
+            if path not in self._module_submitted:
+                self._module_submitted[path] = set().union(
+                    set(), *(self._submits(key)[0] for key in self._module_functions.get(path, ())))
+            if field_name in self._module_submitted[path]:
                 return True
         return False
+
+    def _submits(self, key: str, hops: int = 2) -> tuple[frozenset[str], frozenset[int]]:
+        """What a function hands to a settle or submit call: the `.field` names and the
+        parameters in the call's arguments, directly or through the variables it declares
+        (`const tx = TransactionBuilder.fromXDR(xdr, NET)` from `const xdr = req.paymentXdr`).
+        A call to a project helper that submits its parameter (up to ``hops`` helpers deep)
+        counts as a submit call. Each argument and declaration is read once per function."""
+        if (key, hops) in self._submitted:
+            return self._submitted[(key, hops)]
+        fn = self.functions[key]
+        module = self.modules[fn.module]
+        helpers = self.callees.get(key) if hops else None
+        texts: list[str] = []
+        body = fn.node.child_by_field_name("body")
+        stack = [body] if body is not None else []
+        while stack:
+            n = stack.pop()
+            if n.type != "call_expression":
+                stack.extend(c for c in n.named_children if not _is_function(c))
+                continue
+            callee = _unwrap(n.child_by_field_name("function"))
+            name = callee.child_by_field_name("property") if callee is not None and callee.type == "member_expression" else callee
+            name = _txt(name) if name is not None and name.type in {"identifier", "property_identifier"} else ""
+            args = _args(n)
+            if self._SETTLE_NAME.search(name) or name in self._SUBMIT_NAMES and callee.type == "member_expression":
+                submitted = set(range(len(args)))
+            elif helpers:
+                target = self.resolve(module, callee, fn, {})
+                submitted = set(self._submits(target, hops - 1)[1]) if target in helpers and target != key else set()
+            else:
+                submitted = set()
+            for i, a in enumerate(args):
+                if i in submitted:
+                    texts.append(_txt(a))  # read whole: nothing inside it needs a second look
+                elif not _is_function(a):
+                    stack.append(a)
+            if callee is not None and not _is_function(callee):
+                stack.append(callee)
+        declared = self.declarations(module, fn.node)
+        params = {name: i for i, (name, _) in enumerate(fn.params) if name}
+        fields: set[str] = set()
+        reached: set[int] = set()
+        seen: set[str] = set()
+        while texts:
+            text = texts.pop()
+            fields.update(self._PROPERTY.findall(text))
+            for name in self._NAME.findall(text):
+                if name in seen:
+                    continue
+                seen.add(name)
+                if name in params:
+                    reached.add(params[name])
+                if declared.get(name):
+                    texts.append(declared[name])
+        self._submitted[(key, hops)] = (frozenset(fields), frozenset(reached))
+        return self._submitted[(key, hops)]
+
+    def _step_settles(self, keys) -> bool:
+        """A project function among ``keys`` settles or submits: its body (not its own name,
+        `function settleFirst()`), or a helper it or a function nested in it calls, two calls
+        away (`chargeFirst` calling `submitPayment(req.paymentXdr)`)."""
+        return any(self._settles_within(k, 2) for k in keys if k in self.functions)
+
+    def _settles_within(self, key: str, hops: int) -> bool:
+        """Settlement in a function's body (nested functions included) or in a helper called
+        from it, ``hops`` calls deep; each body is searched once, each answer kept."""
+        if ("within", key, hops) in self._settle_text:
+            return self._settle_text[("within", key, hops)]
+        self._settle_text[("within", key, hops)] = False  # a recursive helper settles nothing more
+        if ("body", key) not in self._settle_text:
+            node = self.functions[key].node
+            self._settle_text[("body", key)] = bool(self._SETTLE_CALL.search(_txt(node.child_by_field_name("body") or node)))
+        found = self._settle_text[("body", key)]
+        if not found and hops:
+            if self._nested is None:
+                self._nested = {}
+                for k, f in self.functions.items():
+                    if f.parent:
+                        self._nested.setdefault(f.parent, []).append(k)
+            inner, stack = [], [key]
+            while stack:
+                k = stack.pop()
+                inner.append(k)
+                stack += self._nested.get(k, [])
+            found = any(self._settles_within(c, hops - 1) for k in inner for c in self.callees.get(k, ())
+                        if c in self.functions)
+        self._settle_text[("within", key, hops)] = found
+        return found
 
     def _uses_settle(self, receiver: str) -> bool:
         if ("uses", receiver) not in self._settle_text:
@@ -1768,6 +1932,15 @@ class JsProject:
                       if pattern is not None and pattern.type == "object_pattern"
                       for c in pattern.named_children if c.type == "shorthand_property_identifier_pattern"}
 
+            def present(node) -> bool:
+                """`s`, `s != null`: a test that the result exists, not of what it says."""
+                node = _unwrap(node)
+                if node is not None and node.type == "binary_expression" and _txt(node.child_by_field_name("operator")) in {"!=", "!=="}:
+                    sides = [_unwrap(node.child_by_field_name("left")), _unwrap(node.child_by_field_name("right"))]
+                    if any(x is not None and (x.type in {"null", "undefined"} or _txt(x) == "undefined") for x in sides):
+                        node = next((x for x in sides if x is not None and x.type == "identifier" and _txt(x) != "undefined"), None)
+                return node is not None and node.type == "identifier" and _txt(node) in index
+
             def reads(node, sign: bool) -> set[int]:
                 """Parameters whose failed settlement makes the throw happen: `sign` is True
                 where `node` being true throws (`if (C) throw`), False where its being false
@@ -1781,7 +1954,14 @@ class JsProject:
                     if n.type == "unary_expression" and _txt(n.child_by_field_name("operator")) == "!":
                         stack.append((n.child_by_field_name("argument"), not sign))
                     elif n.type == "binary_expression" and _txt(n.child_by_field_name("operator")) in {"&&", "||"}:
-                        stack += [(n.child_by_field_name("left"), sign), (n.child_by_field_name("right"), sign)]
+                        # `if (A || B) throw` throws when either holds; `if (A && B) throw` only
+                        # when both do, so `!s.success && strict` lets a failed settlement through
+                        # (`s && !s.success` does not: a missing result is not a settlement).
+                        left, right = n.child_by_field_name("left"), n.child_by_field_name("right")
+                        if (_txt(n.child_by_field_name("operator")) == "||") == sign:
+                            stack += [(left, sign), (right, sign)]
+                        else:
+                            stack += [(side, sign) for side, other in ((left, right), (right, left)) if present(other)]
                     elif n.type == "binary_expression" and _txt(n.child_by_field_name("operator")) in {"===", "==", "!==", "!="}:
                         # `s.success === false`, `s.success !== true`: a read compared to a literal.
                         op = _txt(n.child_by_field_name("operator"))
@@ -1813,6 +1993,18 @@ class JsProject:
                 n = stack.pop()
                 if n is None or _is_function(n):
                     continue
+                if n.type == "statement_block":
+                    # `if (s.success) return; log(s); throw new Error(s.errorReason)`: the block
+                    # ends in a throw that only plain statements (no branch that could leave)
+                    # separate from the if, so it runs unless the settlement succeeded.
+                    stmts = [c for c in n.named_children if c.type != "comment"]
+                    reaches = bool(stmts) and stmts[-1].type == "throw_statement"
+                    for stmt in reversed(stmts[:-1]):
+                        if reaches and stmt.type == "if_statement" and stmt.child_by_field_name("alternative") is None \
+                                and _rejects(stmt.child_by_field_name("consequence")) == "return":
+                            found |= reads(stmt.child_by_field_name("condition"), False)
+                        reaches = reaches and stmt.type in {"expression_statement", "lexical_declaration",
+                                                            "variable_declaration", "empty_statement"}
                 if n.type == "if_statement":
                     alternative = n.child_by_field_name("alternative")
                     alt = alternative.named_children[0] if alternative is not None and alternative.named_children else None
@@ -2010,6 +2202,11 @@ class _JsInterp:
         #: is still unchecked when the handler ends (an audit hook before the check is not).
         self._pending_upstream: set[tuple[int, int]] = set()
         self._conditional = 0
+        #: Loops entered: a loop body runs twice (values assigned late reach reads early), a
+        #: loop nested in another once per outer pass, so nested loops stay linear, not 2^depth.
+        self._loops = 0
+        #: Calls seen under an await (by byte range).
+        self._awaited: set[tuple[int, int]] = set()
         self._adjust: dict[tuple, tuple[set[str], set[str]]] = {}
 
     # ------------------------------------------------------------------ labels
@@ -2047,9 +2244,18 @@ class _JsInterp:
 
     # ------------------------------------------------------------------ values
     def tags(self, node, state: dict[str, set[str]]) -> set[str]:
-        node = _unwrap(node)
+        raw, node = node, _unwrap(node)
         if node is None:
             return set()
+        if raw is not node and node.type == "call_expression" and _awaits(raw):
+            # Read top-down (no parent walk per call); `await Promise.all([assertX(tx)])` rejects
+            # when an element does, so its elements are awaited too.
+            self._awaited.add((node.start_byte, node.end_byte))
+            if _dotted(node.child_by_field_name("function")) == "Promise.all":
+                items = _unwrap(_args(node)[0]) if _args(node) else None
+                for item in map(_unwrap, items.named_children if items is not None and items.type == "array" else []):
+                    if item is not None and item.type == "call_expression":
+                        self._awaited.add((item.start_byte, item.end_byte))
         t = node.type
         if t in {"string", "template_string"} and t == "string":
             value = _txt(node)
@@ -2292,7 +2498,10 @@ class _JsInterp:
             self.p.callers.setdefault(key, set()).add(self.fn.key if self.fn else f"module:{self.module.path}")
             if self.fn is not None:
                 self.p.callees.setdefault(self.fn.key, set()).add(key)
-            (self._try_calls[-1] if self._try_calls else self._plain_calls).add(key)
+            if not self._gates(key, node, (node.start_byte, node.end_byte) in self._awaited):
+                self._caught_calls.add(key)  # an un-awaited async helper's rejection stops nothing here
+            else:
+                (self._try_calls[-1] if self._try_calls else self._plain_calls).add(key)
             if self._enclosing:
                 self.p.sponsor_enclosed.setdefault(key, set()).update(*self._enclosing)
         if key and _SIGN_FOREIGN.search(label) and not _WALLET_PROMPT.search(label):
@@ -3050,7 +3259,8 @@ class _JsInterp:
             for k in up:
                 checks |= self.p.sponsor_checks.get(k, set()) | self.p.sponsor_enclosed.get(k, set())
             # A helper this function called only inside a try whose catch carried on throws
-            # into that catch, not past it (callers' calls of it still count).
+            # into that catch, not past it; an async one it did not await rejects a Promise
+            # nobody waits for (callers' calls of it still count).
             caught = self._caught_calls - self._plain_calls - set().union(*self._try_calls) \
                 - {n for k in up for n in self.p.callees.get(k, ())}
             for k in down - caught:
@@ -3220,13 +3430,16 @@ class _JsInterp:
             stack.extend(children if children is not None else ((c, scope, child_sign) for c in sub.named_children))
         return found
 
-    def _gates(self, key: str | None, call) -> bool:
+    def _gates(self, key: str | None, call, awaited: bool | None = None) -> bool:
         """A call of a project function whose result can gate the path: the function is
         synchronous, or the call is awaited (an async validator's un-awaited Promise is always
-        truthy, so `if (!isSponsorable(tx)) throw` never throws)."""
+        truthy, so `if (!isSponsorable(tx)) throw` never throws). ``awaited`` is known where
+        the call came through tags(); otherwise the call's parents say."""
         fn = self.p.functions.get(key) if key else None
         if fn is None or not any(c.type == "async" for c in fn.node.children):
             return True
+        if awaited is not None:
+            return awaited
         parent = call.parent
         while parent is not None and parent.type == "parenthesized_expression":
             parent = parent.parent
@@ -3720,10 +3933,15 @@ class _JsInterp:
                     self._sponsor_condition = False
                     self._conditional += optional
                     self._enclosing.append(inside)
+                else:
+                    # `if (!matches(p.accepted, R)) { return 402 } else { settle(p, p.accepted) }`:
+                    # the else branch runs only where the payer's requirements are the server's.
+                    self.requirements_bound = bound or self._matches_requirements(cond, state, False)
                 inner = body.named_children[0] if body.type == "else_clause" and body.named_children else body
                 self.statement(inner, branch)
+                self.requirements_bound = bound
                 if i == 0:
-                    self.approved, self.requirements_bound = saved, bound
+                    self.approved = saved
                     self._conditional -= optional
                     self._enclosing.pop()
                 branches.append(branch)
@@ -3737,7 +3955,7 @@ class _JsInterp:
             self.block(stmt.named_children, state)
             return
         if t in {"for_in_statement", "for_statement", "while_statement", "do_statement"}:
-            branch = {k: set(v) for k, v in state.items()}
+            branch = _Branch(state)  # joined below by what the loop assigned, like an if
             if t == "for_in_statement":
                 left = stmt.child_by_field_name("left")
                 right = stmt.child_by_field_name("right")
@@ -3755,11 +3973,13 @@ class _JsInterp:
             else:
                 self.tags(stmt.child_by_field_name("condition"), state)
             body = stmt.child_by_field_name("body")
-            for _ in range(2):
+            self._loops += 1
+            for _ in range(2 if self._loops == 1 else 1):
                 if body is not None:
                     self.statement(body, branch)
-            for key, value in branch.items():
-                state[key] = state.get(key, set()) | value
+            self._loops -= 1
+            for key in branch.written:
+                state[key] = state.get(key, set()) | branch[key]
             return
         if t == "try_statement":
             body = stmt.child_by_field_name("body")
@@ -3798,12 +4018,12 @@ class _JsInterp:
                 if "throw" in ends:
                     self.sponsor_throws.add("credential_type")
             for case in (body.named_children if body is not None else []):
-                branch = {k: set(v) for k, v in state.items()}
+                branch = _Branch(state)
                 for s in case.named_children:
                     if s.type.endswith("statement") or s.type in {"lexical_declaration", "variable_declaration"}:
                         self.statement(s, branch)
-                for key, value in branch.items():
-                    state[key] = state.get(key, set()) | value
+                for key in branch.written:
+                    state[key] = state.get(key, set()) | branch[key]
             return
         if t == "return_statement":
             value = set()

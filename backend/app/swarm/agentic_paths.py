@@ -683,18 +683,21 @@ def _release_cap(versions: list[str], spec: str | None, source: str, boundary: s
     return "depends", f"installed {source} version unknown; payments are capped by default only from {boundary}"
 
 
-#: Tooling a person runs by hand (tools/, scripts/), and a terminal prompt that waits for
-#: them: hidden key entry in raw mode, a prompt library, or a readline question.
-_TOOLING_DIR = re.compile(r"(?:^|/)(?:tools|scripts)/")
+#: Tooling a person runs by hand (the repository's tools/, any scripts/; `src/tools/` holds
+#: an agent's own tools), and a terminal prompt that waits for them: hidden key entry in raw
+#: mode, a prompt library, or a readline question that asks for a key (a chat loop's
+#: question leaves the payments to the agent).
+_TOOLING_DIR = re.compile(r"^tools/|(?:^|/)scripts/")
 _TERMINAL_PROMPT = re.compile(r"\bsetRawMode\(\s*true\s*\)|[\"'](?:prompts|inquirer|@inquirer/[\w-]{1,32}|readline-sync|enquirer)[\"']")
 _READLINE = re.compile(r"[\"'](?:node:)?readline(?:/promises)?[\"']")
+_KEY_QUESTION = re.compile(r"\.question\(\s*[\"'`][^\"'`\n]{0,80}?(?:secret|seed|private|key|mnemonic|passphrase|password)", re.I)
 
 
 def _attended_script(path: str, text: str) -> bool:
     """A tooling script that waits for a person at a terminal prompt (its key typed in
     hidden): one run, watched, not an unattended agent paying on its own."""
     return bool(_TOOLING_DIR.search(path)) and bool(
-        _TERMINAL_PROMPT.search(text) or (_READLINE.search(text) and ".question(" in text))
+        _TERMINAL_PROMPT.search(text) or (_READLINE.search(text) and _KEY_QUESTION.search(text)))
 
 
 def _package_root(lockset: Lockset, near: str) -> str:

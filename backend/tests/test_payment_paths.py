@@ -1038,3 +1038,102 @@ def test_image_only_replicated_workloads_may_run_the_server():
     assert paths({"src/server.ts": memory, "docker-compose.yml": compose}, v)[STORE].severity.value == "high"
     stock = compose.replace("org/api:latest", "bitnami/redis:7")
     assert paths({"src/server.ts": memory, "docker-compose.yml": stock}, v)[STORE].severity.value == "low"
+
+
+# --------------------------------------------------------------------------- third review pass
+def test_a_payment_settled_through_a_variable_or_a_helper_is_settled():
+    rule = "security-x402-verify-without-settle"
+    paywall = VERIFY_ONLY.replace("    next();", "    req.paymentXdr = xdr;\n    next();")
+    two_hop = ('export function settleFirst() {\n  return async (req: any, res: any, next: any) => {\n'
+               '    const xdr = req.paymentXdr;\n    const tx = TransactionBuilder.fromXDR(xdr, NET);\n'
+               '    const sent = await server.sendTransaction(tx);\n'
+               '    if (sent.status !== "PENDING") return res.status(402).end();\n    next();\n  };\n}\n')
+    assert rule not in paths({"src/paywall.ts": paywall, "src/settle.ts": two_hop})
+    step = ('import { submitPayment } from "./chain";\n'
+            'export function chargeFirst() {\n  return async (req: any, res: any, next: any) => {\n'
+            '    const ok = await submitPayment(req.paymentXdr);\n'
+            '    if (!ok) return res.status(402).end();\n    next();\n  };\n}\n')
+    chain = ('export async function submitPayment(xdr: string) {\n'
+             '  const sent = await server.sendTransaction(TransactionBuilder.fromXDR(xdr, NET));\n'
+             '  return sent.status === "PENDING";\n}\n')
+    assert rule not in paths({"src/paywall.ts": paywall, "src/charge.ts": step, "src/chain.ts": chain})
+    app = ('import express from "express";\nimport { paywall } from "./paywall";\nimport { chargeFirst } from "./charge";\n'
+           'const app = express();\napp.get("/data", paywall(), chargeFirst(), (req, res) => res.json(DATA));\n')
+    assert rule not in paths({"src/paywall.ts": paywall, "src/charge.ts": step, "src/chain.ts": chain, "src/app.ts": app})
+    # A helper that is handed the payment and submits something else settles nothing.
+    refund = chain.replace("TransactionBuilder.fromXDR(xdr, NET)", "buildRefund()").replace("{\n", "{\n  log(xdr);\n", 1)
+    assert paths({"src/paywall.ts": paywall, "src/charge.ts": step, "src/chain.ts": refund})[rule].severity.value == "high"
+    # A step named after settling that only logs settles nothing.
+    named = step.replace("chargeFirst", "settleFirst").replace("const ok = await submitPayment(req.paymentXdr);", "const ok = log(req.paymentXdr);")
+    found = paths({"src/paywall.ts": paywall, "src/charge.ts": named, "src/chain.ts": chain,
+                   "src/app.ts": app.replace("chargeFirst", "settleFirst")})
+    assert found[rule].severity.value == "high"
+
+
+def test_requirements_matched_before_an_else_branch_settle_are_bound():
+    rule = "security-x402-requirements-from-payer"
+    head = SETTLE_HEAD.replace('const app', 'import { isDeepStrictEqual } from "node:util";\nconst app')
+    settle = ("    const s = await facilitator.settle(p, p.accepted);\n    if (!s.success) return res.status(402).end();\n"
+              "    res.json({ quote: 42 });\n")
+    for check in ("!isDeepStrictEqual(p.accepted, ROUTES.quote)", "p.accepted.amount !== R.amount || p.accepted.payTo !== R.payTo"):
+        handler = (head + 'app.get("/q", async (req, res) => {\n'
+                   '  const p = decodePaymentSignatureHeader(req.header("PAYMENT-SIGNATURE"));\n'
+                   f"  if ({check}) {{\n    return res.status(402).end();\n  }} else {{\n{settle}  }}\n}});\n")
+        assert rule not in paths({"src/server.ts": handler}), check
+    # The else branch of a match runs where the requirements do not match.
+    inverted = handler.replace("if (p.accepted.amount !== R.amount || p.accepted.payTo !== R.payTo) {\n    return res.status(402).end();",
+                               "if (isDeepStrictEqual(p.accepted, ROUTES.quote)) {\n    log('match');")
+    assert paths({"src/server.ts": inverted})[rule].severity.value == "critical"
+
+
+def test_a_settle_validator_that_returns_early_or_needs_another_condition():
+    rule = "security-x402-settle-unchecked"
+    body = ('app.get("/q", async (req, res) => {\n'
+            '  const s = await facilitator.settle(decodePaymentSignatureHeader(req.header("PAYMENT-SIGNATURE")), REQS);\n'
+            '  ensure(s);\n  res.json({ quote: 42 });\n});\n')
+    for helper in ("function ensure(s) { if (s.success) return; throw new Error(s.errorReason); }\n",
+                   "function ensure(s) { if (s.success) return; log(s); throw new Error(s.errorReason); }\n",
+                   "function ensure(s) { if (s && !s.success) throw new Error('unpaid'); }\n"):
+        assert rule not in paths({"src/server.ts": SETTLE_HEAD + helper + body}), helper
+    for helper in ("function ensure(s) { if (!s.success) return; throw new Error('paid'); }\n",
+                   "function ensure(s) { if (!s.success && strict) throw new Error('unpaid'); }\n",
+                   "function ensure(s) { if (s.success || lenient) return; throw new Error('unpaid'); }\n"):
+        assert paths({"src/server.ts": SETTLE_HEAD + helper + body})[rule].severity.value == "high", helper
+
+
+def test_an_async_throwing_sponsor_helper_counts_only_when_awaited():
+    throwing = "async function assertSponsorable(tx) {\n  " + GUARDS.replace("clientTx", "tx") + "\n}\n"
+    for guard in ("await assertSponsorable(clientTx);", "await Promise.all([assertSponsorable(clientTx), audit(clientTx)]);"):
+        assert not SIGNED & set(paths({"src/relay.ts": throwing + sponsor(guard, "BASE_FEE", "")})), guard
+    # Not awaited (or settled whatever happens), its rejection stops nothing: the sponsor signs
+    # whatever came in.
+    for guard in ("assertSponsorable(clientTx);", "await Promise.allSettled([assertSponsorable(clientTx)]);"):
+        assert SIGNED & set(paths({"src/relay.ts": throwing + sponsor(guard, "BASE_FEE", "")})), guard
+
+
+def test_x402_policies_that_fall_back_or_check_something_else_cap_nothing():
+    helpers = ("function isAffordable(r) { return BigInt(r.amount) <= MAX; }\n"
+               "function amountOk(a) { return BigInt(a) <= MAX; }\n")
+    uncapped = ("client.registerPolicy((v, reqs) => { for (const p of history) { if (BigInt(p.amount) > MAX) throw new Error('x'); } return reqs; });\n",
+                "client.registerPolicy((v, reqs) => reqs.filter((r) => isAffordable(budget)));\n",
+                "client.registerPolicy((v, reqs) => { const ok = reqs.filter((r) => BigInt(r.amount) <= MAX); return ok.length ? ok : reqs; });\n",
+                "client.registerPolicy((v, reqs) => { const c = reqs.find((r) => BigInt(r.amount) <= MAX); return c ? [c] : reqs; });\n")
+    for extra in uncapped:
+        assert paths({"src/pay.ts": helpers + X402_HEAD + extra + X402_WRAP}, X402_OLD)[X402].severity.value == "high", extra
+    capped = ("client.registerPolicy((v, reqs) => { const sorted = [...reqs].sort(byAmount); for (const r of sorted) { if (BigInt(r.amount) > MAX) throw new Error('x'); } return reqs; });\n",
+              "client.registerPolicy((v, reqs) => reqs.filter((r) => amountOk(r.amount)));\n",
+              "client.registerPolicy((v, reqs) => { const ok = reqs.filter((r) => BigInt(r.amount) <= MAX); return ok.length ? ok : []; });\n",
+              "client.registerPolicy((v, reqs) => { if (!reqs.length) return reqs; return reqs.filter((r) => BigInt(r.amount) <= MAX); });\n")
+    for extra in capped:
+        assert X402 not in paths({"src/pay.ts": helpers + X402_HEAD + extra + X402_WRAP}, X402_OLD), extra
+
+
+def test_an_agent_chat_loop_in_a_tools_directory_is_not_an_attended_script():
+    agent = ('import readline from "node:readline";\n' + X402_HEAD + X402_WRAP
+             + 'const rl = readline.createInterface({ input: process.stdin, output: process.stdout });\n'
+             'rl.question("Ask the agent: ", async (q) => console.log(await agent.run(q, { tools: [pay] })));\n')
+    for path in ("src/tools/pay.ts", "tools/pay.ts", "scripts/pay.ts"):
+        assert paths({path: agent}, X402_OLD)[X402].severity.value == "high", path
+    keyed = agent.replace("Ask the agent: ", "Stellar secret key: ")
+    assert paths({"tools/pay.ts": keyed}, X402_OLD)[X402].severity.value == "low"
+    assert paths({"src/tools/pay.ts": keyed}, X402_OLD)[X402].severity.value == "high"
