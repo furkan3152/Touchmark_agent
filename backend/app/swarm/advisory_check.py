@@ -141,19 +141,50 @@ def _separate_installs(lockset: Lockset, package: str, installing: bool = False)
             | {d for d, imp in lockset.importers.items() if package in (imp.get("deps") or {})})
 
 
-def _in_tree(path: str, root: str, separate: set[str]) -> bool:
-    """``path`` is in ``root``'s directory tree and not under a nested directory in ``separate``."""
-    if root and not path.startswith(root + "/"):
-        return False
-    parts = PurePosixPath(path).parts[:-1]
-    first = len(PurePosixPath(root).parts) + 1 if root else 1
-    return not any("/".join(parts[:i]) in separate for i in range(first, len(parts) + 1))
+def _spans(names: list[str], roots: set[str]) -> list[str]:
+    """The sorted ``names`` inside any of ``roots``' directory trees, each once, found by
+    bisection ('0' is the character after '/')."""
+    out, done = [], 0
+    for lo, hi in sorted((bisect_left(names, r + "/"), bisect_left(names, r + "0")) if r else (0, len(names))
+                         for r in roots):
+        out += names[max(lo, done):hi]
+        done = max(done, hi)
+    return out
 
 
-def _under(names: list[str], root: str) -> list[str]:
-    """The sorted ``names`` inside ``root``'s directory tree, found by bisection: each package
-    root reads only its own files. ('0' is the character after '/'.)"""
-    return names[bisect_left(names, root + "/"):bisect_left(names, root + "0")] if root else names
+# A package root's tree is its directory tree without the nested directories in ``separate``
+# (they install on their own): a file belongs to its own directory and to each one above it, up
+# to and including the nearest directory in ``separate``. The helpers walk up from each file and
+# stop at a directory already decided (or already full), so the cost is one walk over the files
+# and directories however deep package roots nest: no root re-reads the trees nested in its own.
+def _in_some_tree(names: list[str], roots: set[str], separate: set[str]) -> list[str]:
+    """The ``names`` that are in the tree of at least one of ``roots``."""
+    reaches: dict[str, bool] = {}
+    out = []
+    for name in names:
+        d, walked = _directory(name), []
+        while d not in reaches and d not in roots and d and d not in separate:
+            walked.append(d)
+            d = d.rpartition("/")[0]
+        reaches[d] = reached = reaches.get(d, d in roots)
+        reaches.update(dict.fromkeys(walked, reached))
+        if reached:
+            out.append(name)
+    return out
+
+
+def _first_in_trees(names: list[str], separate: set[str], keep: int) -> dict[str, list[str]]:
+    """For each directory, the first ``keep`` of the sorted ``names`` in its tree. Walks that pass
+    a directory go on alike above it, so a walk ends at a directory that already holds ``keep``."""
+    trees: dict[str, list[str]] = {}
+    for name in names:
+        d = _directory(name)
+        while len(held := trees.setdefault(d, [])) < keep:
+            held.append(name)
+            if not d or d in separate:
+                break
+            d = d.rpartition("/")[0]
+    return trees
 
 
 def _manifest(directory: str) -> str:
@@ -519,8 +550,7 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
     # JS: MPP charge servers, and passkey-kit wallets used with policy signers.
     mpp = adv.for_package("@stellar/mpp")[0]
     js_code = sorted(n for n in files if n.endswith(_JS) and not _TEST_FILE.search(n))
-    mpp_separate = _separate_installs(lockset, mpp.package)
-    mainnet_in: dict[str, bool] = {}
+    servers = []
     for name, text in sorted(files.items()):
         if not name.endswith(_JS) or "@stellar/mpp/charge/server" not in text or _TEST_FILE.search(name):
             continue
@@ -531,19 +561,21 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
         affected = [v for v in found[0] if mpp.affects(v)]
         calls = _mpp_servers_without_fee_payer(name, text) if affected else []
         if calls:
-            # Mainnet is reachable when the package's own code (not a comment, not a test) names it,
-            # a network-keyed map included: the map can select it. The package is the tree of the
-            # server's nearest manifest without nested directories that install on their own (an
-            # example app with its own lockfile or its own @stellar/mpp); it is read once.
-            root = _package_root(lockset, name)
-            if root not in mainnet_in:
-                package = {n: files[n] for n in _under(js_code, root) if _in_tree(n, root, mpp_separate)}
-                mainnet_in[root] = bool(network_hits(package, _MPP_MAINNET, skip_keyed=False))
-            mainnet = mainnet_in[root]
-            copy(mpp, affected, f"{found[1]}: @stellar/mpp {', '.join(affected)}", Severity.HIGH if mainnet else Severity.MEDIUM,
-                 "The MPP charge server accepts unsigned transaction-hash credentials",
-                 f"@stellar/mpp {affected[0]} is installed and the charge method has no feePayer."
-                 + ("" if mainnet else " Only testnet constants are reachable in this package."), calls[:5])
+            servers.append((_package_root(lockset, name), found[1], affected, calls))
+    # Mainnet is reachable when the package's own code (not a comment, not a test) names it, a
+    # network-keyed map included: the map can select it. The package is the tree of the server's
+    # nearest manifest without nested directories that install on their own (an example app with
+    # its own lockfile or its own @stellar/mpp). Each file in some server's package is read once.
+    mpp_separate = _separate_installs(lockset, mpp.package)
+    roots = {root for root, *_ in servers}
+    mainnet = _first_in_trees([n for n in _in_some_tree(_spans(js_code, roots), roots, mpp_separate)
+                               if network_hits({n: files[n]}, _MPP_MAINNET, skip_keyed=False)], mpp_separate, 1)
+    for root, source, affected, calls in servers:
+        reach = root in mainnet
+        copy(mpp, affected, f"{source}: @stellar/mpp {', '.join(affected)}", Severity.HIGH if reach else Severity.MEDIUM,
+             "The MPP charge server accepts unsigned transaction-hash credentials",
+             f"@stellar/mpp {affected[0]} is installed and the charge method has no feePayer."
+             + ("" if reach else " Only testnet constants are reachable in this package."), calls[:5])
     # Policy signers count only inside the package root that resolves passkey-kit: its directory
     # tree, nested crates included, but not a nested package that installs on its own (its own
     # npm lockfile, or its own passkey-kit dependency). That package is another wallet. A Rust
@@ -554,6 +586,8 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
     wallets = _separate_installs(lockset, passkey.package, installing=True)
     policy_files = sorted(n for n, t in files.items() if n.endswith(_JS + (".rs", ".rs.hbs")) and _POLICY_SIGNER.search(t)
                           and _POLICY_SIGNER.search(code_of(n) if n.endswith(".rs") else mask(t)[0]))
+    policy_trees = (_first_in_trees([n for n in policy_files if n.endswith((".rs", ".rs.hbs"))], wallets, 3),
+                    _first_in_trees([n for n in policy_files if n.endswith(_JS)], separate, 3))
     seen: set[str] = set()
     for name, text in sorted(files.items()):
         if not name.endswith(_JS) or not re.search(r"""["']passkey-kit["']""", text):
@@ -565,9 +599,7 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
         seen.add(resolution.root)
         consulted = True
         affected = [v for v in found[0] if passkey.affects(v)]
-        root = resolution.root
-        policies = [n for n in _under(policy_files, root)
-                    if _in_tree(n, root, wallets if n.endswith((".rs", ".rs.hbs")) else separate)]
+        policies = sorted(n for trees in policy_trees for n in trees.get(resolution.root, []))
         if affected and policies:
             legacy = " Kits before 0.13 deploy the pre-1.0 wallet contract, four builds of which have an " \
                      "unauthenticated update_signer (PASSKEY-KIT-UPDATE-SIGNER)." if below(affected[0], "0.13.0") else ""

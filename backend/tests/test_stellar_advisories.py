@@ -363,9 +363,8 @@ def test_a_nested_package_that_installs_on_its_own_is_not_part_of_the_root_walle
                                      "apps/w": {"lockfiles": ["package-lock.json"], "deps": {"passkey-kit": {}}},
                                      "apps/m": {"lockfiles": ["package-lock.json"], "deps": {}}}})
     separate = advisory_check._separate_installs(lockset, "passkey-kit")
-    assert not advisory_check._in_tree("apps/w/src/policy.ts", "", separate)
-    assert advisory_check._in_tree("apps/m/src/policy.ts", "", separate)
-    assert advisory_check._in_tree("apps/w/src/policy.ts", "apps/w", separate)
+    trees = advisory_check._first_in_trees(["apps/m/src/policy.ts", "apps/w/src/policy.ts"], separate, 3)
+    assert trees[""] == ["apps/m/src/policy.ts"] and trees["apps/w"] == ["apps/w/src/policy.ts"]
     # A workspace member that installs through the root's lockfile is part of the root's wallet.
     member = {"packages/policies/package.json": json.dumps({"name": "policies"}),
               "packages/policies/src/policy.ts": policy.replace("passkey-kit", "./kit")}
@@ -571,3 +570,89 @@ def test_range_arguments_are_read_from_one_pass_over_the_file():
         hits, safe = advisory_check._unchecked_ranges({"src/lib.rs": _rust_code(body)}, manifest)
         assert time.perf_counter() - started < 1.0, body[:30]
         assert bool(hits) is wraps and (bool(safe) or wraps), body[:30]
+
+
+def _in_tree(path: str, root: str, separate: set[str]) -> bool:
+    """The definition the tree helpers implement: ``path`` is under ``root`` and under no
+    directory in ``separate`` strictly below it."""
+    parts = path.split("/")[:-1]
+    first = len(root.split("/")) if root else 0
+    return (not root or path.startswith(root + "/")) and not any(
+        "/".join(parts[:i]) in separate for i in range(first + 1, len(parts) + 1))
+
+
+def test_package_trees_follow_their_definition_on_random_nesting():
+    import random
+    for seed in range(300):
+        rand = random.Random(seed)
+        dirs = [""]
+        for _ in range(rand.randint(1, 12)):
+            dirs.append(f"{rand.choice(dirs)}/{rand.choice('ab')}{rand.randint(0, 2)}".lstrip("/"))
+        names = sorted({f"{rand.choice(dirs)}/f{rand.randint(0, 3)}.ts".lstrip("/")
+                        for _ in range(rand.randint(1, 15))})
+        separate = set(rand.sample(dirs, rand.randint(0, len(dirs))))
+        roots = set(rand.sample(dirs, rand.randint(1, len(dirs))))
+        keep = rand.randint(1, 3)
+        trees = advisory_check._first_in_trees(names, separate, keep)
+        for d in dirs:
+            assert trees.get(d, []) == [n for n in names if _in_tree(n, d, separate)][:keep], (seed, d)
+        assert advisory_check._in_some_tree(names, roots, separate) == [
+            n for n in names if any(_in_tree(n, r, separate) for r in roots)], seed
+        assert advisory_check._spans(names, roots) == [
+            n for n in names if any(not r or n.startswith(r + "/") for r in roots)], seed
+
+
+def test_nested_package_roots_read_each_file_once(settings):
+    # A chain of package roots, each with a charge server or a passkey wallet: each root's tree
+    # holds the trees nested in it, and each root read them again.
+    def run(files: dict, importers: dict) -> tuple[list, float]:
+        lock = {"importers": {"": {"lockfiles": ["package-lock.json"], "deps": {
+            "@stellar/mpp": {"spec": "0.4.0", "version": "0.4.0", "source": "package-lock.json"},
+            "passkey-kit": {"spec": "0.12.0", "version": "0.12.0", "source": "package-lock.json"}}}, **importers}}
+        artifact = AgentArtifact(name="a", source_kind=SourceKind.REPO, source_ref="r", code_files=files,
+                                 raw_metadata={"resolved_versions": lock})
+        started = time.perf_counter()
+        found = advisory_findings(artifact, StellarNativeAuditor(settings),
+                                  today=date.fromisoformat(advisories.ADVISORIES[0].reviewed_at))
+        return found, time.perf_counter() - started
+
+    server = "import { stellar } from '@stellar/mpp/charge/server';\nexport const m = stellar.charge({ r: 1 });\n"
+    chain = ["/".join(f"p{i}" for i in range(n + 1)) for n in range(150)]
+    servers = {f"{d}/src/server.ts": server for d in chain[:60]}
+    roots = {d: {"lockfiles": [], "deps": {}} for d in chain}
+    bottom = chain[59]
+    big = {f"{bottom}/lib/f{j}.ts": "export const v = 'stellar:testnet';\n" * 3_000 for j in range(25)}  # 2.7 MB
+    [finding], took = run({**servers, **big}, roots)
+    assert took < 2.0 and finding.severity is Severity.MEDIUM  # 11 s when each root re-read the bottom
+    mainnet = {f"{bottom}/lib/net.ts": "export const n = Networks.PUBLIC;\n"}
+    [finding], _ = run({**servers, **big, **mainnet}, roots)
+    assert finding.severity is Severity.HIGH  # every root above reaches it
+    # Near miss: the same file in a nested app that installs on its own reaches no server.
+    app = {f"{bottom}/demo/net.ts": mainnet[f"{bottom}/lib/net.ts"]}
+    demo = {f"{bottom}/demo": {"lockfiles": [f"{bottom}/demo/package-lock.json"], "deps": {}}}
+    [finding], _ = run({**servers, **big, **app}, {**roots, **demo})
+    assert finding.severity is Severity.MEDIUM
+
+    # Many mainnet files in a nested install at the bottom of a long chain: each root tested
+    # each of them against its own tree. Near miss: without its own install they reach every root.
+    deep = chain[-1]
+    sep = {f"{deep}/sep/lib/f{j}.ts": "export const n = Networks.PUBLIC;\n" for j in range(400)}
+    servers = {f"{d}/src/server.ts": server for d in chain}
+    own = {f"{deep}/sep": {"lockfiles": [f"{deep}/sep/package-lock.json"], "deps": {}}}
+    [finding], took = run({**servers, **sep}, {**roots, **own})
+    assert took < 2.0 and finding.severity is Severity.MEDIUM  # 10 s
+    [finding], _ = run({**servers, **sep}, roots)
+    assert finding.severity is Severity.HIGH
+
+    # Passkey wallets: each nested root declares the kit; the policy signers sit at the bottom.
+    wallet = 'import { PasskeyKit } from "passkey-kit";\n'
+    kits = {d: {"lockfiles": [], "deps": {"passkey-kit": {"spec": "0.12.0", "version": "0.12.0",
+                                                         "source": f"{d}/package.json"}}} for d in chain}
+    wallets = {f"{d}/src/w.ts": wallet for d in chain}
+    policies = {f"{deep}/policies/q{j:04}.ts": "kit.addPolicy(x);\n" for j in range(1_000)}
+    found, took = run({"src/w.ts": wallet, **wallets, **policies}, kits)
+    assert took < 2.0  # 7 s when each root filtered the policy files under it
+    # Only the deepest wallet holds them (each root above declares the kit itself).
+    [note] = [f for f in found if "-dep-passkey-kit-policy-signer-" in f.id]
+    assert note.evidence.startswith(f"{deep}/package.json: passkey-kit 0.12.0; "
+                                    f"policy signers: {deep}/policies/q0000.ts, ")
