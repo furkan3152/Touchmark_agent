@@ -474,6 +474,18 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             "that forgot to set it.",
             defaults, "Fail at startup when the secret is unset instead of falling back to a default.",
             ["CWE-1188 Insecure Default Initialization of Resource", "CWE-798"], auditor, confidence=0.85))
+    # Rust clients that sign Soroban authorization entries: how long each signature stays valid.
+    from .auth_rules import rust_expiration_hits
+    for name, line, snippet, expiry in rust_expiration_hits(code):
+        findings.append(_finding(
+            stable_id("security-auth-expiration-wide", name, snippet),
+            expiry.severity.downgrade(1) if _TESTLIKE.search(name) else expiry.severity,
+            "Signed authorizations stay valid longer than needed",
+            "A signed Soroban authorization entry can be submitted by whoever holds it until its "
+            f"signature_expiration_ledger; {expiry.note}.",
+            [f"{name}:{line} `{' '.join(snippet.split())[:160]}`"],
+            "Expire entries a few minutes ahead, and cap any timeout the counterparty names against a constant.",
+            ["Soroban authorization", "x402 Stellar exact scheme"], auditor, grade=EvidenceGrade.INFERRED, confidence=0.8))
     by_file: dict[str, list[tuple[int, str]]] = {}
     for name, line, snippet in reused:
         by_file.setdefault(name, []).append((line, snippet))

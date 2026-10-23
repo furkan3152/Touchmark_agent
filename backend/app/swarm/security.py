@@ -32,6 +32,7 @@ from .base import BaseAuditor
 from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
 from .hardening import analyse_hardening
+from .network_rules import network_findings
 from .capabilities import authority_only_declared, code_enforced_spend_limit
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
@@ -133,6 +134,7 @@ class SecurityAuditor(BaseAuditor):
         if deep:
             findings += analyse_agentic_paths(artifact, self.name)
         findings += analyse_hardening(artifact, self.name)
+        findings += network_findings(artifact, self.name)
 
         if artifact.code_files and not any(k in surface for k in ISOLATION_SIGNALS):
             findings.append(

@@ -12,6 +12,7 @@ from bisect import bisect_right
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar.canonical import NETWORK_MARKERS
+from .network_rules import MAINNET_REACHABLE, network_hits as binding_hits
 
 #: Signing against the public network: its passphrase, the SDK constants for it, its CAIP-2 id,
 #: the mainnet USDC issuer and contracts, and the mainnet x402 facilitator.
@@ -46,6 +47,10 @@ _KEY_REACH, _BLOCK_REACH = 200, 1500
 _COMMENT = re.compile(r"\s*(?://|\*|/\*)")
 _PY_COMMENT = re.compile(r"\s*#")
 _CODE = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts", ".rs")
+#: How each network-binding rule lets mainnet in (network_rules.MAINNET_REACHABLE).
+_CHOOSES_MAINNET = {"security-network-chosen-per-call": "a tool argument picks the network",
+                    "security-network-chosen-by-counterparty": "the paid server's challenge picks the network",
+                    "security-network-fallback-mainnet": "unrecognised values fall back to mainnet"}
 #: What the code can do, against what .tmark says the agent signs.
 _SIGNS_FOR = {"payment": "payments", "contract_invocation": "contract_calls", "account_control": "account_changes",
               "foreign_tx_signing": "foreign_transactions"}
@@ -154,16 +159,23 @@ def tmark_findings(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     controls = profile.get("controls", {})
     authority, limits = declared["authority"], declared.get("limits") or {}
 
-    # Network: a testnet-only agent must not carry the public network's passphrase.
+    # Network: a testnet-only agent must not carry the public network's passphrase, nor let a
+    # tool argument, a paid server's challenge or a fallback pick mainnet (network_rules).
     if declared["agent"]["network"] == "testnet":
         hits = network_hits(artifact.code_files, _MAINNET)
-        if hits:
+        chosen = [f"{h.file}:{h.line} ({_CHOOSES_MAINNET[h.rule]})" for h in binding_hits(artifact.code_files)[0]
+                  if h.rule in MAINNET_REACHABLE]
+        if hits or chosen:
             out.append(_finding(
                 "intent-tmark-network-mismatch", Severity.HIGH, "Declared testnet only, but the code can use the public network",
-                "The .tmark says the agent runs on testnet, and the code contains the public network passphrase or "
-                "mainnet endpoints. A configuration switch, or input that picks the network, moves real funds.",
-                "; ".join(hits[:5]),
-                "Remove mainnet constants, or declare network mainnet/both and the limits that apply there.", auditor))
+                "The .tmark says the agent runs on testnet, and the code "
+                + ("contains the public network passphrase or mainnet endpoints" if hits else "")
+                + (" and " if hits and chosen else "")
+                + ("lets something other than the operator select mainnet" if chosen else "")
+                + ". A configuration switch, or input that picks the network, moves real funds.",
+                "; ".join((hits[:5] + chosen[:3]) if hits else chosen[:5]),
+                "Remove mainnet constants and pin the network to configuration, or declare network mainnet/both and "
+                "the limits that apply there.", auditor))
     # The reverse: declared mainnet, but every network the code names is testnet.
     if declared["agent"]["network"] == "mainnet":
         code = {n: t for n, t in artifact.code_files.items() if n.endswith(_CODE)}

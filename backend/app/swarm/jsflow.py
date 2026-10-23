@@ -188,6 +188,7 @@ _SPONSOR_WARNING = re.compile(r"SECURITY:\s*Verify the (?:transaction|operation)
 _MEMORY_STORE = re.compile(r"^(?:mppx(?:/\w+)?|@stellar/mpp(?:/[\w/]+)?)\.Store\.memory$")
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s$]+(?:/|$)")
 from .codeflow import AMOUNT_NAME, HANDLER_NAME, RECEIVED_NAME  # noqa: E402
+from .auth_rules import js_call as _auth_call, mark_payment_requirements as _mark_payment_requirements  # noqa: E402
 _NAME_SOURCES = {"userinput", "prompt", "payload", "command", "cmd", "code", "webhook", "query", "message", "body",
                  "request", "req", "event", "ctx"}
 _TOOL_REGISTER = re.compile(r"(?:^|\.)(?:tool|registerTool|addTool|defineTool|createTool)$")
@@ -485,6 +486,7 @@ class JsProject:
             self._index(module)
         for module in self.modules.values():
             self._entrypoints(module)
+        _mark_payment_requirements(self)
 
     @staticmethod
     def _error_share(root) -> float:
@@ -1672,6 +1674,7 @@ class _JsInterp:
         every = set().union(*args) if args else set()
         self._seller(node, label, short, callee_u, receiver_node, receiver, arg_nodes, args, state, is_new)
         sponsored = self._sponsor(node, label, short, callee_u, receiver, arg_nodes, args, is_new, state)
+        tree_inspected = _auth_call(self, node, label, short, receiver_node, receiver, arg_nodes, args, state, is_new)
         if sponsored:
             # A sponsor that checked the client's envelope signs only its own fee payment.
             receiver = receiver - sponsored
@@ -1952,7 +1955,7 @@ class _JsInterp:
             self._cap("stellar_signing", node)
             self._cap("contract_invocation", node)
             entry = args[0] if args else set()
-            if entry & (UNTRUSTED | {"foreign_tx"}) and not self.approved:
+            if entry & (UNTRUSTED | {"foreign_tx"}) and not self.approved and not tree_inspected:
                 self._cap("foreign_tx_signing", node)
                 self._flow("foreign_signing", node, entry, "an authorization entry derived from external input is signed")
             return entry

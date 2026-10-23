@@ -693,7 +693,11 @@ class _Interp:
                 key = key | {"stored_record"}
             return value | key
         if isinstance(node, ast.Call):
-            found = self.call(node, state)
+            from .auth_rules import py_call  # authorization entries (sim_auth, contract_untrusted)
+            labels, inspected = py_call(self, node, state)
+            approved, self.approved = self.approved, self.approved or inspected
+            found = self.call(node, state) | labels
+            self.approved = approved
             short = _dotted(node.func).rsplit(".", 1)[-1]
             if _HUMAN_DECISION.search(short) and not _NOT_HUMAN.search(_dotted(node.func)):
                 found = found | {"human_decision"}
