@@ -36,6 +36,14 @@ def test_a_model_finding_corroborates_the_rule_finding_of_the_same_kind_only():
     assert out[0].severity == Severity.CRITICAL and out[0].confidence > rule.confidence
 
 
+def test_a_rule_with_a_stable_id_suffix_absorbs_its_model_twin():
+    rule = _f("security-x402-settle-unchecked-490c130d", Severity.HIGH, "src/route.ts:74 `settle(p)`")
+    twin = _f("security-ai-control-bypass-4", Severity.HIGH, "src/route.ts:75 `deliver()`")
+    other = _f("security-ai-secret-exposure-5", Severity.HIGH, "src/route.ts:75 `log(key)`")
+    out = merge_duplicates([rule, twin, other])
+    assert [f.id for f in out] == [rule.id, other.id] and "security-ai-control-bypass-4" in out[0].detail
+
+
 def test_absence_notes_become_warnings_only_when_a_concrete_payment_finding_exists():
     note = _f("economic-no-spend-policy", evidence="")
     alone = fold_absence_notes([note])

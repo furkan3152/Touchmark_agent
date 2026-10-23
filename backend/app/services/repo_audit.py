@@ -246,7 +246,9 @@ _DEV_TOOLING = re.compile(r"^(?:build(?:[-_.][\w-]+)?|smoke[-_]?tests?(?:[-_][\w
 def _skipped(rel: Path) -> bool:
     parts = [p.lower() for p in rel.parts[:-1]]
     name = rel.name.lower()
-    return (any(p in SKIP_DIRS or p.startswith(".") for p in parts) or bool(_DEV_TOOLING.match(name))
+    # In a tools/ directory a name like build_transaction.ts is an agent tool, not a build script.
+    tooling = bool(_DEV_TOOLING.match(name)) and not (parts and parts[-1] in {"tools", "tool"})
+    return (any(p in SKIP_DIRS or p.startswith(".") for p in parts) or tooling
             or name.endswith((".d.ts", ".min.js", ".test.ts", ".spec.ts", ".test.js", ".spec.js", "_test.py", ".map"))
             or name.startswith("test_"))
 

@@ -40,7 +40,24 @@ _RULE_TWINS = {
     "security-path-secret-via-model": {"secret-exposure"},
     "security-path-secret-to-exfiltration": {"secret-exposure"},
     "security-path-untrusted-account-control": {"account-takeover", "control-bypass"},
+    "security-retry-may-pay-twice": {"replay-or-idempotency", "reliability-failure"},
+    "security-asset-checked-by-code-only": {"control-bypass"},
+    # Rules with stable-id suffixes, keyed without the suffix.
+    "security-x402-settle-unchecked": {"control-bypass"},
+    "security-x402-verify-without-settle": {"control-bypass"},
+    "security-x402-requirements-from-payer": {"control-bypass"},
+    "security-tx-hash-proof-unbound": {"replay-or-idempotency"},
+    "security-mpp-replay-store-missing": {"replay-or-idempotency"},
+    "security-amount-parsed-two-ways": {"control-bypass"},
+    "security-sep10-challenge-unchecked": {"foreign-transaction-signing"},
+    "stellar_native-rpc-send-treated-as-final": {"stellar-protocol-misuse"},
+    "stellar_native-rpc-response-misread": {"stellar-protocol-misuse", "functional-defect"},
+    "stellar_native-rpc-outcome-not-success-checked": {"stellar-protocol-misuse", "functional-defect"},
+    "stellar_native-soroban-upgrade-unguarded": {"account-takeover"},
+    "stellar_native-soroban-token-move-unbound": {"unauthorized-payment"},
+    "stellar_native-soroban-token-move-allowance": {"unauthorized-payment"},
 }
+_SUFFIX = re.compile(r"-[0-9a-f]{8}$")
 
 
 def stable_id(rule: str, place: str, snippet: str = "") -> str:
@@ -80,7 +97,7 @@ def merge_duplicates(findings: list[Finding]) -> list[Finding]:
         # one); for a rule finding, a nearby line and the matching kind of defect.
         twin = next((k for k in kept if k.is_risk and (
             (_same_place(k, f, 0) and _category(k.id) == _category(f.id)) if "-ai-" in k.id
-            else (_same_place(k, f) and _category(f.id) in _RULE_TWINS.get(k.id, set())))), None)
+            else (_same_place(k, f) and _category(f.id) in _RULE_TWINS.get(_SUFFIX.sub("", k.id), set())))), None)
         if twin is None:
             kept.append(f)
             continue
