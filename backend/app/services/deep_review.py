@@ -366,9 +366,15 @@ class DeepReviewer:
                 return f"Rejected: {problem}. Cite an exact line and quote it verbatim."
             dimension, label = CATEGORIES[category]
             index = len(result.findings) + 1
+            severity = Severity(args["severity"])
+            if category == "functional_defect" and severity.rank > Severity.MEDIUM.rank:
+                # A feature that does not work is reported, but it is not a way to lose funds:
+                # a defect that fails open is a control bypass, and the model files it as one.
+                # Labelled blind, high functional defects were medium in every case.
+                severity = Severity.MEDIUM
             result.findings.append(Finding(
                 id=f"{dimension.value}-ai-{category.replace('_', '-')}-{index}",
-                dimension=dimension, severity=Severity(args["severity"]),
+                dimension=dimension, severity=severity,
                 title=redact(str(args.get("title") or label)[:200]),
                 detail=redact(str(args.get("attack_scenario", ""))[:1500]
                               + ("\nStellar impact: " + str(args.get("stellar_impact", ""))[:600]
