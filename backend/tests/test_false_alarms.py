@@ -261,3 +261,11 @@ def test_the_verifier_checks_candidates_first():
     picked = selectable([_verdict(f"security-path-secret-{i}").findings[0] for i in range(3)]
                         + [_verdict("security-network-fallback-mainnet").findings[0]], limit=2)
     assert picked[0].id == "security-network-fallback-mainnet"
+
+
+def test_a_candidate_rated_no_issue_is_dismissed():
+    out = AuditSwarm._apply_disputes([_verdict("security-strkey-invalid-0a1b2c3d")], {"results": [
+        {"finding_id": "security-strkey-invalid-0a1b2c3d", "verdict": "partial", "quote_verified": True,
+         "quote": "const dest = PLACEHOLDER", "reviewed_severity": "none", "reason": "benchmark placeholder"}]})
+    f = out[0].findings[0]
+    assert not f.is_risk and f.penalty == 0 and "finds no issue" in f.detail

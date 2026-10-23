@@ -366,13 +366,15 @@ class AuditSwarm:
                                   f"{str(r.get('reason', ''))[:240]}"})
                 refuted = (r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk
                            and not f.id.startswith("stellar_native-onchain-contract-"))  # a source quote cannot refute bytecode
-                if refuted and candidate(f) and not _KEEPS_SEVERITY.search(f.id):
-                    # A candidate rule only proposes a defect; refuted at a quoted code line it is
-                    # dismissed. It stays in the report, visible, but carries no weight.
+                no_issue = (r is not None and r.get("verdict") in {"confirmed", "partial"} and f.is_risk
+                            and str(r.get("reviewed_severity", "")).lower() == "none")
+                if (refuted or no_issue) and candidate(f) and not _KEEPS_SEVERITY.search(f.id):
+                    # A candidate rule only proposes a defect; refuted at a quoted code line, or
+                    # rated as no issue at all, it is dismissed. It stays visible but carries no weight.
                     f = f.model_copy(update={
                         "kind": FindingKind.WARNING, "severity": Severity.INFO,
                         "title": "Dismissed candidate: " + f.title,
-                        "detail": f.detail + f" Independent verification refutes this candidate ({r.get('file', '')}:"
+                        "detail": f.detail + f" Independent verification {'refutes' if refuted else 'finds no issue in'} this candidate ({r.get('file', '')}:"
                                   f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.3)})
                 elif refuted:
