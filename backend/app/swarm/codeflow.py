@@ -37,6 +37,15 @@ def unparse(node) -> str:
         return ""
 
 
+def _literal_text(nodes) -> str:
+    """The string literals in ``nodes``, in source order (`["stellar", "contract", "invoke",
+    ..., "--auto-sign"]`, f-string parts, `+` chains). ast.walk is iterative, so a deeply nested
+    expression neither recurses nor loses its text."""
+    found = [c for n in nodes for c in ast.walk(n) if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+    found.sort(key=lambda c: (getattr(c, "lineno", 0), getattr(c, "col_offset", 0)))
+    return " ".join(c.value for c in found)
+
+
 UNTRUSTED = frozenset({"model", "external", "chain", "caller"})
 DIRECT = frozenset({"model", "external", "chain"})
 
@@ -176,14 +185,33 @@ class CodeProfile:
     #: Version-, network- or path-dependent facts for the rules in agentic_paths.
     facts: list[Fact] = field(default_factory=list)
     error: str = ""
+    #: What the add_* methods recorded, so each deduplicates in constant time (a linear scan
+    #: per record is quadratic in a file with thousands of sinks or switches).
+    _seen: set = field(default_factory=set, repr=False, compare=False)
 
     def has(self, capability: str) -> bool:
         return bool(self.capabilities.get(capability))
 
     def add_fact(self, kind: str, location: Location, detail: str = "", **attrs) -> None:
-        fact = Fact(kind, location, detail, tuple(sorted(attrs.items())))
-        if not any(f.kind == kind and f.location == location for f in self.facts):
-            self.facts.append(fact)
+        if ("fact", kind, location) not in self._seen:
+            self._seen.add(("fact", kind, location))
+            self.facts.append(Fact(kind, location, detail, tuple(sorted(attrs.items()))))
+
+    def add_capability(self, name: str, location: Location) -> None:
+        if ("capability", name, location) not in self._seen:
+            self._seen.add(("capability", name, location))
+            self.capabilities.setdefault(name, []).append(location)
+
+    def add_control(self, name: str, location: Location) -> None:
+        if ("control", name, location) not in self._seen:
+            self._seen.add(("control", name, location))
+            self.controls.setdefault(name, []).append(location)
+
+    def add_flow(self, flow: Flow) -> None:
+        """The first flow of a category at a location."""
+        if ("flow", flow.category, flow.location) not in self._seen:
+            self._seen.add(("flow", flow.category, flow.location))
+            self.flows.append(flow)
 
     def facts_of(self, kind: str) -> list[Fact]:
         return [f for f in self.facts if f.kind == kind]
@@ -619,22 +647,15 @@ class _Project:
         return Location(self.module_of[module], line, lines[line - 1] if 0 < line <= len(lines) else "")
 
     def capability(self, name: str, module: str, node: ast.AST) -> None:
-        bucket = self.profile.capabilities.setdefault(name, [])
-        loc = self.location(module, node)
-        if loc not in bucket:
-            bucket.append(loc)
+        self.profile.add_capability(name, self.location(module, node))
 
     def control(self, name: str, module: str, node: ast.AST) -> None:
-        bucket = self.profile.controls.setdefault(name, [])
-        loc = self.location(module, node)
-        if loc not in bucket:
-            bucket.append(loc)
+        self.profile.add_control(name, self.location(module, node))
 
     def flow(self, category: str, module: str, fn: _Function | None, node: ast.AST, labels: set[str], detail: str = "") -> None:
         loc = self.location(module, node)
-        item = Flow(category, loc, frozenset(labels & (UNTRUSTED | {"secret"})), fn.node.name if fn else "<module>", detail)
-        if not any(f.category == category and f.location == loc for f in self.profile.flows):
-            self.profile.flows.append(item)
+        self.profile.add_flow(Flow(category, loc, frozenset(labels & (UNTRUSTED | {"secret"})),
+                                   fn.node.name if fn else "<module>", detail))
 
 
 class _Interp:
@@ -884,7 +905,7 @@ class _Interp:
             self._cap("process_spawn" if fixed else "code_execution", node)
             if every & UNTRUSTED and not fixed:
                 self._flow("command", node, every, "shell=True" if shell else "")
-            if self.record and CLI_AUTO_SIGN.search(" ".join(unparse(a) for a in node.args)):
+            if self.record and CLI_AUTO_SIGN.search(_literal_text(node.args)):
                 self.p.profile.add_fact("cli_auto_sign", self.p.location(self.module, node),
                                         "stellar contract invoke --auto-sign", direct=bool(every & DIRECT))
             return set()

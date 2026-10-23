@@ -8,13 +8,16 @@ This implementation uses Stellar/Soroban transaction sinks.
 from __future__ import annotations
 
 import ast
+import posixpath
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..services.lockfiles import Lockset, below, spec_admits
 from ..stellar.canonical import NETWORK_MARKERS
 from .consolidate import stable_id
+from .jsflow import X402_V1_CAPS
 
 
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -246,12 +249,23 @@ _MAINNET_CODE = re.compile(r"\bSTELLAR_PUBNET\b|\bUSDC_SAC_MAINNET\b|\bXLM_SAC_M
                            r"[\"'](?:pubnet|mainnet)[\"']|" + "|".join(map(re.escape, NETWORK_MARKERS["mainnet"])))
 _TESTNET_CODE = re.compile(r"\bSTELLAR_TESTNET\b|\bUSDC_SAC_TESTNET\b|\bXLM_SAC_TESTNET\b|\bNetworks\.TESTNET\b|"
                            r"[\"']testnet[\"']|" + "|".join(map(re.escape, NETWORK_MARKERS["testnet"])))
+#: Test files beside the code they test (`server.test.ts`): none of it is deployed.
+_TEST_FILE = re.compile(r"[._-](?:test|spec)s?\.[cm]?[jt]sx?$")
+#: Configuration a deployment reads; `#` lines in them are comments.
+_CONFIG_FILES = (".json", ".yml", ".yaml", ".toml", ".env")
 #: Deployment descriptors that run several instances of a server (each with its own memory).
 _MULTI_INSTANCE_FILES = re.compile(r"(?:^|/)(?:vercel\.json|wrangler\.toml|serverless\.ya?ml|netlify\.toml)$")
-#: A serverless entry point: counts only in the server's own module.
-_LAMBDA_HANDLER = re.compile(r"^\s*export\s+(?:const|async\s+function|function)\s+handler\b|\bexports\.handler\s*=", re.M)
-#: Kubernetes or compose replicas above one.
-_REPLICAS = re.compile(r"^\s*replicas:\s*(?:[2-9]|\d{2,})", re.M)
+#: A serverless entry point: counts only in the server's own module. Leading blanks are
+#: [ \t] here and below: a \s crosses blank lines and backtracks quadratically on them.
+_LAMBDA_HANDLER = re.compile(r"^[ \t]*export\s+(?:const|async\s+function|function)\s+handler\b|\bexports\.handler\s*=", re.M)
+#: Stock images that run a database, cache, queue, proxy, observability tool or a bare base
+#: image (by repository name, after any registry and namespace): never the project's server.
+_STOCK_IMAGE = re.compile(r"(?:^|/)(?:postgres\w*|postgis|mysql|mariadb|mongo\w*|redis\w*|valkey|memcached|rabbitmq|nats|"
+                          r"kafka|zookeeper|elasticsearch|opensearch|minio|nginx\w*|traefik|envoy|haproxy|caddy|prometheus|"
+                          r"grafana|jaeger\w*|otel\w*|localstack|busybox|alpine|ubuntu|debian|node|python)(?:[:@]|$)")
+#: One `key: value` line of a YAML file (list items `- key: value` too); compose services and
+#: Kubernetes workloads with `replicas` above one run several instances.
+_YAML_KEY = re.compile(r"^(?P<indent>[ \t]*)(?P<dash>-[ \t]+)?(?P<key>[\w.-]+):(?:[ \t]+(?P<value>.*))?$")
 
 #: fact kind -> (finding id, severity, title, detail, remediation, references, lower on testnet)
 _FACT_RULES = {
@@ -643,25 +657,47 @@ def _x402_core(lockset: Lockset, near: str) -> tuple[list[str], str | None, str]
 
 def _x402_cap(lockset: Lockset, near: str) -> tuple[str, str]:
     """('capped' | 'uncapped' | 'depends', why) for x402 clients near ``near``."""
-    versions, spec, source = _x402_core(lockset, near)
+    return _release_cap(*_x402_core(lockset, near), X402_DEFAULT_CAP)
+
+
+def _release_cap(versions: list[str], spec: str | None, source: str, boundary: str) -> tuple[str, str]:
+    """('capped' | 'uncapped' | 'depends', why): whether the installed ``source`` caps payments
+    by default, which it does from release ``boundary``."""
     if versions:
-        old = [v for v in versions if below(v, X402_DEFAULT_CAP) is True]
-        new = [v for v in versions if below(v, X402_DEFAULT_CAP) is False]
+        old = [v for v in versions if below(v, boundary) is True]
+        new = [v for v in versions if below(v, boundary) is False]
         listed = f"{source} {', '.join(versions)} installed"
         if new and not old:
             return "capped", listed
         if old and not new:
-            return "uncapped", f"{listed}; no default cap before {X402_DEFAULT_CAP}"
+            return "uncapped", f"{listed}; no default cap before {boundary}"
         return "depends", f"{listed}; only some copies cap payments by default"
     if spec:
-        before, after = spec_admits(spec, None, X402_DEFAULT_CAP), spec_admits(spec, X402_DEFAULT_CAP, None)
+        before, after = spec_admits(spec, None, boundary), spec_admits(spec, boundary, None)
         if before and after:
-            return "depends", f"no lockfile; {source} {spec} admits releases before and after {X402_DEFAULT_CAP}: the cap depends on install date"
+            return "depends", f"no lockfile; {source} {spec} admits releases before and after {boundary}: the cap depends on install date"
         if before is True and after is False:
-            return "uncapped", f"{source} {spec}; no default cap before {X402_DEFAULT_CAP}"
+            return "uncapped", f"{source} {spec}; no default cap before {boundary}"
         if after is True and before is False:
             return "capped", f"{source} {spec}"
-    return "depends", f"installed @x402/core version unknown; payments are capped by default only from {X402_DEFAULT_CAP}"
+    return "depends", f"installed {source} version unknown; payments are capped by default only from {boundary}"
+
+
+#: Tooling a person runs by hand (the repository's tools/, any scripts/; `src/tools/` holds
+#: an agent's own tools), and a terminal prompt that waits for them: hidden key entry in raw
+#: mode, a prompt library, or a readline question that asks for a key (a chat loop's
+#: question leaves the payments to the agent).
+_TOOLING_DIR = re.compile(r"^tools/|(?:^|/)scripts/")
+_TERMINAL_PROMPT = re.compile(r"\bsetRawMode\(\s*true\s*\)|[\"'](?:prompts|inquirer|@inquirer/[\w-]{1,32}|readline-sync|enquirer)[\"']")
+_READLINE = re.compile(r"[\"'](?:node:)?readline(?:/promises)?[\"']")
+_KEY_QUESTION = re.compile(r"\.question\(\s*[\"'`][^\"'`\n]{0,80}?(?:secret|seed|private|key|mnemonic|passphrase|password)", re.I)
+
+
+def _attended_script(path: str, text: str) -> bool:
+    """A tooling script that waits for a person at a terminal prompt (its key typed in
+    hidden): one run, watched, not an unattended agent paying on its own."""
+    return bool(_TOOLING_DIR.search(path)) and bool(
+        _TERMINAL_PROMPT.search(text) or (_READLINE.search(text) and _KEY_QUESTION.search(text)))
 
 
 def _package_root(lockset: Lockset, near: str) -> str:
@@ -669,20 +705,42 @@ def _package_root(lockset: Lockset, near: str) -> str:
     return max(roots, key=len) if roots else ""
 
 
-def _testnet_only(artifact: AgentArtifact, lockset: Lockset, near: str, named: str = "") -> bool:
-    """Only testnet is named in the package that holds ``near``, so only test money moves."""
+def _testnet_only(artifact: AgentArtifact, lockset: Lockset, near: str, named: str = "",
+                  cache: dict | None = None) -> bool:
+    """Only testnet is named in the package that holds ``near``, so only test money moves.
+    Names count in code (not in its comments) and in configuration files, outside tests and
+    examples; a network-keyed map counts too, since it can select either network. The
+    package is scanned once per audit (``cache``, by package root), however many servers and
+    channel facts it holds."""
+    from .tmark_check import network_hits
     if named and (_MAINNET_CODE.search(named) or _MAINNET_CODE.search(f"'{named}'")):
         return False
     root = _package_root(lockset, near)
-    texts = [t for f, t in artifact.code_files.items()
-             if (not root or f.startswith(root + "/")) and not _NON_PRODUCTION.search(f)]
-    return any(_TESTNET_CODE.search(t) for t in texts) and not any(_MAINNET_CODE.search(t) for t in texts)
+    cache = {} if cache is None else cache
+    if ("testnet", root) not in cache:
+        package = {f: t for f, t in artifact.code_files.items() if (not root or f.startswith(root + "/"))
+                   and not _NON_PRODUCTION.search(f) and not _TEST_FILE.search(f)}
+        code = {f: t for f, t in package.items() if not f.endswith(_CONFIG_FILES)}
+        config = [t for f, t in package.items() if f.endswith(_CONFIG_FILES)]
+
+        def named_in(pattern: re.Pattern) -> bool:
+            return bool(network_hits(code, pattern, skip_keyed=False)) or any(
+                pattern.search(line) for t in config for line in t.splitlines() if not line.lstrip().startswith("#"))
+        cache[("testnet", root)] = named_in(_TESTNET_CODE) and not named_in(_MAINNET_CODE)
+    return cache[("testnet", root)]
 
 
-def _multi_instance(artifact: AgentArtifact, lockset: Lockset, near: str) -> str:
+def _multi_instance(artifact: AgentArtifact, lockset: Lockset, near: str, cache: dict | None = None) -> str:
     """A deployment marker that runs several copies of the server in ``near``: a descriptor
     in its package and in a directory that holds it, a Lambda-style handler exported by its
-    own module, or replicas above one at its package root."""
+    own module, or replicas above one at its package root. Looked up once per module."""
+    cache = {} if cache is None else cache
+    if ("instances", near) not in cache:
+        cache[("instances", near)] = _find_multi_instance(artifact, lockset, near)
+    return cache[("instances", near)]
+
+
+def _find_multi_instance(artifact: AgentArtifact, lockset: Lockset, near: str) -> str:
     root = _package_root(lockset, near)
     inside = lambda f: not root or f.startswith(root + "/")  # noqa: E731
     for path in list(artifact.raw_metadata.get("deployment_markers") or []) + list(artifact.code_files):
@@ -692,9 +750,71 @@ def _multi_instance(artifact: AgentArtifact, lockset: Lockset, near: str) -> str
     if _LAMBDA_HANDLER.search(artifact.code_files.get(near, "")):
         return near
     for path, text in artifact.code_files.items():
-        if inside(path) and path.endswith((".yml", ".yaml")) and _REPLICAS.search(text):
+        if inside(path) and path.endswith((".yml", ".yaml")) and _replicated(path, text, near):
             return path
     return ""
+
+
+def _replicated(path: str, text: str, near: str) -> bool:
+    """A compose service or Kubernetes workload in ``path`` with replicas above one that runs
+    the server in ``near``: its command names the server's module, or (with no command of its
+    own) it is built from a directory that holds the module. Another service's replicas (a
+    worker, a database) say nothing about the server."""
+    stem = posixpath.splitext(near.rsplit("/", 1)[-1])[0]
+    names = re.compile(r"(?<![\w.-])" + re.escape(stem) + r"(?:\.[cm]?[jt]sx?)?(?![\w-])")
+    folder = path.rpartition("/")[0]
+
+    def builds_server(context: str | None) -> bool:
+        if context is None:
+            return False
+        root = posixpath.normpath(posixpath.join(folder, context))
+        return root in {"", "."} or near.startswith(root + "/")
+    workloads = _yaml_workloads(text)
+    if any(replicas and (any(names.search(c) for c in commands) or (not commands and builds_server(build)))
+           for replicas, build, commands, _ in workloads):
+        return True
+    # A file that names neither builds nor commands deploys images that run their own default
+    # command (the usual Kubernetes Deployment): one of the project's images may be the server;
+    # a stock database, cache, proxy or base image is not.
+    return not any(build is not None or commands for _, build, commands, _ in workloads) and any(
+        replicas and images and not all(_STOCK_IMAGE.search(i) for i in images) for replicas, _, _, images in workloads)
+
+
+@lru_cache(maxsize=256)
+def _yaml_workloads(text: str) -> tuple:
+    """(replicas above one, build context, command lines, images) per compose service, or per
+    YAML document outside `services:` (a Kubernetes workload). One pass over the lines."""
+    groups: dict[tuple, list] = {}
+    stack: list[tuple[int, str]] = []
+    doc = 0
+    for line in text.splitlines():
+        if line.startswith("---"):
+            doc, stack = doc + 1, []
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        m = _YAML_KEY.match(line)
+        if m is not None:
+            indent = len(m.group("indent")) + len(m.group("dash") or "")
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+        service = stack[1][1] if len(stack) > 1 and stack[0][1] == "services" else None
+        group = groups.setdefault((doc, service), [False, None, [], []])
+        if m is None:  # a list item: `- node` / `- dist/server.js` under command or args
+            if stack and stack[-1][1] in {"command", "entrypoint", "args"}:
+                group[2].append(line)
+            continue
+        key, value = m.group("key"), (m.group("value") or "").split(" #")[0].strip().strip("\"'")
+        if key == "replicas" and value.isdigit() and int(value) > 1:
+            group[0] = True
+        elif key in {"build", "context"} and value:
+            group[1] = value
+        elif key in {"command", "entrypoint", "args"}:
+            group[2].append(value)
+        elif key == "image" and value:
+            group[3].append(value)
+        stack.append((indent, key))
+    return tuple((replicas, build, tuple(commands), tuple(images)) for replicas, build, commands, images in groups.values())
 
 
 def _adjusted(kind: str, severity: Severity, file: str, testnet: bool) -> tuple[Severity, list[str]]:
@@ -719,9 +839,25 @@ def _payment_sdk_findings(artifact: AgentArtifact, profile, lockset: Lockset, by
     switched_off = {f.location for f in profile.facts_of("x402_controls_off")}
     disabled_files = {f.location.file for f in profile.facts_of("x402_spend_controls_disabled")}
 
-    # (A) x402 payers: whether the wrapped fetch pays whatever a 402 asks depends on the release.
-    kept, notes = [], {}
+    # (A) x402 payers: whether the wrapped fetch pays whatever a 402 asks depends on the release
+    # of @x402/core, or of the v1 wrapper (x402-fetch, x402-axios). Clients from other
+    # x402 libraries keep the plain path rule.
+    other_clients = {f.location: f.get("package") or "" for f in profile.facts_of("x402_other_client")}
+    kept, notes, others = [], {}, []
     for flow in by_category.pop("x402_unbounded", []):
+        if flow.location in other_clients:
+            package = other_clients[flow.location]
+            if package in X402_V1_CAPS:
+                # The v1 wrappers cap at their own `maxValue` from a known release.
+                versions, spec, _ = _installed(lockset, package, flow.location.file)
+                state, why = _release_cap(versions, spec, package, X402_V1_CAPS[package])
+                if state != "capped":
+                    severity = Severity.HIGH if state == "uncapped" else Severity.MEDIUM
+                    kept.append((flow, severity.downgrade(1) if _NON_PRODUCTION.search(flow.location.file) else severity, state))
+                    notes[flow.location] = why
+                continue
+            others.append(flow)
+            continue
         state, why = _x402_cap(lockset, flow.location.file)
         off = flow.location in switched_off or flow.location.file in disabled_files
         if state == "capped" or (off and state != "uncapped"):
@@ -738,35 +874,48 @@ def _payment_sdk_findings(artifact: AgentArtifact, profile, lockset: Lockset, by
             severity = severity.downgrade(1)
         kept.append((flow, severity, state))
         notes[flow.location] = why
-    if kept:
-        fid, _, title, detail, remediation, refs = _PATH_RULES["x402_unbounded"]
+    if kept or others:
+        fid, high, title, detail, remediation, refs = _PATH_RULES["x402_unbounded"]
         kept.sort(key=lambda item: -item[1].rank)
+        entries = [(severity, f"{flow.location.render()} [{notes[flow.location]}]", flow) for flow, severity, _ in kept]
+        entries += [(high, _evidence([flow]), flow) for flow in others]
+        # A tooling script that stops for a person at a terminal prompt runs once, with that
+        # person watching; the agent does not pay unattended through it.
+        entries = [(Severity.LOW, text + " [a script a person runs at a prompt]", flow)
+                   if _attended_script(flow.location.file, artifact.code_files.get(flow.location.file, "")) else (severity, text, flow)
+                   for severity, text, flow in entries]
+        entries.sort(key=lambda item: -item[0].rank)
         findings.append(Finding(
-            id=fid, dimension=Dimension.SECURITY, severity=kept[0][1], title=title,
+            id=fid, dimension=Dimension.SECURITY, severity=entries[0][0], title=title,
             detail=detail + (" Whether the installed x402 release caps payments by default could not be "
                              "established for every client." if any(s == "depends" for _, _, s in kept) else ""),
-            evidence="; ".join(f"{flow.location.render()} [{notes[flow.location]}]" for flow, _, _ in kept[:5]),
-            evidence_grade=EvidenceGrade.CONFIRMED if kept[0][2] == "uncapped" else EvidenceGrade.INFERRED,
+            evidence="; ".join(text for _, text, _ in entries[:5]),
+            evidence_grade=EvidenceGrade.CONFIRMED if others or kept[0][2] == "uncapped" else EvidenceGrade.INFERRED,
             remediation=remediation, references=refs, auditor=auditor, confidence=0.95))
 
     # (B) x402 switches. Before 2.23.0 they switch nothing off; (A) reports that client.
+    abort_hooks = {f.location.file for f in profile.facts_of("x402_abort_hook")}
     for kind in ("x402_spend_controls_disabled", "x402_any_asset"):
         for fact in profile.facts_of(kind):
             file = fact.location.file
             cap_state = _x402_cap(lockset, file)[0]
             if cap_state == "uncapped":
                 continue
+            if kind == "x402_spend_controls_disabled" and fact.get("browser"):
+                # A browser paywall or wallet-signed client: the person approves each payment
+                # in the wallet prompt, after the amount is shown. Unattended clients still fire.
+                continue
             severity = _FACT_RULES[kind][1]
-            text = artifact.code_files.get(file, "")
-            if kind == "x402_spend_controls_disabled" and "onBeforePaymentCreation" in text and re.search(r"\babort\s*:\s*true", text):
-                severity = Severity.MEDIUM  # a hook can still refuse a payment
+            if kind == "x402_spend_controls_disabled" and file in abort_hooks:
+                severity = Severity.MEDIUM  # a registered hook can still refuse a payment
             severity, extra = _adjusted(kind, severity, file, False)
             # Confirmed only on a resolved release that has the switch (2.23.0 or later).
             hits.append(_FactHit(kind, fact.location, severity, "; ".join(
                 extra + ([] if cap_state == "capped" else ["installed @x402/core release not resolved"])),
                 grade=EvidenceGrade.CONFIRMED if cap_state == "capped" else EvidenceGrade.INFERRED))
 
-    # (C) MPP servers, and (D) client switches.
+    # (C) MPP servers, and (D) client switches. Package scans are shared by every fact.
+    scanned: dict = {}
     for fact in profile.facts_of("mpp_server"):
         file, mode = fact.location.file, fact.get("mode")
         versions, spec, _ = _installed(lockset, "@stellar/mpp", file)
@@ -777,14 +926,14 @@ def _payment_sdk_findings(artifact: AgentArtifact, profile, lockset: Lockset, by
         else:
             optional = bool(spec) and spec_admits(spec, None, boundary) is True and spec_admits(spec, boundary, None) is False
             installed = f"@stellar/mpp {spec}"
-        testnet = _testnet_only(artifact, lockset, file, fact.get("network") or "")
+        testnet = _testnet_only(artifact, lockset, file, fact.get("network") or "", scanned)
         store = fact.get("store")
         if store == "none" and optional:
             severity, extra = _adjusted("mpp_replay_store", Severity.HIGH, file, testnet)
             hits.append(_FactHit("mpp_replay_store", fact.location, severity,
                                  "; ".join([f"no store; {installed}: replay checks run only with a store"] + extra)))
         elif store == "memory":
-            marker = _multi_instance(artifact, lockset, file)
+            marker = _multi_instance(artifact, lockset, file, scanned)
             severity, extra = _adjusted("mpp_replay_store", Severity.HIGH if marker else Severity.LOW, file,
                                         testnet and bool(marker))
             hits.append(_FactHit(
@@ -798,7 +947,7 @@ def _payment_sdk_findings(artifact: AgentArtifact, profile, lockset: Lockset, by
     for kind in ("mpp_unsigned_push", "mpp_channel_state_unchecked", "mpp_unpinned_channel"):
         for fact in profile.facts_of(kind):
             file = fact.location.file
-            severity, extra = _adjusted(kind, _FACT_RULES[kind][1], file, _testnet_only(artifact, lockset, file))
+            severity, extra = _adjusted(kind, _FACT_RULES[kind][1], file, _testnet_only(artifact, lockset, file, cache=scanned))
             hits.append(_FactHit(kind, fact.location, severity, "; ".join(extra)))
     for fact in profile.facts_of("cli_auto_sign"):
         severity, extra = _adjusted("cli_auto_sign", Severity.MEDIUM if fact.get("direct") else Severity.LOW,
