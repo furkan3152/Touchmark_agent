@@ -333,7 +333,21 @@ def _issue(ticket: dict, signed_xdr: str = "") -> dict:
         "report_matches": on_chain_hash == ticket["report_sha256"], "is_current": bool(current),
         "expires_at": int(credential["expires_at"]), "transactions": chain.transactions,
         "already_issued": existing is not None,
+        **_card(ticket, req_id.hex(), chain.credential, chain_owner, on_chain_hash, int(credential["score"]),
+                int(credential["expires_at"]), bool(current)),
     }
+
+
+def _card(ticket: dict, token_id: str, contract: str, owner: str, report_sha256: str, score: int,
+          expires_at: int, current: bool) -> dict:
+    """The credential drawn from what the ledger returned, and its token metadata."""
+    from ..reporting.credential_card import card_svg, token_metadata
+    record = {"agent_name": ticket["repository"].rstrip("/").rsplit("/", 1)[-1], "decision": "pass", "score": score,
+              "owner": owner, "token_id": token_id, "report_sha256": report_sha256, "expires_at": expires_at,
+              "network": "testnet", "contract": contract, "version": ticket.get("revision", ""),
+              "revoked": not current and expires_at > time.time()}
+    return {"card_svg": card_svg(record),
+            "metadata": token_metadata(record, external_url=f"{EXPLORER}/contract/{contract}")}
 
 
 async def issue_demo_credential(ticket: str, signed_xdr: str = "") -> dict:
