@@ -56,7 +56,6 @@ MESSAGES = {
 "compliance-wallet-screening-hit": ("High-risk wallet screening result", "A configured screening source returned a high-risk result; inspect the source evidence and timestamp.", "Validate the match and escalate for appropriate review before granting financial authority."),
 "compliance-wallet-screening-medium": ("Wallet screening requires review", "A configured screening source returned an intermediate risk result.", "Investigate the source evidence and apply the relevant operating policy."),
 "stellar_native-stellar-secret-seed": ("Stellar signing secret in source", "A source pattern matches a Stellar secret seed. Treat exposed signing authority as compromised.", "Rotate the key, remove it from source and history, and use an isolated signer."),
-"stellar_native-soroban-auth-missing": ("Soroban authorization not evidenced", "A write-capable contract surface lacks recognized require_auth enforcement.", "Require authorization for the exact action arguments and add negative authorization tests."),
 "stellar_native-persistent-ttl": ("Persistent storage TTL renewal missing", "The submitted contract does not show renewal for relevant persistent state.", "Implement and test TTL renewal and archived-entry restoration."),
 "stellar_native-temporary-critical-state": ("Critical state may use temporary storage", "Storage signals suggest important records may disappear when temporary entries expire.", "Use appropriate persistent storage and test expiration and restoration behavior."),
 "stellar_native-event-cursor-missing": ("Event cursor or deduplication missing", "The source lacks recognized durable cursor and replay-handling signals for Soroban events.", "Persist cursors and deduplicate by stable event identifiers."),
@@ -88,6 +87,7 @@ MESSAGES.update({
 "security-path-unenforced-financial-controls": ("Stellar financial controls not evidenced", "Signing tools are declared, but implementation-level financial controls are not demonstrated in the supplied source.", "Enforce authorization, recipient allowlists, limits and replay protection, and test rejection paths."),
 })
 CODE_MESSAGES = {
+"Soroban authorization paths require review": ("Soroban authorization not evidenced", "A write-capable contract surface lacks recognized require_auth enforcement.", "Require authorization for the exact action arguments and add negative authorization tests."),
 "eval() kullanımı": ("Dynamic eval() execution", "Dynamic evaluation can interpret untrusted input as executable code.", "Remove dynamic evaluation or isolate execution with strictly bounded input."),
 "exec() kullanımı": ("Dynamic exec() execution", "Dynamic execution may allow untrusted content to become code.", "Remove dynamic execution and use explicit, typed operations."),
 "shell=True ile subprocess": ("Subprocess invokes a shell", "Shell invocation increases command-injection risk if any argument is attacker-influenced.", "Use argument arrays with shell=False, validate each argument and isolate the process."),

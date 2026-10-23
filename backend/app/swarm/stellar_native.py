@@ -10,56 +10,67 @@ from ..stellar.wasm_profile import (AUTH, AUTH_CALLS, CALL, DELEGATED_SIGNERS, E
 from .base import BaseAuditor
 
 
+#: Where a comment or literal can start: line or block comment, raw string, string, char.
+_LEXEME = re.compile(r'//|/\*|(?:br|r)(#{0,255})"|"|\'')
+_CHAR = re.compile(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'")
+_NOT_NEWLINE = re.compile(r'[^\n]')
+
+
 def _rust_code(source: str) -> str:
-    """Mask Rust comments/literals, retaining offsets; this is not a Rust parser."""
-    result = list(source)
-    i = 0
-    while i < len(source):
-        end = None
-        if source.startswith('//', i):
+    """Mask Rust comments/literals, retaining offsets; this is not a Rust parser. Linear: it
+    jumps from one possible comment or literal start to the next."""
+    out, last, i, n = [], 0, 0, len(source)
+    while True:
+        m = _LEXEME.search(source, i)
+        if not m:
+            break
+        i, token = m.start(), m.group()
+        if token == '//':
             end = source.find('\n', i)
-            if end < 0: end = len(source)
-        elif source.startswith('/*', i):
+            if end < 0: end = n
+        elif token == '/*':
             depth, end = 1, i + 2
-            while end < len(source) and depth:
+            while end < n and depth:
                 if source.startswith('/*', end): depth += 1; end += 2
                 elif source.startswith('*/', end): depth -= 1; end += 2
                 else: end += 1
+        elif token == '"':
+            end = i + 1
+            while end < n:
+                if source[end] == '\\': end += 2
+                elif source[end] == '"': end += 1; break
+                else: end += 1
+        elif token == "'":
+            # Do not consume lifetimes such as &'a Address.
+            char = _CHAR.match(source, i)
+            if not char:
+                i += 1
+                continue
+            end = char.end()
         else:
-            raw = re.match(r'(?:br|r)(#{0,255})"', source[i:])
-            if raw:
-                closing = '"' + raw.group(1)
-                found = source.find(closing, i + len(raw.group()))
-                end = len(source) if found < 0 else found + len(closing)
-            elif source[i] == '"':
-                end = i + 1
-                while end < len(source):
-                    if source[end] == '\\': end += 2
-                    elif source[end] == '"': end += 1; break
-                    else: end += 1
-            elif source[i] == "'":
-                # Do not consume lifetimes such as &'a Address.
-                char = re.match(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'", source[i:])
-                if char: end = i + len(char.group())
-        if end is not None:
-            for pos in range(i, min(end, len(source))):
-                if result[pos] != '\n': result[pos] = ' '
-            i = end
-        else:
-            i += 1
-    return ''.join(result)
+            closing = '"' + m.group(1)
+            found = source.find(closing, m.end())
+            end = n if found < 0 else found + len(closing)
+        end = min(end, n)
+        out.append(source[last:i])
+        out.append(_NOT_NEWLINE.sub(' ', source[i:end]))
+        last = i = end
+    out.append(source[last:])
+    return ''.join(out)
 
 
 _FUNCTION = re.compile(r'\b(?P<public>pub(?:\s*\([^)]*\))?\s+)?(?:(?:async|unsafe|const)\s+)*fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b')
 _PERSISTENT = r'\.\s*storage\s*\(\s*\)\s*\.\s*persistent\s*\(\s*\)'
-_MUTATION = re.compile(r'\.\s*(?:set|remove|update|try_update|transfer|transfer_from|mint|burn|approve)\s*\(')
-_MUTATING_NAME = re.compile(r'^(?:set|reg|upd|fund|submit|complete|refund|initialize|init|mint|burn|transfer|approve|revoke|publish|issue|pause|withdraw|deposit|bind|add|remove)')
+_MUTATION = re.compile(r'\.\s*(?:set|remove|update|try_update|transfer|transfer_from|mint|burn|approve|'
+                       r'update_current_contract|update_current_contract_wasm)\s*\(')
+_MUTATING_NAME = re.compile(r'^(?:set|reg|upd|upg|fund|submit|complete|refund|initialize|init|mint|burn|transfer|approve|revoke|publish|issue|pause|withdraw|deposit|bind|add|remove)')
 _AUTH = re.compile(r'\.\s*require_auth(?:_for_args)?\s*\(')
 
 
-def _rust_functions(source: str, include_private: bool = False) -> list[dict]:
-    """Bound public function bodies conservatively, without resolving Rust types/macros."""
-    code = _rust_code(source)
+def _rust_functions(source: str, include_private: bool = False, code: str | None = None) -> list[dict]:
+    """Bound public function bodies conservatively, without resolving Rust types/macros.
+    ``code`` is the already masked source, when the caller has it."""
+    code = _rust_code(source) if code is None else code
     functions = []
     for match in _FUNCTION.finditer(code):
         start = code.find('{', match.end())
@@ -122,11 +133,12 @@ class StellarNativeAuditor(BaseAuditor):
     ) -> tuple[list[Finding], list[ScenarioResult], str]:
         findings: list[Finding] = []
         surface = artifact.text_surface()
+        from .soroban_rules import _STRONG_ATTR, SorobanRules, placed_in_package, render_template  # builds on this module
         rust_files = {name: content for name, content in artifact.code_files.items() if name.endswith('.rs')}
         # A .rs file outside every crate is not built or deployed: a sample or fixture (an
         # auditor's test inputs, a stray draft). Only crate sources are judged as contracts.
         crates = {name.rsplit('/', 1)[0] if '/' in name else '' for name, text in artifact.code_files.items()
-                  if name.endswith('Cargo.toml') and re.search(r'soroban-sdk|\[workspace\]', text)}
+                  if name.endswith(('Cargo.toml', 'Cargo.toml.hbs')) and re.search(r'soroban-sdk|\[workspace\]', text)}
         if crates or artifact.source_kind == SourceKind.REPO:
             # A repository with no Soroban crate builds no contract from its loose .rs files, and
             # in a Rust workspace only the files that use soroban_sdk are contract code: a CLI or
@@ -134,12 +146,21 @@ class StellarNativeAuditor(BaseAuditor):
             rust_files = {name: content for name, content in rust_files.items()
                           if any(c == '' or name.startswith(c + '/') for c in crates)
                           and re.search(r'\bsoroban_sdk\b|#\[contract', content)}
-        rust = '\n'.join(_rust_code(content) for content in rust_files.values())
+        # A generator's contract template (lib.rs.hbs) is every contract it generates, wherever its
+        # Cargo template lives. It is rendered with every {{#if}} branch kept.
+        templates = {name: render_template(content) for name, content in artifact.code_files.items()
+                     if name.endswith('.rs.hbs')}
+        templates = {name: text for name, text in templates.items()
+                     if re.search(r'\bsoroban_sdk\b', text) and '#[contractimpl' in text}
+        rust_files.update(templates)
+        # Each file is masked once; every rule below reads the masked text.
+        masked = {name: _rust_code(content) for name, content in rust_files.items()}
+        rust = '\n'.join(masked.values())
         # Entry points are the public functions of a #[contractimpl] block; a crate's client or
         # helper modules that only use soroban_sdk types expose none.
         functions = [{**fn, 'file': name} for name, content in rust_files.items()
                      if artifact.source_kind != SourceKind.REPO or '#[contractimpl' in content
-                     for fn in _rust_functions(content)]
+                     for fn in _rust_functions(content, code=masked[name])]
         lower = surface.lower()
 
         from stellar_sdk import StrKey
@@ -172,57 +193,98 @@ class StellarNativeAuditor(BaseAuditor):
                 )
             )
 
+        # Whose authorization a contract checks, and what it covers (soroban_rules). A function
+        # those rules judged is not reported again by the presence check below.
+        tmark_limits = ((artifact.raw_metadata.get("tmark") or {}).get("declared") or {}).get("limits") or {}
+        soroban = SorobanRules(self, rust_files, loose=artifact.source_kind != SourceKind.REPO, templates=set(templates),
+                               limits_declared=bool(tmark_limits.get("per_payment") or tmark_limits.get("per_day")),
+                               masked=masked, context=artifact.code_files).run()
+        findings += soroban.findings
+        # Test code (src/test.rs, #[cfg(test)] modules, tests/) is never deployed: its mock
+        # contracts are not entry points.
+        functions = [fn for fn in functions if fn['file'] not in soroban.tests]
         # Constructor deployment authorization and custom-account __check_auth
         # are separate boundaries; requiring require_auth inside them is unsound.
         mutating = [fn for fn in functions if fn['name'] not in {'__constructor', '__check_auth'}
+                    and (fn['file'], fn['name']) not in soroban.claimed
                     and (_MUTATING_NAME.search(fn['name']) or _MUTATION.search(fn['body']))]
         # Authorization and TTL renewal are often done in a helper (`Self::create_task`,
         # `extend_persistent_ttl`); a call to a helper that performs them counts.
-        everything = [{**fn, 'file': name} for name, content in rust_files.items()
-                      for fn in _rust_functions(content, include_private=True)]
+        everything = [{**fn, 'file': name} for name, content in rust_files.items() if name not in soroban.tests
+                      for fn in _rust_functions(content, include_private=True, code=masked[name])]
         auth_helpers = _providers(everything, lambda body: bool(_AUTH.search(body)))
         ttl_helpers = _providers(everything, lambda body: bool(re.search(r'\.\s*extend_ttl\s*\(', body)))
         # Conservative: a gap stays a gap unless the check is in the function's own body.
         # Severity separates "no check anywhere" (high) from "only through a helper, or a
         # read that cannot create state" (medium, needs review).
-        auth_gaps = [fn for fn in mutating if not _AUTH.search(fn['body'])]
+        def attributed(fn):  # OpenZeppelin #[only_owner]/#[only_admin]/#[only_role] require the auth
+            code = masked[fn['file']]
+            return bool(_STRONG_ATTR.search(code[max(code.rfind(c, 0, fn['start']) for c in '{};') + 1:fn['start']]))
+        auth_gaps = [fn for fn in mutating if not _AUTH.search(fn['body']) and not attributed(fn)]
         auth_hard = [fn for fn in auth_gaps if not _calls_any(fn['body'], auth_helpers)]
+        # An initializer with no once-only guard in a built package: anyone can call it again and
+        # replace the administrator, whatever authorization it asks of the address it is given.
+        reinit = [{'file': fn.file, 'line': fn.line, 'name': fn.name} for fn in soroban.reinit
+                  if placed_in_package(fn.file, artifact.code_files, soroban.tests)]
         persistent = [fn for fn in functions if re.search(_PERSISTENT, fn['body'])]
         ttl_gaps = [fn for fn in persistent if not _has_persistent_ttl(fn['body'])]
         ttl_hard = [fn for fn in ttl_gaps
                     if _MUTATION.search(fn['body']) and not _calls_any(fn['body'], ttl_helpers)]
         def locations(items):
             return '; '.join(f"{fn['file']}:{fn['line']} {fn['name']}" for fn in items)
-        if auth_gaps:
+        if auth_gaps or reinit:
+            first_caller = [fn for fn in auth_hard if re.fullmatch(r'init(?:ialize)?', fn['name'])]
+            lexical = [fn for fn in auth_hard + [g for g in auth_gaps if g not in auth_hard]
+                       if not any(fn['file'] == r['file'] and fn['name'] == r['name'] for r in reinit)]
             finding = self.finding(
                 "soroban-auth-missing",
-                # Hand audits rated these medium or low: a lexical gap, not a shown bypass.
-                Severity.MEDIUM if auth_hard else Severity.LOW,
+                # Hand audits rated these medium or low: a lexical gap, not a shown bypass. An
+                # initializer that can run again hands the contract to whoever calls it.
+                Severity.HIGH if reinit else Severity.MEDIUM if auth_hard else Severity.LOW,
+                # The plain lexical title reads as "Soroban authorization not evidenced" in the
+                # English report; the specific cases keep their own title and text.
+                "An initializer can be run again by anyone" if reinit else
+                "Soroban authorization not evidenced; an initializer can be front-run" if first_caller else
                 "Soroban authorization paths require review",
-                "Potentially mutating public functions lack a direct require_auth call in their own body. Authorization may exist in a helper or caller; this lexical review does not establish an exploitable authorization bypass.",
-                evidence=locations(auth_hard + [fn for fn in auth_gaps if fn not in auth_hard]),
-                remediation="Trace each entrypoint's actual authorization path, including helpers and invocation context, and run unauthorized-caller tests bound to the exact action arguments.",
-                grade=EvidenceGrade.INFERRED,
+                " ".join(part for part, present in (
+                    ("An initializer has no once-only guard: anyone can call it again at any time and replace the "
+                     "administrator (or other authority) it sets, which the contract's other functions trust.", reinit),
+                    ("Potentially mutating public functions lack a direct require_auth call in their own body. Authorization may exist in a helper or caller; this lexical review does not establish an exploitable authorization bypass.", auth_gaps),
+                    ("An initializer that requires nobody's authorization can be called first by anyone after "
+                     "deployment (front-running) and set the administrator.", first_caller)) if present),
+                evidence=locations(reinit + lexical),
+                remediation="Trace each entrypoint's actual authorization path, including helpers and invocation context, and run unauthorized-caller tests bound to the exact action arguments."
+                            + (" Initialize in __constructor, or refuse a second initialization and require the "
+                               "deployer's authorization." if reinit or first_caller else ""),
+                # Confirmed only when every location listed is an initializer that can run again.
+                grade=EvidenceGrade.CONFIRMED if reinit and not lexical else EvidenceGrade.INFERRED,
                 confidence=0.75,
             )
             # Every gap reaches a helper that calls require_auth: nothing is shown to be
             # missing, only unverified. That is an evidence gap, not a risk.
-            findings.append(finding if auth_hard else finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
+            findings.append(finding if auth_hard or reinit else finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
 
         # Per-record entries (a key with an id: Channel(id), Balance(addr)) in instance storage:
         # the instance is one ledger entry, loaded on every call and size-limited, so records
         # that grow with use make every call costlier and can lock the contract.
-        records = [f"{name}:{content[:m.start()].count(chr(10)) + 1}"
+        records = [(name, m.start(), f"{name}:{content[:m.start()].count(chr(10)) + 1}")
                    for name, content in rust_files.items() if '#[contractimpl' in content
-                   for m in re.finditer(r"\.instance\(\)\s*\.set\(\s*&\s*(?:\w+::)?\w+\(\s*[^)\s]", _rust_code(content))]
+                   for m in re.finditer(r"\.instance\(\)\s*\.set\(\s*&\s*(?:\w+::)?\w+\(\s*[^)\s]", masked[name])]
+        # Records any caller can create, in a contract that holds tokens: filling the instance
+        # locks every deposit in it, not only the caller's (skipped for samples and tests).
+        open_records = [where for name, offset, where in records
+                        if placed_in_package(name, artifact.code_files, soroban.tests) and soroban.open_writer(name, offset)]
+        records = open_records + [where for _, _, where in records if where not in open_records]
         if records:
             findings.append(self.finding(
                 "instance-storage-records",
-                Severity.MEDIUM,
+                Severity.HIGH if open_records else Severity.MEDIUM,
                 "Per-record state is kept in instance storage",
                 "Entries keyed by an id or address are written to the contract instance. The instance is a single "
                 "ledger entry that every call loads and that has a size limit, so records that grow with use raise the "
-                "cost of every call and can make the contract unusable; they also share the instance's lifetime.",
+                "cost of every call and can make the contract unusable; they also share the instance's lifetime."
+                + (" Any caller can create these records, and the contract holds deposited tokens: filling the "
+                   "instance makes every call fail and locks every deposit." if open_records else ""),
                 evidence="; ".join(records[:6]),
                 remediation="Keep per-user and per-record data in persistent storage, each entry with its own TTL "
                             "extension, and keep instance storage for small contract-wide configuration.",
@@ -406,7 +468,12 @@ class StellarNativeAuditor(BaseAuditor):
             )
         source = artifact.onchain.data_source
         findings += self._authority_findings(artifact)
-        return findings, scenarios, f"Stellar/Soroban source review; onchain source={source}. Rust checks are bounded lexical evidence, not a compiler, call graph, authorization proof or runtime test. Constructor and custom-account authorization need separate verification."
+        delegated = (f" __check_auth is delegated to a library (do_check_auth) at {', '.join(soroban.library_auth[:3])}: "
+                     "its safety is the library version's." if soroban.library_auth else "")
+        union = (" Code-generator templates are judged with every {{#if}} branch kept, so a check that only one "
+                 "branch contains counts as always present, and a defect of a single configuration can be missed."
+                 if templates else "")
+        return findings, scenarios, f"Stellar/Soroban source review; onchain source={source}. Rust checks are bounded lexical evidence, not a compiler, call graph, authorization proof or runtime test. Constructor and custom-account authorization need separate verification.{delegated}{union}"
 
     # ------------------------------------------------------------ ledger authority
     def _authority_findings(self, artifact: AgentArtifact) -> list[Finding]:

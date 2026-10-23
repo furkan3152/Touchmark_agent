@@ -161,3 +161,24 @@ pub fn lock(env: Env, payer: Address, amount: i128) {
 }
 ''')
     assert any(f.id == 'stellar_native-temporary-critical-state' for f in escrow.findings)
+
+
+def test_openzeppelin_only_attributes_count_as_authorization(settings, run):
+    verdict = check(settings, run, '''
+#[only_owner]
+pub fn set_fee(e: &Env, fee: u32) { e.storage().instance().set(&0, &fee); }
+#[only_role(caller, "manager")]
+pub fn set_limit(e: &Env, limit: u32, caller: Address) { e.storage().instance().set(&1, &limit); }
+pub fn set_other(e: &Env, value: u32) { e.storage().instance().set(&2, &value); }
+''')
+    finding = next(f for f in verdict.findings if f.id == 'stellar_native-soroban-auth-missing')
+    assert 'set_other' in finding.evidence
+    assert 'set_fee' not in finding.evidence and 'set_limit' not in finding.evidence
+
+
+def test_upgrade_entry_points_are_judged_by_the_upgrade_rule_not_twice(settings, run):
+    verdict = check(settings, run, '''
+pub fn upgrade(env: Env, hash: BytesN<32>) { env.deployer().update_current_contract_wasm(hash); }
+''')
+    assert [f.severity.value for f in verdict.findings if f.id.startswith('stellar_native-soroban-upgrade-unguarded')] == ['critical']
+    assert not any(f.id == 'stellar_native-soroban-auth-missing' for f in verdict.findings)
