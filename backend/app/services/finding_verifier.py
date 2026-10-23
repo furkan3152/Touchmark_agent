@@ -254,5 +254,11 @@ def verifier_from_settings(settings) -> FindingVerifier | None:
 
 
 async def verify_artifact(verifier: FindingVerifier, artifact: AgentArtifact, findings: list[Finding]) -> dict:
-    run = await verifier.verify(selectable(findings), artifact.code_files)
+    files = dict(artifact.code_files)
+    declared = (artifact.raw_metadata.get("tmark") or {}).get("declared")
+    if declared and ".tmark" not in files:
+        # Claims that compare the code with the declaration need the declaration to be judged.
+        import json
+        files[".tmark"] = json.dumps(declared, indent=1, default=str)
+    run = await verifier.verify(selectable(findings), files)
     return {"summary": run.summary(), "results": [r.as_dict() for r in run.results]}
