@@ -1,10 +1,12 @@
 """Soroban contract rules: each one fires on its vulnerable shape and stays silent on the near miss."""
+import time
+
 import pytest
 
 from backend.app.models import AgentArtifact, EvidenceGrade, FindingKind, Severity, SourceKind
 from backend.app.reporting.english import english_finding
 from backend.app.swarm.orchestrator import _KEEPS_SEVERITY
-from backend.app.swarm.soroban_rules import render_template, cfg_test_files
+from backend.app.swarm.soroban_rules import cfg_test_files, render_template, without_test_modules
 from backend.app.swarm.stellar_native import StellarNativeAuditor, _rust_code
 
 CARGO = '[package]\nname = "c"\nversion = "0.1.0"\n\n[dependencies]\nsoroban-sdk = "23.0.0"\n'
@@ -882,10 +884,12 @@ impl Channels {
 '''
 
 
-def test_records_anyone_can_create_next_to_deposits_are_high(settings, run):
+def test_records_anyone_can_create_stay_medium_and_claim_no_locked_deposits(settings, run):
+    # A full instance blocks new records only: same-size rewrites (claims, closes) still work.
     files = {'contracts/ch/src/lib.rs': CHANNEL.replace('GUARD', 'payer.require_auth();'), 'contracts/ch/Cargo.toml': CARGO}
     [finding] = rule(audit(settings, run, files, kind=SourceKind.REPO), 'instance-storage-records')
-    assert finding.severity is Severity.HIGH and 'locks every deposit' in finding.detail
+    assert finding.severity is Severity.MEDIUM and 'Any caller can create these records' in finding.detail
+    assert 'lock' not in finding.detail and 'creating a new record fails' in finding.detail
 
 
 def test_records_only_an_administrator_writes_stay_medium(settings, run):
@@ -907,3 +911,403 @@ def test_rule_ids_are_stable_across_line_moves(settings, run):
     first = rule(audit(settings, run, source), 'soroban-token-move-unbound')[0]
     moved = rule(audit(settings, run, '\n\n\n' + source), 'soroban-token-move-unbound')[0]
     assert first.id == moved.id and first.evidence != moved.evidence
+
+
+# ---------------------------------------------------------------- review fixes
+
+DUP_TEMPLATE = '''use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+#[contract]
+pub struct Vault;
+#[contractimpl]
+impl Vault {
+{{#if ownable}}
+    pub fn upgrade(e: Env, operator: Address, hash: BytesN<32>) {
+        operator.require_auth();
+        e.deployer().update_current_contract_wasm(hash);
+    }
+{{else}}
+    pub fn upgrade(e: Env, hash: BytesN<32>) {
+        e.deployer().update_current_contract_wasm(hash);
+    }
+{{/if}}
+}
+'''
+
+CFG_GATED = '''use soroban_sdk::{contract, contractimpl, BytesN, Env};
+#[contract]
+pub struct Vault;
+#[cfg(feature = "v1")]
+#[contractimpl]
+impl Vault {
+    pub fn upgrade(e: Env, hash: BytesN<32>) { e.deployer().update_current_contract_wasm(hash); }
+}
+#[cfg(not(feature = "v1"))]
+#[contractimpl]
+impl Vault {
+    pub fn upgrade(e: Env, hash: BytesN<32>) { e.deployer().update_current_contract_wasm(hash); }
+    pub fn version() -> u32 { 2 }
+}
+'''
+
+
+@pytest.mark.parametrize('files', [{'src/lib.rs.hbs': DUP_TEMPLATE}, {'src/lib.rs': CFG_GATED}])
+def test_one_defect_found_twice_is_one_finding_not_a_failed_audit(settings, run, files):
+    # Both template branches (union rendering) and both cfg variants define the same entry point.
+    verdict = audit(settings, run, {**files, 'Cargo.toml': CARGO}, kind=SourceKind.REPO)
+    assert verdict.status == 'completed'
+    [finding] = rule(verdict, 'soroban-upgrade-unguarded')
+    assert finding.severity is Severity.CRITICAL and finding.evidence.count(' upgrade: ') == 2
+
+
+INLINE_MOCKS = '''#![no_std]
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env};
+#[contract]
+pub struct Vault;
+#[contractimpl]
+impl Vault {
+    pub fn deposit(e: Env, from: Address, amount: i128) {
+        from.require_auth();
+        if amount <= 0 { panic!() }
+        token::Client::new(&e, &e.current_contract_address()).transfer(&from, &e.current_contract_address(), &amount);
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[contract]
+    pub struct MockUpgrader;
+    #[contractimpl]
+    impl MockUpgrader {
+        pub fn upgrade(e: Env, hash: BytesN<32>) { e.deployer().update_current_contract_wasm(hash); }
+        pub fn steal(e: Env, victim: Address, to: Address, token: Address, amount: i128) {
+            token::Client::new(&e, &token).transfer(&victim, &to, &amount);
+            e.storage().instance().set(&1u32, &amount);
+        }
+    }
+}
+'''
+
+
+def test_mock_contracts_in_an_inline_test_module_are_not_judged(settings, run):
+    verdict = audit(settings, run, {'src/lib.rs': INLINE_MOCKS, 'Cargo.toml': CARGO}, kind=SourceKind.REPO)
+    assert soroban_rules(verdict) == [] and rule(verdict, 'soroban-auth-missing') == []
+    # The same module compiled into the contract is judged.
+    live = INLINE_MOCKS.replace('#[cfg(test)]\nmod tests', 'mod tests')
+    judged = soroban_rules(audit(settings, run, {'src/lib.rs': live, 'Cargo.toml': CARGO}, kind=SourceKind.REPO))
+    assert 'stellar_native-soroban-upgrade-unguarded' in judged and 'stellar_native-soroban-token-move-unbound' in judged
+
+
+def test_test_module_blanking_keeps_offsets_and_other_builds():
+    code = 'fn a() {}\n#[cfg(test)]\nmod t {\n    fn b() {}\n}\nfn c() {}\n'
+    blanked = without_test_modules(code)
+    assert len(blanked) == len(code) and blanked.count('\n') == code.count('\n')
+    assert 'fn b' not in blanked and 'fn a' in blanked and 'fn c' in blanked
+    other = code.replace('#[cfg(test)]', '#[cfg(not(test))]')
+    assert without_test_modules(other) == other
+
+
+ORACLE = TOKEN.replace('BODY', '''pub fn settle(env: Env, from: Address, to: Address, amount: i128, price: i128) {
+        PAYER
+        let oracle: Address = env.storage().instance().get(&Key::Oracle).unwrap();
+        oracle.require_auth_for_args((price,).into_val(&env));
+        token::Client::new(&env, &usdc(&env)).transfer(&from, &to, &amount);
+    }''')
+
+
+def test_another_signers_partial_authorization_is_not_the_payers(settings, run):
+    # The payer signs every argument; an oracle signs only its price.
+    assert rule(audit(settings, run, ORACLE.replace('PAYER', 'from.require_auth();')), 'soroban-auth-args-incomplete') == []
+    # The payer itself signing only the price is the defect, whatever the oracle signs.
+    [finding] = rule(audit(settings, run, ORACLE.replace('PAYER', 'from.require_auth_for_args((price,).into_val(&env));')),
+                     'soroban-auth-args-incomplete')
+    assert finding.severity is Severity.HIGH and '`to`' in finding.detail and '`amount`' in finding.detail
+
+
+def test_multi_line_template_expression_keeps_lines(settings, run):
+    source = '''use soroban_sdk::{contract, contractimpl, BytesN, Env};
+const NAME: &str = "{{lookup
+   config
+   "name"}}";
+#[contract]
+pub struct Vault;
+#[contractimpl]
+impl Vault {
+    pub fn upgrade(e: Env, hash: BytesN<32>) {
+        e.deployer().update_current_contract_wasm(hash);
+    }
+}
+'''
+    rendered = render_template(source)
+    assert len(rendered) == len(source) and rendered.count('\n') == source.count('\n') and '{{' not in rendered
+    [finding] = rule(audit(settings, run, {'src/lib.rs.hbs': source, 'Cargo.toml': CARGO}, kind=SourceKind.REPO),
+                     'soroban-upgrade-unguarded')
+    assert finding.evidence.startswith('src/lib.rs.hbs:10 upgrade')
+
+
+@pytest.mark.parametrize('guard', ['#[stellar_macros::only_owner]', '#[stellar_access::only_role(op, "upgrader")]'])
+def test_path_qualified_openzeppelin_attribute_guards_the_upgrade(settings, run, guard):
+    verdict = audit(settings, run, f'''
+#[contractimpl]
+impl Upgradeable for C {{
+    {guard}
+    fn upgrade(e: &Env, h: BytesN<32>, op: Address) {{ upgradeable::upgrade(e, &h); }}
+}}''')
+    assert soroban_rules(verdict) == [] and rule(verdict, 'soroban-auth-missing') == []
+
+
+def test_path_qualified_has_role_without_auth_is_still_high(settings, run):
+    source = TOKEN.replace('BODY', '''#[stellar_access::has_role(caller, "minter")]
+    pub fn mint(e: &Env, to: Address, amount: i128, caller: Address) { Base::mint(e, &to, amount); }''')
+    [finding] = rule(audit(settings, run, source), 'soroban-role-without-auth')
+    assert finding.severity is Severity.HIGH
+
+
+GUARDED_UPGRADE = '''
+#[contractimpl]
+impl C {
+    pub fn upgrade(e: Env, caller: Address, PARAMS hash: BytesN<32>) {
+        GUARD
+        e.deployer().update_current_contract_wasm(hash);
+    }
+}'''
+
+
+@pytest.mark.parametrize('guard', [
+    'match e.storage().instance().get::<DataKey, Address>(&DataKey::Admin) { Some(admin) => admin.require_auth(), '
+    'None => panic!("no admin"), }',
+    'let Some(admin) = e.storage().instance().get::<DataKey, Address>(&DataKey::Admin) else { panic!("no admin") }; '
+    'admin.require_auth();',
+    'caller.require_auth(); if e.storage().instance().get::<DataKey, Address>(&DataKey::Admin).unwrap() != caller { panic!("no"); }',
+    'let admins: Vec<Address> = e.storage().instance().get(&DataKey::Admins).unwrap(); for a in admins.iter() { a.require_auth(); }',
+    'let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap(); let admin = admin.clone(); admin.require_auth();',
+    'let admins: Vec<Address> = e.storage().instance().get(&DataKey::Admins).unwrap_or_else(|| panic!("none")); '
+    'for a in admins.iter() { a.require_auth(); }',
+])
+def test_stored_administrator_in_other_shapes_is_a_strong_guard(settings, run, guard):
+    verdict = audit(settings, run, GUARDED_UPGRADE.replace('PARAMS', '').replace('GUARD', guard))
+    assert soroban_rules(verdict) == []
+
+
+@pytest.mark.parametrize('params, guard', [
+    ('admins: Vec<Address>,', 'for a in admins.iter() { a.require_auth(); }'),
+    ('maybe: Option<Address>,', 'match maybe { Some(admin) => admin.require_auth(), None => panic!("x"), }'),
+])
+def test_caller_supplied_admins_are_not_a_strong_guard(settings, run, params, guard):
+    verdict = audit(settings, run, GUARDED_UPGRADE.replace('PARAMS', params).replace('GUARD', guard))
+    assert rule(verdict, 'soroban-upgrade-weak-guard') or rule(verdict, 'soroban-upgrade-unguarded')
+
+
+def test_single_argument_assert_does_not_stop_the_rules(settings, run):
+    verdict = audit(settings, run, GUARDED_UPGRADE.replace('PARAMS', '').replace('GUARD', 'assert_eq!(caller);'))
+    assert verdict.status == 'completed' and rule(verdict, 'soroban-upgrade-unguarded')
+
+
+TX_CAP = '''//! A per-transaction cap, deployed alongside a SpendingLimitPolicy that keeps the rolling total.
+use soroban_sdk::{auth::{Context, ContractContext}, contract, contractimpl, Address, Env, TryFromVal, Vec};
+#[contract]
+pub struct CapPolicy;
+#[contractimpl]
+impl Policy for CapPolicy {
+    fn enforce(e: &Env, context: Context, authenticated_signers: Vec<Signer>, rule: ContextRule, smart_account: Address) {
+        smart_account.require_auth();
+        if authenticated_signers.is_empty() { panic!() }
+        let cap: i128 = e.storage().persistent().get(&smart_account).unwrap();
+        if let Context::Contract(ContractContext { args, .. }) = context {
+            let amount = i128::try_from_val(e, &args.get(2).unwrap()).unwrap();
+            if amount < 0 { panic!() }
+            if amount > cap { panic!() }
+        }
+    }
+}
+'''
+
+ROLLING_TOTAL = '''use soroban_sdk::{auth::{Context, ContractContext}, contract, contractimpl, Address, Env, TryFromVal, Vec};
+#[contract]
+pub struct RollingPolicy;
+#[contractimpl]
+impl Policy for RollingPolicy {
+    fn enforce(e: &Env, context: Context, authenticated_signers: Vec<Signer>, rule: ContextRule, smart_account: Address) {
+        smart_account.require_auth();
+        if authenticated_signers.is_empty() { panic!() }
+        let mut spent: i128 = e.storage().persistent().get(&smart_account).unwrap_or(0);
+        if let Context::Contract(ContractContext { args, .. }) = context {
+            let amount = i128::try_from_val(e, &args.get(2).unwrap()).unwrap();
+            if amount < 0 { panic!() }
+            spent += amount;
+            if spent > LIMIT { panic!() }
+            e.storage().persistent().set(&smart_account, &spent);
+        }
+    }
+}
+'''
+
+
+def test_per_call_cap_beside_a_rolling_total_policy_is_one_half_of_a_pair(settings, run):
+    lone = TX_CAP.split('\n', 1)[1]
+    crate = {'contracts/cap/Cargo.toml': CARGO}
+    [finding] = rule(audit(settings, run, {**crate, 'contracts/cap/src/lib.rs': lone}, kind=SourceKind.REPO),
+                     'soroban-policy-per-call-cap')
+    assert finding.severity is Severity.MEDIUM
+    pair = {**crate, 'contracts/cap/src/lib.rs': lone, 'contracts/rolling/src/lib.rs': ROLLING_TOTAL,
+            'contracts/rolling/Cargo.toml': CARGO}
+    assert rule(audit(settings, run, pair, kind=SourceKind.REPO), 'soroban-policy-per-call-cap') == []
+    # Documented as the per-transaction half of a pair whose rolling-total policy lives elsewhere.
+    [documented] = rule(audit(settings, run, {**crate, 'contracts/cap/src/lib.rs': TX_CAP}, kind=SourceKind.REPO),
+                        'soroban-policy-per-call-cap')
+    assert documented.severity is Severity.INFO and 'spending-limit policy' in documented.detail
+
+
+def _hostile(body: str) -> dict:
+    head = ('use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env};\n#[contract]\npub struct C;\n'
+            '#[contractimpl]\nimpl C {\n')
+    return {'src/lib.rs': head + body + '}\n', 'Cargo.toml': CARGO}
+
+
+UPGRADE_HEAD = '    pub fn upgrade(e: Env, who: Address, h: BytesN<32>) {\n        who.require_auth();\n'
+UPGRADE_SINK = '\n        e.deployer().update_current_contract_wasm(h);\n    }\n'
+PAY_HEAD = '    pub fn pay(e: Env, from: Address, to: Address, amount: i128) {\n'
+PAY_SINK = '\n        token::Client::new(&e, &t).transfer(&from, &to, &amount);\n    }\n'
+#: Shapes that made one regex or loop quadratic (tens of seconds to minutes at these sizes).
+HOSTILE = {
+    'unclosed template comments': {'src/lib.rs.hbs': 'use soroban_sdk::contract;\n#[contractimpl]\n' + '{{!' * 40000,
+                                   'Cargo.toml': CARGO},
+    'long identifier in an initializer': _hostile('    pub fn init(e: Env, admin: Address) {\n        let x = ' + 'a' * 120000
+                                                  + ';\n        e.storage().instance().set(&1, &admin);\n    }\n'),
+    'dotted run in an upgrade': _hostile(UPGRADE_HEAD + '        let x = ' + 'a.' * 60000 + 'b;' + UPGRADE_SINK),
+    'module path run': _hostile(UPGRADE_HEAD + '        let x = ' + 'a::' * 40000 + 'b(1);' + UPGRADE_SINK),
+    'comparison run': _hostile(UPGRADE_HEAD + '        if ' + 'a < ' * 30000 + '{}' + UPGRADE_SINK),
+    'nested calls': _hostile(PAY_HEAD + '        let v = ' + 'f(' * 30000 + 'x' + ')' * 30000 + ';' + PAY_SINK),
+    'unclosed calls': _hostile(PAY_HEAD + '        ' + 'f(' * 60000 + PAY_SINK),
+    'deadline comparisons': _hostile('    pub fn create(e: Env, payer: Address, deadline: u64, amount: i128) {\n'
+                                     + 'deadline < < < ' * 8000 + '\n        token::Client::new(&e, &t).transfer('
+                                     '&payer, &e.current_contract_address(), &amount);\n    }\n'),
+    'instance record writes': _hostile('    pub fn open(e: Env, payer: Address) {\n        token::Client::new(&e, &t).transfer('
+                                       '&payer, &e.current_contract_address(), &1);\n'
+                                       + 'e.storage().instance().set(&DataKey::Channel(id), &1); ' * 2000 + '\n    }\n'),
+    'many functions': _hostile(''.join(f'    pub fn f{i}(e: Env, a: Address) {{ e.storage().persistent().set(&a, &{i}); }}\n'
+                                       for i in range(5500))),
+    'deeply nested functions': _hostile('fn a() { ' * 12000 + '}' * 12000),
+    'one body, many signatures': _hostile('fn a(' * 30000 + ') { e.deployer().update_current_contract_wasm(h); }'),
+    # Masked comments are whitespace: a call after a comment block has a blank receiver.
+    'comment block before a call': _hostile(PAY_HEAD + '        // a note\n' * 4000 + '        .transfer(&from, &to, &amount);\n    }\n'),
+    'whitespace after operators': _hostile(UPGRADE_HEAD + '        let a = ' + ' ' * 40000 + '(1); spent += ' + ' ' * 40000
+                                           + '; for b in ' + ' ' * 40000 + '(c) {}' + UPGRADE_SINK),
+    # Each impl header was read to the end of the file.
+    'contractimpl attributes without a block': {'src/lib.rs': 'use soroban_sdk::{contract, contractimpl, Env};\n'
+                                                + '#[contractimpl] impl X ' * 10000, 'Cargo.toml': CARGO},
+    # Helpers that create records, each called by entry points: every entry point was read per helper.
+    'record-writing helpers': {'Cargo.toml': CARGO, 'src/lib.rs': (
+        'use soroban_sdk::{contract, contractimpl, token, Address, Env};\n#[contract]\npub struct C;\n'
+        + ''.join(f'fn h{i}(e: &Env, a: u32) {{ e.storage().instance().set(&K(a), &1); }}\n' for i in range(1500))
+        + '#[contractimpl]\nimpl C {\n    pub fn dep(e: Env, f: Address, t: Address) { f.require_auth(); '
+        'token::Client::new(&e, &t).transfer(&f, &e.current_contract_address(), &1); }\n'
+        + ''.join(f'    pub fn e{i}(e: Env, a: u32) {{ h{i}(&e, a); h{(i + 1) % 1500}(&e, a); }}\n' for i in range(1500)) + '}\n')},
+    # Thousands of aliases of one parameter: each was an alternative of one regex, run over the body.
+    'aliases of a signed round': _hostile('    pub fn submit(e: Env, round: u64, sig: BytesN<64>, key: BytesN<32>, msg: Bytes) {\n'
+                                          '        e.crypto().ed25519_verify(&key, &msg, &sig);\n'
+                                          + ''.join(f'        let a{i} = round;\n' for i in range(9000))
+                                          + '        e.storage().instance().set(&1u32, &round);\n    }\n'),
+    'aliases of the contract address': _hostile(
+        '    pub fn __check_auth(e: Env, payload: BytesN<32>, sig: BytesN<64>, ctx: Vec<Context>) -> Result<(), E> {\n'
+        '        e.crypto().ed25519_verify(&k, &payload.into(), &sig);\n'
+        + ''.join(f'        let s{i} = e.current_contract_address();\n' for i in range(5000))
+        + '        for c in ctx.iter() { if c.contract == s0 { return Ok(()); } let amount = 1; }\n        Ok(())\n    }\n'
+        '    pub fn set_limit(e: Env, l: i128) { e.current_contract_address().require_auth(); e.storage().instance().set(&1, &l); }\n'),
+    'aliases of a deposited amount': _hostile('    pub fn deposit(e: Env, from: Address, amount: i128) {\n        from.require_auth();\n'
+                                              + ''.join(f'        let a{i} = amount;\n' for i in range(14000))
+                                              + '        token::Client::new(&e, &e.current_contract_address()).transfer(&from, '
+                                              '&e.current_contract_address(), &amount);\n    }\n'),
+    'aliases beside long authorized argument lists': _hostile(
+        PAY_HEAD + ''.join(f'        let a{i} = amount;\n' for i in range(4000))
+        + ('        from.require_auth_for_args((' + 'x, ' * 1300 + 'amount, to).into_val(&e));\n') * 32 + PAY_SINK),
+    'many parameters sharing aliases': _hostile(
+        '    pub fn submit(e: Env, ' + ', '.join(f'p{i}: i128' for i in range(600)) + ', sig: BytesN<64>) {\n'
+        '        e.crypto().ed25519_verify(&k, &m, &sig);\n' + ''.join(f'        let x = p{i};\n' for i in range(600))
+        + '        let y = x;\n' * 8000 + '        if y < z { }\n' * 8000 + '        e.storage().instance().set(&1u32, &y);\n    }\n'),
+    'record families in one function': _hostile(
+        '    pub fn open(e: Env, payer: Address) {\n        token::Client::new(&e, &t).transfer(&payer, '
+        '&e.current_contract_address(), &1);\n'
+        + ''.join(f'        e.storage().instance().set(&K{i}(id), &1);\n' for i in range(6000)) + '    }\n'),
+}
+
+
+@pytest.mark.parametrize('name', sorted(HOSTILE))
+def test_hostile_source_is_analysed_in_linear_time(settings, run, name):
+    start = time.perf_counter()
+    verdict = audit(settings, run, HOSTILE[name], kind=SourceKind.REPO)
+    assert verdict.status == 'completed' and time.perf_counter() - start < 3
+
+
+@pytest.mark.parametrize('guard', [
+    # No administrator stored: the upgrade goes ahead with nobody's authorization.
+    'match e.storage().instance().get::<DataKey, Address>(&DataKey::Admin) { Some(admin) => admin.require_auth(), None => {} }',
+    'let admins: Vec<Address> = e.storage().instance().get(&DataKey::Admins).unwrap_or(Vec::new(&e)); '
+    'for a in admins.iter() { a.require_auth(); }',
+    # The stored administrator is shadowed by the caller before it authorizes.
+    'let Some(admin) = e.storage().instance().get::<DataKey, Address>(&DataKey::Admin) else { panic!() }; '
+    'let admin = caller; admin.require_auth();',
+])
+def test_stored_administrator_that_may_be_absent_or_replaced_is_a_gap(settings, run, guard):
+    verdict = audit(settings, run, GUARDED_UPGRADE.replace('PARAMS', '').replace('GUARD', guard))
+    [gap] = rule(verdict, 'soroban-upgrade-weak-guard')
+    assert gap.kind is FindingKind.EVIDENCE_GAP
+
+
+WITHDRAW = TOKEN.replace('BODY', '''pub fn withdraw(env: Env, user: Address, to: Address, amount: i128) {
+        user.require_auth_for_args((amount,).into_val(&env));
+        GUARD
+        token::Client::new(&env, &usdc(&env)).transfer(&env.current_contract_address(), &RECIPIENT, &amount);
+    }''')
+
+
+def test_partial_authorization_of_a_payout_from_the_contract_is_high(settings, run):
+    [finding] = rule(audit(settings, run, WITHDRAW.replace('GUARD', '').replace('RECIPIENT', 'to')),
+                     'soroban-auth-args-incomplete')
+    assert finding.severity is Severity.HIGH and '`to`' in finding.detail and 'the contract holds' in finding.detail
+    # Near misses: an administrator authorizes the whole call, or the user withdraws to itself.
+    guarded = WITHDRAW.replace('GUARD', 'admin(&env).require_auth();').replace('RECIPIENT', 'to')
+    assert rule(audit(settings, run, guarded), 'soroban-auth-args-incomplete') == []
+    to_self = WITHDRAW.replace('GUARD', '').replace('RECIPIENT', 'user')
+    assert rule(audit(settings, run, to_self), 'soroban-auth-args-incomplete') == []
+
+
+@pytest.mark.parametrize('body', [
+    'let payer = from.clone();\n        payer.require_auth_for_args((amount,).into_val(&env));\n        SOURCE = from;',
+    'from.require_auth_for_args((amount,).into_val(&env));\n        SOURCE = from.clone();',
+])
+def test_payer_that_signs_through_a_copy_is_still_the_payer(settings, run, body):
+    source = TOKEN.replace('BODY', f'''pub fn pay(env: Env, from: Address, to: Address, amount: i128) {{
+        {body.replace('SOURCE', 'let src')}
+        token::Client::new(&env, &usdc(&env)).transfer(&src, &to, &amount);
+    }}''')
+    [finding] = rule(audit(settings, run, source), 'soroban-auth-args-incomplete')
+    assert finding.severity is Severity.HIGH and '`to`' in finding.detail and "signer's tokens" in finding.detail
+
+
+def test_lone_per_call_cap_named_like_a_spending_limit_policy_stays_medium(settings, run):
+    lone = TX_CAP.split('\n', 1)[1]
+    crate = {'contracts/cap/Cargo.toml': CARGO}
+    # Its own names say "spending limit policy" and "max per tx", but no comment pairs it with another policy.
+    named = lone.replace('CapPolicy', 'SpendingLimitPolicy').replace('cap', 'max_per_tx')
+    # A doc comment that calls the policy itself a per-transaction spending limit policy.
+    described = '//! Spending limit policy: caps each transaction (per transaction).\n' + lone
+    for source in (named, described):
+        [finding] = rule(audit(settings, run, {**crate, 'contracts/cap/src/lib.rs': source}, kind=SourceKind.REPO),
+                         'soroban-policy-per-call-cap')
+        assert finding.severity is Severity.MEDIUM
+
+
+def test_each_text_is_indexed_once_when_the_index_cache_is_small(settings, run, monkeypatch):
+    from backend.app.swarm import soroban_rules
+    monkeypatch.setattr(soroban_rules, '_CACHE_CHARS', 3000)
+    built, original = [], soroban_rules._Text.__init__
+
+    def counting(self, text):
+        built.append(text)  # kept, so no two texts share an id
+        original(self, text)
+    monkeypatch.setattr(soroban_rules._Text, '__init__', counting)
+    head = 'use soroban_sdk::{contract, contractimpl, Address, Env};\n#[contract]\npub struct C;\n#[contractimpl]\nimpl C {\n'
+    files = {'Cargo.toml': CARGO, **{f'src/m{i}.rs': head + f'    pub fn f{i}(e: Env, a: Address) {{\n'
+                                     + '([{}]), ' * 300 + '\n    }\n}\n' for i in range(6)}}
+    assert audit(settings, run, files, kind=SourceKind.REPO).status == 'completed'
+    assert built and len({id(text) for text in built}) == len(built)

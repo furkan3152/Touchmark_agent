@@ -151,7 +151,10 @@ pub fn read(env: Env, key: u32) { env.storage().persistent().get::<_,u32>(&key);
     bare = check(settings, run, 'pub fn set(env: Env, key: u32) { env.storage().persistent().set(&key, &1); }')
     by_id = {f.id: f for f in bare.findings}
     assert by_id['stellar_native-soroban-auth-missing'].severity.value == 'medium'
-    assert by_id['stellar_native-persistent-ttl'].severity.value == 'medium'
+    # Since Protocol 23 an archived entry is restored when next touched: low even with no renewal
+    # anywhere, still a risk rather than an evidence gap, and the detail says why.
+    ttl = by_id['stellar_native-persistent-ttl']
+    assert ttl.severity.value == 'low' and ttl.is_risk and 'restored automatically' in ttl.detail
 
 
 def test_temporary_storage_is_flagged_only_for_critical_keys(settings, run):
