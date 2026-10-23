@@ -21,19 +21,24 @@
       "asset": "XLM"
     },
     "recipients": "allowlist",
-    "human_approval": "never"
+    "human_approval": "never",
+    "per_day": {
+      "amount": "1000",
+      "asset": "XLM"
+    }
   },
   "tools": [
     {
       "name": "send_payment",
-      "description": "Pay a listed supplier in XLM, at most 500 per payment",
+      "description": "Pay a listed supplier in XLM: at most 500 per payment and 1000 per day, once per request id",
       "moves_funds": true,
       "signs": true,
       "network": true,
       "max_amount": {
         "amount": "500",
         "asset": "XLM"
-      }
+      },
+      "files": true
     },
     {
       "name": "fetch_invoice",
@@ -45,6 +50,7 @@
   ],
   "forbidden": [
     "pay anyone who is not in the supplier table",
-    "pay more than 500 XLM in one payment"
+    "pay more than 500 XLM in one payment",
+    "pay more than 1000 XLM in one day"
   ]
 }

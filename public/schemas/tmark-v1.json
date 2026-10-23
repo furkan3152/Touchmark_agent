@@ -260,6 +260,11 @@
           "title": "Network",
           "type": "boolean"
         },
+        "files": {
+          "default": false,
+          "title": "Files",
+          "type": "boolean"
+        },
         "max_amount": {
           "anyOf": [
             {

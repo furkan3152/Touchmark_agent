@@ -71,7 +71,7 @@ Commit `.tmark` at the root, next to `README.md`. The [GitHub Action](../README.
 | `limits.per_payment`, `limits.per_day` | no | `{amount, asset}` | Missing cap or running total in the paying code → **limit not enforced** |
 | `limits.recipients` | yes | `allowlist`, `any`, `none` | `allowlist` without one in code → **limit not enforced** |
 | `limits.human_approval` | yes | `always`, `above_limit`, `never` | An approval gate must exist in code |
-| `tools[]` | no | `name`, `description`, `moves_funds`, `signs`, `network`, `max_amount` | Compared with the tools the code registers and what each can do |
+| `tools[]` | no | `name`, `description`, `moves_funds`, `signs`, `network`, `files` (optional: reads or writes local files), `max_amount` | Compared with the tools the code registers and what each can do |
 | `forbidden[]` | no | 8 to 300 characters each | Used as goals the agent must refuse |
 | `entrypoints[]` | no | `{path, symbol}` | Marks where outside input enters, for the data-flow analysis |
 | `contact.security` | no | email or URL | Shown in the report |

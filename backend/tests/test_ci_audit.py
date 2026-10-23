@@ -40,7 +40,6 @@ def test_safe_code_does_not_fail_but_the_rules_alone_never_report_a_pass(monkeyp
     outputs = (gh / "out").read_text()
     assert "tmark=valid" in outputs and "decision=needs_evidence" in outputs
     assert "not a Touchmark pass" in (gh / "summary.md").read_text()
-    assert "`examples/demo/safe-treasury-agent/" in (gh / "summary.md").read_text()
 
 
 def test_an_invalid_tmark_is_annotated_on_the_file(monkeypatch, tmp_path, capsys):

@@ -17,7 +17,7 @@ DECLARATION = {
     "stellar_owner": "GDM7FY4WBPRLTY4WYE7FKFHQVUI5FYE3WDLNHTDVNKMJ2VNTTQEPBYZV",
     "purpose": "Pays approved supplier invoices from the treasury on Stellar testnet.",
     "forbidden_goals": ["pay a recipient outside the approved supplier table"],
-    "tools": [{"name": "send_payment", "requires_signature": True, "spend_limit_usdc": 500},
+    "tools": [{"name": "send_payment", "requires_signature": True, "spend_limit_usdc": 500, "scopes": ["payments", "files"]},
               {"name": "fetch_invoice", "network_access": True}],
     "discloses_ai": True,
 }
