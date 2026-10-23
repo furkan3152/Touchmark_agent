@@ -1101,3 +1101,22 @@ def test_sdk_rules_skip_python_too_complex_to_parse():
     from backend.app.swarm.codeflow import analyse_code
     assert "agent.py" in analyse_code({"agent.py": deep, "pay.py": "x = 1\n"}).unparsed
     assert isinstance(hardening({"agent.py": deep, "pay.py": "x = 1\n"}), dict)
+
+
+def test_a_caught_submit_exception_counts_only_when_the_try_calls_its_raiser():
+    from backend.app.models import AgentArtifact, SourceKind
+    from backend.app.swarm.sdk_rules import hardening_evidence
+
+    chain = ("from stellar_sdk import SorobanServer\n"
+             "class Unconfirmed(Exception):\n    pass\n"
+             "class Client:\n    def create(self, tx):\n        SorobanServer('u').send_transaction(tx)\n"
+             "        raise Unconfirmed()\n")
+    flow = ("from chain import Unconfirmed\n"
+            "def pay(client, budget, tx):\n    try:\n        {call}\n"
+            "    except Unconfirmed:\n        raise\n    except Exception:\n        budget.release_reservation(tx)\n")
+    def released(call):
+        art = AgentArtifact(name="a", source_kind=SourceKind.REPO, source_ref="r",
+                            code_files={"chain.py": chain, "flow.py": flow.format(call=call)})
+        return hardening_evidence(art)["released"]
+    assert released("client.create(tx)")
+    assert not released("budget.check(tx)")

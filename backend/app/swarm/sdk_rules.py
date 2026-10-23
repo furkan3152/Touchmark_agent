@@ -365,7 +365,11 @@ class _PyRules:
                 found = self._py_lookup(py, _py_dotted(kind) or "")
                 if found and found[0] == "class":
                     sites = self._py_raisers().get(id(found[2]), [])
-                    if sites and all(fn is not None and self._py_fn_submits(other, fn, 1) for other, fn in sites):
+                    names = {fn.name for _, fn in sites if fn is not None}
+                    called = {(_py_name(n.func) or "").rsplit(".", 1)[-1] for stmt in node.body
+                              for n in ast.walk(stmt) if isinstance(n, ast.Call)}
+                    if sites and names & called and \
+                            all(fn is not None and self._py_fn_submits(other, fn, 1) for other, fn in sites):
                         return True
         return False
 
