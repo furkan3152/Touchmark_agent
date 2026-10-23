@@ -4,8 +4,8 @@ import pytest
 from backend.app.models import AgentArtifact, EvidenceGrade, FindingKind, Severity, SourceKind
 from backend.app.reporting.english import english_finding
 from backend.app.swarm.orchestrator import _KEEPS_SEVERITY
-from backend.app.swarm.soroban_rules import render_template
-from backend.app.swarm.stellar_native import StellarNativeAuditor
+from backend.app.swarm.soroban_rules import render_template, cfg_test_files
+from backend.app.swarm.stellar_native import StellarNativeAuditor, _rust_code
 
 CARGO = '[package]\nname = "c"\nversion = "0.1.0"\n\n[dependencies]\nsoroban-sdk = "23.0.0"\n'
 
@@ -91,10 +91,10 @@ def test_check_auth_that_verifies_nothing_is_critical(settings, run):
 
 
 def test_payload_alias_counts_as_verification(settings, run):
-    source = account('ctx: Vec<Context>', 'for c in ctx.iter() { check_context(&env, c)?; }').replace(
+    source = account('ctx: Vec<Context>', 'for c in ctx.iter() { screen(&env, c)?; }').replace(
         'env.crypto().ed25519_verify(&pk, &payload.into(), &sig);',
         'let msg: Bytes = payload.into(); env.crypto().ed25519_verify(&pk, &msg, &sig);')
-    source += 'fn check_context(env: &Env, c: Context) -> Result<(), Error> { match c { _ => Err(Error::NotAllowed) } }'
+    source += 'fn screen(env: &Env, c: Context) -> Result<(), Error> { match c { _ => Err(Error::NotAllowed) } }'
     assert soroban_rules(audit(settings, run, source)) == []
 
 
@@ -179,6 +179,56 @@ def test_spending_key_can_rewrite_its_own_cap(settings, run):
     declared = {'tmark': {'declared': {'limits': {'per_payment': {'amount': '10', 'asset': 'XLM'}}}}}
     [raised] = rule(audit(settings, run, source, raw=declared), 'soroban-account-self-admin')
     assert raised.severity is Severity.HIGH
+
+
+SELF_INLINE = '''
+use soroban_sdk::{auth::{Context, CustomAccountInterface}, contract, contractimpl, contracttype, crypto::Hash, symbol_short, BytesN, Env, Vec};
+#[contracttype]
+enum Key { Signer, Limit }
+#[contract]
+pub struct Wallet;
+#[contractimpl]
+impl Wallet {
+    pub fn set_limit(env: Env, limit: i128) {
+        env.current_contract_address().require_auth();
+        env.storage().instance().set(&Key::Limit, &limit);
+    }
+}
+#[contractimpl]
+impl CustomAccountInterface for Wallet {
+    type Signature = Vec<BytesN<64>>;
+    type Error = Error;
+    fn __check_auth(env: Env, payload: Hash<32>, sigs: Vec<BytesN<64>>, contexts: Vec<Context>) -> Result<(), Error> {
+        VERIFY
+        for ctx in contexts.iter() {
+            if let Context::Contract(c) = ctx {
+                if c.contract == env.current_contract_address() { SELF_BRANCH return Ok(()); }
+                if c.fn_name != symbol_short!("transfer") { return Err(Error::NotAllowed); }
+                let amount: i128 = c.args.get(2).unwrap().into_val(&env);
+                if amount < 0 || amount > 100 { return Err(Error::OverCap); }
+            } else { return Err(Error::NotAllowed); }
+        }
+        Ok(())
+    }
+}
+'''
+ONE_KEY = ('let k: BytesN<32> = env.storage().instance().get(&Key::Signer).unwrap(); '
+           'env.crypto().ed25519_verify(&k, &payload.clone().into(), &sigs.get(0).unwrap());')
+
+
+def test_self_call_compared_with_the_contract_address_inline(settings, run):
+    source = SELF_INLINE.replace('VERIFY', ONE_KEY).replace('SELF_BRANCH', '')
+    [finding] = rule(audit(settings, run, source), 'soroban-account-self-admin')
+    assert finding.severity is Severity.MEDIUM and finding.evidence_grade is EvidenceGrade.CONFIRMED
+
+
+def test_multisig_or_guardian_self_calls_are_not_self_administration(settings, run):
+    multisig = SELF_INLINE.replace('SELF_BRANCH', '').replace('VERIFY', (
+        'let keys: Vec<BytesN<32>> = env.storage().instance().get(&Key::Signer).unwrap(); '
+        'for i in 0..keys.len() { env.crypto().ed25519_verify(&keys.get(i).unwrap(), &payload.clone().into(), &sigs.get(i).unwrap()); }'))
+    assert rule(audit(settings, run, multisig), 'soroban-account-self-admin') == []
+    guardian = SELF_INLINE.replace('VERIFY', ONE_KEY).replace('SELF_BRANCH', 'second_key(&env, &payload, &sigs)?;')
+    assert rule(audit(settings, run, guardian), 'soroban-account-self-admin') == []
 
 
 def test_self_calls_that_need_another_signer_are_not_self_administration(settings, run):
@@ -402,6 +452,39 @@ impl C {
     assert rule(verdict, 'soroban-upgrade-unguarded') == []
 
 
+STORE_MODULE = '''
+mod storage {
+    use super::*;
+    pub fn get_admin(env: &Env) -> Address { env.storage().instance().get(&DataKey::Admin).unwrap() }
+}
+pub struct AdminStore;
+impl AdminStore {
+    pub fn get(env: &Env) -> Address { env.storage().instance().get(&DataKey::Admin).unwrap() }
+}
+#[contractimpl]
+impl C {
+    pub fn upgrade(env: Env, hash: BytesN<32>) {
+        GUARD
+        env.deployer().update_current_contract_wasm(hash);
+    }
+}
+'''
+
+
+@pytest.mark.parametrize('guard', ['storage::get_admin(&env).require_auth();', 'AdminStore::get(&env).require_auth();',
+                                   'let admin = storage::get_admin(&env); admin.require_auth();'])
+def test_upgrade_by_an_admin_read_through_a_module_path_is_silent(settings, run, guard):
+    verdict = audit(settings, run, STORE_MODULE.replace('GUARD', guard))
+    assert soroban_rules(verdict) == [] and rule(verdict, 'soroban-auth-missing') == []
+
+
+def test_upgrade_that_only_reads_the_admin_is_critical(settings, run):
+    # Passing env to a store helper is not a guard.
+    verdict = audit(settings, run, STORE_MODULE.replace('GUARD', 'let _admin = storage::get_admin(&env);'))
+    [finding] = rule(verdict, 'soroban-upgrade-unguarded')
+    assert finding.severity is Severity.CRITICAL and finding.is_risk
+
+
 def test_role_attribute_on_an_upgrade_is_one_finding(settings, run):
     verdict = audit(settings, run, '''
 #[contractimpl]
@@ -444,13 +527,14 @@ def test_token_move_from_an_unauthorized_address_is_high(settings, run):
     assert finding.severity is Severity.HIGH and _KEEPS_SEVERITY.search(finding.id)
 
 
-def test_bare_token_pass_through_is_medium(settings, run):
+def test_bare_token_pass_through_is_low(settings, run):
+    # The token's own authorization of `from` covers every argument the transfer uses.
     verdict = audit(settings, run, TOKEN.replace('BODY', '''pub fn swap(env: Env, from: Address, to: Address, amount: i128, min_out: i128) {
         let out = quote(amount);
         assert!(out >= min_out);
         token::Client::new(&env, &usdc(&env)).transfer(&from, &to, &out);
     }'''))
-    assert [f.severity for f in rule(verdict, 'soroban-token-move-unbound')] == [Severity.MEDIUM]
+    assert [f.severity for f in rule(verdict, 'soroban-token-move-unbound')] == [Severity.LOW]
 
 
 def test_token_move_after_the_owners_auth_is_silent(settings, run):
@@ -485,6 +569,69 @@ def test_spender_that_authorizes_its_own_allowance_is_silent(settings, run):
     assert soroban_rules(verdict) == []
 
 
+EVENT_TOKEN = '''
+use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_token_sdk::TokenUtils;
+#[contract]
+pub struct Token;
+#[contractimpl]
+impl token::Interface for Token {
+    fn transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        spender.require_auth();
+        spend_allowance(&e, from.clone(), spender, amount);
+        spend_balance(&e, from.clone(), amount);
+        receive_balance(&e, to.clone(), amount);
+        TokenUtils::new(&e).events().transfer(from, to, amount);
+    }
+    fn burn_from(e: Env, spender: Address, from: Address, amount: i128) {
+        spender.require_auth();
+        spend_allowance(&e, from.clone(), spender, amount);
+        spend_balance(&e, from.clone(), amount);
+        TokenUtils::new(&e).events().burn(from, amount);
+    }
+}
+'''
+
+
+def test_token_event_emitters_are_not_token_moves(settings, run):
+    # soroban-token-sdk's TokenUtils events are named transfer and burn; they move nothing.
+    verdict = audit(settings, run, EVENT_TOKEN)
+    assert soroban_rules(verdict) == [] and rule(verdict, 'soroban-auth-missing') == []
+
+
+@pytest.mark.parametrize('auth', ['let req = Req { from: from.clone(), amount }; req.from.require_auth();', 'LATER'])
+def test_owner_authorized_through_a_struct_field_or_later_is_bound(settings, run, auth):
+    body = '''pub fn deposit(env: Env, from: Address, amount: i128) {
+        AUTH
+        if amount <= 0 { panic!() }
+        token::Client::new(&env, &usdc(&env)).transfer(&from, &env.current_contract_address(), &amount);
+        TAIL
+    }'''
+    body = body.replace('AUTH', '').replace('TAIL', 'from.require_auth();') if auth == 'LATER' else \
+        body.replace('AUTH', auth).replace('TAIL', '')
+    assert soroban_rules(audit(settings, run, TOKEN.replace('BODY', body))) == []
+
+
+def test_allowance_pull_by_the_stored_operator_is_a_medium_trust_risk(settings, run):
+    verdict = audit(settings, run, TOKEN.replace('BODY', '''pub fn charge(env: Env, payer: Address, merchant: Address, amount: i128) {
+        let operator: Address = env.storage().instance().get(&Key::Admin).unwrap();
+        operator.require_auth();
+        token::Client::new(&env, &usdc(&env)).transfer_from(&env.current_contract_address(), &payer, &merchant, &amount);
+    }'''))
+    assert rule(verdict, 'soroban-token-move-allowance') == []
+    [finding] = rule(verdict, 'soroban-operator-pull')
+    assert finding.severity is Severity.MEDIUM and finding.is_risk and 'operator' in finding.title
+
+
+def test_allowance_pull_behind_an_unverified_role_check_is_a_gap(settings, run):
+    verdict = audit(settings, run, TOKEN.replace('BODY', '''pub fn charge(env: Env, caller: Address, payer: Address, merchant: Address, amount: i128) {
+        access_control::ensure_role(&env, &caller, &symbol_short!("billing"));
+        token::Client::new(&env, &usdc(&env)).transfer_from(&env.current_contract_address(), &payer, &merchant, &amount);
+    }'''))
+    [finding] = rule(verdict, 'soroban-token-move-allowance')
+    assert finding.severity is Severity.MEDIUM and finding.kind is FindingKind.EVIDENCE_GAP
+
+
 def test_has_role_without_auth_is_high(settings, run):
     source = TOKEN.replace('BODY', '''#[has_role(caller, "minter")]
     pub fn mint(e: &Env, to: Address, amount: i128, caller: Address) {
@@ -494,6 +641,17 @@ def test_has_role_without_auth_is_high(settings, run):
     [finding] = rule(audit(settings, run, source.replace('AUTH', '')), 'soroban-role-without-auth')
     assert finding.severity is Severity.HIGH
     assert rule(audit(settings, run, source.replace('AUTH', 'caller.require_auth();')), 'soroban-role-without-auth') == []
+
+
+def test_has_role_without_auth_on_a_library_mint_is_high(settings, run):
+    source = TOKEN.replace('BODY', '''#[has_role(caller, "minter")]
+    pub fn mint(e: &Env, to: Address, amount: i128, caller: Address) { Base::mint(e, &to, amount); }''')
+    [finding] = rule(audit(settings, run, source), 'soroban-role-without-auth')
+    assert finding.severity is Severity.HIGH
+    # The library's burn authorizes the holder it is given.
+    burn = TOKEN.replace('BODY', '''#[has_role(from, "burner")]
+    pub fn burn(e: &Env, from: Address, id: u32) { Base::burn(e, &from, id); }''')
+    assert rule(audit(settings, run, burn), 'soroban-role-without-auth') == []
 
 
 def test_auth_args_that_leave_out_the_recipient_are_high(settings, run):
@@ -520,6 +678,27 @@ def test_signature_checked_without_a_nonce_can_be_replayed(settings, run):
     stored = source.replace('NONCE', 'let n: u64 = env.storage().persistent().get(&Key::Nonce).unwrap_or(0); '
                                       'env.storage().persistent().set(&Key::Nonce, &(n + 1));')
     assert rule(audit(settings, run, stored), 'soroban-signature-replay') == []
+
+
+def test_signed_value_that_must_increase_is_not_replayable(settings, run):
+    verdict = audit(settings, run, TOKEN.replace('BODY', '''pub fn submit(env: Env, price: i128, round: u64, msg: Bytes, sig: BytesN<64>) {
+        let pk: BytesN<32> = env.storage().instance().get(&Key::Signer).unwrap();
+        env.crypto().ed25519_verify(&pk, &msg, &sig);
+        let last: u64 = env.storage().instance().get(&Key::Round).unwrap_or(0);
+        if round <= last { panic!() }
+        env.storage().instance().set(&Key::Round, &round);
+        env.storage().instance().set(&Key::Price, &price);
+    }'''))
+    assert rule(verdict, 'soroban-signature-replay') == []
+
+
+def test_amount_held_to_a_named_minimum_is_checked(settings, run):
+    verdict = audit(settings, run, TOKEN.replace('BODY', '''pub fn deposit(env: Env, from: Address, amount: i128) {
+        from.require_auth();
+        if amount < MIN_DEPOSIT { panic!() }
+        token::Client::new(&env, &usdc(&env)).transfer(&from, &env.current_contract_address(), &amount);
+    }'''))
+    assert rule(verdict, 'soroban-entry-amount-unchecked') == []
 
 
 def test_funding_entry_point_without_an_amount_check_is_low(settings, run):
@@ -599,10 +778,91 @@ def test_guarded_initializer_or_sample_contract_is_not_raised(settings, run):
     assert all(f.severity is not Severity.HIGH for f in rule(audit(settings, run, loose, kind=SourceKind.REPO), 'soroban-auth-missing'))
 
 
+@pytest.mark.parametrize('guard', [
+    'if env.storage().instance().get(&DataKey::Init).unwrap_or(false) { panic!("x") } env.storage().instance().set(&DataKey::Init, &true);',
+    'match env.storage().instance().get::<_, Address>(&DataKey::Admin) { Some(_) => panic!("x"), None => {} }',
+    'if storage::has_admin(&env) { panic!("x") }',
+    'let done: bool = env.storage().instance().get(&DataKey::Init).unwrap_or(false); if done { return; }',
+    'ensure_fresh(&env);',
+])
+def test_initializer_with_another_once_only_guard_is_not_raised(settings, run, guard):
+    source = INIT.replace('GUARD', guard) + '''
+fn ensure_fresh(env: &Env) { if env.storage().instance().get::<_, bool>(&DataKey::Init).unwrap_or(false) { panic!() } }'''
+    files = {'contracts/registry/src/lib.rs': source, 'contracts/registry/Cargo.toml': CARGO}
+    assert all(f.severity is not Severity.HIGH for f in rule(audit(settings, run, files, kind=SourceKind.REPO), 'soroban-auth-missing'))
+
+
+def test_parameter_check_is_not_a_once_only_guard(settings, run):
+    source = INIT.replace('GUARD', 'if admin == env.current_contract_address() { panic!() }')
+    files = {'contracts/registry/src/lib.rs': source, 'contracts/registry/Cargo.toml': CARGO}
+    [finding] = rule(audit(settings, run, files, kind=SourceKind.REPO), 'soroban-auth-missing')
+    assert finding.severity is Severity.HIGH
+
+
+def test_reinit_beside_lexical_gaps_is_not_confirmed_as_a_whole(settings, run):
+    source = INIT.replace('GUARD', '').replace('    pub fn set_fee', '''    pub fn touch(env: Env, v: u32) { env.storage().instance().set(&DataKey::Other, &v); }
+    pub fn set_fee''')
+    files = {'contracts/registry/src/lib.rs': source, 'contracts/registry/Cargo.toml': CARGO}
+    [finding] = rule(audit(settings, run, files, kind=SourceKind.REPO), 'soroban-auth-missing')
+    assert finding.severity is Severity.HIGH and finding.evidence_grade is EvidenceGrade.INFERRED
+    assert 'initialize' in finding.evidence and 'touch' in finding.evidence
+
+
+def test_plain_authorization_gap_keeps_the_stock_english_text(settings, run):
+    files = {'contracts/c/src/lib.rs': INIT.replace('GUARD', 'if env.storage().instance().has(&DataKey::Admin) { panic!() }').replace(
+        '    pub fn set_fee', '    pub fn touch(env: Env, v: u32) { env.storage().instance().set(&DataKey::Other, &v); }\n    pub fn set_fee'),
+        'contracts/c/Cargo.toml': CARGO}
+    [finding] = rule(audit(settings, run, files, kind=SourceKind.REPO), 'soroban-auth-missing')
+    assert english_finding(finding).title == 'Soroban authorization not evidenced'
+
+
 def test_reinitializing_an_unused_value_is_not_raised(settings, run):
     files = {'contracts/c/src/lib.rs': INIT.replace('GUARD', '').replace('DataKey::Fee', 'DataKey::Other').replace(
         'get(&DataKey::Admin)', 'get(&DataKey::Owner)'), 'contracts/c/Cargo.toml': CARGO}
     assert all(f.severity is not Severity.HIGH for f in rule(audit(settings, run, files, kind=SourceKind.REPO), 'soroban-auth-missing'))
+
+
+MOCK = '''use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env};
+#[contract]
+pub struct Attacker;
+#[contractimpl]
+impl Attacker {
+    pub fn steal(env: Env, tok: Address, victim: Address, amount: i128) {
+        token::Client::new(&env, &tok).transfer(&victim, &env.current_contract_address(), &amount);
+        env.storage().instance().set(&1u32, &amount);
+    }
+    pub fn pause(e: &Env) { pausable::pause(e); }
+    pub fn init(env: Env, admin: Address) { env.storage().instance().set(&0u32, &admin); }
+}
+'''
+
+
+@pytest.mark.parametrize('layout', [
+    {'contracts/c/src/lib.rs': 'use soroban_sdk::contract;\n#[cfg(test)]\nmod test;\n', 'contracts/c/src/test.rs': MOCK},
+    {'contracts/c/src/lib.rs': 'use soroban_sdk::contract;\n#[cfg(test)]\nmod mocks;\n', 'contracts/c/src/mocks.rs': MOCK},
+    {'contracts/c/src/lib.rs': 'use soroban_sdk::contract;\nmod helpers;\n',
+     'contracts/c/src/helpers.rs': MOCK.replace('token, Address', 'testutils::Address as _, token, Address')},
+    {'contracts/c/src/lib.rs': 'use soroban_sdk::contract;\nmod helpers;\n', 'contracts/c/src/helpers.rs': '#![cfg(test)]\n' + MOCK},
+])
+def test_mock_contracts_in_test_code_are_not_judged(settings, run, layout):
+    verdict = audit(settings, run, {**layout, 'contracts/c/Cargo.toml': CARGO}, kind=SourceKind.REPO)
+    assert soroban_rules(verdict) == [] and rule(verdict, 'soroban-auth-missing') == []
+
+
+def test_test_files_follow_the_module_tree():
+    files = {'src/lib.rs': '#[cfg(test)]\nmod test;\n#[cfg(not(test))]\nmod real;\nmod a;\n', 'src/test.rs': '', 'src/real.rs': '',
+             'src/a.rs': '#[cfg(any(test, feature = "testutils"))]\nmod fake;\n#[cfg(test)]\nmod inline { use soroban_sdk::testutils::Address as _; }\n',
+             'src/a/fake.rs': '', 'src/a/fake/deep.rs': '', 'src/b.rs': '#[cfg(test)]\nuse soroban_sdk::testutils::Ledger;\n',
+             'src/c.rs': '#[cfg(not(any(test, feature = "helpers")))]\npub(crate) mod both;\n#[cfg(any(test, feature = "helpers"))]\npub mod both;\n',
+             'src/c/both.rs': ''}
+    assert cfg_test_files(files) == {'src/test.rs', 'src/a/fake.rs', 'src/a/fake/deep.rs'}
+
+
+def test_masker_keeps_offsets_and_lifetimes():
+    source = 'fn f<\'a>(x: &\'a str) { let s = r#"a "quoted" // no"#; let c = \'"\'; /* x /* y */ z */ g(s) } // end'
+    masked = _rust_code(source)
+    assert len(masked) == len(source) and "<'a>" in masked and 'g(s)' in masked
+    assert 'quoted' not in masked and 'end' not in masked and ' z ' not in masked
 
 
 CHANNEL = '''use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};

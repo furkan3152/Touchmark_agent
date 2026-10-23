@@ -87,6 +87,7 @@ MESSAGES.update({
 "security-path-unenforced-financial-controls": ("Stellar financial controls not evidenced", "Signing tools are declared, but implementation-level financial controls are not demonstrated in the supplied source.", "Enforce authorization, recipient allowlists, limits and replay protection, and test rejection paths."),
 })
 CODE_MESSAGES = {
+"Soroban authorization paths require review": ("Soroban authorization not evidenced", "A write-capable contract surface lacks recognized require_auth enforcement.", "Require authorization for the exact action arguments and add negative authorization tests."),
 "eval() kullanımı": ("Dynamic eval() execution", "Dynamic evaluation can interpret untrusted input as executable code.", "Remove dynamic evaluation or isolate execution with strictly bounded input."),
 "exec() kullanımı": ("Dynamic exec() execution", "Dynamic execution may allow untrusted content to become code.", "Remove dynamic execution and use explicit, typed operations."),
 "shell=True ile subprocess": ("Subprocess invokes a shell", "Shell invocation increases command-injection risk if any argument is attacker-influenced.", "Use argument arrays with shell=False, validate each argument and isolate the process."),
