@@ -33,10 +33,9 @@ from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
 from .hardening import analyse_hardening
 from .network_rules import network_findings
-from .capabilities import authority_only_declared, code_enforced_spend_limit
+from .capabilities import authority_only_declared, code_enforced_spend_limit, executes_code
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
-DANGEROUS_TOOL_NAMES = ("shell", "exec", "bash", "eval", "python", "run_code", "subprocess")
 ISOLATION_SIGNALS = ("sandbox", "docker", "firecracker", "isolat", "tee", "enclave")
 
 
@@ -237,7 +236,7 @@ class SecurityAuditor(BaseAuditor):
             for t in artifact.tools
         )
         has_exec = any(
-            any(d in t.name.lower() for d in DANGEROUS_TOOL_NAMES) for t in artifact.tools
+            executes_code(t.name) for t in artifact.tools
         )
         severity = attack.severity
 
@@ -353,10 +352,14 @@ class SecurityAuditor(BaseAuditor):
         out: list[Finding] = []
         observed = [t for t in artifact.tools if t.origin == "observed"]
         if observed:
-            severe = any(t.requires_signature or "exec" in t.name for t in observed)
+            # A mismatch between declaration and code is a disclosure defect; what the
+            # capability can do is judged by the rules for it. Undeclared signing is serious,
+            # undeclared execution less so, an undeclared fetch or file read is a note.
+            severity = (Severity.HIGH if any(t.requires_signature for t in observed)
+                        else Severity.MEDIUM if any("exec" in t.name for t in observed) else Severity.LOW)
             out.append(self.finding(
                 "undeclared-capability",
-                Severity.CRITICAL if severe else Severity.HIGH,
+                severity,
                 "Source exercises capabilities the declaration does not grant",
                 "The submitted tool inventory understates what the code does. Findings are based on the "
                 "observed capabilities: " + ", ".join(t.name.split(":", 1)[1] for t in observed) + ".",
@@ -438,7 +441,7 @@ class SecurityAuditor(BaseAuditor):
         # judged by data flow and the deep review, not by its presence alone.
         dangerous = [
             t.name for t in artifact.tools
-            if t.origin == "declared" and any(d in t.name.lower() for d in DANGEROUS_TOOL_NAMES)
+            if t.origin == "declared" and executes_code(t.name)
         ]
         if dangerous:
             out.append(

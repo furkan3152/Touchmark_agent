@@ -49,6 +49,11 @@ _KEEPS_SEVERITY = re.compile(
     r"^stellar_native-onchain-contract-|^stellar_native-soroban-(?:upgrade|token-move)-")
 
 
+#: Facts a source quote cannot argue with: a committed secret, a dependency advisory matched
+#: on the installed version, contract bytecode. The verifier never caps these.
+_STRUCTURAL = re.compile(r"^stellar_native-(?:onchain-contract-|stellar-secret-seed|dep-)|^security-default-secret")
+
+
 class AuditSwarm:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -379,6 +384,10 @@ class AuditSwarm:
         pattern rules, which cannot read intent, not a way to talk a risk away."""
         results = {r["finding_id"]: r for r in verification.get("results", []) if r.get("quote_verified")
                    and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
+        # "unverifiable" needs no quote: the verifier could not find the code that makes the
+        # claim true. It never removes a finding, but an unconfirmed rule finding is capped.
+        results.update({r["finding_id"]: r for r in verification.get("results", [])
+                        if r.get("verdict") == "unverifiable" and r["finding_id"] not in results})
         if not results:
             return verdicts
         out = []
@@ -413,9 +422,24 @@ class AuditSwarm:
                         "detail": f.detail + f" Independent verification {'refutes' if refuted else 'finds no issue in'} this candidate ({r.get('file', '')}:"
                                   f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.3)})
-                elif refuted:
+                elif (r is not None and "-ai-" not in f.id and f.is_risk and f.severity.rank >= Severity.HIGH.rank
+                      and r.get("verdict") in {"partial", "unverifiable"} and not _STRUCTURAL.search(f.id)):
+                    # A pattern rule infers a defect from code shape. On agents submitted with a
+                    # .tmark, labelled blind, rule findings rated high that the verifier did not
+                    # confirm (partial, unverifiable or refuted) were high in 2 of 22; confirmed
+                    # ones in 5 of 7. Unconfirmed, the finding stays a risk at medium: it is shown
+                    # and scored, but does not block a pass on its own.
                     f = f.model_copy(update={
-                        "severity": f.severity.downgrade(1),
+                        "severity": Severity.MEDIUM,
+                        "detail": f.detail + f" Independent verification did not confirm this at high severity "
+                                  f"({r.get('verdict', '')}): {str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.6)})
+                elif refuted:
+                    lowered = f.severity.downgrade(1)
+                    if lowered.rank > Severity.MEDIUM.rank and not _STRUCTURAL.search(f.id):
+                        lowered = Severity.MEDIUM  # refuted and unconfirmed alike never block on their own
+                    f = f.model_copy(update={
+                        "severity": lowered,
                         "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"
                                   f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.5)})
