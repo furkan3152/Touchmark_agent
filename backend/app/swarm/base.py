@@ -12,6 +12,7 @@ from ..models import (
     Dimension,
     EvidenceGrade,
     Finding,
+    FindingKind,
     ScenarioResult,
     Severity,
 )
@@ -188,6 +189,20 @@ class BaseAuditor(ABC):
             else ""
         )
         return calibrated, scenarios, note
+
+    def contained(self, rule: str, run) -> list[Finding]:
+        """Run one rule family. If it fails on unusual input, report that as a blocking
+        evidence gap instead of failing the whole auditor: its other findings stand, and the
+        audit cannot pass with checks that did not run."""
+        try:
+            return run()
+        except Exception as exc:  # noqa: BLE001 - any rule bug must not sink the audit
+            return [self.finding(
+                f"rules-incomplete-{rule}", Severity.LOW, f"The {rule} checks did not complete",
+                f"They stopped on this source with {type(exc).__name__}, so what they look for was not checked.",
+                evidence=f"{type(exc).__name__}: {exc}"[:300],
+                remediation="Re-run the audit after the analyser is fixed; until then, review this area by hand.",
+            ).model_copy(update={"kind": FindingKind.EVIDENCE_GAP})]
 
     def finding(
         self,

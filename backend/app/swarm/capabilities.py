@@ -94,8 +94,8 @@ def effective_artifact(artifact: AgentArtifact) -> AgentArtifact:
     # A declared limit is only credited when the source bounds every payment amount.
     if profile.unbounded_amounts and financial:
         for tool in tools:
-            if _signing(tool) and tool.spend_limit_usdc is not None:
-                tool.spend_limit_usdc = None
+            if _signing(tool) and (tool.spend_limit_usdc is not None or tool.spend_limit is not None):
+                tool.spend_limit_usdc = tool.spend_limit = None
                 tool.description = (tool.description + " [declared spend limit is not enforced in source]").strip()
 
     return artifact.model_copy(update={"tools": tools + added, "code_profile": profile.summary()})

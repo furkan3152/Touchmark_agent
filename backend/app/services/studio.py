@@ -28,7 +28,7 @@ def instruction_literals(files: dict[str, str]) -> list[dict]:
     for path, content in sorted(files.items()):
         if not path.endswith('.py'): continue
         try: tree = ast.parse(content)
-        except (SyntaxError, ValueError, RecursionError): continue
+        except (SyntaxError, ValueError, RecursionError, MemoryError): continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call): continue
             values = []
@@ -96,7 +96,7 @@ class ReviewRequest(BaseModel):
             if path.suffix.lower() == ".py":
                 try:
                     tree = ast.parse(content)
-                except (SyntaxError, ValueError, RecursionError) as exc:
+                except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
                     raise ValueError("Python source must be syntactically valid before review.") from exc
                 pending = [(tree, 0)]
                 while pending:

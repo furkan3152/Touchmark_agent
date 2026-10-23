@@ -32,6 +32,7 @@ from .base import BaseAuditor
 from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
 from .hardening import analyse_hardening
+from .network_rules import network_findings
 from .capabilities import authority_only_declared, code_enforced_spend_limit
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
@@ -133,6 +134,7 @@ class SecurityAuditor(BaseAuditor):
         if deep:
             findings += analyse_agentic_paths(artifact, self.name)
         findings += analyse_hardening(artifact, self.name)
+        findings += self.contained("network-binding", lambda: network_findings(artifact, self.name))
 
         if artifact.code_files and not any(k in surface for k in ISOLATION_SIGNALS):
             findings.append(
@@ -410,7 +412,8 @@ class SecurityAuditor(BaseAuditor):
             for t in artifact.tools
             if t.requires_signature or any(s in SIGNING_SCOPES for s in t.scopes)
         ]
-        unlimited = [t.name for t in signing_tools if t.spend_limit_usdc is None]
+        # A declared cap in any asset counts; it is still checked against the code (capabilities.py).
+        unlimited = [t.name for t in signing_tools if t.spend_limit_usdc is None and t.spend_limit is None]
         if unlimited and code_enforced_spend_limit(artifact):
             unlimited = []  # the source caps every untrusted payment; see capabilities.py
         if unlimited:

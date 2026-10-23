@@ -30,7 +30,7 @@ from stellar_sdk import StrKey
 
 from ..config import Settings
 from ..ingestion.guards import guard_remote_url
-from ..stellar.soroban_reader import LedgerUnavailable, SorobanReader
+from ..stellar.soroban_reader import READ_ERRORS, LedgerUnavailable, SorobanReader
 
 MAX_CARD_BYTES = 256_000
 MAX_ARCHIVE_BYTES = 60_000_000
@@ -226,15 +226,30 @@ class AgentResolver:
             except LedgerUnavailable as exc:
                 step("contract", "unavailable", str(exc))
                 facts = None
+            except READ_ERRORS as exc:
+                # An executable or entry this reader cannot decode is reported, never a server error.
+                error = f"{type(exc).__name__}: {exc}"[:200]
+                step("contract", "unreadable", error)
+                facts = {"status": "unreadable", "contract_id": contract_id, "network": self.network, "error": error}
             if facts:
                 out["contract"] = facts
-                if facts["status"] != "found":
+                ref = facts.get("external_ref") or {}
+                if ref:
+                    step("executable_ref", ref.get("status", ""),
+                         f"owner {ref.get('owner')}, tag {ref.get('tag')!r}, wasm {ref.get('resolved_wasm_hash', '-')}")
+                if facts["status"] == "not_found":
                     step("contract", "not_found", contract_id)
                 elif facts.get("executable") == "stellar_asset":
                     step("contract", "stellar_asset", "a Stellar Asset Contract (token), not agent code")
-                else:
+                elif facts.get("executable") == "unknown":
+                    step("contract", "unknown_executable", "the executable type is not one this reader knows")
+                elif facts.get("wasm_hash"):
                     step("contract_code", "verified" if facts.get("wasm_hash_verified") else facts.get("code", "unverified"),
-                         f"wasm {facts.get('wasm_hash')}, {len(facts.get('functions', []))} functions")
+                         f"wasm {facts.get('wasm_hash')}, "
+                         f"{len(facts.get('functions', [])) + facts.get('functions_omitted', 0)} functions")
+                    graph = (facts.get("profile") or {}).get("callgraph") or {}
+                    if facts.get("profile_error") or graph.get("status") == "undecoded":
+                        step("contract_callgraph", "undecoded", facts.get("profile_error") or graph.get("error", ""))
                     declared = facts.get("meta", {}).get("source_repo", "")
                     if declared and not out["source"]["repository"]:
                         try:

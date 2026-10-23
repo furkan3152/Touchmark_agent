@@ -70,7 +70,7 @@ def discover_project(files: dict[str, str]) -> dict:
         if suffix == '.py':
             try:
                 tree = ast.parse(content)
-            except (SyntaxError, ValueError, RecursionError):
+            except (SyntaxError, ValueError, RecursionError, MemoryError):
                 diagnostics.append({'file': path, 'reason': 'Python syntax could not be parsed.'})
                 continue
             for n in ast.walk(tree):

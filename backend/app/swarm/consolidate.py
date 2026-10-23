@@ -11,6 +11,7 @@ handled where verification is applied (orchestrator._apply_verification).
 from __future__ import annotations
 
 import re
+from hashlib import sha1
 
 from ..models import Finding, FindingKind, Severity
 
@@ -20,6 +21,7 @@ _LOC = re.compile(r"([\w./@-]+\.[A-Za-z0-9]+):(\d+)")
 _CONCRETE_SPEND = re.compile(
     r"^security-path-(?:untrusted-to-financial-sink|x402-payment-unbounded|external-transaction-signed|"
     r"control-not-blocking)$|^security-declared-limit-not-enforced$|^intent-tmark-limit-not-enforced$|"
+    r"^security-x402-(?:spend-controls-disabled|any-asset-uncapped)-[0-9a-f]{8}$|"
     r"-ai-(?:unauthorized-payment|control-bypass|economic-loss|foreign-transaction-signing)-\d+$")
 #: Checklist notes that restate a missing spend control. In two hand-checked rounds over 23
 #: agents, 102 of them were labelled: 66 generic, 23 duplicate, 10 false, 1 overstated, 2 true.
@@ -38,7 +40,32 @@ _RULE_TWINS = {
     "security-path-secret-via-model": {"secret-exposure"},
     "security-path-secret-to-exfiltration": {"secret-exposure"},
     "security-path-untrusted-account-control": {"account-takeover", "control-bypass"},
+    "security-retry-may-pay-twice": {"replay-or-idempotency", "reliability-failure"},
+    "security-asset-checked-by-code-only": {"control-bypass"},
+    # Rules with stable-id suffixes, keyed without the suffix.
+    "security-x402-settle-unchecked": {"control-bypass"},
+    "security-x402-verify-without-settle": {"control-bypass"},
+    "security-x402-requirements-from-payer": {"control-bypass"},
+    "security-tx-hash-proof-unbound": {"replay-or-idempotency"},
+    "security-mpp-replay-store-missing": {"replay-or-idempotency"},
+    "security-amount-parsed-two-ways": {"control-bypass"},
+    "security-sep10-challenge-unchecked": {"foreign-transaction-signing"},
+    "stellar_native-rpc-send-treated-as-final": {"stellar-protocol-misuse"},
+    "stellar_native-rpc-response-misread": {"stellar-protocol-misuse", "functional-defect"},
+    "stellar_native-rpc-outcome-not-success-checked": {"stellar-protocol-misuse", "functional-defect"},
+    "stellar_native-soroban-upgrade-unguarded": {"account-takeover"},
+    "stellar_native-soroban-token-move-unbound": {"unauthorized-payment"},
+    "stellar_native-soroban-token-move-allowance": {"unauthorized-payment"},
 }
+_SUFFIX = re.compile(r"-[0-9a-f]{8}$")
+
+
+def stable_id(rule: str, place: str, snippet: str = "") -> str:
+    """``{rule}-{8 hex}`` from the file (or address) and the matched code, never from a line
+    number or a list position, so a re-audit and the verifier see the same id for the same
+    defect even when code above it moves."""
+    normalized = re.sub(r"\s+", " ", snippet).strip()
+    return f"{rule}-{sha1(f'{place}\n{normalized}'.encode()).hexdigest()[:8]}"
 
 
 def _category(fid: str) -> str:
@@ -70,7 +97,7 @@ def merge_duplicates(findings: list[Finding]) -> list[Finding]:
         # one); for a rule finding, a nearby line and the matching kind of defect.
         twin = next((k for k in kept if k.is_risk and (
             (_same_place(k, f, 0) and _category(k.id) == _category(f.id)) if "-ai-" in k.id
-            else (_same_place(k, f) and _category(f.id) in _RULE_TWINS.get(k.id, set())))), None)
+            else (_same_place(k, f) and _category(f.id) in _RULE_TWINS.get(_SUFFIX.sub("", k.id), set())))), None)
         if twin is None:
             kept.append(f)
             continue
@@ -99,5 +126,28 @@ def fold_absence_notes(findings: list[Finding]) -> list[Finding]:
             if f.id in _ABSENCE and f.kind is not FindingKind.EVIDENCE_GAP else f for f in findings]
 
 
+#: Stellar rules added with the lockfile, payment, RPC, asset and network checks. On repositories
+#: never seen while building them, most of their false findings sat in test harnesses.
+_HARNESS_RULES = re.compile(r"^(?:security-(?:network|mpp|x402|tx-hash|strkey|missing-issuer|payee|payment-asset|"
+                            r"amount-parsed|sep10|sep45|auth-expiration|path-fee-bump|path-sponsor)-|"
+                            r"stellar_native-(?:rpc|bigint|amount-above|memo-required-check|sdk-removed|transaction-meta)-)")
+_HARNESS_PATH = re.compile(r"(?:^|/)(?:sandbox|e2e|redteam|red-team|fixtures?|smoke[-_]?tests?|demo-scripts?)(?:/|$)|"
+                           r"(?:^|/)[\w.-]*(?:[-_.](?:e2e|test|spec|fixture|sandbox))\.[cm]?[jt]sx?$|"
+                           r"(?:^|/)(?:e2e|redteam|smoke)[-_.][\w.-]*\.[cm]?[jt]sx?$")
+
+
+def harness_notes(findings: list[Finding]) -> list[Finding]:
+    """A finding of those rules whose every cited place is a sandbox, end-to-end or fixture
+    script is a low warning: the script is not the agent that runs."""
+    out = []
+    for f in findings:
+        places = _locations(f)
+        if f.is_risk and _HARNESS_RULES.search(f.id) and places and all(_HARNESS_PATH.search(p) for p, _ in places):
+            f = f.model_copy(update={"kind": FindingKind.WARNING, "severity": Severity.LOW,
+                                     "detail": f.detail + " Every cited place is test or sandbox code."})
+        out.append(f)
+    return out
+
+
 def consolidate(findings: list[Finding]) -> list[Finding]:
-    return fold_absence_notes(merge_duplicates(findings))
+    return harness_notes(fold_absence_notes(merge_duplicates(findings)))

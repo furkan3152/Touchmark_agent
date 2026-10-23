@@ -39,10 +39,12 @@ from .policy import (
 
 #: Findings about funds, keys or code execution: the verifier may dispute them, but not
 #: lower their severity (on hand-audited agents it under-rated real ones when it did).
+#: Ledger and bytecode facts (onchain-contract-*) are kept too: the verifier only reads source.
 _KEEPS_SEVERITY = re.compile(
     r"-ai-(?:unauthorized-payment|foreign-transaction-signing|account-takeover|control-bypass|economic-loss|"
     r"code-execution|secret-exposure)-\d+$|^security-path-(?:untrusted-to-financial-sink|external-transaction-signed|"
-    r"key-signs-arbitrary-bytes|untrusted-account-control|untrusted-to-command|secret)")
+    r"key-signs-arbitrary-bytes|untrusted-account-control|untrusted-to-command|secret)|"
+    r"^stellar_native-onchain-contract-|^stellar_native-soroban-(?:upgrade|token-move)-")
 
 
 class AuditSwarm:
@@ -360,7 +362,8 @@ class AuditSwarm:
                         "severity": reviewed,
                         "detail": f.detail + f" Independent verification rates this {reviewed.value}: "
                                   f"{str(r.get('reason', ''))[:240]}"})
-                if r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk:
+                if (r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk
+                        and not f.id.startswith("stellar_native-onchain-contract-")):  # a source quote cannot refute bytecode
                     f = f.model_copy(update={
                         "severity": f.severity.downgrade(1),
                         "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"
