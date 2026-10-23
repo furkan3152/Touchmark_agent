@@ -42,8 +42,7 @@ from .policy import (
 _KEEPS_SEVERITY = re.compile(
     r"-ai-(?:unauthorized-payment|foreign-transaction-signing|account-takeover|control-bypass|economic-loss|"
     r"code-execution|secret-exposure)-\d+$|^security-path-(?:untrusted-to-financial-sink|external-transaction-signed|"
-    r"key-signs-arbitrary-bytes|untrusted-account-control|untrusted-to-command|secret)|"
-    r"^stellar_native-dep-passkey-kit-update-signer-")  # a deployed hash, which source lines cannot show
+    r"key-signs-arbitrary-bytes|untrusted-account-control|untrusted-to-command|secret)")
 
 
 class AuditSwarm:

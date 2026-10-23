@@ -192,24 +192,47 @@ class AuthorityReader:
 
 #: Committed seeds whose accounts are looked up, at most.
 MAX_SEED_KEYS = 20
+#: Horizon reads in flight per network, and the most time the whole lookup may take.
+SEED_LOOKUP_CONCURRENCY, SEED_LOOKUP_SECONDS = 6, 20.0
 
 
 async def seed_exposure(public_keys: list[str], *, transport: httpx.AsyncBaseTransport | None = None,
-                        timeout: float = 8.0) -> dict:
+                        timeout: float = 8.0, budget: float = SEED_LOOKUP_SECONDS) -> dict:
     """What a committed secret seed controls, by the public key derived from it in process.
 
     For each key, on mainnet and on testnet: whether its account exists and holds a balance,
     and how many other accounts list it as a signer (Horizon ``/accounts?signer=``). Only the
     G... public key is sent. Testnet is reset from time to time, so a key absent there may
-    have held testnet funds before."""
+    have held testnet funds before.
+
+    The reads run concurrently and end within ``budget`` seconds. A network stops after its
+    first failed read; every key it did not answer for is 'unavailable', and keeps its
+    path-based severity, so a slow or unreachable Horizon delays intake by the budget at most."""
     from datetime import datetime, timezone
     keys = [k for k in dict.fromkeys(public_keys) if StrKey.is_valid_ed25519_public_key(k)][:MAX_SEED_KEYS]
-    out: dict = {"checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "keys": {}}
-    for network in ("mainnet", "testnet"):
+    out: dict = {"checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "keys": {k: {} for k in keys}}
+
+    async def read(network: str) -> None:
+        failed, limit = asyncio.Event(), asyncio.Semaphore(SEED_LOOKUP_CONCURRENCY)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, transport=transport,
                                      headers={"Accept": "application/json"}) as client:
-            for key in keys:
-                out["keys"].setdefault(key, {})[network] = await _key_exposure(client, NETWORKS[network].horizon_url, key)
+            async def one(key: str) -> None:
+                async with limit:
+                    if failed.is_set():
+                        return
+                    result = await _key_exposure(client, NETWORKS[network].horizon_url, key)
+                    if result["status"] == "unavailable":
+                        failed.set()
+                    out["keys"][key][network] = result
+            await asyncio.gather(*(one(k) for k in keys))
+
+    try:
+        await asyncio.wait_for(asyncio.gather(read("mainnet"), read("testnet")), timeout=max(budget, 0.001))
+    except asyncio.TimeoutError:
+        pass
+    for record in out["keys"].values():
+        for network in ("mainnet", "testnet"):
+            record.setdefault(network, {"status": "unavailable"})
     return out
 
 

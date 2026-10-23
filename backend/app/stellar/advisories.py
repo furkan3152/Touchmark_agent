@@ -85,8 +85,9 @@ ADVISORIES: tuple[Advisory, ...] = (
         "https://www.npmjs.com/package/@stellar/mpp/v/0.7.0", "2026-10-22",
         "charge_server_without_fee_payer",
         "Before 0.7.0 a charge server without a fee payer accepts a push credential that is only a transaction "
-        "hash, unsigned: whoever presents another payer's hash first is served on that payment. 0.7.0 accepts "
-        "unsigned hashes only with allowUnsignedPush."),
+        "hash, unsigned: whoever presents another payer's hash first is served on that payment. 0.3 binds no payer; "
+        "from 0.4 the server compares the transfer's sender with the credential's source DID, which the presenter "
+        "writes and nothing signs. 0.7.0 accepts unsigned hashes only with allowUnsignedPush."),
     Advisory(
         "PASSKEY-KIT-POLICY-SIGNER", "npm", "passkey-kit",
         (("0.0.0", "0.16.3"),), "0.16.3", "",

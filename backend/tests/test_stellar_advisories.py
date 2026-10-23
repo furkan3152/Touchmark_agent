@@ -6,14 +6,16 @@ release without the code condition, a range instead of a lockfile, a client-only
 from __future__ import annotations
 
 import json
+import time
 from datetime import date
 
 import pytest
 
 from backend.app.models import AgentArtifact, Severity, SourceKind
 from backend.app.stellar import advisories
+from backend.app.swarm import advisory_check
 from backend.app.swarm.advisory_check import advisory_findings
-from backend.app.swarm.stellar_native import StellarNativeAuditor
+from backend.app.swarm.stellar_native import StellarNativeAuditor, _rust_code
 from backend.tests.test_deep_checks import audit
 
 BAD_HASH = "0c0a264d4cc0b3e79b8533e2a2e1f0ed21501a5a3f9f2455d2f18c232940b865"
@@ -75,6 +77,32 @@ def test_the_fixed_macros_or_no_collision_is_not_a_risk(tmp_path):
     assert [f["severity"] for f in dep_findings(pinned, "ghsa-96xm")] == ["info"]
 
 
+WORKSPACE = '[workspace]\nmembers = ["contracts/*"]\n{extra}'
+MEMBER = '[package]\nname = "{name}"\nversion = "0.1.0"\n\n[dependencies]\nsoroban-sdk = {{ workspace = true }}\n'
+
+
+def workspace(tmp_path, crates: dict[str, str], lock: str, extra: str = "", more: dict | None = None) -> dict:
+    files = {"Cargo.toml": WORKSPACE.format(extra=extra), "Cargo.lock": lock, **(more or {})}
+    for name, source in crates.items():
+        files.update({f"contracts/{name}/Cargo.toml": MEMBER.format(name=name), f"contracts/{name}/src/lib.rs": source})
+    return audit(tmp_path, files)
+
+
+def test_a_same_named_type_in_another_crate_or_a_test_module_does_not_collide(tmp_path):
+    lock = cargo_lock(soroban_sdk="23.5.1", soroban_sdk_macros="23.5.1")
+    # Both crates keep the template name `Contract`; the inherent helper is in the other crate.
+    token = VAULT.replace("Vault", "Contract")
+    router = ('use soroban_sdk::{contract, contractimpl, Address, Env};\n#[contract]\npub struct Contract;\n'
+              + INHERENT.replace("Vault", "Contract"))
+    found = workspace(tmp_path / "a", {"token": token, "router": router}, lock)
+    assert [f["severity"] for f in dep_findings(found, "ghsa-4chv")] == ["info"]
+    found = workspace(tmp_path / "b", {"token": token + INHERENT.replace("Vault", "Contract")}, lock)
+    [finding] = dep_findings(found, "ghsa-4chv")
+    assert finding["severity"] == "high" and "contracts/token/src/lib.rs" in finding["evidence"]
+    in_tests = VAULT + "\n#[cfg(test)]\nmod test {\n    use super::*;\n" + INHERENT + "}\n"
+    assert [f["severity"] for f in dep_findings(rust_repo(tmp_path / "c", "23.5.1", in_tests), "ghsa-4chv")] == ["info"]
+
+
 # ----------------------------------------------------------------- GHSA-96xm-fv9w-pf3f and GHSA-x2hw-px52-wp4m
 RANGES = VAULT.replace("{ owner(&e).require_auth(); set_owner(&e, &new) }",
                        "{ let b = load(&e); let part = b.slice(0..=end(&e)); set_owner(&e, &new) }")
@@ -85,6 +113,32 @@ def test_an_inclusive_slice_without_overflow_checks_is_medium(tmp_path):
     assert finding["severity"] == "medium" and "src/lib.rs:" in finding["evidence"]
     checked = rust_repo(tmp_path / "b", "22.0.8", RANGES, extra="\n[profile.release]\noverflow-checks = true\n")
     assert [f["severity"] for f in dep_findings(checked, "ghsa-96xm")] == ["info"]
+
+
+def test_prng_gen_range_is_medium_but_rand_gen_range_off_chain_is_not(tmp_path):
+    lock = cargo_lock(soroban_sdk="22.0.5", rand="0.8.5")
+    prng = VAULT.replace("{ owner(&e).require_auth(); set_owner(&e, &new) }",
+                         "{ let pick = e.prng().gen_range::<u64>(0..count(&e)); set_owner(&e, &new) }")
+    [finding] = dep_findings(workspace(tmp_path / "a", {"vault": prng}, lock), "ghsa-96xm")
+    assert finding["severity"] == "medium" and "contracts/vault/src/lib.rs:8" in finding["evidence"]
+    # A CLI next to the contracts that jitters with rand, and a contract test that does: not contract code.
+    cli = ('use rand::Rng;\nfn main() {\n    let mut rng = rand::thread_rng();\n'
+           '    let jitter_ms: u64 = rng.gen_range(100..500);\n    let _ = bytes::Bytes::new().slice(0..=1);\n}\n')
+    more = {"cli/Cargo.toml": '[package]\nname = "cli"\nversion = "0.1.0"\n\n[dependencies]\nrand = "0.8"\nsoroban-sdk = "22.0.5"\n',
+            "cli/src/main.rs": cli,
+            "contracts/vault/tests/fuzz.rs": "use soroban_sdk::Env;\n#[test]\nfn f() { let e = Env::default(); e.prng().gen_range::<u64>(0..10); }\n"}
+    found = workspace(tmp_path / "b", {"vault": VAULT}, lock, extra="\n[profile.release]\nopt-level = \"z\"\n", more=more)
+    assert [f["severity"] for f in dep_findings(found, "ghsa-96xm")] == ["info"]
+
+
+def test_overflow_checks_are_read_from_the_workspace_root(tmp_path):
+    # An exact pin in a member, no lockfile: the profile that applies is the workspace root's.
+    member = '[package]\nname = "vault"\nversion = "0.1.0"\n\n[dependencies]\nsoroban-sdk = "=22.0.8"\n'
+    files = {"Cargo.toml": WORKSPACE.format(extra="\n[profile.release]\noverflow-checks = true\n"),
+             "contracts/vault/Cargo.toml": member, "contracts/vault/src/lib.rs": RANGES}
+    assert [f["severity"] for f in dep_findings(audit(tmp_path / "a", files), "ghsa-96xm")] == ["info"]
+    files["Cargo.toml"] = WORKSPACE.format(extra="")
+    assert [f["severity"] for f in dep_findings(audit(tmp_path / "b", files), "ghsa-96xm")] == ["medium"]
 
 
 def test_fr_equality_is_medium_only_with_fr_values(tmp_path):
@@ -110,7 +164,8 @@ def test_a_contract_delegated_signer_on_old_stellar_accounts_is_medium(tmp_path)
     g_signer = account.replace("e.current_contract_address()", "owner_address(&e)")
     found = audit(tmp_path / "b", {"Cargo.toml": CARGO_TOML.format(sdk="23.5.3", extra='stellar-accounts = "0.7.2"\n'),
                                    "Cargo.lock": lock, "src/lib.rs": g_signer})
-    assert [f["severity"] for f in dep_findings(found, "stellar-accounts")] == ["info"]
+    [note] = dep_findings(found, "stellar-accounts")
+    assert note["severity"] == "info" and "Delegates chosen at run time" in note["detail"]
 
 
 # ----------------------------------------------------------------- @stellar/mpp charge servers
@@ -136,6 +191,20 @@ def test_an_old_mpp_charge_server_without_fee_payer_accepts_unsigned_hashes(tmp_
     assert finding["severity"] == "medium" and "src/server.ts:7" in finding["evidence"]  # testnet constants only
     pubnet = MPP_SERVER.replace("STELLAR_TESTNET }", "STELLAR_PUBNET }").replace("STELLAR_TESTNET", "STELLAR_PUBNET")
     assert [f["severity"] for f in mpp_findings(tmp_path / "b", "0.4.0", pubnet)] == ["high"]
+
+
+def test_mainnet_in_a_comment_or_a_test_does_not_raise_an_mpp_server_to_high(tmp_path):
+    files = {"package.json": json.dumps({"dependencies": {"@stellar/mpp": "^0.4.0"}}),
+             "package-lock.json": package_lock(stellar__mpp="0.4.0"),
+             "src/server.ts": "// mainnet later: https://horizon.stellar.org\n" + MPP_SERVER,
+             "src/server.test.ts": 'import { STELLAR_PUBNET } from "@stellar/mpp";\nexpect(net).not.toBe(STELLAR_PUBNET);\n'
+                                   + MPP_SERVER}
+    [finding] = dep_findings(audit(tmp_path, files), "mpp-unsigned-hash-push-stellar-mpp")
+    assert finding["severity"] == "medium" and "src/server.ts:8" in finding["evidence"]
+    # A network-keyed map can select mainnet: it is reachable.
+    files["src/net.ts"] = "export const USDC = { 'stellar:pubnet': USDC_SAC_MAINNET, 'stellar:testnet': USDC_SAC_TESTNET };\n"
+    [finding] = dep_findings(audit(tmp_path / "b", files), "mpp-unsigned-hash-push-stellar-mpp")
+    assert finding["severity"] == "high"
 
 
 def test_mpp_fixed_release_fee_payer_or_client_import_is_not_matched(tmp_path):
@@ -189,9 +258,11 @@ def test_an_affected_sdk_in_contract_metadata_is_only_a_fact(settings, run):
     (f'export const kit = new PasskeyKit({{ rpcUrl, networkPassphrase, walletWasmHash: "{BAD_HASH}" }});\n', 1),
     (f'// Refuse these known-vulnerable builds\nexport const KNOWN_VULNERABLE_WALLET_WASM_HASHES = [\n  "{BAD_HASH}",\n];\n', 0),
     (f'export const walletWasmHash = "{"cd" * 32}";\n', 0),
+    (f'// const kit = new PasskeyKit({{ walletWasmHash: "{BAD_HASH}" }});\n', 0),
 ])
 def test_deploying_from_a_known_vulnerable_hash_is_critical(settings, run, source, hits):
     assert len(stellar_native(settings, run, code_files={"src/kit.ts": source})) == hits
+    assert not stellar_native(settings, run, code_files={"tests/kit.test.ts": source})
 
 
 # ----------------------------------------------------------------- the table itself
@@ -210,10 +281,36 @@ def test_a_stale_table_is_reported_only_where_it_was_consulted(settings):
             "locked": {"Cargo.lock": {"soroban-sdk": ["23.5.3"]}}}
     later = date.fromisoformat(advisories.ADVISORIES[0].reviewed_at).replace(year=2027)
     auditor = StellarNativeAuditor(settings)
-    used = AgentArtifact(name="a", source_kind=SourceKind.REPO, source_ref="r", code_files={"src/lib.rs": VAULT},
+    used = AgentArtifact(name="a", source_kind=SourceKind.REPO, source_ref="r",
+                         code_files={"Cargo.toml": CARGO_TOML.format(sdk="23.5.3", extra=""), "src/lib.rs": VAULT},
                          raw_metadata={"resolved_versions": lock})
     [gap] = advisory_findings(used, auditor, today=later)
     assert gap.id == "stellar_native-dep-advisory-table-stale" and gap.kind.value == "evidence_gap"
     assert not advisory_findings(used, auditor, today=date.fromisoformat(advisories.ADVISORIES[0].reviewed_at))
     unrelated = used.model_copy(update={"raw_metadata": {}})
     assert not advisory_findings(unrelated, auditor, today=later)
+
+
+# ----------------------------------------------------------------- cost
+def test_masking_is_linear_and_only_affected_contract_code_is_masked(settings, monkeypatch):
+    unit = 'pub fn f(e: Env) -> u32 { let s = "a \\" b"; let c = \'x\'; /* c /* n */ */ // x\n  r#"raw"#; 1 }\n'
+    big = unit * (400_000 // len(unit))
+    started = time.perf_counter()
+    assert len(_rust_code(big)) == len(big)
+    assert time.perf_counter() - started < 0.5  # a quadratic masker takes seconds here
+
+    masked: list[str] = []
+    monkeypatch.setattr(advisory_check, "_rust_code", lambda text: masked.append(text) or _rust_code(text))
+    lock = {"importers": {"": {"lockfiles": ["Cargo.lock"], "deps": {
+        "soroban-sdk": {"spec": "23.5.3", "version": "23.5.3", "source": "Cargo.lock"},
+        "soroban-sdk-macros": {"spec": "23.5.3", "version": "23.5.3", "source": "Cargo.lock"}}}},
+        "locked": {"Cargo.lock": {"soroban-sdk": ["23.5.3"], "soroban-sdk-macros": ["23.5.3"]}}}
+    files = {"Cargo.toml": CARGO_TOML.format(sdk="23.5.3", extra=""), "src/lib.rs": VAULT,
+             "cli/Cargo.toml": '[package]\nname = "cli"\n', "cli/src/main.rs": big}
+    artifact = AgentArtifact(name="a", source_kind=SourceKind.REPO, source_ref="r", code_files=files,
+                             raw_metadata={"resolved_versions": lock})
+    advisory_findings(artifact, StellarNativeAuditor(settings), today=date.fromisoformat(advisories.ADVISORIES[0].reviewed_at))
+    assert masked == []  # no affected version: nothing to mask
+    lock["importers"][""]["deps"]["soroban-sdk-macros"]["version"] = "23.5.1"
+    advisory_findings(artifact, StellarNativeAuditor(settings), today=date.fromisoformat(advisories.ADVISORIES[0].reviewed_at))
+    assert masked == [VAULT]  # the contract source, not the CLI

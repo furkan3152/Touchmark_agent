@@ -18,20 +18,32 @@ from ..models import AgentArtifact, EvidenceGrade, Finding, FindingKind, Severit
 from ..services.lockfiles import Lockset, below, exact_pin
 from ..stellar import advisories as adv
 from .consolidate import stable_id
-from .stellar_native import _FUNCTION, _rust_code
-from .tmark_check import _MAINNET
+from .stellar_native import _FUNCTION, _rust_code, contract_sources
+from .tmark_check import _MAINNET, network_hits
 
 #: Lockfile names: a version read from one of them is what is installed.
 _LOCKS = {"Cargo.lock", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"}
 _JS = (".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".mts", ".cts")
 #: @stellar/mpp's own constants for the public network, next to the shared mainnet markers.
-_MPP_MAINNET = re.compile(r"\b(?:STELLAR_PUBNET|USDC_SAC_MAINNET|XLM_SAC_MAINNET)\b")
+_MPP_MAINNET = re.compile(r"\b(?:STELLAR_PUBNET|USDC_SAC_MAINNET|XLM_SAC_MAINNET)\b|" + _MAINNET.pattern)
+#: Tests, fixtures and mocks, and Rust targets that are separate crates (integration tests,
+#: benches, fuzz targets) or test-only modules: none of it is deployed.
+_TEST_FILE = re.compile(r"(?:^|/)(?:tests?|__tests__|__mocks__|mocks?|spec|e2e|fixtures?|fuzz|benches)/|"
+                        r"[._-](?:test|spec)s?\.[cm]?[jt]sx?$|(?:^|/)(?:testutils?|test_?utils?)(?:/|\.rs$)|"
+                        r"(?:^|/)tests?\.rs$|_tests?\.rs$")
+#: A test module inside a source file: #[cfg(test)] mod tests { ... }.
+_TEST_MODULE = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:#\s*\[[^\]]*\]\s*)*"
+                          r"(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 
 _CONTRACTIMPL = re.compile(r"#\s*\[\s*contractimpl\b")
 _IMPL = re.compile(r"\bimpl\s*(?:<[^>{;]*>\s*)?(?:(?P<trait>[\w:]+(?:<[^>{;]*>)?)\s+for\s+)?"
                    r"(?P<type>[A-Za-z_]\w*)(?:<[^>{;]*>)?\s*(?:where\b[^{;]*)?\{")
-_INCLUSIVE_SLICE = re.compile(r"\.\s*slice\s*\([^;{}]*?\.\.=")
-_GEN_RANGE = re.compile(r"\.\s*gen_range\s*(?:::\s*<[^>]*>\s*)?\(")
+#: Bytes/Vec slices whose bound the SDK adds one to: an inclusive end, or an excluded start.
+_UNCHECKED_SLICE = re.compile(r"\.\s*slice\s*\(\s*(?:[^;{}]*?\.\.=|\(\s*(?:[\w:]*::)?Bound\s*::\s*Excluded\b)")
+#: Prng::gen_range, on env.prng() or on a name bound to it (rand's Rng::gen_range is not affected).
+_GEN_RANGE = re.compile(r"(?:\.\s*prng\s*\(\s*\)|\b([a-z_]\w*))\s*\.\s*gen_range\s*(?:::\s*<[^>]*>\s*)?\(")
+_PRNG_BINDING = re.compile(r"\blet\s+(?:mut\s+)?([a-z_]\w*)\s*(?::[^=;]*)?=[^;]*\.\s*prng\s*\(\s*\)\s*;|"
+                           r"\b([a-z_]\w*)\s*:\s*&?\s*(?:[\w:]*::)?Prng\b")
 _FR_IMPORT = re.compile(r"\b(?:bn254|bls12_381)\s*::\s*(?:\{[^}]*\bFr\b|Fr\b)")
 _FR_BINDING = re.compile(r"\b([a-z_]\w*)\s*:\s*&?\s*(?:[\w:]*::)?Fr\b|"
                          r"\blet\s+(?:mut\s+)?([a-z_]\w*)\s*(?::[^=;]*)?=\s*(?:[\w:]*::)?Fr\s*::")
@@ -80,6 +92,42 @@ def _package_root(lockset: Lockset, path: str) -> str:
     return next(("/".join(parts[:i]) for i in range(len(parts), 0, -1) if "/".join(parts[:i]) in lockset.importers), "")
 
 
+def _manifest(directory: str) -> str:
+    return "Cargo.toml" if directory in ("", ".") else f"{directory}/Cargo.toml"
+
+
+def _crate_root(files: dict[str, str], path: str) -> str:
+    """The nearest directory above ``path`` that has a Cargo.toml ('' for the repository root)."""
+    parents = [str(d) for d in PurePosixPath(path).parents]
+    return next(("" if d == "." else d for d in parents if _manifest(d) in files), "")
+
+
+def _profile_manifest(files: dict[str, str], source: str) -> str | None:
+    """The manifest whose [profile.release] applies. Cargo reads profiles only at the workspace
+    root: next to the lockfile, or the nearest manifest above a pinned member that has [workspace]."""
+    here = str(PurePosixPath(source).parent)
+    if PurePosixPath(source).name in _LOCKS:
+        return files.get(_manifest(here))
+    manifests = [files[_manifest(str(d))] for d in (PurePosixPath(here), *PurePosixPath(here).parents)
+                 if _manifest(str(d)) in files]
+    return next((m for m in manifests if re.search(r"(?m)^\s*\[workspace\]", m)), manifests[0] if manifests else None)
+
+
+def _deployed(files: dict[str, str], name: str) -> bool:
+    """A contract source the release build includes: not a test, bench, example or fuzz target."""
+    crate = _crate_root(files, name)
+    inner = name[len(crate) + 1:] if crate else name
+    return not _TEST_FILE.search(name) and not inner.startswith(("examples/", "benches/"))
+
+
+def _without_test_modules(code: str) -> str:
+    """Blank #[cfg(test)] modules: they are compiled into test builds only."""
+    for m in reversed(list(_TEST_MODULE.finditer(code))):
+        end = _block(code, m.end() - 1)
+        code = code[:m.start()] + re.sub(r"[^\n]+", lambda s: " " * len(s.group()), code[m.start():end]) + code[end:]
+    return code
+
+
 # ------------------------------------------------------------------ Rust conditions
 
 def _impls(name: str, code: str) -> list[dict]:
@@ -94,23 +142,30 @@ def _impls(name: str, code: str) -> list[dict]:
     return out
 
 
-def _name_collisions(files: dict[str, str]) -> list[str]:
+def _name_collisions(files: dict[str, str], crates: dict[str, str]) -> list[str]:
     """GHSA-4chv-4c6w-w254: a #[contractimpl] trait impl and a plain inherent impl of the same
-    type define a function with the same name."""
+    type define a function with the same name. Inherent impls live in the type's own crate, so a
+    type is (crate, name): two contracts that both call their type `Contract` do not collide."""
     impls = [i for name, code in files.items() for i in _impls(name, code)]
-    exported = {(i["type"], fn): f"{i['file']}:{line}" for i in impls if i["trait"] and i["contractimpl"] for fn, line in i["fns"]}
-    return [f"{fn}: trait fn at {exported[(i['type'], fn)]}, inherent fn at {i['file']}:{line}"
+    exported = {(crates[i["file"]], i["type"], fn): f"{i['file']}:{line}"
+                for i in impls if i["trait"] and i["contractimpl"] for fn, line in i["fns"]}
+    return [f"{fn}: trait fn at {exported[(crates[i['file']], i['type'], fn)]}, inherent fn at {i['file']}:{line}"
             for i in impls if not i["trait"] and not i["contractimpl"]
-            for fn, line in i["fns"] if (i["type"], fn) in exported]
+            for fn, line in i["fns"] if (crates[i["file"]], i["type"], fn) in exported]
 
 
 def _unchecked_ranges(files: dict[str, str], manifest: str | None) -> list[str]:
-    """GHSA-96xm-fv9w-pf3f: release builds without overflow checks, and an inclusive slice or
-    gen_range in the source. Without the workspace manifest the profile is unknown: no match."""
+    """GHSA-96xm-fv9w-pf3f: release builds without overflow checks, and a Bytes/Vec slice with
+    an inclusive end or excluded start, or Prng::gen_range, in contract code. Without the
+    workspace manifest the profile is unknown: no match."""
     if manifest is None or re.search(r"(?ms)^\[profile\.release\][^\[]*?^\s*overflow-checks\s*=\s*true", manifest):
         return []
-    return [f"{name}:{_line(code, m.start())}" for name, code in files.items()
-            for m in (*_INCLUSIVE_SLICE.finditer(code), *_GEN_RANGE.finditer(code))][:5]
+    hits = []
+    for name, code in files.items():
+        prng = {a or b for a, b in _PRNG_BINDING.findall(code)}
+        hits += [f"{name}:{_line(code, m.start())}" for m in _UNCHECKED_SLICE.finditer(code)]
+        hits += [f"{name}:{_line(code, m.start())}" for m in _GEN_RANGE.finditer(code) if not m[1] or m[1] in prng]
+    return hits[:5]
 
 
 def _fr_equality(files: dict[str, str], raw: dict[str, str]) -> list[str]:
@@ -167,11 +222,39 @@ def _mpp_servers_without_fee_payer(name: str, text: str) -> list[str]:
 
 # ------------------------------------------------------------------ findings
 
-def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = None) -> list[Finding]:
+#: What each Rust condition looks for, said when an affected version does not show it.
+_NOT_SHOWN = {
+    "contractimpl_name_collision": "No inherent function of a contract type shares its name with a function of a "
+                                   "#[contractimpl] trait impl of that type in the same crate.",
+    # A delegate the operator or a tool passes in at run time (a C... strkey on a command line)
+    # is not a self or mutual delegate shown in source; whether one is configured needs a
+    # ledger read of the account's rules, so this stays a note.
+    "delegated_contract_signer": "The source builds no Delegated signer from the account's own address or a "
+                                 "contract-address literal. Delegates chosen at run time (an address an operator or a "
+                                 "tool passes in) are not visible to this check: confirm that no configured Delegated "
+                                 "signer is the account itself or a contract that delegates back to it.",
+    "unchecked_range_arithmetic": "No contract source built without overflow checks slices Bytes or Vec with an "
+                                  "inclusive end or excluded start, or calls Prng gen_range.",
+    "fr_equality": "No BN254 or BLS12-381 Fr value is compared with == or assert_eq.",
+}
+
+
+def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = None,
+                      masked: dict[str, str] | None = None) -> list[Finding]:
+    """``masked`` maps each contract source to its comment- and literal-masked text, when the
+    caller (StellarNativeAuditor) already has it; otherwise each file is masked when needed."""
     lockset = Lockset(artifact.raw_metadata.get("resolved_versions"))
     files = artifact.code_files
     out: list[Finding] = []
     consulted = False
+    contracts = list(masked) if masked is not None else list(contract_sources(artifact))
+    masked, built_code = masked or {}, {}
+
+    def code_of(name: str) -> str:
+        """Masked text, without #[cfg(test)] modules; computed once, and only when asked for."""
+        if name not in built_code:
+            built_code[name] = _without_test_modules(masked[name] if name in masked else _rust_code(files[name]))
+        return built_code[name]
 
     def finding(advisory: adv.Advisory, place: str, severity: Severity, title: str, detail: str, evidence: str,
                 grade: EvidenceGrade = EvidenceGrade.CONFIRMED, gap: bool = False, remediation: str = "") -> None:
@@ -185,12 +268,11 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
             references=[advisory.url], grade=grade, confidence=0.9 if grade is EvidenceGrade.CONFIRMED else 0.75)
         out.append(f.model_copy(update={"kind": FindingKind.EVIDENCE_GAP}) if gap else f)
 
-    # Rust: group the crate sources by the lockfile that resolves each advisory's package.
-    rust_raw = {n: t for n, t in files.items() if n.endswith(".rs")}
-    rust = {n: _rust_code(t) for n, t in rust_raw.items()}
+    # Rust: the contract sources, grouped by the lockfile that resolves each advisory's package.
+    # Files are masked only for a group whose installed version is affected.
     for advisory in (a for a in adv.ADVISORIES if a.ecosystem == "cargo"):
         groups: dict[tuple, list[str]] = {}
-        for name in rust:
+        for name in contracts:
             found = _installed(lockset, advisory.package, name, "cargo")
             if found:
                 groups.setdefault(found, []).append(name)
@@ -199,13 +281,15 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
             affected = [v for v in versions if advisory.affects(v)]
             if not affected:
                 continue
-            code, raw = {n: rust[n] for n in names}, {n: rust_raw[n] for n in names}
+            built = [n for n in names if _deployed(files, n)]
+            code = {n: code_of(n) for n in built}
+            raw = {n: files[n] for n in built}
             installed = f"{source}: {advisory.package} {', '.join(affected)}"
-            root = str(PurePosixPath(source).parent)
             hits, severity, grade = {
-                "contractimpl_name_collision": lambda: (_name_collisions(code), Severity.HIGH, EvidenceGrade.CONFIRMED),
+                "contractimpl_name_collision": lambda: (_name_collisions(code, {n: _crate_root(files, n) for n in built}),
+                                                        Severity.HIGH, EvidenceGrade.CONFIRMED),
                 "delegated_contract_signer": lambda: (_contract_delegates(code, raw), Severity.MEDIUM, EvidenceGrade.INFERRED),
-                "unchecked_range_arithmetic": lambda: (_unchecked_ranges(code, files.get("Cargo.toml" if root == "." else f"{root}/Cargo.toml")),
+                "unchecked_range_arithmetic": lambda: (_unchecked_ranges(code, _profile_manifest(files, source)),
                                                        Severity.MEDIUM, EvidenceGrade.INFERRED),
                 "fr_equality": lambda: (_fr_equality(code, raw), Severity.MEDIUM, EvidenceGrade.INFERRED),
             }[advisory.condition]()
@@ -214,14 +298,14 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
                         "The installed version has a published flaw and the source uses the affected feature.",
                         installed + "; " + "; ".join(hits[:5]), grade)
             else:
-                finding(advisory, source, Severity.INFO, f"{advisory.package} {affected[0]} is within {advisory.id}; its code condition was not found",
-                        "The installed version is affected, but the source does not show the condition that makes it exploitable.",
+                finding(advisory, source, Severity.INFO, f"{advisory.package} {affected[0]} is within {advisory.id}; check whether its condition applies",
+                        f"The installed version is affected. {_NOT_SHOWN[advisory.condition]}",
                         installed, EvidenceGrade.INFERRED, gap=True)
 
     # JS: MPP charge servers, and passkey-kit wallets used with policy signers.
     mpp = adv.for_package("@stellar/mpp")[0]
     for name, text in sorted(files.items()):
-        if not name.endswith(_JS) or "@stellar/mpp/charge/server" not in text:
+        if not name.endswith(_JS) or "@stellar/mpp/charge/server" not in text or _TEST_FILE.search(name):
             continue
         found = _installed(lockset, mpp.package, name, "npm")
         if not found:
@@ -230,16 +314,20 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
         affected = [v for v in found[0] if mpp.affects(v)]
         calls = _mpp_servers_without_fee_payer(name, text) if affected else []
         if calls:
+            # Mainnet is reachable when the package's own code (not a comment, not a test) names it,
+            # a network-keyed map included: the map can select it.
             root = _package_root(lockset, name)
-            package = {n: t for n, t in files.items() if not root or n.startswith(root + "/")}
-            mainnet = any(_MAINNET.search(t) or _MPP_MAINNET.search(t) for n, t in package.items() if n.endswith(_JS))
+            package = {n: t for n, t in files.items() if (not root or n.startswith(root + "/"))
+                       and n.endswith(_JS) and not _TEST_FILE.search(n)}
+            mainnet = bool(network_hits(package, _MPP_MAINNET, skip_keyed=False))
             finding(mpp, name, Severity.HIGH if mainnet else Severity.MEDIUM,
                     "The MPP charge server accepts unsigned transaction-hash credentials",
                     f"@stellar/mpp {affected[0]} is installed and the charge method has no feePayer."
                     + ("" if mainnet else " Only testnet constants are reachable in this package."),
                     f"{found[1]}: @stellar/mpp {affected[0]}; " + "; ".join(calls[:5]))
     passkey = adv.for_package("passkey-kit")[0]
-    policies = any(_POLICY_SIGNER.search(rust.get(n, t)) for n, t in files.items() if n.endswith(_JS + (".rs", ".rs.hbs")))
+    policies = any(_POLICY_SIGNER.search(t) and (not n.endswith(".rs") or _POLICY_SIGNER.search(code_of(n)))
+                   for n, t in files.items() if n.endswith(_JS + (".rs", ".rs.hbs")))
     seen: set[str] = set()
     for name, text in sorted(files.items()):
         if not name.endswith(_JS) or not re.search(r"""["']passkey-kit["']""", text):
@@ -280,12 +368,17 @@ def advisory_findings(artifact: AgentArtifact, auditor, today: date | None = Non
                 "The contract metadata names an affected SDK release; whether the code meets the advisory's condition "
                 "needs its source.", f"{contract.get('contract_id')}: rssdkver {built}", EvidenceGrade.INFERRED, gap=True)
     for name, text in sorted(files.items()):
-        lines = text.splitlines()
+        if _TEST_FILE.search(name):
+            continue
         for m in re.finditer(r"\b[0-9a-fA-F]{64}\b", text):
-            value, number = m.group(0).lower(), _line(text, m.start())
+            value = m.group(0).lower()
             if value not in adv.KNOWN_BAD_WASM_HASHES:
                 continue
-            # A list of hashes to refuse (a deny list, passkey-kit's own table) is the fix, not a use.
+            lines, number = text.splitlines(), _line(text, m.start())
+            # A commented-out line, or a list of hashes to refuse (a deny list, passkey-kit's own
+            # table), is not a use: the list is the fix.
+            if lines[number - 1].lstrip().startswith(("//", "#", "*", "/*")):
+                continue
             if _WASM_HASH_USE.search(lines[number - 1]) and not _DENY_LIST.search("\n".join(lines[max(0, number - 4):number])):
                 consulted = True
                 finding(bad, name, Severity.CRITICAL, "New smart wallets are deployed from a known-vulnerable WASM",

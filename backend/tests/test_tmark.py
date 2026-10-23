@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import time
 from pathlib import Path
 
 from backend.app.config import Settings
 from backend.app.services import tmark
 from backend.app.services.repo_audit import audit_repository
+from backend.app.swarm.tmark_check import _MAINNET, network_hits
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER = "GDM7FY4WBPRLTY4WYE7FKFHQVUI5FYE3WDLNHTDVNKMJ2VNTTQEPBYZV"
@@ -218,3 +220,30 @@ def test_mainnet_declared_with_only_testnet_code_is_low(tmp_path):
     # Near misses: the code can still select mainnet.
     assert network_findings(tmp_path / "b", "mainnet", "export const NET = process.env.STELLAR_NETWORK;\n") is None
     assert network_findings(tmp_path / "c", "mainnet", "export const NET = isProd ? 'mainnet' : 'testnet';\n") is None
+
+
+def test_a_private_field_is_code_and_a_python_comment_is_not(tmp_path):
+    field = "export class Wallet {\n  #horizon = 'https://horizon.stellar.org';\n}\n"
+    assert network_findings(tmp_path / "a", "testnet", field)["severity"] == "high"
+    assert not network_hits({"src/net.py": "# mainnet: https://horizon.stellar.org\nHORIZON = 'https://horizon-testnet.stellar.org'\n"},
+                            _MAINNET)
+
+
+def test_a_nested_network_keyed_config_does_not_break_a_testnet_declaration(tmp_path):
+    nested = ("export const CONFIG = {\n  mainnet: {\n    horizonUrl: 'https://horizon.stellar.org',\n"
+              "    passphrase: Networks.PUBLIC,\n  },\n  testnet: {\n    horizonUrl: 'https://horizon-testnet.stellar.org',\n"
+              "    passphrase: Networks.TESTNET,\n  },\n}[process.env.NET];\n")
+    assert network_findings(tmp_path / "a", "testnet", nested) is None
+    # Near miss: a block under a key that is not a network, with no testnet sibling.
+    server = "export const CONFIG = {\n  server: {\n    horizonUrl: 'https://horizon.stellar.org',\n  },\n};\n"
+    assert network_findings(tmp_path / "b", "testnet", server)["severity"] == "high"
+
+
+def test_a_long_line_before_a_network_marker_costs_little():
+    # Minified code or a hex blob before the marker; then thousands of keyed markers on one line.
+    for line, limit in (("a" * 100_000 + " https://horizon.stellar.org", 0.1), ("x." * 50_000 + "horizon.stellar.org", 0.1),
+                        ("mainnet: 'https://horizon.stellar.org', testnet: 'x', " * 3_000, 0.5),
+                        ("{ mainnet: {" + " u: 'https://horizon.stellar.org'," * 3_000 + " }, testnet: {} }", 0.5)):
+        started = time.perf_counter()
+        network_hits({"src/min.js": line + "\n"}, _MAINNET)
+        assert time.perf_counter() - started < limit, line[:20]

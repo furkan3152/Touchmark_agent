@@ -1,6 +1,7 @@
 """Stellar lexical evidence must not turn declarations into enforcement proof."""
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -225,6 +226,34 @@ def test_seed_exposure_sends_public_keys_only():
     assert {httpx.URL(u).host for u in asked} == {"horizon.stellar.org", "horizon-testnet.stellar.org"}
 
 
+def test_seed_lookup_stops_a_failing_network_and_keeps_to_its_budget():
+    keys = [Keypair.random().public_key for _ in range(12)]
+    asked: list[str] = []
+
+    async def horizon(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.host)
+        if request.url.host == "horizon.stellar.org":
+            raise httpx.ConnectError("unreachable", request=request)
+        await asyncio.sleep(10 if request.url.path.endswith(keys[-1]) else 0)
+        return httpx.Response(404, json={}) if request.url.path != "/accounts" else \
+            httpx.Response(200, json={"_embedded": {"records": []}})
+    started = time.monotonic()
+    out = asyncio.run(seed_exposure(keys, transport=httpx.MockTransport(horizon), budget=0.5))
+    assert time.monotonic() - started < 2
+    assert all(out["keys"][k]["mainnet"] == {"status": "unavailable"} for k in keys)
+    assert asked.count("horizon.stellar.org") <= 6  # the reads already in flight, then none
+    assert out["keys"][keys[0]]["testnet"]["status"] == "not_found"
+    assert out["keys"][keys[-1]]["testnet"] == {"status": "unavailable"}  # still waiting at the budget
+
+
+def test_a_committed_seed_path_with_a_space_keeps_its_test_severity(settings, run):
+    verdict = run(StellarNativeAuditor(settings).run(AgentArtifact(
+        name="a", source_kind=SourceKind.REPO, source_ref="r", code_files={"src/a.py": "x = 1\n"},
+        raw_metadata={"committed_seeds": ["my tests/keys.txt:2 (SABC…redacted)"]}), deep=False))
+    finding = next(f for f in verdict.findings if f.id == "stellar_native-stellar-secret-seed")
+    assert finding.severity is Severity.MEDIUM
+
+
 def test_a_fixture_seed_funded_on_mainnet_is_critical(tmp_path, monkeypatch):
     seed = Keypair.random()
     root = tmp_path / "agent"
@@ -233,7 +262,7 @@ def test_a_fixture_seed_funded_on_mainnet_is_critical(tmp_path, monkeypatch):
     (root / "tests/fixtures/keys.ts").write_text(f'export const PAYER = "{seed.secret}";\n')
     sent: list[list[str]] = []
 
-    async def ledger(public_keys):
+    async def ledger(public_keys, **_):
         sent.append(public_keys)
         return {"checked_at": "2026-10-22T00:00:00+00:00", "keys": {seed.public_key: {
             "mainnet": {"status": "found", "exists": True, "signs_for": 0,

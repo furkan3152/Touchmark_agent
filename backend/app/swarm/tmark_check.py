@@ -8,6 +8,7 @@ payment) that the code either keeps or breaks; a broken claim is reported as suc
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar.canonical import NETWORK_MARKERS
@@ -25,17 +26,26 @@ _TESTNET = re.compile(r"Networks\.TESTNET\b|TESTNET_NETWORK_PASSPHRASE|channels\
 _CHOOSES_NETWORK = re.compile(r"""["'`](?:mainnet|pubnet|public)["'`]|"""
                               r"(?:process\.env|import\.meta\.env|os\.environ|os\.getenv|env::var)\W{0,3}[\w.]{0,40}"
                               r"(?:NETWORK|PASSPHRASE|HORIZON|RPC)", re.I)
-#: A value or key in an object, map or match keyed by network name.
-_NET_KEY = r"""(?:[\w.]*(?:main_?net|pub_?net|public|production)\w*|stellar:pubnet)"""
+#: A value or key in an object, map or match keyed by network name. The key starts where a
+#: name starts: an unanchored [\w.]* would retry at every character of a long run (minified
+#: code, a hex blob) before each marker.
+_NET_KEY = r"""(?:(?<![\w.])[\w.]*(?:main_?net|pub_?net|public|production)\w*|stellar:pubnet)"""
 _VALUE_START = r"""\s*(?:\w+\(\s*)?["'`]?(?:[a-z]+://)?[\w.-]*$"""
 # The colon follows the key directly: `cond ? A : B` is a ternary, not a key and a value.
 _AS_VALUE = re.compile(_NET_KEY + r"""["'`\]]?(?::|\s*=>)""" + _VALUE_START, re.I)
 _AS_MAP_VALUE = re.compile(r"""\[\s*["'`]?""" + _NET_KEY + r"""["'`]?\s*,""" + _VALUE_START, re.I)
 _AS_KEY = re.compile(r"""^["'`]?\]?(?::|\s*=>)""")
 _AS_MAP_KEY = (re.compile(r"""\[\s*["'`]?$"""), re.compile(r"""^["'`]?\s*,"""))
+#: A block opened under a network key: `mainnet: {`, `"stellar:pubnet": {`, `Network::Mainnet => {`.
+_AS_BLOCK = re.compile(_NET_KEY + r"""["'`\]]?\s*(?::|=>|=)\s*(?:\w+\s*\(\s*)?$""", re.I)
 _TESTNET_SIBLING = re.compile(r"""(?:testnet|futurenet)\w*["'`\]]?\s*(?::|=>|,)""", re.I)
-_COMMENT = re.compile(r"^\s*(?://|#|\*|/\*)")
-_CODE = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs")
+#: How far before a match its key is looked for, and around a network block its testnet sibling.
+_KEY_REACH, _BLOCK_REACH = 200, 1500
+#: A comment line, or a line inside a block comment. '#' starts one in Python only: in JS it is
+#: a private field, in Rust an attribute.
+_COMMENT = re.compile(r"\s*(?://|\*|/\*)")
+_PY_COMMENT = re.compile(r"\s*#")
+_CODE = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".mts", ".cts", ".rs")
 #: What the code can do, against what .tmark says the agent signs.
 _SIGNS_FOR = {"payment": "payments", "contract_invocation": "contract_calls", "account_control": "account_changes",
               "foreign_tx_signing": "foreign_transactions"}
@@ -48,29 +58,70 @@ def _finding(fid: str, severity: Severity, title: str, detail: str, evidence: st
                    references=[".tmark v1 (docs/TMARK.md)"], auditor=auditor, confidence=confidence)
 
 
-def _network_keyed(text: str, start: int, end: int) -> bool:
+class _Blocks:
+    """The innermost '{' open at any offset of a file, from one pass over its braces, and
+    whether that block is opened under a network key with a testnet sibling nearby."""
+
+    def __init__(self, text: str):
+        self.text, self.positions, self.openers, self.closes, self.keyed = text, [], [], {}, {}
+        stack: list[int] = []
+        for m in re.finditer(r"[{}]", text):
+            if m.group() == "{":
+                stack.append(m.start())
+            elif stack:
+                self.closes[stack.pop()] = m.start()
+            self.positions.append(m.start())
+            self.openers.append(stack[-1] if stack else -1)
+
+    def network_block(self, offset: int) -> bool:
+        k = bisect_right(self.positions, offset - 1) - 1
+        brace = self.openers[k] if k >= 0 else -1
+        if brace < 0:
+            return False
+        if brace not in self.keyed:
+            close = self.closes.get(brace, len(self.text))
+            self.keyed[brace] = (bool(_AS_BLOCK.search(self.text[max(0, brace - _KEY_REACH):brace]))
+                                 and bool(_TESTNET_SIBLING.search(self.text, max(0, brace - _BLOCK_REACH),
+                                                                  close + _BLOCK_REACH)))
+        return self.keyed[brace]
+
+
+def _network_keyed(text: str, start: int, end: int, line_start: int, blocks: _Blocks) -> bool:
     """The match is a key or value of a map that lists networks side by side
-    ({'stellar:pubnet': ..., 'stellar:testnet': ...}): the code serves each network it names,
-    and the one it uses is chosen elsewhere."""
-    line_start, line_end = text.rfind("\n", 0, start) + 1, text.find("\n", end)
-    before, after = text[line_start:start], text[end:line_end if line_end >= 0 else len(text)]
+    ({'stellar:pubnet': ..., 'stellar:testnet': ...}), or sits in a block opened under a network
+    key (mainnet: { horizonUrl: ... }, testnet: { ... }): the code serves each network it names,
+    and the one it uses is chosen elsewhere. Only a bounded stretch of the line is read, so a
+    long minified line costs no more than a short one."""
+    newline = text.find("\n", end, end + _KEY_REACH)
+    before = text[max(line_start, start - _KEY_REACH):start]
+    after = text[end:newline if newline >= 0 else end + _KEY_REACH]
     keyed = (bool(_AS_KEY.match(after)) or bool(_AS_VALUE.search(before)) or bool(_AS_MAP_VALUE.search(before))
              or (bool(_AS_MAP_KEY[0].search(before)) and bool(_AS_MAP_KEY[1].match(after))))
-    return keyed and bool(_TESTNET_SIBLING.search(text, max(0, start - 400), end + 400))
+    if keyed and _TESTNET_SIBLING.search(text, max(0, start - 400), end + 400):
+        return True
+    return blocks.network_block(start)
 
 
-def network_hits(files: dict[str, str], pattern: re.Pattern) -> list[str]:
+def network_hits(files: dict[str, str], pattern: re.Pattern, skip_keyed: bool = True) -> list[str]:
     """First file:line per code file where ``pattern`` names a network in code, outside
-    comments and network-keyed maps."""
+    comments and (with ``skip_keyed``) network-keyed maps."""
     hits = []
     for name, text in files.items():
         if not name.endswith(_CODE):
             continue
+        comment = _PY_COMMENT if name.endswith(".py") else _COMMENT
+        line_start, scanned, blocks = 0, 0, None
         for m in pattern.finditer(text):
-            line = text[text.rfind("\n", 0, m.start()) + 1:m.start()]
-            if not _COMMENT.match(line) and not _network_keyed(text, m.start(), m.end()):
-                hits.append(f"{name}:{text.count(chr(10), 0, m.start()) + 1}")
-                break
+            newline = text.rfind("\n", scanned, m.start())
+            line_start, scanned = (newline + 1 if newline >= 0 else line_start), m.start()
+            if comment.match(text, line_start, m.start()):
+                continue
+            if skip_keyed:
+                blocks = blocks or _Blocks(text)
+                if _network_keyed(text, m.start(), m.end(), line_start, blocks):
+                    continue
+            hits.append(f"{name}:{text.count(chr(10), 0, m.start()) + 1}")
+            break
     return hits
 
 

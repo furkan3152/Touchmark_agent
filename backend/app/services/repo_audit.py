@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -465,7 +466,7 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
              "" if declared.get("tmark") else ownership_claim(selection.get("ownership") or {}).get("stellar_owner", ""))
     exposure = await _seed_exposure(
         settings, seed_public_keys({**files, "<system prompt>": instructions[:12_000]}, selection.get("committed_seed_keys") or {}),
-        {"agent": {stellar_address, agent_signing_key}, "owner": {owner}})
+        {"agent": {stellar_address, agent_signing_key}, "owner": {owner}}, deadline)
     if source_binding:
         chain["source_binding"] = source_binding
     artifact = AgentArtifact(
@@ -573,10 +574,12 @@ def seed_public_keys(sources: dict[str, str], committed: dict[str, str]) -> dict
     return keys
 
 
-async def _seed_exposure(settings: Settings, keys: dict[str, list[str]], declared: dict[str, set[str]]) -> dict | None:
+async def _seed_exposure(settings: Settings, keys: dict[str, list[str]], declared: dict[str, set[str]],
+                        deadline: float | None = None) -> dict | None:
     """Seed triage input for stellar_native: which declared key each seed is, and, when ledger
     reads are enabled, what its account holds on mainnet and testnet. With reads disabled or
-    Horizon unavailable the seed keeps its path-based severity, so a rules-only run is stable."""
+    Horizon unavailable the seed keeps its path-based severity, so a rules-only run is stable.
+    Under a request ``deadline`` the lookup takes at most a quarter of the time left."""
     if not keys:
         return None
     record: dict = {"status": "not_checked", "keys": [
@@ -584,9 +587,10 @@ async def _seed_exposure(settings: Settings, keys: dict[str, list[str]], declare
          "declared": next((role for role, values in declared.items() if key in values), "")}
         for key, where in keys.items()]}
     if settings.enable_onchain_verification:
-        from ..stellar.authority import seed_exposure
+        from ..stellar.authority import SEED_LOOKUP_SECONDS, seed_exposure
+        budget = SEED_LOOKUP_SECONDS if deadline is None else min(SEED_LOOKUP_SECONDS, (deadline - time.monotonic()) / 4)
         try:
-            looked = await seed_exposure(list(keys))
+            looked = await seed_exposure(list(keys), budget=budget)
         except Exception:  # the lookup is evidence, never a reason to fail the review
             record["status"] = "unavailable"
         else:

@@ -8,44 +8,51 @@ from ..models import FindingKind, AgentArtifact, Dimension, EvidenceGrade, Findi
 from .base import BaseAuditor
 
 
+#: Where a Rust comment or literal can start; raw strings are tried before plain ones.
+_RUST_LITERAL = re.compile(r'//|/\*|(?:br|r)(#{0,255})"|"|\'')
+_RUST_STRING = re.compile(r'"(?:[^"\\]|\\[\s\S])*"')
+_RUST_CHAR = re.compile(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'")
+_RUST_NESTED = re.compile(r'/\*|\*/')
+
+
 def _rust_code(source: str) -> str:
-    """Mask Rust comments/literals, retaining offsets; this is not a Rust parser."""
-    result = list(source)
-    i = 0
-    while i < len(source):
-        end = None
-        if source.startswith('//', i):
+    """Mask Rust comments/literals, retaining offsets; this is not a Rust parser.
+
+    One pass that jumps from one literal start to the next, so it is linear in the
+    size of the source (large generated or vendored files are common in workspaces)."""
+    out, last, i = [], 0, 0
+    while True:
+        m = _RUST_LITERAL.search(source, i)
+        if m is None:
+            break
+        i, token = m.start(), m.group()
+        if token == '//':
             end = source.find('\n', i)
             if end < 0: end = len(source)
-        elif source.startswith('/*', i):
+        elif token == '/*':
             depth, end = 1, i + 2
-            while end < len(source) and depth:
-                if source.startswith('/*', end): depth += 1; end += 2
-                elif source.startswith('*/', end): depth -= 1; end += 2
-                else: end += 1
+            while depth:
+                nested = _RUST_NESTED.search(source, end)
+                if nested is None: end = len(source); break
+                depth += 1 if nested.group() == '/*' else -1
+                end = nested.end()
+        elif token == '"':
+            string = _RUST_STRING.match(source, i)
+            end = string.end() if string else len(source)
+        elif token == "'":
+            # Do not consume lifetimes such as &'a Address.
+            char = _RUST_CHAR.match(source, i)
+            if char is None:
+                i += 1
+                continue
+            end = char.end()
         else:
-            raw = re.match(r'(?:br|r)(#{0,255})"', source[i:])
-            if raw:
-                closing = '"' + raw.group(1)
-                found = source.find(closing, i + len(raw.group()))
-                end = len(source) if found < 0 else found + len(closing)
-            elif source[i] == '"':
-                end = i + 1
-                while end < len(source):
-                    if source[end] == '\\': end += 2
-                    elif source[end] == '"': end += 1; break
-                    else: end += 1
-            elif source[i] == "'":
-                # Do not consume lifetimes such as &'a Address.
-                char = re.match(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'", source[i:])
-                if char: end = i + len(char.group())
-        if end is not None:
-            for pos in range(i, min(end, len(source))):
-                if result[pos] != '\n': result[pos] = ' '
-            i = end
-        else:
-            i += 1
-    return ''.join(result)
+            found = source.find('"' + m.group(1), m.end())
+            end = len(source) if found < 0 else found + 1 + len(m.group(1))
+        out += [source[last:i], re.sub(r'[^\n]+', lambda s: ' ' * len(s.group()), source[i:end])]
+        last = i = end
+    out.append(source[last:])
+    return ''.join(out)
 
 
 _FUNCTION = re.compile(r'\b(?P<public>pub(?:\s*\([^)]*\))?\s+)?(?:(?:async|unsafe|const)\s+)*fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b')
@@ -111,6 +118,23 @@ def _calls_any(body: str, names: set[str]) -> bool:
     return any(re.search(r'(?:\bSelf::|\bself\.|(?<![\w.:]))' + re.escape(n) + r'\s*\(', body) for n in names)
 
 
+def contract_sources(artifact: AgentArtifact) -> dict[str, str]:
+    """The .rs files judged as Soroban contract code."""
+    rust_files = {name: content for name, content in artifact.code_files.items() if name.endswith('.rs')}
+    # A .rs file outside every crate is not built or deployed: a sample or fixture (an
+    # auditor's test inputs, a stray draft). Only crate sources are judged as contracts.
+    crates = {name.rsplit('/', 1)[0] if '/' in name else '' for name, text in artifact.code_files.items()
+              if name.endswith('Cargo.toml') and re.search(r'soroban-sdk|\[workspace\]', text)}
+    if crates or artifact.source_kind == SourceKind.REPO:
+        # A repository with no Soroban crate builds no contract from its loose .rs files, and
+        # in a Rust workspace only the files that use soroban_sdk are contract code: a CLI or
+        # wallet crate next to the contracts is not.
+        rust_files = {name: content for name, content in rust_files.items()
+                      if any(c == '' or name.startswith(c + '/') for c in crates)
+                      and re.search(r'\bsoroban_sdk\b|#\[contract', content)}
+    return rust_files
+
+
 #: Test, example and script paths: a seed there is presumed a throwaway key.
 _TEST_PATH = re.compile(r"(^|/)(tests?|spec|fixtures?|examples?|scripts)/|test|spec|smoke|example|fixture", re.I)
 
@@ -125,7 +149,7 @@ def _seed_severity(exposure: dict | None, places: list[str]) -> tuple[Severity, 
     by_place = {where: item for item in (exposure or {}).get("keys", []) for where in item.get("locations", [])}
     worst, notes = Severity.INFO, []
     for place in places:
-        test = bool(_TEST_PATH.search(place.split(":", 1)[0]))
+        test = bool(_TEST_PATH.search(place.rsplit(":", 1)[0]))
         item = by_place.get(place) or {}
         main, testnet = item.get("mainnet") or {}, item.get("testnet") or {}
         key = f"{item.get('public_key', '')[:8]}…"
@@ -161,19 +185,9 @@ class StellarNativeAuditor(BaseAuditor):
     ) -> tuple[list[Finding], list[ScenarioResult], str]:
         findings: list[Finding] = []
         surface = artifact.text_surface()
-        rust_files = {name: content for name, content in artifact.code_files.items() if name.endswith('.rs')}
-        # A .rs file outside every crate is not built or deployed: a sample or fixture (an
-        # auditor's test inputs, a stray draft). Only crate sources are judged as contracts.
-        crates = {name.rsplit('/', 1)[0] if '/' in name else '' for name, text in artifact.code_files.items()
-                  if name.endswith('Cargo.toml') and re.search(r'soroban-sdk|\[workspace\]', text)}
-        if crates or artifact.source_kind == SourceKind.REPO:
-            # A repository with no Soroban crate builds no contract from its loose .rs files, and
-            # in a Rust workspace only the files that use soroban_sdk are contract code: a CLI or
-            # wallet crate next to the contracts is not.
-            rust_files = {name: content for name, content in rust_files.items()
-                          if any(c == '' or name.startswith(c + '/') for c in crates)
-                          and re.search(r'\bsoroban_sdk\b|#\[contract', content)}
-        rust = '\n'.join(_rust_code(content) for content in rust_files.values())
+        rust_files = contract_sources(artifact)
+        masked = {name: _rust_code(content) for name, content in rust_files.items()}
+        rust = '\n'.join(masked.values())
         # Entry points are the public functions of a #[contractimpl] block; a crate's client or
         # helper modules that only use soroban_sdk types expose none.
         functions = [{**fn, 'file': name} for name, content in rust_files.items()
@@ -193,9 +207,9 @@ class StellarNativeAuditor(BaseAuditor):
         # during repository selection; only their redacted locations are passed on.
         committed = list(artifact.raw_metadata.get("committed_seeds") or [])
         seed_locations = ([f"{n}:{line} (S{s[1:5]}…redacted)" for n, line, s in seeds] + committed)[:5]
-        test_only = bool(seeds or committed) and all(
-            _TEST_PATH.search(n) for n in [n for n, _, _ in seeds] + [c.split(":", 1)[0] for c in committed])
-        places = [f"{n}:{line}" for n, line, _ in seeds] + [c.split(" ", 1)[0] for c in committed]
+        # Committed entries read 'path:line (S…redacted)'; a path may contain spaces.
+        places = [f"{n}:{line}" for n, line, _ in seeds] + [c.rsplit(" (S", 1)[0] for c in committed]
+        test_only = bool(places) and all(_TEST_PATH.search(p.rsplit(":", 1)[0]) for p in places)
         seeds = seeds or committed
         if seeds:
             severity, notes = _seed_severity(artifact.raw_metadata.get("seed_exposure"), places)
@@ -254,7 +268,7 @@ class StellarNativeAuditor(BaseAuditor):
         # that grow with use make every call costlier and can lock the contract.
         records = [f"{name}:{content[:m.start()].count(chr(10)) + 1}"
                    for name, content in rust_files.items() if '#[contractimpl' in content
-                   for m in re.finditer(r"\.instance\(\)\s*\.set\(\s*&\s*(?:\w+::)?\w+\(\s*[^)\s]", _rust_code(content))]
+                   for m in re.finditer(r"\.instance\(\)\s*\.set\(\s*&\s*(?:\w+::)?\w+\(\s*[^)\s]", masked[name])]
         if records:
             findings.append(self.finding(
                 "instance-storage-records",
@@ -447,7 +461,7 @@ class StellarNativeAuditor(BaseAuditor):
         source = artifact.onchain.data_source
         findings += self._authority_findings(artifact)
         from .advisory_check import advisory_findings  # it reuses this module's Rust helpers
-        findings += _one_per_id(advisory_findings(artifact, self))
+        findings += _one_per_id(advisory_findings(artifact, self, masked=masked))
         return findings, scenarios, f"Stellar/Soroban source review; onchain source={source}. Rust checks are bounded lexical evidence, not a compiler, call graph, authorization proof or runtime test. Constructor and custom-account authorization need separate verification."
 
     # ------------------------------------------------------------ ledger authority
