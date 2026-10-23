@@ -3,7 +3,8 @@
 Each check looks for one concrete defect with a known exploit: instructions hidden in
 text the model reads, credentials committed to the repository, signed transactions that
 never expire, ledger traffic without TLS, retries that pay twice, payments accepted by
-asset code alone and Soroban arithmetic that wraps. They report locations, never the
+asset code alone, payment addresses, assets and amounts that are wrong by construction
+(asset_rules.py) and Soroban arithmetic that wraps. They report locations, never the
 secret or the hidden text itself.
 """
 
@@ -15,6 +16,11 @@ import re
 from collections import Counter
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
+from .asset_rules import AssetRules, asset_findings
+from .consolidate import stable_id
+from .codeflow import unparse
+from .sdk_rules import hardening_evidence
+from .source_index import EXAMPLE_PATH
 
 _CODE = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", ".go", ".sol")
 _TESTLIKE = re.compile(r"(^|/)(tests?|spec|fixtures?|examples?|mocks?|__tests__)/|(test|spec|mock|fixture|example)", re.I)
@@ -60,6 +66,14 @@ _CREDENTIALS = (
     ("EVM private key", re.compile(rb"(?i)(?:private[_-]?key|priv[_-]?key|PK)\s*[:=]\s*[\"']?(?:0x)?[0-9a-f]{64}\b")),
 )
 _PLACEHOLDER = re.compile(rb"(?i)x{6,}|your[_-]|example|dummy|placeholder|redacted|changeme|<|0{16,}|1234567890")
+#: Where the Stellar CLI keeps identities: `<config>/identity/<name>.toml`, with the config
+#: directory `.stellar` in a project or `~/.config/stellar` (stellar-cli config/locator.rs).
+#: A `secret_key` there is an S... seed, which the committed-seed check already reports.
+_CLI_IDENTITY = re.compile(r"(?:^|/)(?:\.stellar|\.config/stellar)/identity/[^/]+\.toml$")
+#: Leading blanks are [ \t]: a \s there crosses blank lines and backtracks quadratically on them.
+_SEED_PHRASE = re.compile(rb"""^[ \t]*seed_phrase[ \t]*=[ \t]*["']([a-z ]{20,})["']""", re.M)
+#: A credential kind whose account and network are not known from the file alone.
+CLI_SEED_PHRASE = "Stellar CLI identity seed phrase"
 
 
 def _entropy(token: bytes) -> float:
@@ -77,6 +91,14 @@ def find_credentials(name: str, data: bytes) -> list[str]:
                 continue
             line = data[:match.start()].count(b"\n") + 1
             found.append(f"{name}:{line} ({kind}, redacted)")
+    if _CLI_IDENTITY.search(name):
+        from stellar_sdk.sep.mnemonic import Language, StellarMnemonic
+        for match in _SEED_PHRASE.finditer(data):
+            words = match.group(1).decode().split()
+            # Placeholders fail the checksum, or repeat one word (which passes it 1 time in 16).
+            if len(set(words)) > len(words) // 2 and StellarMnemonic(Language.ENGLISH).check(" ".join(words)):
+                line = data[:match.start()].count(b"\n") + 1
+                found.append(f"{name}:{line} ({CLI_SEED_PHRASE}, redacted)")
     return found
 
 
@@ -94,21 +116,21 @@ _REBUILD = re.compile(r"\bload_account\(|\bloadAccount\(|TransactionBuilder\(|ge
 _SUBMIT = re.compile(r"\bsubmit_transaction\(|\bsubmitTransaction\(|\bsendTransaction\(|\bsend_transaction\(")
 _JS_RETRY_WRAPPER = re.compile(r"\b(?:pRetry|asyncRetry|retry|backoff|withRetry|retryAsync)\s*\(")
 _ATTEMPT_LOOP = re.compile(r"\b(?:for|while)\s*\([^)\n]*\b(?:attempt|retr|tries|tryCount)\w*", re.I)
-_ASSET_CODE_CMP = re.compile(
-    r"""\b(?:asset_code|assetCode|asset(?:\.|\[["'])code(?:["']\])?)\s*(?:===?|!==?)\s*["'](?!native\b|XLM\b)[A-Za-z0-9]{3,12}["']|"""
-    r"""["'](?!native\b|XLM\b)[A-Za-z0-9]{3,12}["']\s*(?:===?|!==?)\s*\b(?:asset_code|assetCode|asset(?:\.|\[["'])code(?:["']\])?)""")
 _SECRET_VAR = r"\w*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD)\w*"
 _DEFAULT_SECRET = re.compile(
     r"\$\{(?P<a>" + _SECRET_VAR + r"):-(?P<av>[^}\s]+)\}"
     r"|process\.env\.(?P<b>" + _SECRET_VAR + r")\s*(?:\|\||\?\?)\s*[\"'`](?P<bv>[^\"'`]+)[\"'`]"
     r"|os\.(?:getenv|environ\.get)\(\s*[\"'](?P<c>" + _SECRET_VAR + r")[\"']\s*,\s*[\"'](?P<cv>[^\"']+)[\"']")
+#: mppx binds its payment challenges with an HMAC under `secretKey`; whoever knows the key
+#: can mint challenges the server accepts (mppx server/Mppx.js).
+_MPPX_SERVER_IMPORT = re.compile(r"""["'](?:mppx/(?:server|express|hono|nextjs|elysia)|@stellar/mpp/(?:charge|channel)/server)["']""")
+_MPPX_CREATE = re.compile(r"\bMppx\.create\s*\(")
 _HTML_SINK = re.compile(r"\.(?:innerHTML|outerHTML)\s*\+?=\s*(?P<rhs>[^;\n]+)|\.insertAdjacentHTML\([^,]+,\s*(?P<arg>[^)\n]+)"
                         r"|dangerouslySetInnerHTML=\{\{\s*__html:\s*(?P<react>[^}\n]+)")
 _DYNAMIC = re.compile(r"\$\{|[\"'`]\s*\+\s*[A-Za-z_$]|\+\s*[A-Za-z_$]")
 _FUNCTION_HEAD = re.compile(r"(?:function\s+(?P<a>[\w$]+)\s*\((?P<ap>[^)]*)\)|(?:const|let|var)\s+(?P<b>[\w$]+)\s*=\s*"
                             r"(?:async\s*)?\((?P<bp>[^)]*)\)\s*=>)")
 _ESCAPED = re.compile(r"escape|sanitiz|DOMPurify|purify|encode|marked\.parse|textContent", re.I)
-_RECEIPT_CONTEXT = re.compile(r"payment|paid|deposit|incoming|receiv|operations|x402|verify|settle", re.I)
 
 
 def _block(text: str, start: int, limit: int = 6000) -> str:
@@ -157,6 +179,127 @@ def _wrapped_sink(text: str, pos: int, value: str) -> bool:
                for call in re.finditer(r"\b" + re.escape(fn) + r"\(([^\n]*)", text))
 
 
+class _JsScopes:
+    """Which declaration a name in a parsed JS/TS file refers to: the nearest enclosing block
+    or function that declares it. Each block's names are indexed once."""
+
+    def __init__(self, js):
+        self.js = js
+        self._blocks: dict[tuple[int, int], dict[str, object]] = {}
+
+    def _declared(self, block) -> dict[str, object]:
+        key = (block.start_byte, block.end_byte)
+        if key not in self._blocks:
+            names: dict[str, object] = {}
+            for stmt in block.named_children:
+                decl = stmt.child_by_field_name("declaration") if stmt.type == "export_statement" else stmt
+                if decl is not None and decl.type in {"lexical_declaration", "variable_declaration"}:
+                    for d in decl.named_children:
+                        name = d.child_by_field_name("name") if d.type == "variable_declarator" else None
+                        if name is not None and name.type == "identifier":
+                            names.setdefault(name.text.decode("utf-8", "replace"), d)
+            self._blocks[key] = names
+        return self._blocks[key]
+
+    def binding(self, ident):
+        """('decl', declarator) | ('param', function) | None (not declared in this file)."""
+        name = ident.text.decode("utf-8", "replace")
+        node = ident.parent
+        while node is not None:
+            if self.js._is_function(node) and name in self.js._param_names(node):
+                return "param", node
+            if node.type in {"statement_block", "program", "switch_body"} and name in self._declared(node):
+                return "decl", self._declared(node)[name]
+            node = node.parent
+        return None
+
+    def value(self, node):
+        """A named value's declared initializer; any other expression as it is."""
+        node = self.js._unwrap(node)
+        if node is not None and node.type in {"identifier", "shorthand_property_identifier"}:
+            bound = self.binding(node)
+            if bound is not None and bound[0] == "decl":
+                return self.js._unwrap(bound[1].child_by_field_name("value"))
+            return None
+        return node
+
+    def origin(self, node):
+        """Where a key comes from, comparable across uses: an environment variable, a
+        declaration, a parameter, or a name this file does not declare."""
+        node = self.js._unwrap(node)
+        if node is None:
+            return None
+        if node.type == "member_expression" and self.js._dotted(node).startswith("process.env."):
+            return "env", self.js._dotted(node)
+        if node.type in {"identifier", "shorthand_property_identifier"}:
+            bound = self.binding(node)
+            if bound is None:
+                return "global", node.text
+            init = self.js._unwrap(bound[1].child_by_field_name("value")) if bound[0] == "decl" else None
+            if init is not None and init.type == "member_expression" and self.js._dotted(init).startswith("process.env."):
+                return "env", self.js._dotted(init)
+            return bound[0], bound[1].start_byte, node.text
+        return None
+
+
+def _literal_fallback(js, node) -> bool:
+    """A non-empty literal the key is, or falls back to (`?? "dev"`, `|| 'dev'`). An empty one
+    fails closed (mppx refuses a falsy secretKey at start-up: "Missing secret key", mppx
+    server/Mppx.js), and a YOUR_... template placeholder is skipped as the env-variable rule
+    skips it."""
+    node = js._unwrap(node)
+    if node is not None and node.type == "binary_expression" and node.child_by_field_name("operator").type in {"??", "||"}:
+        node = js._unwrap(node.child_by_field_name("right"))
+    value = js._string_value(node) if node is not None else None
+    return bool(value) and "$" not in value and not re.match(r"(?i)your[_-]|<|x{4,}", value)
+
+
+def _mppx_secrets(name: str, text: str) -> tuple[list[str], list[tuple[int, str]]]:
+    """In an MPP server, the `secretKey` options that fall back to a value written in the
+    repository (as default-secret evidence), and those that are also the Stellar seed
+    passed to Keypair.fromSecret (line, code). Read from the syntax tree: a name resolves to
+    the declaration in scope, and comments and string contents are not code."""
+    defaults: list[str] = []
+    reuse: list[tuple[int, str]] = []
+    if not _MPPX_SERVER_IMPORT.search(text) or not _MPPX_CREATE.search(text):
+        return defaults, reuse
+    from . import jsflow as js
+    if not js.is_js(name) or not js.available():
+        return defaults, reuse
+    lower = name.lower()
+    parser = js._parsers()["tsx" if lower.endswith(".tsx") else "ts" if lower.endswith((".ts", ".mts", ".cts")) else "js"]
+    try:
+        root = parser.parse(text.encode("utf-8", "replace")).root_node
+    except (ValueError, RecursionError):
+        return defaults, reuse
+    scopes = _JsScopes(js)
+    creates, seeds = [], []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.named_children)
+        if node.type == "call_expression":
+            label = js._dotted(node.child_by_field_name("function"))
+            if label == "Mppx.create":
+                creates.append(node)
+            elif label.rsplit(".", 1)[-1] == "fromSecret" and js._args(node):
+                seeds.append(js._args(node)[0])
+    seed_origins = {scopes.origin(a) for a in seeds} - {None}
+    lines = text.splitlines()
+    for call in sorted(creates, key=lambda n: n.start_byte):
+        options = js._unwrap(js._args(call)[0]) if js._args(call) else None
+        value = js._props(options).get("secretKey") if options is not None and options.type == "object" else None
+        if value is None:
+            continue  # options passed by name, or no key: not read here
+        target = scopes.value(value)
+        if target is not None and _literal_fallback(js, target):
+            defaults.append(f"{name}:{target.start_point[0] + 1} secretKey")
+        if scopes.origin(value) in seed_origins:
+            line = value.start_point[0] + 1
+            reuse.append((line, lines[line - 1] if line <= len(lines) else ""))
+    return defaults, reuse
+
+
 def _tool_descriptions(name: str, text: str) -> list[tuple[int, str]]:
     """Text the model reads as tool documentation: descriptions and @tool docstrings."""
     out = [(_line(text, m.start("text")), m.group("text")) for m in _DESC_PROP.finditer(text)]
@@ -164,11 +307,11 @@ def _tool_descriptions(name: str, text: str) -> list[tuple[int, str]]:
     if name.endswith(".py"):
         try:
             tree = ast.parse(text)
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
             return out
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-                    _TOOL_DECORATOR.search(ast.unparse(d.func if isinstance(d, ast.Call) else d)) for d in node.decorator_list):
+                    _TOOL_DECORATOR.search(unparse(d.func if isinstance(d, ast.Call) else d)) for d in node.decorator_list):
                 doc = ast.get_docstring(node, clean=False)
                 if doc:
                     out.append((node.body[0].lineno, doc))
@@ -247,8 +390,11 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     leaked = list(dict.fromkeys(leaked))
     if leaked:
         test_only = all(_TESTLIKE.search(item.split(":", 1)[0]) for item in leaked)
+        # A CLI identity's account and network are unknown here (ledger triage raises it);
+        # on its own it is reported at medium.
+        cli_only = all(CLI_SEED_PHRASE in item for item in leaked)
         findings.append(_finding(
-            "security-committed-credential", Severity.MEDIUM if test_only else Severity.HIGH,
+            "security-committed-credential", Severity.MEDIUM if test_only or cli_only else Severity.HIGH,
             "A live-looking credential is committed to the repository",
             "An API key, token or private key is in the repository. Anyone with read access, and every fork and "
             "clone, has it; an AI provider key lets others run up the bill or read the agent's traffic."
@@ -261,14 +407,19 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     # Signed transactions with no expiry: a held or leaked envelope stays valid forever.
     forever = [f"{n}:{_line(t, m.start())}" for n, t in code.items() if n in signing_files
                for m in _INFINITE_TIMEOUT.finditer(t) if not _commented(t, m.start())]
-    if forever:
+    # The Python SDK builds an envelope with no time bounds when none are set (it only warns).
+    sdk_evidence = hardening_evidence(artifact)
+    unbounded = sdk_evidence["no_expiry"]
+    if forever or unbounded:
         findings.append(_finding(
-            "security-transaction-never-expires", Severity.MEDIUM,
+            "security-transaction-never-expires", Severity.MEDIUM if forever else Severity.LOW,
             "Signed transactions are built without an expiry",
-            "The transaction's time bounds are infinite (timeout 0). An envelope that is signed but not submitted at "
+            ("The transaction's time bounds are infinite (timeout 0). " if forever else
+             "The transaction is built with no time bounds (stellar_sdk TransactionBuilder.build() only warns). ")
+            + "An envelope that is signed but not submitted at "
             "once — after a timeout, in a queue, in a log or with a relayer — can be submitted at any later time, "
             "long after the user or the agent decided otherwise.",
-            forever, "Set a short timeout (for example 30 to 180 seconds) on every transaction the agent signs.",
+            forever + unbounded, "Set a short timeout (for example 30 to 180 seconds) on every transaction the agent signs.",
             ["Stellar transaction time bounds"], auditor, confidence=0.9))
 
     # Ledger traffic without TLS: whoever is on the path chooses the simulation the agent signs.
@@ -291,18 +442,18 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
         if name.endswith(".py"):
             try:
                 tree = ast.parse(text)
-            except (SyntaxError, ValueError):
+            except (SyntaxError, ValueError, RecursionError, MemoryError):
                 continue
             for node in ast.walk(tree):
                 body = None
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-                        _RETRY_DECORATOR.search(ast.unparse(d)) for d in node.decorator_list):
+                        _RETRY_DECORATOR.search(unparse(d)) for d in node.decorator_list):
                     body = node
                 elif isinstance(node, (ast.For, ast.AsyncFor, ast.While)) and re.search(
-                        r"attempt|retr|tries", ast.unparse(node.target if isinstance(node, (ast.For, ast.AsyncFor)) else node.test), re.I):
+                        r"attempt|retr|tries", unparse(node.target if isinstance(node, (ast.For, ast.AsyncFor)) else node.test), re.I):
                     body = node
                 if body is not None:
-                    src = ast.unparse(body)
+                    src = unparse(body)
                     if _REBUILD.search(src) and _SUBMIT.search(src):
                         double.append(f"{name}:{node.lineno}")
         else:
@@ -313,47 +464,52 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
                     if _REBUILD.search(window) and _SUBMIT.search(window):
                         double.append(f"{name}:{_line(text, m.start())}")
                         break
-    if double:
+    # The same defect without a loop: the failure handler of a send frees the reservation or budget
+    # it held, or a paid x402 request is repeated, although the payment may have gone through.
+    released = sdk_evidence["released"]
+    if double or released:
         findings.append(_finding(
             "security-retry-may-pay-twice", Severity.MEDIUM,
-            "A failed submission is retried with a newly built transaction",
-            "The retry reloads the account and builds a new transaction. A submission that timed out may still have "
-            "been applied; the rebuilt transaction gets the next sequence number and is applied too, so the payment "
-            "is made twice.",
-            double, "On a timeout, resubmit the same signed envelope or look it up by hash; build a new one only after "
-            "the first is known to have failed (expired time bounds or a bad sequence number).",
+            "A failed submission is retried with a newly built transaction" if double else
+            "A payment that may have gone through is treated as not made",
+            ("The retry reloads the account and builds a new transaction. A submission that timed out may still have "
+             "been applied; the rebuilt transaction gets the next sequence number and is applied too, so the payment "
+             "is made twice. " if double else "")
+            + ("An error raised after the transaction or paid request was sent (a timeout, a failed poll, an error "
+               "response after settlement) releases the reservation, claim or budget held for it, or repeats the paid "
+               "request, without checking whether the first one landed. The next attempt pays again." if released else ""),
+            double + released, "On a timeout, resubmit the same signed envelope or look it up by hash; build a new one "
+            "(or release what was reserved) only after the first is known to have failed (expired time bounds or a "
+            "bad sequence number). Keep a flag set just before sending and release only while it is unset.",
             ["Stellar transaction submission and timeouts"], auditor, grade=EvidenceGrade.INFERRED, confidence=0.7))
 
-    # Incoming payments checked by asset code only: anyone can issue a token with that code.
-    by_code = []
-    for name, text in code.items():
-        if not _RECEIPT_CONTEXT.search(text):
-            continue
-        lines = text.splitlines()
-        for m in _ASSET_CODE_CMP.finditer(text):
-            if _commented(text, m.start()):
-                continue
-            line = _line(text, m.start())
-            near = "\n".join(lines[max(0, line - 13):line + 12])
-            # The agent's own balances only hold trustlines it opened; an incoming payment
-            # record carries whatever asset the sender chose.
-            close = "\n".join(lines[max(0, line - 4):line + 1])
-            if not re.search(r"issuer", near, re.I) and not re.search(r"balance", close, re.I) \
-                    and re.search(r"\b(?:payment|operation|record|transfer|from|deposit|received?)\b", near, re.I):
-                by_code.append(f"{name}:{line}")
+    # Incoming payments checked by asset code only: anyone can issue a token with that code. Only
+    # receipt and verification code that reads ledger records counts; the agent's own balances
+    # only hold trustlines it opened. An `||` with a full-asset comparison is the same bypass.
+    assets = AssetRules(artifact)
+    by_code = assets.code_only_checks()
     if by_code:
+        literal = any(item[3] for item in by_code)
+        severity = Severity.HIGH if literal else Severity.MEDIUM
+        if all(EXAMPLE_PATH.search(item[0]) for item in by_code):  # templates and examples drop one level
+            severity = Severity.MEDIUM if literal else Severity.LOW
         findings.append(_finding(
-            "security-asset-checked-by-code-only", Severity.HIGH,
+            "security-asset-checked-by-code-only", severity,
             "A payment is accepted by asset code without checking the issuer",
             "The code compares an asset's code (for example \"USDC\") but not its issuer. Anyone can issue an asset "
-            "with any code, so a payment in a worthless look-alike passes the check.",
-            by_code, "Compare code and issuer together against a configured asset (Asset.equals, or both fields).",
+            "with any code, so a payment in a worthless look-alike passes the check."
+            + ("" if literal else " Here the code is compared with a configured value, so the bypass works whenever "
+               "that value is a bare code."),
+            [f"{path}:{line} `{snippet[:120]}`" for path, line, snippet, _ in by_code],
+            "Compare code and issuer together against a configured asset (Asset.equals, or both fields).",
             ["Stellar assets and issuers"], auditor, confidence=0.8))
+    findings += asset_findings(assets, lambda fid, severity, title, detail, evidence, remediation, refs: _finding(
+        fid, severity, title, detail, evidence, remediation, refs, auditor, confidence=0.85))
 
     # Soroban contracts whose release build wraps on overflow.
     manifests = {n: t for n, t in files.items() if n.endswith("Cargo.toml")}
-    soroban = [n for n, t in manifests.items() if re.search(r"^\s*soroban-sdk\s*=", t, re.M)]
-    if soroban and not any(re.search(r"^\s*overflow-checks\s*=\s*true", t, re.M) for t in manifests.values()):
+    soroban = [n for n, t in manifests.items() if re.search(r"^[ \t]*soroban-sdk[ \t]*=", t, re.M)]
+    if soroban and not any(re.search(r"^[ \t]*overflow-checks[ \t]*=[ \t]*true", t, re.M) for t in manifests.values()):
         findings.append(_finding(
             "security-soroban-overflow-unchecked", Severity.MEDIUM,
             "Soroban contract arithmetic can wrap around in release builds",
@@ -396,6 +552,18 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
                     or re.match(r"(?i)your[_-]|<|x{4,}", value) or _commented(text, m.start())):
                 continue
             defaults.append(f"{name}:{_line(text, m.start())} {var}")
+    # An MPP server's challenge key with a fallback value: the same defect, one finding.
+    reused = []
+    places = {d.split(" ", 1)[0] for d in defaults}  # file:line already reported
+    for name, text in code.items():
+        if _TESTLIKE.search(name):
+            continue
+        mpp_defaults, mpp_reuse = _mppx_secrets(name, text)
+        for d in mpp_defaults:
+            if d.split(" ", 1)[0] not in places:
+                places.add(d.split(" ", 1)[0])
+                defaults.append(d)
+        reused += [(name, line, snippet) for line, snippet in mpp_reuse]
     if defaults:
         findings.append(_finding(
             "security-default-secret", Severity.MEDIUM,
@@ -405,4 +573,29 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             "that forgot to set it.",
             defaults, "Fail at startup when the secret is unset instead of falling back to a default.",
             ["CWE-1188 Insecure Default Initialization of Resource", "CWE-798"], auditor, confidence=0.85))
+    # Rust clients that sign Soroban authorization entries: how long each signature stays valid.
+    from .auth_rules import rust_expiration_hits
+    for name, line, snippet, expiry in rust_expiration_hits(code):
+        findings.append(_finding(
+            stable_id("security-auth-expiration-wide", name, snippet),
+            expiry.severity.downgrade(1) if _TESTLIKE.search(name) else expiry.severity,
+            "Signed authorizations stay valid longer than needed",
+            "A signed Soroban authorization entry can be submitted by whoever holds it until its "
+            f"signature_expiration_ledger; {expiry.note}.",
+            [f"{name}:{line} `{' '.join(snippet.split())[:160]}`"],
+            "Expire entries a few minutes ahead, and cap any timeout the counterparty names against a constant.",
+            ["Soroban authorization", "x402 Stellar exact scheme"], auditor, grade=EvidenceGrade.INFERRED, confidence=0.8))
+    by_file: dict[str, list[tuple[int, str]]] = {}
+    for name, line, snippet in reused:
+        by_file.setdefault(name, []).append((line, snippet))
+    for name, places in by_file.items():  # one finding per file: the same lines would share an id
+        findings.append(_finding(
+            stable_id("security-mpp-secret-reuses-stellar-seed", name, places[0][1]), Severity.LOW,
+            "The MPP challenge key is the agent's Stellar seed",
+            "The value that signs MPP payment challenges is also the secret seed of a Stellar account. The seed then "
+            "sits in a second subsystem (HMAC keys are logged, rotated and shared differently from signing keys), and "
+            "rotating one forces rotating the other.",
+            [f"{name}:{line} `{' '.join(snippet.split())[:160]}`" for line, snippet in places[:5]],
+            "Give the MPP server its own random secret of at least 32 bytes.",
+            ["CWE-323 Reusing a Nonce, Key Pair in Encryption", "MPP challenge binding"], auditor, confidence=0.85))
     return findings

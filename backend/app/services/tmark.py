@@ -215,20 +215,45 @@ def parse(text: str) -> tuple[Tmark | None, list[str]]:
         return None, errors
 
 
+def stroops(amount: str) -> int:
+    """A .tmark amount in the asset's smallest unit (seven decimal places), exactly: amounts
+    are compared as integers, never as floats."""
+    return int(Decimal(amount).scaleb(7))
+
+
+def cap(money: Money | None) -> dict | None:
+    """A declared cap in its own asset: {"amount": "500.0000000", "asset": "XLM"}."""
+    if money is None:
+        return None
+    return {"amount": f"{Decimal(stroops(money.amount)).scaleb(-7):.7f}",
+            "asset": "XLM" if money.asset == "native" else money.asset}
+
+
+def _is_usdc(asset: str) -> bool:
+    from ..stellar.canonical import canonical_asset
+    return asset.upper().startswith("USDC:") or (canonical_asset(asset) or ("",))[0] == "USDC"
+
+
 def to_declaration(tm: Tmark) -> dict:
-    """The fields the audit uses, in the shape of the legacy touchmark.json declaration."""
-    usdc = lambda m: float(m.amount) if m and m.asset.upper().startswith("USDC") else None  # noqa: E731
+    """The fields the audit uses, in the shape of the legacy touchmark.json declaration.
+
+    Every tool cap is kept in its own asset (``spend_limit``); ``spend_limit_usdc`` is also
+    set for a USDC cap, for readers of the older field."""
+    usdc = lambda m: float(m.amount) if m and _is_usdc(m.asset) else None  # noqa: E731
     tools = [{"name": t.name, "description": t.description,
               "scopes": (["payments"] if t.moves_funds else []) + (["sign"] if t.signs else []),
               "requires_signature": t.signs, "network_access": t.network,
-              "spend_limit_usdc": usdc(t.max_amount)} for t in tm.tools]
+              "spend_limit_usdc": usdc(t.max_amount), "spend_limit": cap(t.max_amount)} for t in tm.tools]
     capabilities = list(tm.authority.signs) + (["network"] if any(t.network for t in tm.tools) else [])
+    account = tm.authority.agent_account
     return {
         "name": tm.agent.name, "purpose": tm.agent.purpose, "description": tm.agent.purpose,
         "capabilities": capabilities, "tools": tools, "forbidden_goals": tm.forbidden,
         "human_oversight": bool(tm.limits and tm.limits.human_approval != "never"),
         "discloses_ai": tm.agent.discloses_ai,
-        "agent_wallet": tm.authority.agent_account if tm.authority.agent_account.startswith("G") else "",
+        "agent_wallet": account if account.startswith("G") else "",
+        # A smart account or contract agent: read on chain like a C... reference (agent_resolver).
+        "agent_contract_id": account if account.startswith("C") else "",
     }
 
 

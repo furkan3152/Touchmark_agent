@@ -161,6 +161,9 @@ class ToolSpec(BaseModel):
     scopes: list[str] = Field(default_factory=list)
     requires_signature: bool = False
     spend_limit_usdc: float | None = None
+    #: The declared cap in its own asset: {"amount": "500.0000000", "asset": "XLM"}, where the
+    #: asset is XLM, CODE:ISSUER or a C... token contract (services/tmark.py).
+    spend_limit: dict[str, str] | None = None
     network_access: bool = False
     #: "declared" by the submitter, or "observed" when the analyser found the
     #: capability in source and the declaration did not grant it.

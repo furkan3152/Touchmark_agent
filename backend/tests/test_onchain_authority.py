@@ -24,7 +24,7 @@ CORPUS = json.loads((Path(__file__).parent / "fixtures" / "agent_corpus.json").r
 
 
 def account(address, *, agent_weight=1, med=2, high=3, memo_required=False, home_domain=""):
-    return {"account_id": address, "home_domain": home_domain,
+    return {"account_id": address, "home_domain": home_domain, "last_modified_ledger": 777,
             "thresholds": {"low_threshold": 1, "med_threshold": med, "high_threshold": high},
             "signers": [{"key": address, "weight": 2, "type": "ed25519_public_key"},
                         {"key": AGENT_KEY, "weight": agent_weight, "type": "ed25519_public_key"}],
@@ -52,6 +52,7 @@ def test_account_view_reports_agent_weight_against_thresholds():
     assert view["agent_key"] == {"key": AGENT_KEY, "weight": 1, "is_signer": True,
                                  "can_pay_alone": False, "can_administer_alone": False}
     assert view["trustlines"][0]["unlimited"] is True
+    assert view["last_modified_ledger"] == 777  # part of the chain identity an audit commits to
 
 
 def test_hardcoded_destination_requiring_a_memo_is_found():

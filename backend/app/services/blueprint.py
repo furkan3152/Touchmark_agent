@@ -119,7 +119,7 @@ def python_edges(files: dict[str, str]) -> list[dict]:
     for path, content in sorted(files.items()):
         if not path.endswith('.py'): continue
         try: tree = ast.parse(content)
-        except (SyntaxError, ValueError, RecursionError): continue
+        except (SyntaxError, ValueError, RecursionError, MemoryError): continue
         package = path.split('/')[:-1]
         for n in ast.walk(tree):
             targets = []
@@ -182,7 +182,7 @@ def compile_blueprint(files: dict[str, str]) -> dict:
             if not stable_callable(tree, n) or len(args.args + args.posonlyargs) != 1 or args.vararg or args.kwarg or args.kwonlyargs or n.decorator_list:
                 raise ValueError()
             entry['line'] = n.lineno
-        except (SyntaxError, ValueError, RecursionError):
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
             blockers.append('Declared entrypoint must be one unrebound, undecorated top-level Python callable taking exactly one positional argument, in an unambiguous Python module path.')
     edges = python_edges(files)
     unresolved = [e for e in edges if e['resolution'] != 'supplied_source']

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from ..stellar.chain_identity import identity_changes
+
 
 def _key(finding: dict) -> str:
     # Rule ids are stable across commits; model finding ids end in a running number, so
@@ -29,4 +31,6 @@ def compare_reports(before: dict, after: dict) -> dict:
         "closed": [row(f) for k, f in old.items() if k not in new],
         "remaining": [row(f) for k, f in new.items() if k in old],
         "introduced": [row(f) for k, f in new.items() if k not in old],
+        # A different executable, executable entry, signer set or thresholds is a different agent.
+        "identity_changes": identity_changes(before.get("onchain_authority"), after.get("onchain_authority")),
     }

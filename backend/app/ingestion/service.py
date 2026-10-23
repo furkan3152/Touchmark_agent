@@ -64,6 +64,8 @@ SECRET_FILENAMES = {
 SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 MAX_FILE_BYTES = 200_000
 MAX_FILES = 60
+#: Deeper zip entries are skipped (see repo_audit.MAX_PATH_DEPTH).
+MAX_PATH_DEPTH = 64
 
 
 def _is_secret_path(parts: tuple[str, ...]) -> bool:
@@ -355,6 +357,9 @@ class IngestionService:
                 if len(out) >= MAX_FILES or info.is_dir():
                     continue
                 name = info.filename
+                # Very deep or long names are not source; path handling costs grow with them.
+                if name.count("/") >= MAX_PATH_DEPTH or len(name) > 1024:
+                    continue
                 parts = Path(name).parts
                 # Yol kaçışı: `../etc/passwd` veya `/etc/passwd`.
                 if ".." in parts or Path(name).is_absolute() or name.startswith("/"):
