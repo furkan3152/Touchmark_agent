@@ -7,7 +7,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import itertools
 import json
+import string
+import time
 
 import httpx
 import pytest
@@ -17,12 +20,15 @@ from backend.app.config import Settings
 from backend.app.models import AgentArtifact, AuditorVerdict, Dimension, EvidenceGrade, FindingKind, Severity, SourceKind
 from backend.app.services.agent_resolver import AgentResolver, audit_reference
 from backend.app.services.report_diff import compare_reports
+from backend.app.services.deep_review import evidence_pack
+from backend.app.stellar import soroban_reader, wasm_profile
 from backend.app.stellar.soroban_reader import SorobanReader
 from backend.app.swarm.orchestrator import _KEEPS_SEVERITY, AuditSwarm
 from backend.app.swarm.policy import BLOCKING_GAPS, artifact_commitment
 from backend.app.swarm.stellar_native import StellarNativeAuditor
-from backend.tests.test_wasm_profile import SDK25
-from backend.tests.wasm_builder import contract_wasm
+from backend.tests.test_wasm_profile import (_COMPARE, _COPY, _FORGET_IMPORTS, _INSTALL, _RELOAD, _SPILL, HOSTILE,
+                                             SDK25)
+from backend.tests.wasm_builder import contract_wasm, raw_module, spec_section
 
 
 def _contract(seed: str) -> str:
@@ -459,7 +465,7 @@ def test_an_undecodable_body_is_a_resolution_step_not_a_finding():
 
 def test_ledger_and_bytecode_findings_keep_their_severity_under_verification():
     for rule in ("upgradeable", "upgrade-unauthenticated", "code-externally-controlled", "hidden-export",
-                 "delegates-unauthenticated", "code-unresolved", "manages-external-refs"):
+                 "delegates-unauthenticated", "code-unresolved", "manages-external-refs", "bytecode-incomplete"):
         assert _KEEPS_SEVERITY.search(f"stellar_native-onchain-contract-{rule}")
     assert not _KEEPS_SEVERITY.search("stellar_native-onchain-identity-unbound")
     critical = contract_findings(contract_wasm(UPGRADEABLE, helpers=UNCHECKED, spec=UPGRADE_SPEC))
@@ -470,6 +476,203 @@ def test_ledger_and_bytecode_findings_keep_their_severity_under_verification():
             result = {"results": [{"finding_id": finding.id, "quote_verified": True, "quote": "admin.require_auth();",
                                    "reason": "the source checks the admin", **outcome}]}
             assert AuditSwarm._apply_disputes([verdict], result)[0].findings[0].severity is finding.severity
+
+
+# --------------------------------------------------------------------------- hand-built and hostile bytecode
+def test_an_exported_upgrade_import_is_an_open_upgrade():
+    # (export "upgrade" (func 0)) with func 0 = update_current_contract_wasm: anyone installs any hash.
+    wasm = raw_module([(1, 1), (0, 1)], ["l.6"], [1], [("upgrade", 0), ("hello", 1)], [(0, b"\x42\x00")]) \
+        + spec_section({"upgrade": [("new_wasm_hash", "bytes32")], "hello": []})
+    finding = contract_findings(wasm)["onchain-contract-upgrade-unauthenticated"]
+    assert finding.severity is Severity.CRITICAL and finding.evidence_grade is EvidenceGrade.CONFIRMED
+    assert "export upgrade -> import l.6 (update_current_contract_wasm)" in finding.evidence
+    assert "argument new_wasm_hash (bytes32) its caller passes, unchecked" in finding.evidence
+    repoint = raw_module([(2, 1), (0, 1)], ["l.j"], [1], [("repoint", 0)], [(0, b"\x42\x00")]) \
+        + spec_section({"repoint": [("owner", "address"), ("tag", "string")]})
+    assert contract_findings(repoint)["onchain-contract-upgrade-unauthenticated"].severity is Severity.CRITICAL
+    writer = raw_module([(3, 1), (0, 1)], ["l._"], [1], [("put", 0), ("hello", 1)], [(0, b"\x42\x00")]) \
+        + spec_section({"hello": []})
+    assert contract_findings(writer)["onchain-contract-hidden-export"].severity is Severity.HIGH
+    reader = raw_module([(2, 1), (0, 1)], ["l.1"], [1], [("get", 0), ("hello", 1)], [(0, b"\x42\x00")]) \
+        + spec_section({"get": [("key", "u32"), ("kind", "u32")], "hello": []})
+    assert not [k for k, f in contract_findings(reader).items() if f.is_risk]
+
+
+def test_an_export_no_transaction_can_name_raises_nothing():
+    # Not a symbol, or the host's reserved prefix "__" (soroban-env-host 25.0.1 refuses to invoke
+    # "__upgrade" with Error(Context, InvalidAction) and the code stays as it was).
+    for bad in ("up-grade", "a.b", "x" * 33, "__upgrade"):
+        defined = raw_module([(1, 1)], ["l.6"], [0], [(bad, 1)], [(0, b"\x20\x00\x10\x00")]) + spec_section({})
+        exported = raw_module([(1, 1), (0, 1)], ["l.6"], [1], [(bad, 0), ("hello", 1)], [(0, b"\x42\x00")]) \
+            + spec_section({"hello": []})
+        for wasm in (defined, exported):
+            found = contract_findings(wasm)
+            assert "onchain-contract-upgrade-unauthenticated" not in found and "onchain-contract-hidden-export" not in found
+            assert found["onchain-contract-upgradeable"].severity is Severity.LOW  # the module still imports it
+    # More arguments than the host passes an invoked function (32).
+    wide = raw_module([(33, 1)], ["l.6"], [0], [("upgrade", 1)], [(0, b"\x20\x00\x10\x00")]) + spec_section({})
+    assert "onchain-contract-upgrade-unauthenticated" not in contract_findings(wide)
+    named = raw_module([(1, 1)], ["l.6"], [0], [("_start", 1), ("hello", 1)], [(0, b"\x42\x00")]) \
+        + spec_section({"hello": []})
+    assert contract_findings(named)["onchain-contract-hidden-export"].severity is Severity.MEDIUM
+    # Near miss: one underscore is an ordinary name; invoking "_up" replaced the code with no auth.
+    single = raw_module([(1, 1), (0, 1)], ["l.6"], [1], [("_up", 0), ("hello", 1)], [(0, b"\x42\x00")]) \
+        + spec_section({"hello": []})
+    assert contract_findings(single)["onchain-contract-upgrade-unauthenticated"].severity is Severity.CRITICAL
+    called = raw_module([(1, 1)], ["l.6"], [0, 0], [("__upgrade", 1), ("hello", 2)],
+                        [(0, b"\x20\x00\x10\x00"), (0, b"\x20\x00\x10\x01")]) + spec_section({"hello": []})
+    evidence = contract_findings(called)["onchain-contract-upgrade-unauthenticated"].evidence
+    assert "export hello -> f2 -> f1 -> import l.6" in evidence and "__upgrade" not in evidence
+
+
+def _forget_module(code: bytes) -> bytes:
+    return raw_module([(4, 1), (2, 1), (1, 1)], _FORGET_IMPORTS, [2], [("upgrade", 4)], [(0, code)],
+                      memory=True, stack_pointer=True) + spec_section({"upgrade": [("new_wasm_hash", "bytes32")]})
+
+
+def test_an_upgrade_whose_checked_copy_the_flow_forgot_is_not_critical_but_undecided():
+    found = contract_findings(_forget_module(_SPILL + _COPY + _RELOAD + _COMPARE + _INSTALL))
+    assert "onchain-contract-upgrade-unauthenticated" not in found
+    assert "whether anything checks it was not traced" in found["onchain-contract-upgradeable"].detail
+    gap = found["onchain-contract-bytecode-incomplete"]  # the check is real here, but unseen
+    assert gap.kind is FindingKind.EVIDENCE_GAP and "lost track of a copy" in gap.evidence
+    direct = contract_findings(_forget_module(_COPY + b"\x20\x00" + _COMPARE + _INSTALL))
+    assert not {"onchain-contract-upgrade-unauthenticated", "onchain-contract-bytecode-incomplete"} & set(direct)
+    # Near miss: memory is forgotten while the hash is only in a local; nothing checks it.
+    local_only = contract_findings(_forget_module(_COPY + _INSTALL))
+    assert local_only["onchain-contract-upgrade-unauthenticated"].severity is Severity.CRITICAL
+    assert "onchain-contract-bytecode-incomplete" not in local_only
+
+
+def test_an_open_upgrade_that_drops_a_copy_of_its_hash_still_blocks_a_pass():
+    # global.set 1 (the hash) before update_current_contract_wasm(hash): nothing checks it, but a check
+    # that read the global back would not be seen. Was CRITICAL, then a LOW note with no gap.
+    def module(code: bytes) -> bytes:
+        return raw_module([(4, 1), (2, 1), (1, 1)], _FORGET_IMPORTS, [2], [("upgrade", 4)], [(0, code)],
+                          memory=True, stack_pointer=True, globals_=1) \
+            + spec_section({"upgrade": [("new_wasm_hash", "bytes32")]})
+    found = contract_findings(module(b"\x20\x00\x24\x01" + _INSTALL))
+    gap = found["onchain-contract-bytecode-incomplete"]
+    assert gap.kind is FindingKind.EVIDENCE_GAP and "stellar_native-onchain-contract-bytecode-incomplete" in BLOCKING_GAPS
+    assert "upgrade installs the code its caller names" in gap.detail
+    assert found["onchain-contract-upgradeable"].severity is Severity.LOW
+    # Near miss: a check the flow sees on the argument itself decides it (no writer: a note, no gap).
+    checked = contract_findings(module(b"\x20\x00\x24\x01\x20\x00" + _COMPARE + _INSTALL))
+    assert not {"onchain-contract-bytecode-incomplete", "onchain-contract-upgrade-unauthenticated"} & set(checked)
+
+
+def test_an_open_upgrade_the_data_flow_could_not_follow_blocks_a_pass():
+    # A function with more locals than the flow follows stops it for the whole module.
+    big = raw_module([(1, 1)], ["l.6"], [0, 0], [("upgrade", 1), ("pad", 2)],
+                     [(0, b"\x20\x00\x10\x00"), (2000, b"\x42\x00")]) \
+        + spec_section({"upgrade": [("new_wasm_hash", "bytes32")], "pad": []})
+    found = contract_findings(big)
+    gap = found["onchain-contract-bytecode-incomplete"]
+    assert gap.kind is FindingKind.EVIDENCE_GAP and gap.severity is Severity.MEDIUM
+    assert "stellar_native-onchain-contract-bytecode-incomplete" in BLOCKING_GAPS
+    assert "too many locals in f2" in gap.evidence and "upgrade" in gap.evidence
+    assert found["onchain-contract-upgradeable"].severity is Severity.LOW
+    # Near miss: the upgrade authenticates, so the untraced flow decides nothing.
+    authed = raw_module([(1, 1)], ["a.0", "l.6"], [0, 0], [("upgrade", 2), ("pad", 3)],
+                        [(0, b"\x20\x00\x10\x00\x1a\x20\x00\x10\x01"), (2000, b"\x42\x00")]) \
+        + spec_section({"upgrade": [("new_wasm_hash", "bytes32")], "pad": []})
+    assert "onchain-contract-bytecode-incomplete" not in contract_findings(authed)
+
+
+def test_twenty_thousand_exports_give_bounded_facts_and_a_blocking_gap():
+    imports = [f"{m}.{c}" for m in "bvmxl" for c in "0123456789"]  # 50 host functions, l.6 among them
+    body = b"".join(b"\x10" + bytes([i]) for i in range(len(imports))) + b"\x42\x00"
+    names = ["".join(t) for t in itertools.islice(itertools.product(string.ascii_letters + string.digits, repeat=3), 20000)]
+    wasm = raw_module([(0, 1)], imports, [0], [(n, len(imports)) for n in names], [(0, body)])
+    facts = read(rpc(instance(AGENT, wasm_exec(wasm)), code(wasm)))
+    assert len(wasm) < 131072 and facts["profile"]["exports_omitted"] == 20000 - 64
+    assert facts["profile"]["exports_omitted_unauthenticated"] == 20000 - 64  # every one reaches l.6 openly
+    assert len(json.dumps(facts)) < 200_000  # was 20.6 MB
+    artifact = AgentArtifact(name="x", source_kind=SourceKind.REPO, source_ref="repo:x@1", code_files={"a.py": "print(1)\n"},
+                             chain_authority={"network": "testnet", "contract": facts})
+    pack, _ = evidence_pack(artifact, [], artifact.chain_authority)
+    assert len(pack) < 60_000 and '"exports_described": 64' in pack  # was 23.3 million characters
+    assert findings(facts)["onchain-contract-bytecode-incomplete"].kind is FindingKind.EVIDENCE_GAP
+    sdk = read(rpc(instance(AGENT, wasm_exec(w := (SDK25 / "timelock_open.wasm").read_bytes())), code(w)))
+    assert "exports_omitted" not in sdk["profile"] and len(json.dumps(sdk)) < 20_000
+
+
+def test_padding_with_getters_neither_hides_a_finding_nor_blocks_a_pass():
+    getters = {f"get_{i}": ["l.1"] for i in range(70)}
+    spec = {n: [] for n in getters}
+    hidden = contract_findings(contract_wasm(dict(getters, transfer=["a.0", "l._"], sweep_all=["d._"]),
+                                             spec=dict(spec, transfer=[])))
+    assert hidden["onchain-contract-hidden-export"].severity is Severity.HIGH
+    assert "import d._ (call)" in hidden["onchain-contract-hidden-export"].evidence
+    account = contract_findings(contract_wasm(dict(getters, __check_auth=["a.9", "c.0", "d._"], execute=["a.0", "d._"]),
+                                              spec=dict(spec, __check_auth=[], execute=[])))
+    assert account["onchain-contract-delegates-unauthenticated"].severity is Severity.HIGH
+    gated = contract_findings(contract_wasm(dict(getters, upgrade=["h:admin", "l.6(p0)"]), helpers=ADMIN,
+                                            spec=dict(spec, upgrade=[("new_wasm_hash", "bytes32")])))
+    assert "export upgrade -> " in gated["onchain-contract-upgradeable"].evidence
+    for found in (hidden, account, gated):  # no omitted export can raise a finding
+        assert "onchain-contract-bytecode-incomplete" not in found
+    # Near miss: open upgrades past the 64 described are counted, and block a pass.
+    opened = contract_findings(contract_wasm({f"up_{i}": ["l.6(p0)"] for i in range(70)}))
+    assert opened["onchain-contract-upgrade-unauthenticated"].severity is Severity.CRITICAL
+    assert "6 of the 6 exports beyond the 64 described" in opened["onchain-contract-bytecode-incomplete"].evidence
+
+
+def test_a_large_spec_and_metadata_give_bounded_facts_and_review():
+    # 770 spec functions of 8 parameters (the spec of a 120 KB module) and 40 metadata entries of 1 KB:
+    # the facts were 245 KB and the deep review pack 448,000 characters.
+    many = {f"f{i:05d}": [(f"a{k}", "u32") for k in range(8)] for i in range(770)}
+    meta = {f"k{i:02d}": "v" * 1000 for i in range(40)} | {"source_repo": "https://example.invalid/agent"}
+    wide = [(f"p{k}", "u32") for k in range(40)]  # more than the host passes: the export cannot be invoked
+    upgrade = {"upgrade": ["l.6(p0)"], "wide": []}
+    start = time.perf_counter()
+    wasm = contract_wasm(upgrade, spec=dict(wide=wide, **many, upgrade=[("new_wasm_hash", "bytes32")]), meta=meta)
+    facts = read(rpc(instance(AGENT, wasm_exec(wasm)), code(wasm)))
+    assert len(wasm) < 131072 + 40_000 and time.perf_counter() - start < 5
+    assert len(facts["functions"]) == 64 and facts["functions_omitted"] == 772 - 64
+    kept = {f["name"]: f for f in facts["functions"]}
+    assert kept["wide"]["inputs_omitted"] == 8 and len(kept["wide"]["inputs"]) == 32
+    assert len(facts["meta"]) == 32 and max(map(len, facts["meta"].values())) == 256
+    assert len(json.dumps(facts)) < 50_000 and facts["custom_account"] is False
+    # The upgrade comes last in the spec; its parameters are kept because the rules read them.
+    finding = findings(facts)["onchain-contract-upgrade-unauthenticated"]
+    assert "argument new_wasm_hash (bytes32) its caller passes, unchecked" in finding.evidence
+    artifact = AgentArtifact(name="x", source_kind=SourceKind.REPO, source_ref="repo:x@1", code_files={"a.py": "print(1)\n"},
+                             chain_authority={"network": "testnet", "contract": facts})
+    pack, _ = evidence_pack(artifact, [], artifact.chain_authority)
+    assert len(pack) < 20_000 and '"function": "upgrade(new_wasm_hash: bytes32)"' in pack
+    assert '"spec_only_omitted": 706' in pack and "... 8 more" in pack
+    transport = rpc(instance(AGENT, wasm_exec(wasm)), code(wasm))
+    steps = asyncio.run(AgentResolver(Settings(_env_file=None), transport=transport).resolve(AGENT))["steps"]
+    assert next(s["evidence"] for s in steps if s["check"] == "contract_code").endswith(", 772 functions")
+
+
+def test_the_bytecode_profile_runs_off_the_event_loop():
+    slow = HOSTILE["readers"]
+    real, ticks = wasm_profile.profile, []
+
+    def profile(code, names):
+        time.sleep(0.6)  # holds its own thread, as a long profile does
+        return real(code, names)
+
+    async def main():
+        async def heartbeat():
+            while True:
+                ticks.append(time.monotonic())
+                await asyncio.sleep(0.02)
+        beat = asyncio.create_task(heartbeat())
+        await asyncio.sleep(0.05)
+        facts = await SorobanReader("testnet", transport=rpc(instance(AGENT, wasm_exec(slow)), code(slow))).contract(AGENT)
+        beat.cancel()
+        return facts
+    soroban_reader.wasm_profile.profile = profile
+    try:
+        facts = asyncio.run(main())
+    finally:
+        soroban_reader.wasm_profile.profile = real
+    assert facts["profile"]["dataflow"]["status"] == "incomplete"
+    gaps = [b - a for a, b in zip(ticks, ticks[1:])]
+    assert ticks[-1] - ticks[0] > 0.6 and max(gaps) < 0.3
 
 
 # --------------------------------------------------------------------------- the end-to-end audit

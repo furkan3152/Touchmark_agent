@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar import knowledge
+from ..stellar.soroban_reader import without_export_detail
 from .ai_review import redact
 
 #: A review given less time than this would read a file or two and stop; it is skipped instead.
@@ -271,7 +272,7 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
             {"id": f.id, "severity": f.severity.value, "kind": f.kind.value, "title": f.title,
              "evidence": f.evidence[:300]}
             for f in findings if f.is_risk and f.severity.rank >= Severity.MEDIUM.rank],
-        "onchain_authority": chain or {"status": "not_supplied"},
+        "onchain_authority": without_export_detail(chain) if chain else {"status": "not_supplied"},
     }
     return json.dumps(pack, ensure_ascii=False, indent=1), flows
 

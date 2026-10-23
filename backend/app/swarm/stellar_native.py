@@ -649,6 +649,7 @@ class StellarNativeAuditor(BaseAuditor):
                 remediation="Restore the contract code entry or supply the source and build attestation.")))
         if not profile:
             return out
+        out += self._incomplete(profile, where)
         if profile.get("manages_external_refs"):
             out.append(self.finding("onchain-contract-manages-external-refs", Severity.INFO,
                 "The contract publishes executable references (CAP-85)",
@@ -706,6 +707,8 @@ class StellarNativeAuditor(BaseAuditor):
                          f"paths, so anyone may be able to repoint this contract: {writer} (an owner that refuses to "
                          "overwrite a published tag would be safe; the bytecode does not show that)")
         owner_risks = _upgrade_risks(owner_profile, owner_facts.get("functions"))[0] if owner != cid else []
+        if owner != cid and owner_profile:
+            out += self._incomplete(owner_profile, f"owner {owner}: wasm {owner_facts.get('wasm_hash')}")
         if owner_risks:
             severity, grade = Severity.HIGH, EvidenceGrade.INFERRED
             notes.append("the owner's own upgrade needs no authentication, so anyone may be able to replace the "
@@ -743,6 +746,41 @@ class StellarNativeAuditor(BaseAuditor):
             remediation="Require the administrator's authorization (require_auth) in every upgrade path, or a "
                         "timelock whose schedule step is authenticated.",
             grade=EvidenceGrade.CONFIRMED if critical else EvidenceGrade.INFERRED)
+
+    def _incomplete(self, profile: dict, where: str) -> list[Finding]:
+        """An evidence gap when the bytecode review could have missed an unauthenticated upgrade
+        or writer: exports a finding could come from left undescribed, or an open upgrade whose
+        code the data flow did not follow or lost track of."""
+        reasons = []
+        exports = profile.get("exports") or {}
+        if "exports_omitted_unauthenticated" in profile:
+            if profile["exports_omitted_unauthenticated"]:
+                reasons.append(f"{profile['exports_omitted_unauthenticated']} of the {profile['exports_omitted']} "
+                               f"exports beyond the {len(exports)} described reach an upgrade, a storage write or a "
+                               "contract call with no authentication and were not analysed")
+        elif profile.get("exports_omitted"):  # facts from before that count was kept
+            reasons.append(f"{profile['exports_omitted']} exports beyond the {len(exports)} described were not "
+                           "analysed")
+        open_upgrades = {n: r for n, r in sorted(exports.items()) if n not in HOST_ENTRY_POINTS
+                         and set(r["reaches"]) & UPGRADE and _open(r)}
+        untraced = [n for n, r in open_upgrades.items() if r.get("flows") is None]
+        if untraced:
+            reasons.append(f"the data flow stopped ({(profile.get('dataflow') or {}).get('error', 'incomplete')}) "
+                           f"before tracing where {', '.join(untraced[:3])} gets the code it installs")
+        lost = [n for n, r in open_upgrades.items() if _code_lost(r.get("flows"))]
+        if lost:
+            reasons.append(f"{', '.join(lost[:3])} installs the code its caller names, and the data flow lost track "
+                           "of a copy of that argument in memory, a global or an indirect call it could not follow, "
+                           "where a check would go unseen")
+        if not reasons:
+            return []
+        return [_gap(self.finding("onchain-contract-bytecode-incomplete", Severity.MEDIUM,
+            "The deployed contract's bytecode could not be fully analysed",
+            "Whether anyone can replace the contract's code, or write what its upgrade installs, was not decided: "
+            + "; ".join(reasons) + ". An unauthenticated upgrade or writer may go unreported.",
+            evidence=f"{where}; " + "; ".join(reasons),
+            remediation="Review the contract source with a build attestation for this WASM hash, or deploy a module "
+                        "with fewer exports and simpler functions."))]
 
     def _interface_findings(self, profile: dict, exports: dict, where: str, upgrade_reported: set[str]) -> list[Finding]:
         """The exports compared with the contract spec (contractspecv0) the WASM publishes."""
@@ -805,16 +843,29 @@ def _open(reach: dict) -> bool:
     return not set(reach["reaches"]) & (AUTH | CALL) and not reach["indirect"]
 
 
+def _code_lost(flows: dict | None) -> bool:
+    """The code the caller names reaches the upgrade with nothing seen checking it, but the data
+    flow lost track of a copy of that argument, and a check on the copy would be unseen: CRITICAL
+    is decided neither way. Code that comes from no argument the flow saw does not count, even
+    after an argument was lost: an SDK timelock installs a hash the host unpacked from a stored
+    struct into memory, after its operation id went through memory too."""
+    return bool(flows and flows["upgrade_code"] and not flows.get("upgrade_code_checked")
+                and flows.get("upgrade_code_lost"))
+
+
 def _upgrade_risks(profile: dict | None, functions: list[dict] | None) -> tuple[list[tuple[Severity, str, str]], list[str]]:
     """Upgrade exports the bytecode shows anyone can steer, as (severity, export, evidence),
     and notes on unauthenticated upgrade exports it cannot decide (those raise no risk).
 
-    CRITICAL: the WASM hash (or executable owner) comes from the caller's argument and no host
-    function that could check it sees that argument. HIGH: the code comes from storage, or
-    the argument is checked against something, and another unauthenticated export stores a
-    caller-supplied value of a type the code is stored as. Anything else is a note."""
+    CRITICAL: the WASM hash (or executable owner) comes from the caller's argument, no host
+    function that could check it sees that argument, and the data flow lost no copy of it.
+    HIGH: the code comes from storage, or the argument is checked against something (or a
+    copy was lost), and another unauthenticated export stores a caller-supplied value of a
+    type the code is stored as. Anything else is a note; where a lost argument leaves the
+    CRITICAL undecided, _incomplete raises the evidence gap."""
     exports = (profile or {}).get("exports") or {}
-    inputs = {f["name"]: f.get("inputs", []) for f in functions or []}
+    # A function whose parameters the facts cut short is untyped, like an export not in the spec.
+    inputs = {f["name"]: None if f.get("inputs_omitted") else f.get("inputs", []) for f in functions or []}
     risks: list[tuple[Severity, str, str]] = []
     notes: list[str] = []
     for name, reach in sorted(exports.items()):
@@ -832,11 +883,15 @@ def _upgrade_risks(profile: dict | None, functions: list[dict] | None) -> tuple[
         path = "; ".join(reach["paths"][c] for c in sorted(upgrades))
         args = inputs.get(name)
         named = ", ".join(_argument(args, i) for i in flows["upgrade_code"])
-        if flows["upgrade_code"] and not flows.get("upgrade_code_checked"):
+        unchecked = flows["upgrade_code"] and not flows.get("upgrade_code_checked")
+        if unchecked and not flows.get("upgrade_code_lost"):
             risks.append((Severity.CRITICAL, name, f"{path} (installs the {named} its caller passes, unchecked)"))
             continue
         writers = _code_writers(exports, inputs, upgrades)
-        if flows["upgrade_code"]:
+        if unchecked:  # the flow dropped a copy of it, and a check on that copy would not be seen
+            how = (f"installs the {named} its caller passes; the data flow lost track of a copy of it (memory, a "
+                   "global or an indirect call it could not follow), so whether anything checks it was not traced")
+        elif flows["upgrade_code"]:
             how = f"installs the {named} its caller passes after passing it to a host function that can check it"
         elif flows["upgrade_tag"]:
             how = "installs the owner's tag its caller names"
