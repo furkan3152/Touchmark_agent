@@ -48,8 +48,6 @@ _MAINNET_NAME = re.compile(r"^(?:stellar:)?(?:public|mainnet|pubnet)$", re.I)
 _TESTNET_NAME = re.compile(r"^(?:stellar:)?testnet$", re.I)
 #: A variable whose text is a URL or host: guessing the network from a substring of it.
 _URLISH = re.compile(r"url|host|server|endpoint|horizon|rpc|uri|origin|base", re.I)
-#: Code that hashes for a network: a passphrase constant or a builder option.
-_PASSPHRASE_USE = re.compile(r"[Pp]assphrase|\bNetworks?\.(?:PUBLIC|TESTNET|FUTURENET)\b|PUBLIC_NETWORK_PASSPHRASE")
 _STRING = re.compile(r"""^\s*(["'`])(.*)\1\s*$""", re.S)
 
 
@@ -173,6 +171,7 @@ class _Source:
     skel: str
     python: bool
     package: str = ""  # the nearest directory with a manifest (the repository root by default)
+    selectors: list | None = None  # computed once (fallback and pair rules both read them)
 
 
 def _package_of(name: str, roots: set[str]) -> str:
@@ -215,11 +214,17 @@ class Selector:
     yields: set[str]      # every network value the selector can produce
     guess: bool           # tests substrings of a URL or host
     target: str = ""      # the variable or field the result is stored in
+    passphrase: bool = False  # its branch values are passphrases (or a table whose entries hold them)
+
+
+def _passphrases(values) -> bool:
+    """Whether a selector's branch values are passphrases (not what it compares against)."""
+    return any(re.search(r"[Pp]assphrase|PASSPHRASE|Networks?\.(?:PUBLIC|TESTNET|FUTURENET)\b", v or "") for v in values)
 
 
 _CASE = re.compile(r"\bcase\s+(?P<label>[^:?]+?)\s*:|\bdefault\s*:")
 _SWITCH = re.compile(r"\bswitch\s*\(\s*(?P<subject>[\w$.?!\[\]'\"]+)\s*\)\s*\{")
-_YIELD = re.compile(r"\breturn\s+(?P<ret>[^;\n]+)|(?P<target>[\w$.]+)\s*=(?!=)\s*(?P<val>[^;\n]+)")
+_YIELD = re.compile(r"\breturn\s+(?P<ret>[^;\n]+)|(?<![\w$.])(?P<target>[\w$.]+)\s*=(?!=)\s*(?P<val>[^;\n]+)")
 
 
 def _js_switches(src: _Source) -> list[Selector]:
@@ -244,12 +249,14 @@ def _js_switches(src: _Source) -> list[Selector]:
         for k, (start, end, label) in enumerate(marks):
             stop = marks[k + 1][0] if k + 1 < len(marks) else len(body)
             clauses.append((label, body[end:stop]))
-        explicit, fallback, yields, pending = [], None, set(), []
+        explicit, fallback, yields, pending, written = [], None, set(), [], []
         for label, stmts in clauses:
             pending.append(label)
             value = None
             for y in _YIELD.finditer(stmts):
                 value = net_of(y.group("ret") or y.group("val") or "")
+                if value:
+                    written.append(y.group("ret") or y.group("val"))
                 if value or y.group("ret"):
                     break
             if not stmts.strip():
@@ -268,7 +275,8 @@ def _js_switches(src: _Source) -> list[Selector]:
             continue
         line = _line(src.text, m.start())
         out.append(Selector(src.name, line, " ".join(src.code[m.start():close + 1].split())[:400],
-                            m.group("subject"), [e for e in explicit if e], fallback, yields, False))
+                            m.group("subject"), [e for e in explicit if e], fallback, yields, False,
+                            passphrase=_passphrases(written)))
     return out
 
 
@@ -299,8 +307,36 @@ def _split_ternary(skel: str, code: str, start: int, end: int) -> tuple[list[tup
     return (pieces, code[cond_start:end].strip()) if pieces else None
 
 
-_ASSIGN_TERNARY = re.compile(r"(?:\b(?:const|let|var)\s+(?P<decl>[\w$]+)(?:\s*:[^=;\n]+)?|(?P<attr>this\.[\w$]+|[\w$]+))"
+_ASSIGN_TERNARY = re.compile(r"(?:\b(?:const|let|var)\s+(?P<decl>[\w$]+)(?:\s*:[^=;\n]+)?|(?<![\w$])(?P<attr>this\.[\w$]+|[\w$]+))"
                              r"\s*=(?!=)\s*")
+
+
+def _conditions(src: _Source, conds: list[str], before: int) -> tuple[list[str], bool, str]:
+    """(values tested, whether a URL substring is tested, the subject) for the conditions of a
+    ternary or if-chain; a bare alias is read through its declaration before ``before``."""
+    explicit, guess, subject = [], False, ""
+    for c in conds:
+        alias = re.fullmatch(r"!?\s*([\w$]+)", c)
+        if alias:
+            # `const isPubnet = cfg.network === 'stellar:pubnet'; ... isPubnet ? A : B`
+            decl = None
+            for d in re.finditer(r"\b(?:const|let|var)\s+" + re.escape(alias.group(1)) + r"\s*=\s*([^;\n]+)",
+                                 src.code[max(0, before - 3000):before]):
+                decl = d
+            c = decl.group(1) if decl else c
+        found = re.search(r"(?<![\w$.])(?P<subj>[\w$.]+)\s*\.\s*(?:includes|indexOf|startsWith|endsWith|match|search)\s*\(\s*"
+                          r"""["'`](?P<val>[^"'`]+)["'`]""", c) or \
+            re.search(r"""(?<![\w$.])(?P<subj>[\w$.]+)\s*[!=]==?\s*["'`](?P<val>[^"'`]+)["'`]""", c) or \
+            re.search(r"""["'`](?P<val>[^"'`]+)["'`]\s*[!=]==?\s*(?P<subj>[\w$.]+)""", c)
+        if not found:
+            explicit.append(c)
+            continue
+        subject = found.group("subj")
+        explicit.append(found.group("val").lower())
+        if re.search(r"\.\s*(?:includes|indexOf|startsWith|endsWith|match|search)\s*\(", c) and \
+                _URLISH.search(subject.rsplit(".", 1)[-1]):
+            guess = True
+    return explicit, guess, subject
 
 
 def _js_ternaries(src: _Source) -> list[Selector]:
@@ -334,32 +370,11 @@ def _js_ternaries(src: _Source) -> list[Selector]:
         nets = [net_of(v) for v in values]
         if not any(nets):
             continue
-        explicit, guess, subject = [], False, ""
-        for c in conds:
-            alias = re.fullmatch(r"!?\s*([\w$]+)", c)
-            if alias:
-                # `const isPubnet = cfg.network === 'stellar:pubnet'; ... isPubnet ? A : B`
-                decl = None
-                for d in re.finditer(r"\b(?:const|let|var)\s+" + re.escape(alias.group(1)) + r"\s*=\s*([^;\n]+)",
-                                     src.code[max(0, m.start() - 3000):m.start()]):
-                    decl = d
-                c = decl.group(1) if decl else c
-            found = re.search(r"(?P<subj>[\w$.]+)\s*\.\s*(?:includes|indexOf|startsWith|endsWith|match|search)\s*\(\s*"
-                              r"""["'`](?P<val>[^"'`]+)["'`]""", c) or \
-                re.search(r"""(?P<subj>[\w$.]+)\s*[!=]==?\s*["'`](?P<val>[^"'`]+)["'`]""", c) or \
-                re.search(r"""["'`](?P<val>[^"'`]+)["'`]\s*[!=]==?\s*(?P<subj>[\w$.]+)""", c)
-            if not found:
-                explicit.append(c)
-                continue
-            subject = found.group("subj")
-            explicit.append(found.group("val").lower())
-            if re.search(r"\.\s*(?:includes|indexOf|startsWith|endsWith|match|search)\s*\(", c) and \
-                    _URLISH.search(subject.rsplit(".", 1)[-1]):
-                guess = True
+        explicit, guess, subject = _conditions(src, conds, m.start())
         target = m.group("decl") or m.group("attr") or ""
         line = _line(src.text, m.start())
         out.append(Selector(src.name, line, " ".join(src.code[m.start():i].split())[:400], subject,
-                            explicit, nets[-1], {x for x in nets if x}, guess, target))
+                            explicit, nets[-1], {x for x in nets if x}, guess, target, passphrase=_passphrases(values)))
     return out
 
 
@@ -403,8 +418,231 @@ def _py_selectors(src: _Source) -> list[Selector]:
                 explicit.append(ast.unparse(test))
         target = ast.unparse(node.targets[0] if isinstance(node, ast.Assign) else node.target)
         out.append(Selector(src.name, node.lineno, " ".join(ast.unparse(node).split())[:400], subject, explicit,
-                            nets[-1], {x for x in nets if x}, guess, target))
+                            nets[-1], {x for x in nets if x}, guess, target,
+                            passphrase=_passphrases([ast.unparse(v) for _, v in pieces] + [ast.unparse(expr)])))
     return out
+
+
+_IF_HEAD = re.compile(r"\bif\s*\(")
+
+
+def _return_at(src: _Source, pos: int) -> tuple[str, int] | None:
+    """`return X;` or `{ return X; }` starting at ``pos`` (after spaces): (X, end)."""
+    m = re.match(r"\s*(\{)?\s*return\s+", src.skel[pos:pos + 200])
+    if not m:
+        return None
+    start = pos + m.end()
+    depth, i = 0, start
+    while i < min(len(src.skel), start + 400):
+        ch = src.skel[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and ch in ";\n":
+            break
+        i += 1
+    value, end = src.code[start:i].strip(), i + (src.skel[i:i + 1] == ";")
+    if m.group(1):
+        close = re.match(r"\s*\}", src.skel[end:end + 40])
+        if not close:
+            return None
+        end += close.end()
+    return (value, end) if value else None
+
+
+def _js_if_chains(src: _Source) -> list[Selector]:
+    """`if (n === 'testnet') return A; else if (n === 'futurenet') return B; return C;` (with
+    or without else and braces): an if-chain of returns, the last return being its fallback."""
+    out, seen = [], set()
+    for m in _IF_HEAD.finditer(src.skel):
+        if m.start() in seen or not re.search(r"(?:^|[;{}])\s*$", src.skel[max(0, m.start() - 200):m.start()]):
+            continue
+        chain, pos, final = [], m.start(), None
+        while True:
+            head = _IF_HEAD.match(src.skel, pos)
+            if not head:
+                final = _return_at(src, pos)
+                break
+            seen.add(pos)
+            open_at = head.end() - 1
+            close = _closing(src.skel, open_at, "(", ")", limit=400)
+            ret = _return_at(src, close + 1)
+            if ret is None:
+                break
+            chain.append((src.code[open_at + 1:close].strip(), ret[0]))
+            pos = ret[1] + re.match(r"\s*(?:else\b\s*)?", src.skel[ret[1]:ret[1] + 40]).end()
+        if not chain or final is None:
+            continue
+        nets = [net_of(v) for _, v in chain] + [net_of(final[0])]
+        if not any(nets) or sum(1 for x in nets if x) < 2:
+            continue
+        explicit, guess, subject = _conditions(src, [c for c, _ in chain], m.start())
+        out.append(Selector(src.name, _line(src.text, m.start()), " ".join(src.code[m.start():final[1]].split())[:400],
+                            subject, explicit, nets[-1], {x for x in nets if x}, guess,
+                            passphrase=_passphrases([v for _, v in chain] + [final[0]])))
+    return out
+
+
+def _top_keys(text: str, python: bool) -> list[str]:
+    """The keys at the top level of an object literal or dict (``text`` starts at `{`)."""
+    code, skel = mask(text, python)
+    keys, depth = [], 0
+    for i, ch in enumerate(skel):
+        if ch in "([{":
+            depth += 1
+            if depth != 1:
+                continue
+        elif ch in ")]}":
+            depth -= 1
+            continue
+        elif ch != "," or depth != 1:
+            continue
+        key = re.match(r"""\s*(?:(["'`])([\w:-]+)\1|([A-Za-z_$][\w$]*))\s*:""", code[i + 1:i + 120])
+        if key:
+            keys.append((key.group(2) or key.group(3)).lower())
+    return list(dict.fromkeys(keys))
+
+
+#: `TABLE[key] ?? fallback` or `TABLE[key] || fallback`.
+_MAP_FALLBACK = re.compile(r"(?<![\w$.])(?P<table>[\w$]+(?:\.[\w$]+)*)\s*\[(?P<key>[^\]\n]{1,120})\]\s*(?:\?\?|\|\|)\s*")
+
+
+def _fallback_value(table: str, expr: str) -> str | None:
+    """The network a map fallback yields: a network value, or the table's own mainnet or
+    testnet entry (`NETWORKS.mainnet`, `NETWORKS['public']`)."""
+    found = net_of(expr)
+    if found in {"mainnet", "testnet"}:
+        return found
+    own = re.fullmatch(re.escape(table) + r"""\s*(?:\.\s*(?P<a>\w+)|\[\s*["'](?P<b>[\w:-]+)["']\s*\])""", expr.strip())
+    if own:
+        name = own.group("a") or own.group("b")
+        return "mainnet" if _MAINNET_NAME.match(name) else "testnet" if _TESTNET_NAME.match(name) else None
+    return None
+
+
+def _js_map_fallbacks(src: _Source, group: list[_Source]) -> list[Selector]:
+    """N3 through a table: `NETWORKS[name] ?? Networks.PUBLIC`. The table's keys are the
+    values with a branch of their own; a table that cannot be read is not judged."""
+    out = []
+    for m in _MAP_FALLBACK.finditer(src.skel):
+        end = m.end()
+        stop = re.search(r"[;,)\n}]", src.skel[end:end + 200])
+        expr = src.code[end:end + (stop.start() if stop else 200)].strip()
+        table = m.group("table")
+        fallback = _fallback_value(table, expr)
+        if fallback is None:
+            continue
+        body = _definition(table.rsplit(".", 1)[-1], group)
+        keys = _top_keys(body, src.python) if body.startswith("{") else []
+        if not keys or not all(_NET_NAME.match(k) for k in keys):
+            continue
+        head = re.search(r"(?:\b(?:const|let|var)\s+(?P<decl>[\w$]+)(?:\s*:[^=;\n]+)?|(?<![\w$])(?P<attr>this\.[\w$]+|[\w$]+))"
+                         r"\s*=(?!=)\s*$", src.skel[max(0, m.start() - 120):m.start()])
+        target = (head.group("decl") or head.group("attr")) if head else ""
+        nets = {fallback} | {n for n in (net_of(f'"{k}"') for k in keys) if n}
+        out.append(Selector(src.name, _line(src.text, m.start()), " ".join(src.code[m.start():end + len(expr)].split())[:400],
+                            m.group("key").strip(), keys, fallback, nets, False, target,
+                            passphrase=_passphrases([body, expr])))
+    return out
+
+
+def _py_chains(tree: ast.Module, src: _Source) -> list[Selector]:
+    """Python if/elif chains of returns, and `TABLE.get(key, fallback)` map fallbacks."""
+    out = []
+    tables = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict) and len(node.targets) == 1:
+            t = node.targets[0]
+            name = t.id if isinstance(t, ast.Name) else t.attr if isinstance(t, ast.Attribute) else None
+            keys = [k.value.lower() for k in node.value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+            if name and keys and len(keys) == len(node.value.keys):
+                tables[name] = (keys, ast.unparse(node.value))
+
+    def returns(body):
+        return body[0].value if len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is not None else None
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body, i = fn.body, 0
+        while i < len(body):
+            start, chain, final, j = body[i], [], None, i
+            stmt = start
+            while isinstance(stmt, ast.If) and returns(stmt.body) is not None:
+                chain.append((stmt.test, returns(stmt.body)))
+                if len(stmt.orelse) == 1 and isinstance(stmt.orelse[0], ast.If):
+                    stmt = stmt.orelse[0]  # elif
+                    continue
+                if stmt.orelse:
+                    final = returns(stmt.orelse)  # else: return X
+                    break
+                j += 1  # `if ...: return X` then the next statement
+                stmt = body[j] if j < len(body) else None
+                if isinstance(stmt, ast.Return):
+                    final = stmt.value
+            i = j + 1
+            if not chain or final is None:
+                continue
+            nets = [net_of(ast.unparse(v)) for _, v in chain] + [net_of(ast.unparse(final))]
+            if sum(1 for x in nets if x) < 2:
+                continue
+            explicit, guess, subject = [], False, ""
+            for test, _ in chain:
+                if isinstance(test, ast.Compare) and len(test.ops) == 1:
+                    left, right = test.left, test.comparators[0]
+                    if isinstance(test.ops[0], ast.In) and isinstance(left, ast.Constant) and isinstance(left.value, str):
+                        subject, guess = ast.unparse(right), guess or bool(_URLISH.search(ast.unparse(right).rsplit(".", 1)[-1]))
+                        explicit.append(left.value.lower())
+                        continue
+                    const = next((x for x in (right, left) if isinstance(x, ast.Constant) and isinstance(x.value, str)), None)
+                    if const is not None:
+                        subject = ast.unparse(left if const is right else right)
+                        explicit.append(const.value.lower())
+                        continue
+                explicit.append(ast.unparse(test))
+            lines = src.text.splitlines()[start.lineno - 1:getattr(final, "end_lineno", start.lineno) or start.lineno]
+            out.append(Selector(src.name, start.lineno, " ".join(" ".join(lines).split())[:400], subject, explicit,
+                                nets[-1], {x for x in nets if x}, guess,
+                                passphrase=_passphrases([ast.unparse(v) for _, v in chain] + [ast.unparse(final)])))
+    seen = set()
+    for node in ast.walk(tree):
+        call = node.values[0] if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or) else node
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "get"):
+            continue
+        table = ast.unparse(call.func.value).rsplit(".", 1)[-1]
+        default = call.args[1] if len(call.args) == 2 else node.values[-1] if call is not node and len(call.args) == 1 else None
+        if default is None or table not in tables:
+            continue
+        fallback = _fallback_value(ast.unparse(call.func.value), ast.unparse(default))
+        if fallback is None:
+            continue
+        keys, body = tables[table]
+        if not all(_NET_NAME.match(k) for k in keys):
+            continue
+        if id(call) in seen:
+            continue
+        seen.add(id(call))
+        nets = {fallback} | {n for n in (net_of(f'"{k}"') for k in keys) if n}
+        out.append(Selector(src.name, node.lineno, " ".join(ast.unparse(node).split())[:400], ast.unparse(call.args[0]),
+                            keys, fallback, nets, False, passphrase=_passphrases([body, ast.unparse(default)])))
+    return out
+
+
+def selectors(src: _Source, group: list[_Source]) -> list[Selector]:
+    """Every selector in a file: switches, ternary chains, if-chains and map fallbacks."""
+    if src.selectors is None:
+        if src.python:
+            found = _py_selectors(src)
+            try:
+                found += _py_chains(ast.parse(src.text), src)
+            except (SyntaxError, ValueError, RecursionError):
+                pass
+        else:
+            found = _js_switches(src) + _js_ternaries(src) + _js_if_chains(src) + _js_map_fallbacks(src, group)
+        src.selectors = found
+    return src.selectors
 
 
 # --------------------------------------------------------------------------- declared domains
@@ -433,27 +671,74 @@ def _handled(value: str, explicit: list[str]) -> bool:
                for e in explicit)
 
 
-def _feeds_signing(src: _Source, sel: Selector) -> bool:
-    """The selector's result reaches a passphrase, an endpoint table or a CLI command: it
-    yields a passphrase constant itself, or it is stored in a variable the file then uses as
-    a table key or passes on, in a file that hashes for a network."""
-    if re.search(r"[Pp]assphrase|Networks?\.(?:PUBLIC|TESTNET)|_NETWORK_PASSPHRASE", sel.text):
+#: Text that holds a network passphrase (a builder option, an SDK constant, a passphrase table).
+_PASSPHRASE_HELD = re.compile(r"[Pp]assphrase|PASSPHRASE|\bNetworks?\.(?:PUBLIC|TESTNET|FUTURENET)\b")
+#: A function that turns a network name into a passphrase or a network configuration.
+_NETWORK_FN = r"[\w$]*(?:[Pp]assphrase|PASSPHRASE|[Nn]etwork_?[Cc]onfig|NETWORK_?CONFIG)[\w$]*"
+
+
+def _definition(name: str, group: list[_Source]) -> str:
+    """The object literal or dict a table name is assigned, or the body of the function whose
+    call result it is assigned (`this.networkConfig = getNetworkConfig(url)`), in the package."""
+    n = re.escape(name)
+    for src in group:
+        for m in re.finditer(r"(?<![\w$])(?:this\.|self\.)?" + n + r"\s*(?::[^=;\n{]{0,200})?=(?!=)\s*", src.skel):
+            at = m.end()
+            if src.skel.startswith("{", at):
+                return src.code[at:_closing(src.skel, at) + 1]
+            call = re.match(r"(?:new\s+)?([\w$.]+)\s*\(", src.skel[at:at + 200])
+            if call:
+                fn = re.escape(call.group(1).rsplit(".", 1)[-1])
+                for other in group:
+                    d = re.search(r"\b(?:function\s+|def\s+)" + fn + r"\s*\(|(?<![\w$.])" + fn
+                                  + r"\s*(?::[^=;\n]{0,200})?=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*(?::[^=]{0,120})?=>", other.skel)
+                    if d:
+                        return other.code[d.start():d.start() + 3000]
+    return ""
+
+
+def _feeds_signing(src: _Source, sel: Selector, group: list[_Source]) -> bool:
+    """The selector's value reaches a passphrase: it yields a passphrase constant itself, keys
+    a table whose entries hold passphrases, is passed to a passphrase or network-config
+    function, or is the --network of a Stellar CLI command. Logging it, building an explorer
+    link from it or passing it to any other function does not count."""
+    if sel.passphrase:
         return True
     name = sel.target.rsplit(".", 1)[-1]
-    if not name or not _PASSPHRASE_USE.search(src.code) and "--network" not in src.code:
+    if not name:
         return False
-    uses = re.findall(r"\[\s*(?:this\.|self\.)?" + re.escape(name) + r"\s*\]|\(\s*(?:this\.|self\.)?" + re.escape(name)
-                      + r"\s*[,)]|(?:this|self)\." + re.escape(name) + r"\s*=", src.code)
-    return bool(uses)
+    ref = r"(?:this\.|self\.)?" + re.escape(name) + r"(?![\w$])"
+    code = src.code
+    if re.search(r"(?<![\w$])" + _NETWORK_FN + r"\s*\(\s*" + ref + r"\s*[,)]", code):
+        return True
+    if re.search(r"--network(?:\s+|=)(?:\$\{|\{)\s*" + ref + r"""|["']--network["']\s*,\s*""" + ref, code):
+        return True
+    for m in re.finditer(r"(?<![\w$])(?P<table>[\w$.]+)\s*\[\s*" + ref + r"\s*\]", code):
+        if re.match(r"\s*\??\.\s*(?:networkPassphrase|passphrase|network_passphrase)\b", code[m.end():m.end() + 80]):
+            return True  # TABLE[net].networkPassphrase
+        held = re.search(r"(?<![\w$.])([\w$]+)\s*=\s*$", code[max(0, m.start() - 80):m.start()])
+        if held and re.search(r"(?<![\w$])" + re.escape(held.group(1)) + r"\s*\??\.\s*(?:networkPassphrase|passphrase|"
+                              r"network_passphrase)\b|(?<![\w$])" + re.escape(held.group(1))
+                              + r"""\s*\[\s*["'](?:networkPassphrase|passphrase|network_passphrase)""",
+                              code[m.end():m.end() + 2000]):
+            return True  # const config = TABLE[net]; ... config.networkPassphrase
+        table = m.group("table").rsplit(".", 1)[-1]
+        if re.fullmatch(r"Networks?|\w*PASSPHRASES?\w*|\w*[Pp]assphrases\w*", table) \
+                or _PASSPHRASE_HELD.search(_definition(table, group)):
+            return True
+    return False
 
 
 def fallback_hits(sources: list[_Source]) -> tuple[list[Hit], list[Selector]]:
     """N3. Returns the hits and every selector whose fallback is mainnet (N6 reads them)."""
     domains = declared_domains(sources)
+    packages: dict[str, list[_Source]] = {}
+    for src in sources:
+        packages.setdefault(src.package, []).append(src)
     hits, mainnet_fallbacks = [], []
     for src in sources:
-        selectors = _py_selectors(src) if src.python else _js_switches(src) + _js_ternaries(src)
-        for sel in selectors:
+        group = packages[src.package]
+        for sel in selectors(src, group):
             domain = domains.get(src.package, set())
             unhandled = {v for v in domain if not _handled(v, sel.explicit)}
             named = [e for e in sel.explicit if _NET_NAME.match(e)]
@@ -463,7 +748,7 @@ def fallback_hits(sources: list[_Source]) -> tuple[list[Hit], list[Selector]]:
                     continue  # every declared value has its own branch: the default is unreachable
                 if not (sel.guess or len(others) >= 2 or (domain and unhandled - {"mainnet", "public", "pubnet"})):
                     continue  # `x === 'testnet' ? TESTNET : PUBLIC` over two values
-                if not _feeds_signing(src, sel):
+                if not _feeds_signing(src, sel, group):
                     continue
                 mainnet_fallbacks.append(sel)
                 how = ("the network is guessed from a substring of the URL" if sel.guess else
@@ -479,7 +764,7 @@ def fallback_hits(sources: list[_Source]) -> tuple[list[Hit], list[Selector]]:
                 compared = r"""[!=]==?\s*["'`]{v}["'`]|["'`]{v}["'`]\s*[!=]==?"""
                 strays = sorted(v for v in unhandled if not _TESTNET_NAME.match(v)
                                 and not re.search(compared.replace("{v}", re.escape(v)), before))
-                if not strays or not _feeds_signing(src, sel):
+                if not strays or not _feeds_signing(src, sel, group):
                     continue
                 hits.append(Hit("security-network-fallback-testnet", src.name, sel.line, sel.text,
                                 _severity(Severity.LOW, src.name),
@@ -498,17 +783,35 @@ _PY_CLI_LIST = re.compile(r"""\[\s*["'](?:stellar|soroban)["'][^\]]{0,600}?["']-
 _NETWORK_ADD = re.compile(r"\b(?:stellar|soroban)\s+(?:config\s+)?network\s+add\s+(?:--\S+\s+)*[\"']?(?P<name>[\w:-]+)")
 
 
+#: A process launch: child_process, execa, zx, subprocess, os.system. `regex.exec(` is not one.
+_EXEC = re.compile(r"(?<![\w$.])(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|execa|execaSync|execaCommand)\s*\(|"
+                   r"\bchild_process\b|\bnode:child_process\b|\bsubprocess\.(?:run|call|check_call|check_output|Popen)\s*\(|"
+                   r"\bos\.(?:system|popen)\s*\(|\bcreate_subprocess_(?:exec|shell)\s*\(|\$`|\bBun\.\$")
+#: A string that documents or prints a command rather than running it: help, usage and tool
+#: descriptions, and log or print calls.
+_DOC_CONTEXT = re.compile(r"""(?i)(?:help|usage|description|example|docs?|hint|instructions?|readme|message|text|title)\w*"""
+                          r"""["']?\s*[:=]\s*[\[(]?\s*$|(?:console\.\w+|print|logger\.\w+|log\.\w+|echo)\s*\(\s*$""")
+
+
 def cli_hits(sources: list[_Source], files: dict[str, str], fallbacks: list[Selector]) -> tuple[list[Hit], dict]:
     """N6. Returns standalone hits and, per mainnet-fallback selector whose value also reaches a
-    CLI command, the commands it reaches (folded into that N3 finding)."""
+    CLI command, the commands it reaches (folded into that N3 finding). Only commands a
+    package can run count: the package launches processes, and the string is not help text,
+    a tool description or a log line (the launch itself may sit in another file of the
+    package, as with a command table read by a runner)."""
     defined = {m.group("name") for text in files.values() for m in _NETWORK_ADD.finditer(text)}
     known = CLI_NETWORKS | defined
+    launches = {src.package for src in sources if _EXEC.search(src.code)}
     hits, folded = [], {}
     for src in sources:
+        if src.package not in launches:
+            continue
         commands = [(m.start(), m.group("arg"), m.group("expr")) for m in _CLI_COMMAND.finditer(src.code)]
         if src.python:
             commands += [(m.start(), m.group("arg"), None) for m in _PY_CLI_LIST.finditer(src.code)]
         for pos, arg, expr in commands:
+            if _DOC_CONTEXT.search(src.code[max(0, src.code.rfind("\n", 0, pos) - 200):pos]):
+                continue
             line = _line(src.text, pos)
             if expr is None:
                 if arg not in known and _NET_NAME.match(arg):
@@ -573,7 +876,7 @@ def _picks(region: str, value: str):
     """Where ``value`` picks the passphrase, and whether it picks the endpoint, in ``region``."""
     v = re.escape(value)
     passphrase = re.search(
-        r"\w*[Pp]assphrase\w*\s*\(\s*" + v + r"\b|\bNetworks?\s*\[\s*" + v + r"|PASSPHRASES?\w*\s*\[\s*" + v +
+        r"(?<!\w)\w*[Pp]assphrase\w*\s*\(\s*" + v + r"\b|\bNetworks?\s*\[\s*" + v + r"|PASSPHRASES?\w*\s*\[\s*" + v +
         r"|\[\s*" + v + r"\s*\]\s*\??\.\s*(?:networkPassphrase|passphrase)|networkPassphrase\s*:\s*[^,}\n]*\b" + v + r"\b|"
         + v + r"""\s*===?\s*["'`][\w:]+["'`]\s*\?\s*[^;]{0,80}(?:Networks?\.PUBLIC|PUBLIC_NETWORK_PASSPHRASE)""", region)
     endpoint = bool(re.search(
@@ -712,9 +1015,9 @@ _HOSTS = {net: tuple(m for m in markers if "." in m and " " not in m) for net, m
 _URL_DEFAULT = re.compile(r"""(?:\.default\(\s*|(?:\|\||\?\?)\s*|getenv\(\s*["']\w+["']\s*,\s*|get\(\s*["']\w+["']\s*,\s*)"""
                           r"""["'](?P<url>https?://[^"'\s]+)["']""")
 #: A configuration entry for a Horizon or RPC URL, and one for a network name.
-_ENDPOINT_KEY = re.compile(r"""(?P<key>[\w$]*(?:HORIZON|Horizon|horizon|RPC|Rpc|rpc|SOROBAN|Soroban)[\w$]*)["']?\s*[:=]\s*"""
+_ENDPOINT_KEY = re.compile(r"""(?<![\w$])(?P<key>[\w$]*(?:HORIZON|Horizon|horizon|RPC|Rpc|rpc|SOROBAN|Soroban)[\w$]*)["']?\s*[:=]\s*"""
                            r"""(?P<expr>[^\n;]+)""")
-_NETWORK_KEY = re.compile(r"""(?P<key>[\w$]*(?:NETWORK|Network|network)(?!_?PASSPHRASE|_?Passphrase|_?passphrase|_?URL|Url)"""
+_NETWORK_KEY = re.compile(r"""(?<![\w$])(?P<key>[\w$]*(?:NETWORK|Network|network)(?!_?PASSPHRASE|_?Passphrase|_?passphrase|_?URL|Url)"""
                           r"""[\w$]*)["']?\s*[:=]\s*(?P<expr>[^\n;]+)""")
 _CONFIGURED = re.compile(r"process\.env|import\.meta\.env|os\.(?:getenv|environ)|\bz\s*\.\s*(?:string|enum)|\benv\b")
 #: A start-up check that the server's own passphrase (RPC getNetwork, the Horizon root) is the
@@ -784,8 +1087,8 @@ def _fixed_pairs(group: list[_Source], text: str) -> list[Hit]:
     """N4 when one side is written into the code: a fixed passphrase with a configurable URL,
     or a configurable passphrase with a fixed URL."""
     hits = []
-    selectors = [sel for src in group for sel in (_py_selectors(src) if src.python else _js_ternaries(src) + _js_switches(src))]
-    selected = any(sel.yields and re.search(r"[Pp]assphrase|PASSPHRASE|Networks?\.", sel.text) for sel in selectors)
+    found = [sel for src in group for sel in selectors(src, group)]
+    selected = any(sel.yields and re.search(r"[Pp]assphrase|PASSPHRASE|Networks?\.", sel.text) for sel in found)
     for src in group:
         if _NON_PRODUCTION.search(src.name):
             continue
@@ -1004,9 +1307,10 @@ _RULES = {
         "to the public network.",
         ["Stellar network passphrases"], EvidenceGrade.CONFIRMED),
     "security-network-fallback-testnet": (
-        "A declared network value is silently signed for testnet",
+        "A declared network value is silently used with the testnet passphrase",
         "A network the configuration or tool schema accepts has no branch of its own and falls through to the "
-        "testnet passphrase, so transactions for it are hashed for the wrong network and rejected.",
+        "testnet passphrase: whatever the code signs, verifies or looks up for that network is done against "
+        "testnet instead, so it fails or reads the wrong ledger.",
         "Give every declared network its own passphrase, or remove the value from the accepted list.",
         ["Stellar network passphrases"], EvidenceGrade.CONFIRMED),
     "security-network-endpoint-mismatch": (

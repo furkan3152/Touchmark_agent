@@ -494,9 +494,11 @@ def _web_auth_findings(artifact: AgentArtifact, findings: list[Finding], by_cate
     from .auth_rules import web_auth_hits
     signed = {(f.location.file, f.location.line) for f in by_category.get("foreign_signing", [])}
     out = list(findings)
+    existing = next((f for f in out if f.id == "security-path-external-transaction-signed"), None)
     for kind, file, line, text, severity, note in web_auth_hits(artifact.code_files):
         rule, title, detail, remediation, refs = _WEB_AUTH[kind]
-        if (file, line) in signed:
+        # Folded only into a finding at least as severe (an unresolved caller origin is LOW).
+        if (file, line) in signed and existing is not None and existing.severity.rank >= severity.rank:
             sep = {"sep10": "SEP-10 challenge", "sep45": "SEP-45 authorization entry"}[kind]
             out = [f.model_copy(update={"detail": f.detail + f" At {file}:{line} it is a {sep}: {note}."})
                    if f.id == "security-path-external-transaction-signed" else f for f in out]
@@ -529,6 +531,37 @@ def _auth_hits(profile) -> tuple[list[_FactHit], dict]:
         hits.append(_FactHit("auth_expiration", fact.location, severity, "; ".join([fact.detail] + extra),
                              grade=EvidenceGrade.INFERRED, confidence=0.8))
     return hits, notes
+
+
+def _fold_scheme_trees(artifact: AgentArtifact, profile, by_category: dict, x402_flows: list, findings: list[Finding],
+                       tree_notes: dict) -> list[Finding]:
+    """An x402 client scheme (createPaymentPayload) that signs a blind tree, in a package whose
+    wrapper is already reported as paying whatever a 402 asks: the paid endpoint choosing the
+    asset contract is that finding's defect, so the tree and expiry notes join it and no
+    signing finding opens for the scheme (one finding per defect)."""
+    from .network_rules import _MANIFESTS, _package_of
+    x402 = next((f for f in findings if f.id == _PATH_RULES["x402_unbounded"][0]), None)
+    if x402 is None:
+        return findings
+    roots = {n.rpartition("/")[0] for n in artifact.code_files if n.rsplit("/", 1)[-1] in _MANIFESTS}
+    paid = {_package_of(f.location.file, roots) for f in x402_flows if f.location.render() in x402.evidence}
+    sites = [f.location for f in profile.facts_of("auth_tree_unchecked")
+             if f.get("scheme") == "x402" and _package_of(f.location.file, roots) in paid]
+    if not sites:
+        return findings
+    for category in ("foreign_signing", "financial"):
+        if category in by_category:
+            by_category[category] = [f for f in by_category[category] if f.location not in sites]
+    note = (" The registered x402 scheme also signs the authorization entries of the asset contract the 402 names "
+            "without comparing their root contract, function and sub-invocations, so that contract can add a transfer "
+            "from the payer to the tree (" + "; ".join(
+                f"{loc.file}:{loc.line}" + (f", and {tree_notes[loc]}" if tree_notes.get(loc) else "") for loc in sites[:3])
+            + ").")
+    for loc in sites:
+        tree_notes.pop(loc, None)
+    folded = x402.model_copy(update={"detail": x402.detail + note, "evidence": x402.evidence + "; " + "; ".join(
+        f"{loc.render()} [authorization tree unchecked]" for loc in sites[:3])})
+    return [folded if f is x402 else f for f in findings]
 
 
 def _grouped(facts) -> dict[str, list]:
@@ -787,9 +820,11 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
     for flow in profile.flows:
         by_category.setdefault(flow.category, []).append(flow)
     lockset = Lockset(artifact.raw_metadata.get("resolved_versions"))
+    x402_flows = list(by_category.get("x402_unbounded", []))
     payment_findings, payment_hits, default_caps = _payment_sdk_findings(artifact, profile, lockset, by_category, auditor)
     sponsor_hits, sponsor_notes = _sponsor_hits(profile, by_category)
     auth_hits, tree_notes = _auth_hits(profile)
+    payment_findings = _fold_scheme_trees(artifact, profile, by_category, x402_flows, payment_findings, tree_notes)
     findings += payment_findings + _fact_findings(payment_hits + sponsor_hits + auth_hits, auditor) + _seller_findings(profile, auditor)
     amount_caps = list(profile.controls.get("amount_cap", [])) + default_caps
     # A sponsor that accepts only Address credentials and pins both sources inspected the

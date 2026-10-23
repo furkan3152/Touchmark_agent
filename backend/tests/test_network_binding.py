@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import time
+
 from backend.app.models import AgentArtifact, SourceKind
-from backend.app.swarm.network_rules import mask, net_of, network_findings
+from backend.app.swarm.network_rules import _CACHE, mask, net_of, network_findings, network_hits
 
 
 def found(files: dict[str, str], **metadata) -> dict[str, dict]:
@@ -245,3 +247,85 @@ def test_sdk_declarations_and_examples_drop_one_level():
     assert found({"examples/net.ts": switch})["security-network-fallback-mainnet"]["severity"] == "low"
     sdk = {"declared": {"agent": {"kind": "sdk", "network": "testnet"}}}
     assert found({"src/net.ts": switch}, tmark=sdk)["security-network-fallback-mainnet"]["severity"] == "low"
+
+
+# ----------------------------------------------------------------- review fixes
+def test_a_selector_that_never_reaches_a_passphrase_is_not_a_fallback():
+    # stellar.expert names mainnet 'public': an explorer segment is not a network binding.
+    head = ("import { Networks, TransactionBuilder } from '@stellar/stellar-sdk';\n"
+            "const passphrase = config.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;\n"
+            "export function txLink(hash: string) {\n"
+            "  const seg = config.network === 'testnet' ? 'testnet' : config.network === 'futurenet' ? 'futurenet' : 'public';\n")
+    for use in ("  logger.debug(seg);\n  return `https://stellar.expert/explorer/${seg}/tx/${hash}`;\n}\n",
+                "  return links[seg] + hash;\n}\nconst links = { testnet: 'a', futurenet: 'b', public: 'c' };\n"):
+        assert found({"src/links.ts": head + use}) == {}, use
+    py = ("from stellar_sdk import Network\n"
+          "PASS = Network.TESTNET_NETWORK_PASSPHRASE if NET == 'testnet' else Network.PUBLIC_NETWORK_PASSPHRASE\n"
+          "def link(h):\n    seg = 'testnet' if NET == 'testnet' else 'futurenet' if NET == 'futurenet' else 'public'\n"
+          "    return explorer(seg, h)\n")
+    assert found({"links.py": py}) == {}
+    # The same value handed to a passphrase function, or keying a table of passphrases, is one.
+    for use in ("  return getNetworkPassphrase(seg);\n}\n",
+                "  return NETWORKS[seg].networkPassphrase;\n}\n",
+                "  const cfg = NETWORKS[seg];\n  return new TransactionBuilder(acct, { networkPassphrase: cfg.networkPassphrase });\n}\n"):
+        assert found({"src/links.ts": head + use})["security-network-fallback-mainnet"]["severity"] == "medium", use
+    table = "const T = { testnet: { networkPassphrase: Networks.TESTNET }, public: { networkPassphrase: Networks.PUBLIC } };\n"
+    assert "security-network-fallback-mainnet" in found({"src/links.ts": table + head + "  return T[seg];\n}\n"})
+
+
+def test_map_fallbacks_and_if_chains_to_mainnet_are_medium():
+    cases = {
+        "src/map.ts": "const PASS = { testnet: Networks.TESTNET, futurenet: Networks.FUTURENET };\n"
+                      "export const passphrase = PASS[cfg.network] ?? Networks.PUBLIC;\n",
+        "src/own.ts": "const NETS = { testnet: { networkPassphrase: Networks.TESTNET }, futurenet: { networkPassphrase: "
+                      "Networks.FUTURENET }, mainnet: { networkPassphrase: Networks.PUBLIC } };\n"
+                      "export const net = NETS[cfg.network] || NETS.mainnet;\n",
+        "src/chain.ts": "export function pass(n: string) {\n  if (n === 'testnet') return Networks.TESTNET;\n"
+                        "  else if (n === 'futurenet') { return Networks.FUTURENET; }\n  return Networks.PUBLIC;\n}\n",
+        "chain.py": "def passphrase(net):\n    if net == 'testnet':\n        return Network.TESTNET_NETWORK_PASSPHRASE\n"
+                    "    elif net == 'futurenet':\n        return Network.FUTURENET_NETWORK_PASSPHRASE\n"
+                    "    else:\n        return Network.PUBLIC_NETWORK_PASSPHRASE\n",
+        "get.py": "PASS = {'testnet': Network.TESTNET_NETWORK_PASSPHRASE, 'futurenet': Network.FUTURENET_NETWORK_PASSPHRASE}\n"
+                  "def p(net):\n    return PASS.get(net, Network.PUBLIC_NETWORK_PASSPHRASE)\n",
+    }
+    for name, text in cases.items():
+        assert found({name: text})["security-network-fallback-mainnet"]["severity"] == "medium", name
+    # Over two values the fallback is the other network, not a guess.
+    two = {"src/map.ts": "const PASS = { testnet: Networks.TESTNET };\nexport const p = PASS[cfg.network] ?? Networks.PUBLIC;\n",
+           "src/chain.ts": "export function pass(n: string) {\n  if (n === 'testnet') return Networks.TESTNET;\n"
+                           "  return Networks.PUBLIC;\n}\n",
+           "get.py": "PASS = {'testnet': Network.TESTNET_NETWORK_PASSPHRASE}\n"
+                     "def p(net):\n    return PASS.get(net, Network.PUBLIC_NETWORK_PASSPHRASE)\n"}
+    for name, text in two.items():
+        assert found({name: text}) == {}, name
+    # A passphrase mapped back to a name is not a network choice.
+    reverse = ("export function networkTag(passphrase: string) {\n  if (passphrase === Networks.PUBLIC) return 'mainnet';\n"
+               "  if (passphrase === Networks.FUTURENET) return 'futurenet';\n  return 'testnet';\n}\n")
+    assert found({"src/tag.ts": reverse, "src/schema.ts": "export const N = z.enum(['testnet', 'mainnet', 'local']);\n"}) == {}
+
+
+def test_cli_names_count_only_in_commands_the_package_runs():
+    assert found({"cli.py": 'HELP = "stellar contract deploy --network public  # see docs"\nprint(HELP)\n'}) == {}
+    described = ("import { exec } from 'node:child_process';\n"
+                 "server.tool('deploy', { description: 'stellar contract deploy --network public' }, run);\n"
+                 "console.log(`stellar keys fund alice --network standalone`);\n")
+    assert found({"src/tools.ts": described}) == {}
+    table = "export const COMMANDS = { deploy: (a) => `stellar contract deploy --wasm ${a.wasm} --network public` };\n"
+    runner = "import { exec } from 'node:child_process';\nexport const run = (c: string) => exec(c);\n"
+    assert found({"src/commands.ts": table, "src/run.ts": runner})["security-cli-network-unknown"]["severity"] == "low"
+    assert found({"src/commands.ts": table}) == {}
+
+
+def test_long_word_runs_cost_little():
+    # An embedded hex WASM or test vector: no key regex may restart inside it.
+    blob = "a1" * 20_000
+    for name, text in (("src/wasm.ts", f"export const WASM = '{blob}';\n"), ("src/word.ts", f"const {blob} = 1;\n"),
+                       ("src/cfg.ts", f"const HORIZON_URL = process.env.H || '{blob}';\nconst NETWORK = process.env.N;\n"),
+                       ("src/sw.ts", "function f(n) { switch (n) { case 'a': return '" + blob + "'; default: return Networks.PUBLIC; } }\n"),
+                       ("src/tool.ts", "server.tool('x', {}, async (args) => { const network = args.network; const s = '"
+                        + blob + "'; tx.sign(kp); });\n"),
+                       ("w.py", f"W = '{blob}'\nseg = 'testnet' if N == 'testnet' else 'public'\n")):
+        _CACHE.clear()
+        started = time.perf_counter()
+        network_hits({name: text})
+        assert time.perf_counter() - started < 1.0, name

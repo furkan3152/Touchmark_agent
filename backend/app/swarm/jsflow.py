@@ -188,7 +188,8 @@ _SPONSOR_WARNING = re.compile(r"SECURITY:\s*Verify the (?:transaction|operation)
 _MEMORY_STORE = re.compile(r"^(?:mppx(?:/\w+)?|@stellar/mpp(?:/[\w/]+)?)\.Store\.memory$")
 _SAFE_URL_PREFIX = re.compile(r"^https?://[^/{}\s$]+(?:/|$)")
 from .codeflow import AMOUNT_NAME, HANDLER_NAME, RECEIVED_NAME  # noqa: E402
-from .auth_rules import js_call as _auth_call, mark_payment_requirements as _mark_payment_requirements  # noqa: E402
+from .auth_rules import (auth_tree_index as _auth_tree_index, js_call as _auth_call,  # noqa: E402
+                         mark_payment_requirements as _mark_payment_requirements)
 _NAME_SOURCES = {"userinput", "prompt", "payload", "command", "cmd", "code", "webhook", "query", "message", "body",
                  "request", "req", "event", "ctx"}
 _TOOL_REGISTER = re.compile(r"(?:^|\.)(?:tool|registerTool|addTool|defineTool|createTool)$")
@@ -1954,7 +1955,8 @@ class _JsInterp:
         if _AUTHORIZE.search(label):
             self._cap("stellar_signing", node)
             self._cap("contract_invocation", node)
-            entry = args[0] if args else set()
+            tree = _auth_tree_index(label)  # authorizeInvocation(signer, validUntil, invocation)
+            entry = args[tree] if len(args) > tree else set()
             if entry & (UNTRUSTED | {"foreign_tx"}) and not self.approved and not tree_inspected:
                 self._cap("foreign_tx_signing", node)
                 self._flow("foreign_signing", node, entry, "an authorization entry derived from external input is signed")
