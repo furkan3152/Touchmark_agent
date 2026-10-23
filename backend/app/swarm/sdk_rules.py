@@ -13,7 +13,9 @@ the SDK release it was judged against (stellar/sdk_semantics.py).
 from __future__ import annotations
 
 import ast
+import posixpath
 import re
+from bisect import bisect_right
 
 from ..models import AgentArtifact, EvidenceGrade, Finding, Severity
 from ..services.lockfiles import Lockset, below, spec_admits
@@ -153,10 +155,44 @@ def _py_is_rpc(call: ast.Call, receivers: set[str], sdk_server: bool) -> bool:
     return text in receivers or (sdk_server and bool(re.search(r"soroban|rpc", text, re.I)))
 
 
+class _PyDefs:
+    """The non-test definitions of one function or method name, sorted once per project:
+    module-level functions by file, methods by their class (node and name), and the methods
+    that implement it (not a stub)."""
+    __slots__ = ("plain", "by_owner", "by_class", "implementations", "modules")
+
+    def __init__(self, entries):
+        self.plain: dict[str, list] = {}
+        self.by_owner: dict[int, list] = {}
+        self.by_class: dict[str, list] = {}
+        self.implementations: list = []
+        self.modules: dict[str, list] = {}  # module -> its module-level functions of this name (memo)
+        for py, fn in entries:
+            if TEST_PATH.search(py.path):
+                continue
+            owner = _py_owner(py, fn)
+            if owner is None:
+                self.plain.setdefault(py.path, []).append((py, fn))
+            elif isinstance(owner, ast.ClassDef):
+                self.by_owner.setdefault(id(owner), []).append((py, fn))
+                self.by_class.setdefault(owner.name, []).append((py, fn))
+                if not _py_stub(fn):
+                    self.implementations.append((py, fn))
+
+    def in_module(self, module: str) -> list:
+        if module not in self.modules:
+            self.modules[module] = [d for path, found in self.plain.items() if _module_is(path, module) for d in found]
+        return self.modules[module]
+
+
 class _PyRules:
     def __init__(self, ctx: _Context):
         self.ctx = ctx
         self._submits: dict[int, bool] = {}
+        self._set_submits: dict[tuple, bool] = {}
+        self._defs: dict[str, _PyDefs] = {}
+        self._imported: dict[tuple, tuple[str, str | None] | None] = {}
+        self._classes: dict[tuple, str | None] = {}
 
     # -------------------------------------------------- K2: enum compared with str, missing field
     def misread(self, py: PyFile) -> list[tuple[str, int, str, bool]]:
@@ -336,75 +372,133 @@ class _PyRules:
             return self._py_cli_sends(call, scope)
         if depth >= 3:
             return False
-        for other, fn in self._py_targets(py, call):
-            key = id(fn)
-            if key not in self._submits:
-                self._submits[key] = False  # cycles count as not submitting
-                self._submits[key] = any(isinstance(n, ast.Call) and self._py_call_submits(other, n, depth + 1, fn)
-                                         for n in _py_walk(fn))
-            if self._submits[key]:
-                return True
-        return False
+        shared, targets = self._py_targets(py, call)
+        if shared is None:
+            return any(self._py_fn_submits(other, fn, depth) for other, fn in targets)
+        if shared not in self._set_submits:  # a Protocol's implementations: judged once per method name
+            self._set_submits[shared] = False
+            self._set_submits[shared] = any(self._py_fn_submits(other, fn, depth) for other, fn in targets)
+        return self._set_submits[shared]
 
-    def _py_targets(self, py: PyFile, call: ast.Call) -> list[tuple[PyFile, ast.AST]]:
-        """The project functions a call runs, resolved through its receiver: `self.m()` in the
-        caller's class, `f()` defined in the module or imported by name, `mod.f()` from an
-        imported module, `obj.m()` where obj is annotated or built as a project class (a
-        Protocol's stub stands for the classes that implement the method). A method called on
-        anything else (`cur.execute()`) is not followed: its name may belong to another class."""
+    def _py_fn_submits(self, py: PyFile, fn, depth: int) -> bool:
+        key = id(fn)
+        if key not in self._submits:
+            self._submits[key] = False  # cycles count as not submitting
+            self._submits[key] = any(isinstance(n, ast.Call) and self._py_call_submits(py, n, depth + 1, fn)
+                                     for n in _py_walk(fn))
+        return self._submits[key]
+
+    def _py_defs(self, name: str) -> _PyDefs:
+        if name not in self._defs:
+            self._defs[name] = _PyDefs(self.ctx.index.py_defs.get(name, []))
+        return self._defs[name]
+
+    def _py_targets(self, py: PyFile, call: ast.Call) -> tuple[tuple | None, list[tuple[PyFile, ast.AST]]]:
+        """(a key when the list is shared by every call of the method, the project functions a
+        call runs), resolved through its receiver: `self.m()` in the caller's class, `f()`
+        defined in the module or imported by name, `mod.f()` / `pkg.mod.f()` from an imported
+        module, `obj.m()` where obj is annotated or built as a project class (here, inline as
+        `C().m()`, or as a module-level instance imported from another module), a Protocol's
+        stub standing for the classes that implement the method. A method called on anything
+        else (`cur.execute()`) is not followed: its name may belong to another class."""
         name = _py_name(call.func)
-        defs = [(f, d) for f, d in self.ctx.index.py_defs.get(name, []) if not TEST_PATH.search(f.path)]
-        if not defs:
-            return []
+        if name not in self.ctx.index.py_defs:
+            return None, []
+        defs = self._py_defs(name)
         func = call.func
         if isinstance(func, ast.Name):
-            local = [(f, d) for f, d in defs if f is py and _py_owner(f, d) is None]
+            local = defs.plain.get(py.path)
+            if local:
+                return None, local
             source = self._py_imported(py, name)
-            return local or [(f, d) for f, d in defs if source and _py_owner(f, d) is None and _module_is(f.path, source[0])]
+            return None, defs.in_module(source[0]) if source else []
         if not isinstance(func, ast.Attribute):
-            return []
-        recv = func.value
+            return None, []
+        recv, kind = func.value, None
         if isinstance(recv, ast.Name) and recv.id in {"self", "cls"}:
             cls = _py_enclosing_class(py, call)
             if cls is None:
-                return []
-            own = [(f, d) for f, d in defs if _py_owner(f, d) is cls]
-            bases = {_py_annotation_class(b) for b in cls.bases}  # inherited from a project class
-            return own or [(f, d) for f, d in defs if isinstance(_py_owner(f, d), ast.ClassDef)
-                           and _py_owner(f, d).name in bases]
+                return None, []
+            own = defs.by_owner.get(id(cls))
+            if own:
+                return None, own
+            bases = sorted(b for b in {_py_annotation_class(b) for b in cls.bases} if b)  # inherited from a project class
+            return None, [d for b in bases for d in defs.by_class.get(b, [])]
         if isinstance(recv, ast.Name):
             source = self._py_imported(py, recv.id)
             if source and source[1] is None:  # `import pkg.mod as m` / `from pkg import mod`
-                return [(f, d) for f, d in defs if _py_owner(f, d) is None and _module_is(f.path, source[0])]
-            kind = _py_class_of_name(py, call, recv.id)
+                return None, defs.in_module(source[0])
+            fn = py.parents.get(call)
+            while fn is not None and not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn = py.parents.get(fn)
+            key = (py.path, id(fn), recv.id)
+            if key not in self._classes:
+                self._classes[key] = _py_class_of_name(py, call, recv.id) or (
+                    self._py_module_instance(*source) if source else None)  # `from agent.chain import client`
+            kind = self._classes[key]
         elif isinstance(recv, ast.Attribute) and isinstance(recv.value, ast.Name) and recv.value.id == "self":
-            kind = _py_class_of_attribute(py, call, recv.attr)
-        else:
-            kind = None
+            cls = _py_enclosing_class(py, call)
+            key = (py.path, id(cls), "self." + recv.attr)
+            if key not in self._classes:
+                self._classes[key] = _py_class_of_attribute(py, call, recv.attr)
+            kind = self._classes[key]
+        elif isinstance(recv, ast.Attribute):
+            dotted = _py_dotted(recv)  # `agent.chain.submit()` after `import agent.chain`
+            if dotted and self._py_imported(py, dotted) == (dotted, None):
+                return None, defs.in_module(dotted)
+        elif isinstance(recv, ast.Call) and isinstance(recv.func, (ast.Name, ast.Attribute)) and \
+                _py_name(recv.func)[:1].isupper():
+            kind = _py_name(recv.func)  # `StellarClient().pay(env)`
         if not kind:
-            return []
-        own = [(f, d) for f, d in defs if isinstance(_py_owner(f, d), ast.ClassDef) and _py_owner(f, d).name == kind]
+            return None, []
+        own = defs.by_class.get(kind, [])
         if own and all(_py_stub(d) for _, d in own):
             # A Protocol or an abstract base: the project classes that implement the method.
-            return [(f, d) for f, d in defs if isinstance(_py_owner(f, d), ast.ClassDef) and not _py_stub(d)]
-        return own
+            return ("implementations", name), defs.implementations
+        return None, own
 
     def _py_imported(self, py: PyFile, name: str) -> tuple[str, str | None] | None:
         """(module, imported name) a local name comes from: `from a.b import name` -> ("a.b",
-        "name"); `import a.b as name`, or `from a import b` where a/b.py is a project module ->
-        ("a.b", None)."""
-        for node in py.tree.body:
-            if isinstance(node, ast.ImportFrom) and node.module:
-                for alias in node.names:
-                    if (alias.asname or alias.name) == name:
-                        dotted = f"{node.module}.{alias.name}"
-                        module = any(_module_is(path, dotted) for path in self.ctx.index.py)
-                        return (dotted, None) if module else (node.module, alias.name)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.asname == name or (alias.asname is None and alias.name == name):
-                        return alias.name, None
-        return None
+        "name"); `import a.b as name`, `import a.b` (for the name `a.b`), or `from a import b`
+        where a/b.py is a project module -> ("a.b", None). Once per file and name."""
+        key = (py.path, name)
+        if key not in self._imported:
+            found = None
+            for node in py.tree.body:
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    for alias in node.names:
+                        if (alias.asname or alias.name) == name:
+                            dotted = f"{node.module}.{alias.name}"
+                            module = any(_module_is(path, dotted) for path in self.ctx.index.py)
+                            found = (dotted, None) if module else (node.module, alias.name)
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.asname == name or (alias.asname is None and alias.name == name):
+                            found = (alias.name, None)
+                if found:
+                    break
+            self._imported[key] = found
+        return self._imported[key]
+
+    def _py_module_instance(self, module: str, name: str | None) -> str | None:
+        """The class of a module-level instance another module imports by name: `client =
+        StellarClient()` or `client: StellarClient = ...` in that module."""
+        key = ("instance", module, name)
+        if key not in self._classes:
+            found = None
+            for path, other in self.ctx.index.py.items():
+                if name is None or not _module_is(path, module) or TEST_PATH.search(path):
+                    continue
+                for node in other.tree.body:
+                    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+                        found = _py_annotation_class(node.annotation)
+                    elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                        built = _py_call(node.value)
+                        if built is not None and isinstance(built.func, (ast.Name, ast.Attribute)) and \
+                                _py_name(built.func)[:1].isupper():
+                            found = _py_name(built.func)
+            self._classes[key] = found
+        return self._classes[key]
 
     def _py_cli_sends(self, call: ast.Call, scope) -> bool:
         words: list[str] = []
@@ -419,6 +513,15 @@ class _PyRules:
                             words += _py_strings(fn)
         text = " ".join(words)
         return bool(_STELLAR_CLI.search(text)) and not re.search(r"--send[= ]no\b", text)
+
+
+def _py_dotted(node) -> str | None:
+    """`agent.chain` for an attribute chain of plain names."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    return ".".join([node.id, *reversed(parts)]) if isinstance(node, ast.Name) else None
 
 
 def _py_owner(py: PyFile, fn: ast.AST):
@@ -590,8 +693,35 @@ def _py_string_origin(arg, fn) -> str | None:
 #: The Soroban RPC client classes of the JS SDK (rpc.Server; SorobanRpc.Server before 13.0.0;
 #: SorobanServer in soroban-client).
 _RPC_CLASS = r"(?:[\w$]+\.)*(?:(?:rpc|SorobanRpc)\.Server|SorobanServer)\b"
+#: Where the client class is named (`new rpc.Server(`, `: rpc.Server`); the name it is bound
+#: to is read from the text just before it on the same line (_BEFORE_*).
+_RPC_USE = re.compile(r"(?<![\w$])(?:(?:rpc|SorobanRpc)\.Server|SorobanServer)(?![\w$])")
+#: `Server` imported from the SDK's rpc entry point, or destructured from its rpc namespace.
+_RPC_IMPORT = re.compile(r"""\{([^{}]{0,800})\}\s*(?:from\s*|=\s*require\(\s*)["']@stellar/stellar-sdk/"""
+                         r"""(?:(?:no-axios|no-eventsource|minimal)/)?rpc["']""")
+_RPC_DESTRUCTURE = re.compile(r"\{([^{}=;]{0,800})\}\s*=\s*(?:[\w$]+\.)?(?:rpc|SorobanRpc)\s*(?:[;\n]|$)")
+#: How much of the line before a class use is read for the name bound to it.
+_BEFORE = 160
+#: `name = new `, `name: T = new `, `name: new ` (an object key), `this.name = new `. The type
+#: excludes brackets and commas, so `f(url: string) { this.rpc = new ` binds rpc, not url.
+_BEFORE_NEW = re.compile(r"(?<![\w$])#?([\w$]+)\s*(?:\??:[^=;\n(){},]{0,120})?[=:]\s*(?:await\s+)?new\s+(?:[\w$]+\.)*$")
+#: `name: ` or `name?: ` (a typed parameter, variable or field).
+_BEFORE_TYPE = re.compile(r"(?<![\w$])#?([\w$]+)\s*\??:\s*(?:[\w$]+\.)*$")
+#: `function f(...): ` or `f = async (...): Promise<` (a factory typed to return the client).
+_BEFORE_RETURN_TYPE = re.compile(r"(?<![\w$])([\w$]+)\s*(?:=\s*(?:async\s*)?)?\([^()]{0,120}\)\s*:\s*"
+                                 r"(?:Promise\s*<\s*)?(?:[\w$]+\.)*$")
+#: `return new ` or `=> new ` (a factory that builds the client).
+_BEFORE_RETURNED = re.compile(r"(?:(?<![\w$])return\s+(?:await\s+)?|=>\s*\(?\s*)new\s+(?:[\w$]+\.)*$")
+#: `name = ` / `name: ` before a factory call (`const rpcServer = getRpc()`, `this.rpc = await this.makeRpc()`).
+_BEFORE_CALL = re.compile(r"(?<![\w$])#?([\w$]+)\s*(?:\??:[^=;\n(){},]{0,120})?[=:]\s*(?:await\s+)?(?:this\.|[\w$]+\.)?$")
+#: Call sites by name, for the factory calls.
+_CALL_SITE = re.compile(r"(?<![\w$.])([\w$]+)\s*\(")
 #: Receivers that are another chain's client or a wallet, whatever they are bound to.
 _NOT_RPC = re.compile(r"horizon|wallet|signer|provider|\beth\b|viem|ethers|web3|solana|connection", re.I)
+#: How far up from a use of a send result its context is looked for, and how many names
+#: derived from one result are followed; past either the use counts as unknown (no finding).
+_CONTEXT_DEPTH = 200
+_DERIVED_LIMIT = 256
 
 
 def _bound_names(call) -> tuple[object, set[str], list]:
@@ -632,105 +762,265 @@ def _bound_names(call) -> tuple[object, set[str], list]:
     return node, names, wrappers
 
 
+class _FnUses:
+    """One function's identifiers, indexed once so each send in it reads only the uses of its
+    own names: names derived from a root (`const h = sent.hash`, `for (const s of sent)`) and,
+    per name, its classified uses by kind in source order."""
+    __slots__ = ("derived", "idents", "kinds")
+
+    def __init__(self, fn):
+        self.derived: dict[str, tuple[list[int], list[str]]] = {}
+        self.idents: dict[str, list] = {}
+        #: name -> kind -> (starts, wheres, for "settled": index of the next entry with payment words)
+        self.kinds: dict[str, dict[str, tuple[list[int], list, list[int]]]] = {}
+        for node in SourceIndex.walk(fn):
+            if node.type == "variable_declarator":
+                value = _unwrap(node.child_by_field_name("value"))
+                target = node.child_by_field_name("name")
+                if value is not None and target is not None and target.type == "identifier" and \
+                        value.type in {"identifier", "member_expression"}:
+                    root = _root_identifier(value)
+                    if root:
+                        starts, targets = self.derived.setdefault(root, ([], []))
+                        starts.append(node.start_byte)
+                        targets.append(_txt(target))
+            elif node.type == "for_in_statement":
+                root, left = _root_identifier(node.child_by_field_name("right")), node.child_by_field_name("left")
+                if root and left is not None and left.type == "identifier":
+                    starts, targets = self.derived.setdefault(root, ([], []))
+                    starts.append(node.start_byte)
+                    targets.append(_txt(left))
+            elif node.type in {"identifier", "shorthand_property_identifier"}:
+                parent = node.parent
+                if parent is not None and parent.type == "variable_declarator" and parent.child_by_field_name("name") == node:
+                    continue
+                self.idents.setdefault(_txt(node), []).append(node)
+
+
+class _JsDefs:
+    """The non-test functions of one name, sorted once per project: plain functions and object
+    literal properties by file, methods by class name and by class node."""
+    __slots__ = ("plain", "literal", "not_class", "by_class", "by_class_node")
+
+    def __init__(self, entries):
+        self.plain: dict[str, list] = {}
+        self.literal: dict[str, list] = {}
+        self.not_class: dict[str, list] = {}
+        self.by_class: dict[str, list] = {}
+        self.by_class_node: dict[tuple, list] = {}
+        for js, fn in entries:
+            owner = _js_owner(fn)
+            if owner is None:
+                self.plain.setdefault(js.path, []).append((js, fn))
+            elif owner is True:
+                self.literal.setdefault(js.path, []).append((js, fn))
+            if not isinstance(owner, str):
+                self.not_class.setdefault(js.path, []).append((js, fn))
+            else:
+                self.by_class.setdefault(owner, []).append((js, fn))
+            cls = _js_class(fn)
+            if cls is not None:
+                self.by_class_node.setdefault((js.path, cls.start_byte), []).append((js, fn))
+
+
 class _JsRules:
     def __init__(self, ctx: _Context):
         self.ctx = ctx
+        self._defs: dict[str, _JsDefs | None] = {}
+        self._memo: dict[tuple, object] = {}
         self._polls: dict[int, bool] = {}
         self._sends: dict[int, bool] = {}
-        self._rpc_names: dict[str, bool] = {}
+        self._bound: set[str] | None = None
+        self._aliases: dict[str, re.Pattern | None] = {}
+        self._fn_uses: dict[tuple, _FnUses] = {}
+        self._contexts: dict[tuple, tuple[str | None, tuple]] = {}
+        self._arg_contexts: dict[tuple, tuple[str | None, tuple]] = {}
+        self._caller_verdicts: dict[tuple, list | None] = {}
+        self._claims: dict[tuple, bool] = {}
+        self._calls_by_name: dict[str, list] | None = None
+
+    # -------------------------------------------------- which receivers are Soroban RPC clients
+    def _class_alias(self, js: JsFile) -> re.Pattern | None:
+        """This file's own names for the client class: `Server` imported from the SDK's rpc
+        entry point or destructured from its rpc namespace (`const { Server } = rpc`)."""
+        if js.path not in self._aliases:
+            names = set()
+            for m in _RPC_IMPORT.finditer(js.text):
+                names.update(a or "Server" for a in re.findall(r"(?<![\w$])Server(?:\s+as\s+([\w$]+))?(?![\w$])", m.group(1)))
+            for m in _RPC_DESTRUCTURE.finditer(js.text):
+                names.update(a or "Server" for a in re.findall(r"(?<![\w$])Server(?:\s*:\s*([\w$]+))?(?![\w$])", m.group(1)))
+            self._aliases[js.path] = re.compile(r"(?<![\w$.])(?:" + "|".join(sorted(map(re.escape, names))) + r")(?![\w$])") \
+                if names else None
+        return self._aliases[js.path]
+
+    def _class_uses(self, js: JsFile):
+        yield from _RPC_USE.finditer(js.text)
+        alias = self._class_alias(js)
+        if alias is not None:
+            yield from alias.finditer(js.text)
+
+    def _is_rpc_class(self, js: JsFile, text: str) -> bool:
+        alias = self._class_alias(js)
+        return bool(re.fullmatch(_RPC_CLASS, text) or alias is not None and alias.fullmatch(text))
+
+    def _rpc_bound(self) -> set[str]:
+        """Names bound or typed as an RPC client anywhere in the project's Stellar files
+        (`server = new rpc.Server(`, `server: rpc.Server`, `rpc: new rpc.Server(` in a clients
+        object, `const rpcServer = getRpc()` for a factory that returns one), found in one pass
+        over each file: a class use, then the text just before it."""
+        if self._bound is not None:
+            return self._bound
+        bound, factories, builders = set(), set(), {}
+        stellar = [js for js in self.ctx.index.js.values() if js.stellar]
+        for js in stellar:
+            for m in self._class_uses(js):
+                before = js.text[max(0, m.start() - _BEFORE):m.start()]
+                before = before[before.rfind("\n") + 1:]
+                found = _BEFORE_NEW.search(before) or _BEFORE_TYPE.search(before)
+                if found:
+                    bound.add(found.group(1))
+                elif (found := _BEFORE_RETURN_TYPE.search(before)):
+                    factories.add(found.group(1))
+                elif _BEFORE_RETURNED.search(before):
+                    builders[js.path] = js
+        for js in builders.values():  # `return new rpc.Server(url)` / `() => new rpc.Server(url)`: the function's name
+            for node in SourceIndex.walk(js.root):
+                if node.type != "new_expression" or not self._is_rpc_class(js, _txt(node.child_by_field_name("constructor"))):
+                    continue
+                parent = node.parent
+                while parent is not None and parent.type in {"await_expression", "parenthesized_expression", "as_expression"}:
+                    parent = parent.parent
+                fn = SourceIndex.enclosing_function(node) if parent is not None and parent.type == "return_statement" \
+                    else parent if js_functions_type(parent) else None
+                name = js_function_name(fn) if fn is not None else None
+                if name:
+                    factories.add(name)
+        if factories:
+            for js in stellar:
+                for m in _CALL_SITE.finditer(js.text):
+                    if m.group(1) in factories:
+                        before = js.text[max(0, m.start() - _BEFORE):m.start()]
+                        found = _BEFORE_CALL.search(before[before.rfind("\n") + 1:])
+                        if found:
+                            bound.add(found.group(1))
+        self._bound = bound
+        return bound
 
     def _is_rpc(self, js: JsFile, recv) -> bool:
         """A Soroban RPC client of the Stellar SDK, in a file that imports the SDK: a new
-        rpc.Server(...) or a name bound to one or typed as one (here, or in another Stellar
-        file of the project, as a clients module does). A name alone (`rpcClient`) is not
-        enough: EVM and other JSON-RPC clients send transactions too. A name that says soroban
-        counts in a Stellar file."""
+        rpc.Server(...) or a name bound to one, typed as one or returned by a factory of one
+        (here, or in another Stellar file of the project, as a clients module does). A name
+        alone (`rpcClient`) is not enough: EVM and other JSON-RPC clients send transactions
+        too. A name that says soroban counts in a Stellar file."""
         if recv is None or not js.stellar:
             return False
         text = _txt(recv)
         if _NOT_RPC.search(text):
             return False
-        if re.match(r"new\s+" + _RPC_CLASS + r"\s*\(", text) or re.search(r"soroban", text, re.I):
+        if re.search(r"soroban", text, re.I):
             return True
+        if recv.type == "new_expression":
+            return self._is_rpc_class(js, _txt(recv.child_by_field_name("constructor")))
         name = text.rsplit(".", 1)[-1].lstrip("#")
-        if not re.fullmatch(r"[\w$]+", name):
-            return False
-        if name not in self._rpc_names:
-            bound = re.compile(r"(?<![\w$])#?" + re.escape(name) + r"\s*(?:\??:[^=;\n]+)?[=:]\s*(?:await\s+)?new\s+" + _RPC_CLASS
-                               + r"\s*\(|(?<![\w$])#?" + re.escape(name) + r"\s*\??:\s*" + _RPC_CLASS)
-            self._rpc_names[name] = any(other.stellar and bound.search(other.text) for other in self.ctx.index.js.values())
-        return self._rpc_names[name]
+        return bool(re.fullmatch(r"[\w$]+", name)) and name in self._rpc_bound()
 
     # -------------------------------------------------- uses of a send result
     def _uses(self, js: JsFile, fn, names: set[str], after: int) -> dict[str, list]:
-        """Classify each use of the names in fn after a byte offset: poll, settled, returned."""
-        out: dict[str, list] = _no_uses()
-        names = set(names)
-        for node in SourceIndex.walk(fn):
-            if node.type == "variable_declarator" and node.start_byte > after:
-                value = _unwrap(node.child_by_field_name("value"))
-                target = node.child_by_field_name("name")
-                if value is not None and target is not None and target.type == "identifier" and \
-                        value.type in {"identifier", "member_expression"} and _root_identifier(value) in names:
-                    names.add(_txt(target))  # const h = sent.hash
-            elif node.type == "for_in_statement" and node.start_byte > after and \
-                    _root_identifier(node.child_by_field_name("right")) in names:
-                left = node.child_by_field_name("left")
-                if left is not None and left.type == "identifier":
-                    names.add(_txt(left))  # for (const s of sent)
-        for node in SourceIndex.walk(fn):
-            if node.type not in {"identifier", "shorthand_property_identifier"} or _txt(node) not in names \
-                    or node.start_byte <= after:
-                continue
-            parent = node.parent
-            if parent.type in {"variable_declarator"} and parent.child_by_field_name("name") == node:
-                continue
-            kind, where = self._context(js, node, fn)
-            if kind:
-                out[kind].append(where)
+        """Classify each use of the names in fn after a byte offset: poll, settled, returned,
+        unknown, status. Reads the function's index (one walk per function), so the cost of a
+        send is the number of names derived from it, not the size of its function. `settled`
+        holds the first two settled uses and the first that names a payment (what the finding
+        shows and how it is rated); the other kinds hold their first use."""
+        index = self._fn_uses.get(_node_key(js, fn))
+        if index is None:
+            index = self._fn_uses[_node_key(js, fn)] = _FnUses(fn)
+        out = _no_uses()
+        names, todo, steps = set(names), list(names), 0
+        while todo:
+            starts, targets = index.derived.get(todo.pop(), ((), ()))
+            for i in range(bisect_right(starts, after), len(starts)):
+                steps += 1
+                if steps > _DERIVED_LIMIT:
+                    out["unknown"].append((0, "too many names derived from the result"))
+                    return out
+                if targets[i] not in names:
+                    names.add(targets[i])
+                    todo.append(targets[i])
+        settled, paying = [], []
+        for name in names:
+            for kind, (starts, wheres, pays) in self._name_uses(js, fn, index, name).items():
+                i = bisect_right(starts, after)
+                if i == len(starts):
+                    continue
+                if kind != "settled":
+                    out[kind].append(wheres[i])
+                    continue
+                settled += [(starts[j], wheres[j]) for j in range(i, min(i + 2, len(starts)))]
+                if pays[i] >= 0:
+                    paying.append((starts[pays[i]], wheres[pays[i]]))
+        settled.sort(key=lambda item: item[0])
+        first = settled[:2]
+        if paying and not any(_PAYMENT_WORDS.search(where[1]) for _, where in first):
+            first.append(min(paying, key=lambda item: item[0]))
+        out["settled"] = [where for _, where in first]
         return out
 
+    def _name_uses(self, js: JsFile, fn, index: _FnUses, name: str) -> dict:
+        """kind -> (starts, wheres, next paying entry) for one name's uses in a function."""
+        kinds = index.kinds.get(name)
+        if kinds is None:
+            kinds = {}
+            for node in index.idents.get(name, ()):
+                kind, where = self._context_of(js, node, fn)
+                if kind:
+                    starts, wheres, _ = kinds.setdefault(kind, ([], [], []))
+                    starts.append(node.start_byte)
+                    wheres.append(where)
+            for kind, (starts, wheres, pays) in kinds.items():
+                following = -1
+                pays.extend([-1] * len(starts))
+                for j in range(len(starts) - 1, -1, -1):
+                    if kind == "settled" and _PAYMENT_WORDS.search(wheres[j][1]):
+                        following = j
+                    pays[j] = following
+            index.kinds[name] = kinds
+        return kinds
+
+    def _context_of(self, js: JsFile, node, fn) -> tuple[str | None, tuple]:
+        """_context, once per identifier: the walk stops at the first enclosing function, so
+        the answer does not depend on which function asked."""
+        key = _node_key(js, node)
+        found = self._contexts.get(key)
+        if found is None:
+            found = self._contexts[key] = self._context(js, node, fn)
+        return found
+
     def _context(self, js: JsFile, node, fn) -> tuple[str | None, tuple]:
-        # `sent.status` handed back or logged: whoever reads it sees PENDING, nothing claims success.
+        # `sent.status` handed back or logged: whoever reads it sees PENDING, unless the same
+        # return or log calls the outcome a success.
         holder = node.parent
         status = holder is not None and holder.type == "member_expression" and \
             holder.child_by_field_name("object") == node and _txt(holder.child_by_field_name("property")) == "status"
-        expr = node
+        return self._walk_context(js, node, status, fn, _CONTEXT_DEPTH)
+
+    def _walk_context(self, js: JsFile, expr, status: bool, fn, budget: int) -> tuple[str | None, tuple]:
         while expr.parent is not None and expr.parent != fn and not js_functions_type(expr.parent):
+            budget -= 1
+            if budget < 0:
+                return "unknown", ()
             parent = expr.parent
             if parent.type == "return_statement":
-                return ("status", ()) if status else ("returned", (js.line(parent), js.snippet(parent)))
+                if status and not self._claims_final(js, parent):
+                    return "status", ()
+                return "returned", (js.line(parent), js.snippet(parent))
             if parent.type in _STATEMENTS:
                 return None, ()
             if parent.type == "arguments" and parent.parent is not None and parent.parent.type == "call_expression":
-                call = parent.parent
-                name, dotted = callee_name(call), _dotted(call.child_by_field_name("function"))
-                if name in sdk.POLL_METHODS or name in sdk.SELF_POLLING:
-                    return "poll", ()
-                if name in _TRANSPARENT:
-                    expr = call
-                    continue
-                where = (js.line(call), js.snippet(call))
-                if _LOGGER.search(dotted):
-                    if status:
-                        return "status", ()
-                    text = " ".join(s for s in (_string_value(a) or _template_text(a) for a in _args(call)) if s)
-                    final = _FINAL_WORDS.search(text) and not _TENTATIVE_WORDS.search(text)
-                    return ("settled", where) if final else (None, ())
-                if _RESPONDER.search(dotted):
-                    return ("status", ()) if status else ("returned", where)
-                if (_DB_WRITE.search(dotted) or _SETTLE_CALL.search(name)) and _TENTATIVE_WORDS.search(
-                        " ".join(_string_value(n) or "" for a in _args(call) for n in SourceIndex.walk(a)
-                                 if n.type in {"string", "template_string"})):
-                    return "unknown", where  # recorded as pending: settled later by a reconciler
-                if _DB_WRITE.search(dotted):
-                    return "settled", where
-                defs = self.ctx.index.defs(name)
-                if defs and any(self._fn_polls(f, d, 0) for f, d in defs):
-                    return "poll", ()
-                if _SETTLE_CALL.search(name):
-                    return "settled", where
-                return ("unknown", where) if not defs else (None, ())
+                key = (_node_key(js, parent.parent), status)
+                found = self._arg_contexts.get(key)
+                if found is None:
+                    found = self._arg_contexts[key] = self._call_context(js, parent.parent, status, fn, budget)
+                return found
             if parent.type == "binary_expression" and _txt(parent.child_by_field_name("operator")) in \
                     {"===", "!==", "==", "!=", "<", ">", "<=", ">="}:
                 return None, ()
@@ -743,6 +1033,53 @@ class _JsRules:
                 return None, ()
             expr = parent
         return None, ()
+
+    def _call_context(self, js: JsFile, call, status: bool, fn, budget: int) -> tuple[str | None, tuple]:
+        """What a call does with a send result passed to it (once per call and status use)."""
+        name, dotted = callee_name(call), _dotted(call.child_by_field_name("function"))
+        if name in sdk.POLL_METHODS or name in sdk.SELF_POLLING:
+            return "poll", ()
+        if name in _TRANSPARENT:
+            return self._walk_context(js, call, status, fn, budget)
+        where = (js.line(call), js.snippet(call))
+        if _LOGGER.search(dotted):
+            text = " ".join(s for s in (_string_value(a) or _template_text(a) for a in _args(call)) if s)
+            if _FINAL_WORDS.search(text) and not _TENTATIVE_WORDS.search(text):
+                return "settled", where
+            return ("status", ()) if status else (None, ())
+        if _RESPONDER.search(dotted):
+            return ("status", ()) if status and not self._claims_final(js, call) else ("returned", where)
+        if (_DB_WRITE.search(dotted) or _SETTLE_CALL.search(name)) and _TENTATIVE_WORDS.search(
+                " ".join(_string_value(n) or "" for a in _args(call) for n in SourceIndex.walk(a)
+                         if n.type in {"string", "template_string"})):
+            return "unknown", where  # recorded as pending: settled later by a reconciler
+        if _DB_WRITE.search(dotted):
+            return "settled", where
+        defs = self.ctx.index.defs(name)
+        if defs and any(self._fn_polls(f, d, 0) for f, d in defs):
+            return "poll", ()
+        if _SETTLE_CALL.search(name):
+            return "settled", where
+        return ("unknown", where) if not defs else (None, ())
+
+    def _claims_final(self, js: JsFile, node) -> bool:
+        """A return or response that calls the outcome final next to the status it hands back:
+        a success-named key set to true (`success: true`, `ok: true`) or a string that says
+        confirmed or paid and not pending."""
+        key = _node_key(js, node)
+        if key not in self._claims:
+            claims = False
+            for n in SourceIndex.walk(node):
+                if n.type == "pair" and _txt(n.child_by_field_name("value")) == "true" and \
+                        _SUCCESS_NAME.search(_txt(n.child_by_field_name("key")).strip("'\"")):
+                    claims = True
+                elif n.type in {"string", "template_string"}:
+                    text = _string_value(n) or _template_text(n) or ""
+                    claims = bool(_FINAL_WORDS.search(text) and not _TENTATIVE_WORDS.search(text))
+                if claims:
+                    break
+            self._claims[key] = claims
+        return self._claims[key]
 
     def _fn_polls(self, js: JsFile, fn, depth: int) -> bool:
         key = _node_key(js, fn)
@@ -781,7 +1118,7 @@ class _JsRules:
             uses = self._uses(js, fn, names, call.end_byte) if names else _no_uses()
             if expr.parent is not None and expr.parent.type == "return_statement":
                 uses["returned"].append((js.line(expr.parent), js.snippet(expr.parent)))
-            if uses["poll"] or uses["unknown"] or uses["status"]:
+            if _undecided(uses):
                 continue
             settled = list(uses["settled"])
             if not settled and uses["returned"]:
@@ -804,7 +1141,14 @@ class _JsRules:
 
     def _callers(self, js: JsFile, fn, depth: int = 0) -> list | None:
         """What the callers of a function returning a send result do with it: None when one
-        polls or when nothing in the project calls it."""
+        polls or when nothing in the project calls it (once per function)."""
+        key = (_node_key(js, fn), depth)
+        if key not in self._caller_verdicts:
+            self._caller_verdicts[key] = None  # a cycle reads as undecided
+            self._caller_verdicts[key] = self._callers_of(js, fn, depth)
+        return self._caller_verdicts[key]
+
+    def _callers_of(self, js: JsFile, fn, depth: int) -> list | None:
         name = js_function_name(fn)
         if not name:
             if fn.parent is None or fn.parent.type != "arguments" or fn.parent.parent is None:
@@ -824,9 +1168,8 @@ class _JsRules:
             expr, names, wrappers = _bound_names(host)
             if any(self._waits(w) for w in wrappers):
                 return None
-            uses = self._uses(js, outer, names, host.end_byte) if names else \
-                _no_uses()
-            if uses["poll"] or uses["unknown"] or uses["status"]:
+            uses = self._uses(js, outer, names, host.end_byte) if names else _no_uses()
+            if _undecided(uses):
                 return None
             if uses["settled"]:
                 return uses["settled"]
@@ -834,29 +1177,35 @@ class _JsRules:
                 return self._callers(js, outer, depth + 1)
             return None
         settled, seen = [], False
-        for other in self.ctx.index.js.values():
-            if TEST_PATH.search(other.path):
+        for other, call in self._calls_named(name):
+            caller = SourceIndex.enclosing_function(call)
+            if caller is None or caller == fn:
                 continue
-            for call in SourceIndex.calls(other.root):
-                if callee_name(call) != name:
-                    continue
-                caller = SourceIndex.enclosing_function(call)
-                if caller is None or caller == fn:
-                    continue
-                seen = True
-                expr, names, wrappers = _bound_names(call)
-                if any(self._waits(w) for w in wrappers):
-                    return None
-                uses = self._uses(other, caller, names, call.end_byte) if names else \
-                    _no_uses()
-                if uses["poll"] or uses["unknown"] or uses["status"]:
-                    return None
-                settled += [(line, f"{other.path}:{line} {snip}") for line, snip in uses["settled"]]
+            seen = True
+            expr, names, wrappers = _bound_names(call)
+            if any(self._waits(w) for w in wrappers):
+                return None
+            uses = self._uses(other, caller, names, call.end_byte) if names else _no_uses()
+            if _undecided(uses):
+                return None
+            settled += [(line, f"{other.path}:{line} {snip}") for line, snip in uses["settled"]]
         return settled if seen and settled else None
+
+    def _calls_named(self, name: str) -> list:
+        """(file, call) for every call by this name outside tests: one pass over the project."""
+        if self._calls_by_name is None:
+            found: dict[str, list] = {}
+            for other in self.ctx.index.js.values():
+                if TEST_PATH.search(other.path):
+                    continue
+                for call in SourceIndex.calls(other.root):
+                    found.setdefault(callee_name(call), []).append((other, call))
+            self._calls_by_name = found
+        return self._calls_by_name.get(name, [])
 
     # -------------------------------------------------- K1b: success read as "not failed"
     def not_failed_as_success(self, js: JsFile) -> list[tuple[int, str]]:
-        out = []
+        out, judged = [], set()
         if not re.search(r"getTransaction|pollTransaction", js.text):
             return out
         for call in SourceIndex.calls(js.root):
@@ -864,35 +1213,58 @@ class _JsRules:
                 continue
             fn = SourceIndex.enclosing_function(call)
             _, names, _ = _bound_names(call)
-            if fn is None or not names:
-                continue
-            checks_success = None
-            for node in SourceIndex.walk(fn):
-                if node.type != "binary_expression" or _txt(node.child_by_field_name("operator")) not in {"!==", "!="}:
+            if fn is None or not names or (_node_key(js, fn), frozenset(names)) in judged:
+                continue  # the verdict depends on the function and the names only
+            judged.add((_node_key(js, fn), frozenset(names)))
+            failed, success = self._status_tests(js, fn)
+            checks_success = not success.isdisjoint(names)
+            for node, value in sorted((t for name in names for t in failed.get(name, ())), key=lambda t: t[0].start_byte):
+                holder = node.parent
+                while holder is not None and holder.type == "parenthesized_expression":
+                    holder = holder.parent
+                if holder is None or holder.type not in {"pair", "return_statement", "variable_declarator",
+                                                         "assignment_expression"}:
                     continue
-                left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
-                for status, other in ((left, right), (right, left)):
-                    value = _string_value(other) or _txt(other)
-                    if not (_is_status(status, names) and re.search(r"FAILED|NOT_FOUND", value)):
+                name = _holder_name(holder, fn)
+                if not _SUCCESS_NAME.search(name):
+                    # `finished = r.status !== NOT_FOUND` is a polling flag; a test that is not
+                    # named as a verdict is fine when the same result is compared with SUCCESS.
+                    if "NOT_FOUND" in value and _POLL_FLAG.search(name):
                         continue
-                    holder = node.parent
-                    while holder is not None and holder.type == "parenthesized_expression":
-                        holder = holder.parent
-                    if holder is None or holder.type not in {"pair", "return_statement", "variable_declarator",
-                                                             "assignment_expression"}:
+                    if checks_success:
                         continue
-                    name = _holder_name(holder, fn)
-                    if not _SUCCESS_NAME.search(name):
-                        # `finished = r.status !== NOT_FOUND` is a polling flag; a test that is not
-                        # named as a verdict is fine when the same result is compared with SUCCESS.
-                        if "NOT_FOUND" in value and _POLL_FLAG.search(name):
-                            continue
-                        if checks_success is None:
-                            checks_success = _compares_success(fn, names)
-                        if checks_success:
-                            continue
-                    out.append((js.line(node), js.snippet(node)))
+                out.append((js.line(node), js.snippet(node)))
         return out
+
+    def _status_tests(self, js: JsFile, fn) -> tuple[dict[str, list], set[str]]:
+        """(root name -> `x.status !== FAILED|NOT_FOUND` tests, root names whose status is
+        compared with SUCCESS or switched on) in a function: one walk per function, not one
+        per getTransaction call."""
+        key = ("status", _node_key(js, fn))
+        if key not in self._memo:
+            failed: dict[str, list] = {}
+            success: set[str] = set()
+            for node in SourceIndex.walk(fn):
+                if node.type == "binary_expression":
+                    op = _txt(node.child_by_field_name("operator"))
+                    if op not in {"===", "==", "!==", "!="}:
+                        continue
+                    left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+                    for status, other in ((left, right), (right, left)):
+                        if other is None or other.end_byte - other.start_byte > 200 or not _is_status(status, {_root_identifier(status)}):
+                            continue
+                        value = _string_value(other) or _txt(other)
+                        root = _root_identifier(status)
+                        if op in {"!==", "!="} and re.search(r"FAILED|NOT_FOUND", value):
+                            failed.setdefault(root, []).append((node, value))
+                        if re.search(r"SUCCESS", value):
+                            success.add(root)
+                elif node.type == "switch_statement":
+                    value = node.child_by_field_name("value")
+                    if _is_status(value, {_root_identifier(value)}) and "SUCCESS" in _txt(node.child_by_field_name("body")):
+                        success.add(_root_identifier(value))
+            self._memo[key] = (failed, success)
+        return self._memo[key]
 
     # -------------------------------------------------- K3: released or rebuilt after broadcast
     def release_after_send(self, js: JsFile) -> list[tuple[int, str]]:
@@ -942,17 +1314,21 @@ class _JsRules:
     def _js_targets(self, js: JsFile, call) -> list[tuple[JsFile, object]]:
         """The project functions a call runs, resolved through its receiver: `f()` defined in
         this file or imported by name, `this.m()` in the caller's class, `mod.f()` on an
-        imported module, `obj.m()` where obj is built or typed as a project class or is an
-        object literal of this file. A method called on anything else (`db.execute()`) is not
-        followed: its name may belong to another class."""
-        defs = [(f, d) for f, d in self.ctx.index.defs(callee_name(call)) if not TEST_PATH.search(f.path)]
+        imported module, `obj.m()` where obj is built or typed as a project class (here, inline
+        as `new C().m()`, or as an instance another module exports) or is an object literal of
+        this file. A method called on anything else (`db.execute()`) is not followed: its name
+        may belong to another class."""
+        name = callee_name(call)
+        defs = self._js_defs(name)
         fn = _unwrap(call.child_by_field_name("function"))
-        if not defs or fn is None:
+        if defs is None or fn is None:
             return []
         if fn.type == "identifier":
-            plain = [(f, d) for f, d in defs if _js_owner(d) is None]
-            local = [(f, d) for f, d in plain if f is js]
-            return local or ([(f, d) for f, d in plain if f is not js] if _txt(fn) in _js_imports(js) else [])
+            local = defs.plain.get(js.path)
+            if local:
+                return local
+            return [d for path, found in defs.plain.items() if path != js.path for d in found] \
+                if _txt(fn) in _js_imports(js) else []
         if fn.type != "member_expression":
             return []
         obj = _unwrap(fn.child_by_field_name("object"))
@@ -960,21 +1336,78 @@ class _JsRules:
             cls = _js_class(call)
             if cls is None:
                 return []
-            own = [(f, d) for f, d in defs if f is js and _js_class(d) == cls]
-            parent = re.search(r"\bextends\s+(?:[\w$]+\.)*([\w$]+)", _txt(cls)[:300])  # inherited from a project class
-            return own or [(f, d) for f, d in defs if parent and _js_owner(d) == parent.group(1)]
+            own = defs.by_class_node.get((js.path, cls.start_byte), [])
+            if own:
+                return own
+            heritage = next((_txt(c) for c in cls.named_children if c.type == "class_heritage"), "")
+            parent = re.search(r"\bextends\s+(?:[\w$]+\.)*([\w$]+)", heritage)  # inherited from a project class
+            return defs.by_class.get(parent.group(1), []) if parent else []
         if obj is not None and obj.type == "identifier" and _js_imports(js).get(_txt(obj)) in {"namespace", "default"}:
-            return [(f, d) for f, d in defs if f is not js and not isinstance(_js_owner(d), str)]
+            return [d for path, found in defs.not_class.items() if path != js.path for d in found]
+        if obj is not None and obj.type == "new_expression":  # `new StellarService().pay(tx)`
+            ctor = obj.child_by_field_name("constructor")
+            return defs.by_class.get(_txt(ctor).rsplit(".", 1)[-1], []) if ctor is not None else []
         holder = _js_holder(obj)
         if not holder:
             return []
-        kind = _js_class_of(js, holder)
+        kind = self._js_class_of(js, holder)
+        if kind is None and obj.type == "identifier" and _js_imports(js).get(holder) == "named":
+            kind = next((k for other in self._js_modules(js, holder) if (k := self._js_class_of(other, holder))), None)
         if kind:
-            return [(f, d) for f, d in defs if _js_owner(d) == kind]
-        literal = _js_literal_of(js, holder)
+            return defs.by_class.get(kind, [])
+        literal = self._js_literal_of(js, holder)
         if literal is not None:
-            return [(f, d) for f, d in defs if f is js and literal[0] <= d.start_byte < literal[1]]
+            return [(f, d) for f, d in defs.literal.get(js.path, []) if literal[0] <= d.start_byte < literal[1]]
         return []
+
+    def _js_defs(self, name: str) -> _JsDefs | None:
+        if name not in self._defs:
+            found = [(f, d) for f, d in self.ctx.index.defs(name) if not TEST_PATH.search(f.path)]
+            self._defs[name] = _JsDefs(found) if found else None
+        return self._defs[name]
+
+    def _js_class_of(self, js: JsFile, name: str) -> str | None:
+        key = ("class", js.path, name)
+        if key not in self._memo:
+            self._memo[key] = _js_class_of(js, name)
+        return self._memo[key]
+
+    def _js_literal_of(self, js: JsFile, name: str) -> tuple[int, int] | None:
+        key = ("literal", js.path)
+        if key not in self._memo:  # name -> range of the object literal it is declared with, once per file
+            found: dict[str, tuple[int, int] | None] = {}
+            for node in SourceIndex.walk(js.root):
+                if node.type == "variable_declarator":
+                    target = _txt(node.child_by_field_name("name"))
+                    if target not in found:
+                        value = _unwrap(node.child_by_field_name("value"))
+                        found[target] = (value.start_byte, value.end_byte) if value is not None and value.type == "object" else None
+            self._memo[key] = found
+        return self._memo[key].get(name)
+
+    def _js_modules(self, js: JsFile, name: str) -> list[JsFile]:
+        """The project files a named import may come from: the relative module it names
+        (with its extension or index file), or for an aliased path (`@/lib/chain`) the files
+        named like its last segment."""
+        key = ("module", js.path, name)
+        if key not in self._memo:
+            if "stems" not in self._memo:  # module path (no extension, no /index) -> files; last segment -> files
+                stems: dict[str, list] = {}
+                lasts: dict[str, list] = {}
+                for path, other in self.ctx.index.js.items():
+                    stem = re.sub(r"(?:/index)?\.[cm]?[jt]sx?$", "", path)
+                    stems.setdefault(stem, []).append(other)
+                    lasts.setdefault(stem.rsplit("/", 1)[-1], []).append(other)
+                self._memo["stems"], self._memo["lasts"] = stems, lasts
+            source = _js_import_sources(js).get(name) or ""
+            found = []
+            if source.startswith("."):
+                base = posixpath.normpath(posixpath.join(posixpath.dirname(js.path), source))
+                found = self._memo["stems"].get(re.sub(r"(?:/index)?\.[cm]?[jt]sx?$", "", base), [])
+            elif not source.startswith(("@stellar/", "node:")) and "/" in source:
+                found = self._memo["lasts"].get(source.rstrip("/").rsplit("/", 1)[-1], [])
+            self._memo[key] = [other for other in found if other is not js]
+        return self._memo[key]
 
     def _pays(self, js: JsFile, call) -> bool:
         """An x402 paid request: a fetch with a payment header, or a fetch wrapped to pay."""
@@ -1186,6 +1619,32 @@ def _js_imports(js: JsFile) -> dict[str, str]:
     return found
 
 
+def _js_import_sources(js: JsFile) -> dict[str, str]:
+    """Local name -> the module it is imported from (ES imports and `const { f } = require()`);
+    once per file."""
+    found = getattr(js, "_import_sources", None)
+    if found is None:
+        found = {}
+        for node in SourceIndex.walk(js.root):
+            if node.type == "import_statement":
+                source = _string_value(node.child_by_field_name("source")) or ""
+                for spec in SourceIndex.walk(node):
+                    if spec.type == "import_specifier":
+                        alias = spec.child_by_field_name("alias") or spec.child_by_field_name("name")
+                        found[_txt(alias)] = source
+                    elif spec.type in {"namespace_import", "import_clause"}:
+                        found.update({_txt(c): source for c in spec.named_children if c.type == "identifier"})
+            elif node.type == "variable_declarator" and _txt(node.child_by_field_name("value")).startswith("require("):
+                value = node.child_by_field_name("value")
+                source = next((_string_value(a) for a in _args(value)), None) or ""
+                target = node.child_by_field_name("name")
+                if target is not None:
+                    found.update({_txt(n): source for n in SourceIndex.walk(target)
+                                  if n.type in {"shorthand_property_identifier_pattern", "identifier"}})
+        js._import_sources = found
+    return found
+
+
 def _js_class_of(js: JsFile, name: str) -> str | None:
     """The class a name holds in this file: `name = new C(...)`, `this.name = new C(...)`, or
     `name: C` (a parameter, a variable or a field)."""
@@ -1198,20 +1657,16 @@ def _js_class_of(js: JsFile, name: str) -> str | None:
     return typed.group(1) if typed else None
 
 
-def _js_literal_of(js: JsFile, name: str) -> tuple[int, int] | None:
-    """The byte range of the object literal a name is declared with in this file."""
-    for node in SourceIndex.walk(js.root):
-        if node.type == "variable_declarator" and _txt(node.child_by_field_name("name")) == name:
-            value = _unwrap(node.child_by_field_name("value"))
-            if value is not None and value.type == "object":
-                return value.start_byte, value.end_byte
-            return None
-    return None
-
-
 def _no_uses() -> dict[str, list]:
     """How a send result is used: polled, settled, returned, unknown, or its status handed on."""
     return {"poll": [], "settled": [], "returned": [], "unknown": [], "status": []}
+
+
+def _undecided(uses: dict[str, list]) -> bool:
+    """The result is polled, goes somewhere unknown, or only its status is handed on (the
+    reader sees PENDING). A status logged or returned next to a write that marks the order
+    paid does not undo the write."""
+    return bool(uses["poll"] or uses["unknown"] or uses["status"] and not uses["settled"])
 
 
 def _node_key(js: JsFile, node) -> tuple:
@@ -1243,20 +1698,6 @@ def _holder_name(holder, fn) -> str:
     if holder.type == "assignment_expression":
         return _txt(holder.child_by_field_name("left")).rsplit(".", 1)[-1]
     return js_function_name(fn) or ""
-
-
-def _compares_success(fn, names: set[str]) -> bool:
-    """The function compares the result's status with SUCCESS (or switches on it)."""
-    for node in SourceIndex.walk(fn):
-        if node.type == "binary_expression" and _txt(node.child_by_field_name("operator")) in {"===", "==", "!==", "!="}:
-            left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
-            for status, other in ((left, right), (right, left)):
-                if _is_status(status, names) and re.search(r"SUCCESS", _string_value(other) or _txt(other)):
-                    return True
-        elif node.type == "switch_statement" and _is_status(node.child_by_field_name("value"), names) and \
-                "SUCCESS" in _txt(node.child_by_field_name("body")):
-            return True
-    return False
 
 
 def _converted(node, scope) -> bool:

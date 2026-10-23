@@ -1057,9 +1057,11 @@ _PER_SCOPE_VALUES, _CALLEES = 16, 16
 
 
 def _js_defs(src: _Source) -> dict[str, tuple[int, int]]:
-    """Function name -> body span, for the functions this file defines (first definition wins)."""
+    """Function name -> body span, for the functions this file defines (first definition wins);
+    their parameter names go to src.memo["params"]."""
     if "defs" not in src.memo:
         defs: dict[str, tuple[int, int]] = {}
+        params: dict[str, list[str | None]] = {}
         pairs = src.pairs()
         for m in _JS_DEF.finditer(src.skel):
             name = m.group("a") or m.group("b")
@@ -1069,8 +1071,62 @@ def _js_defs(src: _Source) -> dict[str, tuple[int, int]]:
             body = src.function_at(brace + 1)
             if body is not None and body[0] == brace:
                 defs[name] = body
-        src.memo["defs"] = defs
+                opening = src.skel.find("(", m.start("a" if m.group("a") else "b") + len(name), brace)
+                if opening >= 0:
+                    params[name] = [(re.match(r"(?:\.\.\.)?\s*([\w$]+)", part) or [None, None])[1]
+                                    for part in _arguments(src, opening)]
+                else:  # `const f = x => {`
+                    single = re.search(r"([\w$]+)\s*=>\s*$", src.skel[m.start():brace])
+                    params[name] = [single.group(1) if single else None]
+        src.memo["defs"], src.memo["params"] = defs, params
     return src.memo["defs"]
+
+
+def _arguments(src: _Source, opening: int) -> list[str]:
+    """The depth-0 comma-separated parts between ``opening`` and its partner (bracketed groups
+    and strings skipped whole)."""
+    pairs = src.pairs()
+    close = pairs.get(opening)
+    if close is None:
+        return []
+    parts, start, i = [], opening + 1, opening + 1
+    while i < close:
+        ch = src.skel[i]
+        if ch in "([{" and i in pairs:
+            i = pairs[i] + 1
+            continue
+        if ch == ",":
+            parts.append(src.code[start:i].strip())
+            start = i + 1
+        i += 1
+    last = src.code[start:close].strip()
+    return parts + [last] if last or parts else parts
+
+
+def _callee_endpoint(src: _Source, scope: tuple[int, int], value: str) -> bool:
+    """The function hands ``value`` to a function of this file (one of the callees whose
+    signature _operator_signs reads) that picks the endpoint from that parameter:
+    `signAndSend(tx, network)` -> `horizonFor(network)` inside signAndSend."""
+    defs = _js_defs(src)
+    params, picks = src.memo["params"], src.memo.setdefault("callee_picks", {})
+    seen: set[str] = set()
+    for m in _CALLED.finditer(src.code, scope[0], scope[1]):
+        name = m.group(1)
+        if name not in defs or defs[name] == scope:
+            continue
+        seen.add(name)
+        if len(seen) > _CALLEES:
+            return False
+        names = params.get(name, [])
+        for position, arg in enumerate(_arguments(src, m.end() - 1)):
+            param = names[position] if position < len(names) else None
+            if arg != value or not param:
+                continue
+            if (name, param) not in picks:  # once per callee and parameter, whatever the number of tools
+                picks[name, param] = bool(_picks(src.code[defs[name][0]:defs[name][1]], param)[1])
+            if picks[name, param]:
+                return True
+    return False
 
 
 def _signing(src: _Source, span: tuple[int, int]) -> tuple[bool, bool, set[str]]:
@@ -1169,6 +1225,7 @@ def per_call_hits(sources: list[_Source]) -> list[Hit]:
             passphrase, endpoint = _picks(region, value)
             if not passphrase or _pinned(region, value):
                 continue
+            endpoint = endpoint or _callee_endpoint(src, (start, end), value)
             line = src.line(pos if endpoint else start + passphrase.start())
             if not endpoint:
                 used = [u.group("a") or u.group("b") for u in _ENDPOINT_USE.finditer(region)]
@@ -1178,7 +1235,10 @@ def per_call_hits(sources: list[_Source]) -> list[Hit]:
                                     Severity.LOW, f"`{value}` picks the passphrase, but the endpoint stays on configuration",
                                     group="per-call-endpoint"))
                 continue
-            if not _HANDLER.search(src.code, top[0], top[1]) or not _operator_signs(src, (start, end)):
+            handlers = src.memo.setdefault("handler_regions", {})
+            if top not in handlers:  # once per top-level region, not once per tool in it
+                handlers[top] = bool(_HANDLER.search(src.code, top[0], top[1]))
+            if not handlers[top] or not _operator_signs(src, (start, end)):
                 continue
             hits.append(Hit("security-network-chosen-per-call", src.name, line, src.line_text(line),
                             _severity(Severity.MEDIUM, src.name),

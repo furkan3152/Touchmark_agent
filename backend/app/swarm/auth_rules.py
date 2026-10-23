@@ -16,8 +16,8 @@ ids; only the expiration and the web-auth challenges have ids of their own.
 from __future__ import annotations
 
 import ast
-import functools
 import re
+from bisect import bisect_left
 from dataclasses import dataclass
 
 from ..models import Severity
@@ -919,13 +919,14 @@ def web_auth_hits(files: dict[str, str]) -> list[tuple[str, str, int, str, Sever
     return hits
 
 
-def _mentions(text: str, names: set[str]) -> bool:
-    return bool(names) and bool(_names_pattern(frozenset(names)).search(text))
+#: An identifier that is not a property (`x` in `x.y`, not `y`).
+_IDENT = re.compile(r"(?<![\w$.])[A-Za-z_$][\w$]*")
 
 
-@functools.lru_cache(maxsize=1024)
-def _names_pattern(names: frozenset[str]) -> re.Pattern:
-    return re.compile(r"(?<![\w$.])(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")(?![\w$])")
+def _ids(text: str) -> set[str]:
+    """The identifiers a piece of code reads: tested against a name set, so a growing taint
+    never builds a pattern."""
+    return set(_IDENT.findall(text))
 
 
 #: JS bindings: `const x =`, `const { a, b } =`, `x =`; `for (const x of ...)`; `xs.map((x) =>`.
@@ -976,36 +977,45 @@ def _js_bound(pattern: str) -> set[str]:
         else {pattern}
 
 
+def _js_events(src) -> list[tuple]:
+    """(offset, kind, names bound, identifiers read, text read, parses a transaction) for every
+    binding of a JS file in source order, read once per file and shared by every function's flow."""
+    found = src.memo.get("web_auth_events")
+    if found is None:
+        from .network_rules import _statement
+        code, found = src.code, []
+        for m in _JS_BIND.finditer(code):
+            stop, _marks = _statement(src, m.end())
+            found.append((m.start(), "bind", _js_bound(m.group("pat") or m.group("bare")), code[m.end():stop]))
+        for m in _JS_LOOP.finditer(code):
+            close = src.pairs().get(code.find("(", m.start()), m.end())
+            found.append((m.start(), "loop", _js_bound(m.group("pat")), code[m.end():close]))
+        for m in _JS_EACH.finditer(code):
+            found.append((m.start(), "each", {m.group("pat")}, m.group("iter")))
+        found = sorted(((pos, kind, names, _ids(expr), expr, kind == "bind" and bool(_PARSE_TX.search(expr)))
+                        for pos, kind, names, expr in found), key=lambda e: e[0])
+        src.memo["web_auth_events"] = found
+    return found
+
+
 def _js_taint(src, start: int, end: int, seeds: set[str], source: re.Pattern,
               module: bool = False) -> tuple[set[str], set[str]]:
     """(names derived from the seeds or from text ``source`` matches, those of them bound to a
     parsed transaction) in code[start:end], in source order (two passes for loops). With
     ``module``, only bindings outside every function count: one function's locals never seed
-    another's."""
-    from .network_rules import _statement
-    code = src.code
-    events = [(m.start(), "bind", m) for m in _JS_BIND.finditer(code, start, end)]
-    events += [(m.start(), "loop", m) for m in _JS_LOOP.finditer(code, start, end)]
-    events += [(m.start(), "each", m) for m in _JS_EACH.finditer(code, start, end)]
-    if module:
-        events = [e for e in events if src.function_at(e[0]) is None]
-    events.sort(key=lambda e: e[0])
+    another's. Each binding is read once per file (_js_events), so a function costs its own
+    bindings, whatever the size of the taint."""
+    events = _js_events(src)
+    lo = bisect_left(events, start, key=lambda e: e[0])
+    hi = bisect_left(events, end, key=lambda e: e[0])
+    steps = [e for e in events[lo:hi] if not module or src.function_at(e[0]) is None]
+    matched = [bool(source.search(e[4])) for e in steps]
     tainted, parsed = set(seeds), set()
     for _ in range(2):
-        for _pos, kind, m in events[:2000]:
-            if kind == "bind":
-                stop, _marks = _statement(src, m.end())
-                expr = code[m.end():stop]
-                names = _js_bound(m.group("pat") or m.group("bare"))
-            elif kind == "loop":
-                close = src.pairs().get(code.find("(", m.start()), m.end())
-                expr = code[m.end():close]
-                names = _js_bound(m.group("pat"))
-            else:
-                expr, names = m.group("iter"), {m.group("pat")}
-            if source.search(expr) or _mentions(expr, tainted):
+        for (_pos, _kind, names, read, _expr, parses), hit in zip(steps, matched):
+            if hit or not read.isdisjoint(tainted):
                 tainted |= names
-                if kind == "bind" and _PARSE_TX.search(expr):
+                if parses:
                     parsed |= names
     return tainted, parsed
 
@@ -1014,7 +1024,7 @@ def _js_web_auth(src) -> dict[str, int | None]:
     """Offsets of a SEP-10 challenge signed from the web-auth response, and of SEP-45 entries
     signed from the contract web-auth response, in a JS or TS file."""
     found: dict[str, int | None] = {"sep10": None, "sep45": None}
-    code, cache = src.code, {}
+    code, cache, requests = src.code, {}, {}
     # Module-level values first: `const ENDPOINT = toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT`.
     top10, _ = _js_taint(src, 0, len(code), set(), _SEP10_SOURCE, module=True) if _SEP10_SOURCE.search(code) else (set(), set())
     top45, _ = _js_taint(src, 0, len(code), set(), _SEP45_SOURCE, module=True) if _SEP45_SOURCE.search(code) else (set(), set())
@@ -1038,9 +1048,11 @@ def _js_web_auth(src) -> dict[str, int | None]:
         scope = _flow_scope(src, m.start())
         tainted, _ = flow(scope, "sep45")
         close = src.pairs().get(m.end() - 1, m.end())
-        region = code[scope[0]:scope[1]]
-        requested = _SEP45_SOURCE.search(region) or _mentions(region, top45)
-        if _mentions(code[m.end():close], tainted) or (requested and _SEP45_FIELD.search(region)):
+        if scope not in requests:  # the function itself asks the contract web-auth endpoint for entries
+            region = code[scope[0]:scope[1]]
+            requests[scope] = bool((_SEP45_SOURCE.search(region) or not _ids(region).isdisjoint(top45))
+                                   and _SEP45_FIELD.search(region))
+        if not _ids(code[m.end():close]).isdisjoint(tainted) or requests[scope]:
             found["sep45"] = m.start()
             break
     return found
@@ -1079,14 +1091,32 @@ def _py_web_auth(src) -> dict[str, int | None]:
                 stack.extend(ast.iter_child_nodes(n))
         return sorted(out, key=lambda b: (getattr(b[0], "lineno", 0), getattr(b[0], "col_offset", 0)))
 
+    def called(func) -> str:
+        """`a.b.c` -> `b.c`: enough for the parsers' names, without unparsing a long chain."""
+        if isinstance(func, ast.Attribute):
+            base = func.value.attr if isinstance(func.value, ast.Attribute) else getattr(func.value, "id", "")
+            return f"{base}.{func.attr}"
+        return getattr(func, "id", "")
+
+    prepared: dict = {}
+
+    def steps_of(scope) -> list[tuple[set[str], set[str], str, bool]]:
+        """(targets, names read, text, parses a transaction) per binding, once per scope."""
+        if scope not in prepared:
+            prepared[scope] = [(targets, names_in(value), text_of(value),
+                                any(isinstance(c, ast.Call) and _PARSE_TX.search(called(c.func) + "(") for c in ast.walk(value)))
+                               for _node, targets, value in bindings(scope)]
+        return prepared[scope]
+
     def taint(scope, seeds: set[str], source: re.Pattern) -> tuple[set[str], set[str]]:
         tainted, parsed = set(seeds), set()
-        steps = bindings(scope)[:2000]
+        steps = steps_of(scope)
+        hits = [bool(source.search(text)) for _targets, _names, text, _parses in steps]
         for _ in range(2):
-            for _node, targets, value in steps:
-                if source.search(text_of(value)) or names_in(value) & tainted:
+            for (targets, names, _text, parses), hit in zip(steps, hits):
+                if hit or names & tainted:
                     tainted |= targets
-                    if any(isinstance(c, ast.Call) and _PARSE_TX.search(unparse(c.func) + "(") for c in ast.walk(value)):
+                    if parses:
                         parsed |= targets
         return tainted, parsed
     top10, _ = taint(tree, set(), _SEP10_SOURCE)

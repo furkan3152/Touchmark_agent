@@ -524,3 +524,41 @@ def test_web_auth_skips_python_too_complex_to_parse():
     # CPython raises MemoryError ("parser stack overflowed") for `a{{{...`, not SyntaxError.
     from backend.app.swarm.auth_rules import web_auth_hits
     assert web_auth_hits({"sep10.py": "WEB_AUTH_ENDPOINT = 1\nx = a" + "{" * 3000 + "\n"}) == []
+
+
+def test_web_auth_flow_is_linear_in_the_bindings_and_keeps_long_chains():
+    # Each function's flow reads the file's bindings once; a taint that grows by one name per
+    # binding never rebuilds a pattern, and a chain longer than 2,000 bindings still reaches
+    # the parse and the signature.
+    from backend.app.swarm.auth_rules import web_auth_hits
+    head = "import { Keypair, TransactionBuilder, Networks, authorizeEntry } from '@stellar/stellar-sdk';\n" \
+           "const kp = Keypair.fromSecret(process.env.S!);\n"
+    chain = "".join(
+        f"export async function login{k}(toml: any) {{\n  const a0 = await fetchJson(`${{toml.WEB_AUTH_ENDPOINT}}?account=x`);\n"
+        + "".join(f"  const a{i} = a{i - 1};\n" for i in range(1, 2500))
+        + "  const tx = TransactionBuilder.fromXDR(a2499.transaction, Networks.TESTNET);\n  tx.sign(kp);\n}\n" for k in range(4))
+    signs = "export async function enter(toml: any) {\n" \
+            "  const r = await fetch(`${toml.WEB_AUTH_FOR_CONTRACTS_ENDPOINT}?account=x`);\n" \
+            "  const { authorization_entries } = await r.json();\n" + "".join(
+                f"  const e{i} = authorization_entries[{i}];\n  await authorizeEntry(e{i}, kp, latest + 10, PASS);\n"
+                for i in range(3000)) + "}\n"
+    py = "import httpx\nfrom stellar_sdk import TransactionEnvelope\ndef login(web_auth_endpoint, kp):\n" \
+         "    a0 = httpx.get(web_auth_endpoint, params={'account': kp.public_key}).json()\n" \
+         + "".join(f"    a{i} = a{i - 1}\n" for i in range(1, 2500)) \
+         + "    env = TransactionEnvelope.from_xdr(a2499['transaction'], 'p')\n    env.sign(kp)\n"
+    started = time.perf_counter()
+    hits = web_auth_hits({"src/auth.ts": head + chain, "src/contracts.ts": head + signs, "agent/auth.py": py})
+    assert time.perf_counter() - started < 5
+    assert {(kind, name) for kind, name, *_ in hits} == {("sep10", "src/auth.ts"), ("sep45", "src/contracts.ts"),
+                                                          ("sep10", "agent/auth.py")}
+
+
+def test_cli_auto_sign_words_are_read_in_source_order():
+    # ast.walk is breadth-first: a word inside an f-string element or a nested call came after
+    # its siblings, so `contract invoke --auto-sign` no longer read in order.
+    for command in ("['stellar', 'contract', 'invoke', '--auto-sign']", "f'stellar contract invoke --id {cid} --auto-sign'",
+                    "['stellar', 'contract', f'invoke', '--auto-sign']", "['stellar', 'contract', str('invoke'), '--auto-sign']"):
+        profile = analyse_code({"cli.py": f"import subprocess\ncid = 'C'\ndef run():\n    subprocess.run({command})\n"})
+        assert [f.kind for f in profile.facts if f.kind == "cli_auto_sign"] == ["cli_auto_sign"], command
+    profile = analyse_code({"cli.py": "import subprocess\ndef run():\n    subprocess.run(['stellar', 'contract', 'invoke'])\n"})
+    assert not [f for f in profile.facts if f.kind == "cli_auto_sign"]

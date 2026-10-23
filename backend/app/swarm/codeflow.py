@@ -323,7 +323,7 @@ class _Project:
                 continue
             try:
                 tree = ast.parse(content)
-            except (SyntaxError, ValueError, RecursionError):
+            except (SyntaxError, ValueError, RecursionError, MemoryError):  # MemoryError: parser stack overflow
                 self.profile.unparsed.append(path)
                 continue
             module = _module_name(path)
@@ -884,8 +884,10 @@ class _Interp:
             self._cap("process_spawn" if fixed else "code_execution", node)
             if every & UNTRUSTED and not fixed:
                 self._flow("command", node, every, "shell=True" if shell else "")
-            words = (n.value for a in node.args for n in ast.walk(a) if isinstance(n, ast.Constant) and isinstance(n.value, str))
-            if self.record and CLI_AUTO_SIGN.search(" ".join(words)):  # the command's words, at any depth
+            # The command's words, at any depth, in source order (ast.walk is breadth-first).
+            words = sorted((n for a in node.args for n in ast.walk(a) if isinstance(n, ast.Constant) and isinstance(n.value, str)),
+                           key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0)))
+            if self.record and CLI_AUTO_SIGN.search(" ".join(n.value for n in words)):
                 self.p.profile.add_fact("cli_auto_sign", self.p.location(self.module, node),
                                         "stellar contract invoke --auto-sign", direct=bool(every & DIRECT))
             return set()

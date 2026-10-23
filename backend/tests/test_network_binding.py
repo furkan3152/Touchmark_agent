@@ -62,6 +62,44 @@ def test_a_per_call_network_pinned_to_configuration_is_not_reported():
     assert "security-network-chosen-per-call" not in found({"src/pay.ts": callers})
 
 
+def test_a_helper_that_signs_and_picks_the_endpoint_from_the_tools_network_is_medium():
+    helper = _PER_CALL.replace("server.tool(", """async function signAndSend(tx: any, network: string) {
+  const kp = Keypair.fromSecret(process.env.OPERATOR_SECRET!);
+  tx.sign(kp);
+  return horizonFor(network).submitTransaction(tx);
+}
+server.tool(""").replace("""  const kp = Keypair.fromSecret(process.env.OPERATOR_SECRET!);
+  tx.sign(kp);
+  return horizonFor(network).submitTransaction(tx);
+});""", """  return signAndSend(tx, network);
+});""")
+    assert found({"src/pay.ts": helper})["security-network-chosen-per-call"]["severity"] == "medium"
+    # The helper sends to the configured network: the tool's value picks only the passphrase.
+    fixed = helper.replace("async function signAndSend(tx: any, network: string)", "async function signAndSend(tx: any, net: string)") \
+        .replace("return horizonFor(network).submitTransaction(tx);\n}", "return horizonFor(config.network).submitTransaction(tx);\n}")
+    assert "security-network-chosen-per-call" not in found({"src/pay.ts": fixed})
+    # The value handed on in another position does not reach the endpoint parameter.
+    other = helper.replace("async function signAndSend(tx: any, network: string)", "async function signAndSend(network: string, tx: any)")
+    assert "security-network-chosen-per-call" not in found({"src/pay.ts": other})
+
+
+def test_many_tools_after_a_long_helper_cost_little():
+    # Every tool sits in the region that starts at the helper: the handler test is made once per
+    # region, and the helper's endpoint pick once per parameter, not once per tool (27 s before).
+    helper = ("import { Keypair, Networks, TransactionBuilder, Horizon } from '@stellar/stellar-sdk';\n"
+              "function passphraseFor(net: string) { return net === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET; }\n"
+              "async function signAndSend(tx: any, network: string) {\n"
+              + "".join(f"  const v{i} = compute{i}(tx, network);\n" for i in range(3000))
+              + "  tx.sign(Keypair.fromSecret(process.env.OPERATOR_SECRET!));\n"
+              "  return new Horizon.Server(network === 'mainnet' ? 'https://horizon.stellar.org' : 'x').submitTransaction(tx);\n}\n")
+    tools = "".join(f"server.tool('t{i}', {{}}, async (args: any) => {{ const network = args.network; "
+                    "const tx = TransactionBuilder.fromXDR(args.xdr, passphraseFor(network)); return signAndSend(tx, network); });\n"
+                    for i in range(1500))
+    started = time.perf_counter()
+    assert found({"src/a.ts": helper + tools})["security-network-chosen-per-call"]["severity"] == "medium"
+    assert time.perf_counter() - started < 5
+
+
 # ----------------------------------------------------------------- N2 counterparty network
 _MPP = """
 import { Mppx } from 'mppx/client';

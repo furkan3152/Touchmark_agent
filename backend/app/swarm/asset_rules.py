@@ -14,6 +14,7 @@ import ast
 import functools
 import itertools
 import re
+from bisect import bisect_right
 
 from ..models import AgentArtifact, Severity
 from ..services.lockfiles import Lockset, version_key
@@ -142,6 +143,17 @@ def _rust_strings(text: str) -> list[tuple[int, int]]:
 
 #: An item compiled only for tests: #[cfg(test)], #[cfg(any(test, feature = "testutils"))].
 _CFG_ATTR = re.compile(r"#\s*\[\s*cfg\s*\((?P<cfg>[^\]]*)\)\s*\]")
+
+
+def _merged(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Overlapping or nested spans joined, in order (for a bisect)."""
+    out: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if out and start <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], end))
+        else:
+            out.append((start, end))
+    return out
 
 
 def _cfg_test_items(text: str) -> list[tuple[int, int]]:
@@ -292,19 +304,24 @@ class AssetRules:
         for path, text in self.index.rust.items():
             if TEST_PATH.search(path) or path in tests or _PLACEHOLDER_PATH.search(path):
                 continue
-            skipped = _cfg_test_items(text)
+            skipped = _merged(_cfg_test_items(text))
+            starts, newlines = [a for a, _ in skipped], None
             # String literals as the lexer sees them: never inside a comment, a raw string or a
             # #[cfg(test)] item.
             for start, end in _rust_strings(text):
                 value = text[start + 1:end - 1]
-                if not _STRKEY_LIKE.fullmatch(value) or _RUN.search(value) or strkey_valid(value) or \
-                        _placeholder(value) or any(a <= start < b for a, b in skipped):
+                if not _STRKEY_LIKE.fullmatch(value) or _RUN.search(value) or strkey_valid(value) or _placeholder(value):
                     continue
-                begin = text.rfind("\n", 0, start) + 1
-                stop = text.find("\n", end)
-                binder = re.search(r"(?:const|static|let)\s+(?:mut\s+)?(\w+)", text[begin:start])
-                place = self._strkey_place(path, text.count("\n", 0, start) + 1,
-                                           " ".join(text[begin:stop if stop >= 0 else len(text)].split())[:160],
+                i = bisect_right(starts, start) - 1
+                if i >= 0 and start < skipped[i][1]:
+                    continue
+                if newlines is None:  # line numbers from one index per file, not a count per literal
+                    newlines = [m.start() for m in re.finditer("\n", text)]
+                row = bisect_right(newlines, start)
+                begin = newlines[row - 1] + 1 if row else 0
+                stop = newlines[row] if row < len(newlines) else len(text)
+                binder = re.search(r"(?:const|static|let)\s+(?:mut\s+)?(\w+)", text[max(begin, start - 300):start])
+                place = self._strkey_place(path, row + 1, " ".join(text[begin:min(stop, begin + 2000)].split())[:160],
                                            value, binder.group(1) if binder else "", True)
                 if place:
                     out.append(place)

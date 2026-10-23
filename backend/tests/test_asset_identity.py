@@ -90,6 +90,18 @@ def test_rust_literals_in_comments_raw_strings_and_test_items_are_not_reported()
     assert "lib.rs:6" in hardening({"crates/wallet/src/lib.rs": after})[STRKEY].evidence
 
 
+def test_many_rust_literals_and_test_items_cost_little():
+    """Each invalid literal counted the newlines before it and tested every cfg(test) span (10 s
+    for 20,000 literals); lines and spans are now indexed once per file."""
+    bad = broken(Keypair.random().public_key)
+    items = "#[cfg(test)]\nmod t {\n    const A: &str = \"x\";\n}\n" * 3000
+    source = items + f"pub const PAYEE: &str = \"{bad}\";\n" * 20000
+    started = time.perf_counter()
+    found = hardening({"crates/wallet/src/lib.rs": source})
+    assert time.perf_counter() - started < 5
+    assert "lib.rs:12001 " in found[STRKEY].evidence  # the first literal after 3,000 four-line test items
+
+
 def test_placeholder_addresses_and_benchmark_suites_are_not_reported():
     stub = "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVWXYZ234"
     assert not strkey_valid(stub)
