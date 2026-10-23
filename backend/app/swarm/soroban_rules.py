@@ -7,9 +7,11 @@ the address: an upgrade authorized by whoever calls it, a token move from an add
 signed for this call, a role attribute that checks membership but not authorization. These rules
 cover those cases. They reuse stellar_native's masker, function splitter and helper resolution;
 code-generator templates (.rs.hbs) are rendered by union first, so every branch is judged. It is
-bounded lexical evidence, not a compiler. Every scan is linear in the source: what the rules ask
-of a text again and again (matching brackets, statement ends, call sites, bindings) is found once,
-so a hostile file cannot stall the audit.
+bounded lexical evidence, not a compiler. The cost grows linearly with the source, so a hostile
+file cannot stall the audit: what the rules ask of a text again and again (matching brackets,
+statement ends, call sites, words, bindings, comparisons) is found once per text, a set of names
+is looked up in those words rather than built into a regex, and what may repeat per function
+(parameters, authorization sites, payments, helpers in scope) is capped by the bounds below.
 """
 
 from __future__ import annotations
@@ -17,13 +19,14 @@ from __future__ import annotations
 import heapq
 import re
 from bisect import bisect_left, bisect_right
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import cached_property
 from itertools import islice
 
 from ..models import EvidenceGrade, Finding, FindingKind, Severity
 from .consolidate import stable_id
-from .stellar_native import _AUTH, _MUTATION, _NOT_NEWLINE, _rust_code, _rust_functions
+from .stellar_native import _AUTH, _CHAR, _LEXEME, _MUTATION, _NOT_NEWLINE, _rust_code, _rust_functions
 
 #: Handlebars block tags ({{#if}}, {{else}}, {{/each}}) and partials. Union rendering blanks them
 #: and keeps every branch body; comments are found by _template_comments.
@@ -36,7 +39,7 @@ _TEMPLATE_EXPR = re.compile(r'\{\{\{?[^{}]*\}?\}\}')
 #: impls export every fn; inherent impls their pub fns.
 _IMPL_ATTR = re.compile(r'#\[\s*contractimpl\b[^\[\]]*\]')
 _ATTRS = re.compile(r'\s*(?:#\[[^\]]*\]\s*)*')
-_IMPL_HEAD = re.compile(r'impl\b([^{;]*)\{')
+_IMPL_WORD = re.compile(r'impl\b')
 _STORE_READ = re.compile(r'storage\s*\(\s*\)\s*\.\s*(?:instance|persistent|temporary)\s*\(\s*\)\s*\.\s*get\b')
 _STORE_WRITE = re.compile(r'storage\s*\(\s*\)\s*\.\s*(?:instance|persistent|temporary)\s*\(\s*\)\s*'
                           r'\.\s*(?:set|remove|update|try_update)\b')
@@ -104,6 +107,7 @@ _FAILS = re.compile(r'\bpanic|\bErr\s*\(|\bassert|\bunreachable\s*!')
 _ERR_OR_PANIC = re.compile(r'\bErr\s*\(|panic')
 _AUTH_FOR_ARGS = re.compile(r'\.\s*require_auth_for_args\s*\(')
 _PLAIN_AUTH = re.compile(r'\.\s*require_auth\s*\(\s*\)')
+_NAMED_AUTH = re.compile(r'(?<![\w.])([A-Za-z_]\w*)\s*\.\s*require_auth(?:_for_args)?\s*\(')
 _SELF_LETS = re.compile(r'\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=;]{1,256})?=\s*' + _SELF.pattern)
 #: Deny-list shapes in an account's context check.
 _DENY_NE = re.compile(r'\b(?:fn_name|contract)\s*!=')
@@ -131,7 +135,11 @@ _LOWER_BOUND = re.compile(r'\b(?=\w*amount)\w+\s*(?:<=?)\s*0\b|\b0\s*>=?\s*\w*am
 #: A policy documented or named as a per-transaction cap that runs beside a spending-limit policy.
 _PER_TX_DOC = re.compile(r'(?i)\bper[\s_-]?(?:transaction|tx)\b|\btx[\s_-]?max\b|\bmax(?:imum)?[\s_-]?per[\s_-]?(?:tx|transaction)\b')
 _PER_TX_NAME = re.compile(r'(?i)tx[_-]?max|per[_-]?tx|per[_-]?transaction')
-_SPENDING_POLICY_DOC = re.compile(r'(?i)spending[\s_-]?limit[\s_-]?polic')
+#: A comment that pairs this policy with a spending-limit policy: "deployed alongside the
+#: SpendingLimitPolicy", "used together with a spending limit policy".
+_PAIRED_WITH = re.compile(r'(?i)\b(?:alongside|together\s+with|paired\s+with|pairs?\s+with|used\s+with|works?\s+with|'
+                          r'combined\s+with|in\s+addition\s+to|next\s+to|besides?|complements?|on\s+top\s+of)\b')
+_SPENDING_POLICY_NAME = re.compile(r'(?i)\b\w*spending[\s_-]?limit[\s_-]?polic\w*')
 _SELF_ADMIN_EXTRA = re.compile(r'(?i)signer|threshold|verify|admin|guardian|require_auth')
 _OK_UNIT = re.compile(r'\bOk\s*\(\s*\(\s*\)\s*\)')
 _MULTISIG = re.compile(r'(?i)threshold|all_signed|weight|signers')
@@ -147,12 +155,19 @@ _STATE_LET = re.compile(r'\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\b[^=;]{0,256}=\s*')
 #: A binding whose value may be a stored address: `let x = ..`, `if let Some(x) = ..`, and a
 #: let-else `let Some(x) = .. else { .. }`.
 _STORED_LET = re.compile(r'\b(?:if\s+let\s+Some\s*\(\s*|let\s+Some\s*\(\s*|let\s+(?:mut\s+)?)([A-Za-z_]\w*)\b[^;=]{0,256}=\s*')
-_SOME_ARM = re.compile(r'\bSome\s*\(\s*([A-Za-z_]\w*)\s*\)\s*=>')
+#: A match arm's pattern `Some(x)`, and the arrow that ends a pattern.
+_SOME_ARM_PATTERN = re.compile(r'\s*Some\s*\(\s*([A-Za-z_]\w*)\s*\)\s*')
+_ARROW = re.compile(r'=>')
+#: A read that falls back to a default (`unwrap_or(Vec::new(&e))`): a stored list may be empty.
+_DEFAULTED = re.compile(r'\bunwrap_or(?:_default|_else)?\s*\(')
+_PANICS = re.compile(r'\bpanic|\bunreachable\s*!')
 _LOOP_BINDING = re.compile(r'(?:\(([^)]{0,256})\)|([A-Za-z_]\w*))\s+in\s+(?:&\s*)?(?:mut\s+)?')
 _ALIAS_LET = re.compile(r'\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=;]{1,256})?=\s*(?:&\s*)?([A-Za-z_]\w*)'
                         r'((?:\s*\.\s*(?:into|clone|to_bytes|to_array|to_owned)\s*\(\s*\))*)\s*;')
 _ALIAS_FOR = re.compile(r'\bfor\s+(?:\(([^)]{0,256})\)|([A-Za-z_]\w*))\s+in\s+(?:&\s*)?([A-Za-z_]\w*)\b')
 _STRUCT_LET = re.compile(r'\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=;]{1,256})?=\s*[A-Z]\w*(?:\s*::\s*\w+)*\s*\{')
+#: get(&Key(..)) or has(&Key(..)): the key family a record is loaded by (group 1).
+_LOADS = re.compile(r'\.\s*(?:get|has)\s*(?:::<[^>]{0,256}>\s*)?\(\s*&\s*((?:\w+\s*::\s*)?\w+)\s*\(')
 _SET_KEY = re.compile(r'\.\s*set\s*\(\s*&\s*(?:\w+\s*::\s*)?([A-Za-z_]\w*)')
 _GET_KEY = re.compile(r'\.\s*get\s*(?:::<[^>]{0,256}>\s*)?\(\s*&\s*(\w+)(?:\s*::\s*([A-Za-z_]\w*))?')
 _DECIDES = re.compile(r'[!=]=|assert|panic')
@@ -166,7 +181,10 @@ _ROOT_AT = re.compile(r'\s*(?:\(\s*)?(?:&\s*)?([A-Za-z_]\w*)')
 _FIELD_AT = re.compile(r'\s*\.\s*([A-Za-z_]\w*)')
 _ASSERT_EQ = re.compile(r'assert_(?:eq|ne)!\s*\(')
 _EQ_OP = re.compile(r'(?=[!=]=)')
+_EQEQ = re.compile(r'==')
 _CMP_OP = re.compile(r'[<>]')
+_SIGN_METHOD = re.compile(r'\.\s*(?:is_positive|is_negative|signum)')
+_POSITIVE_ANY = re.compile(r'(?:<=?|>=?)\s*[01]\b|\b[01]\s*(?:<=?|>=?)|is_positive|is_negative')
 _OPERAND = re.compile(r'[A-Za-z_][\w.]{0,256}(?:\([^;{})]{0,256}\))?')
 _LOWER_SEGMENT = re.compile(r'[a-z_][a-z0-9_]*')
 _TYPE_SEGMENT = re.compile(r'[A-Z]\w*')
@@ -175,7 +193,7 @@ _NAME_START = re.compile(r'[A-Za-z_]')
 _EQ_CLASS = frozenset('&.:()_')
 
 #: Bounds that keep each rule linear on hostile input; real contracts stay far below them.
-#: Parts of an argument list that are read.
+#: Parts of an argument list (and parameters of a signature) that are read.
 _MAX_ARGS = 64
 #: Characters of one argument kept; a longer one is cut and ends in '…', so it never reads as a
 #: plain variable.
@@ -216,7 +234,7 @@ _OPENER = {')': '(', ']': '[', '}': '{'}
 
 class _Text:
     """Positions in one text, found once and shared by every rule that reads it: brackets paired
-    per type (as _close counts them), ( and [ paired together backwards (as _receiver walks), commas
+    per type (each type counted on its own), ( and [ paired together backwards (as _receiver walks), commas
     by nesting depth, and the ; { } that end statements and headers. Lookups are dictionary reads
     and bisects, so nested or unclosed brackets cost linear time instead of a scan per call."""
 
@@ -363,24 +381,36 @@ class _Text:
     def newlines(self) -> list[int]:
         return [m.start() for m in re.finditer('\n', self.text)]
 
+    @cached_property
+    def arrows(self) -> dict[int, list[int]]:
+        """Nesting depth -> positions of the `=>` (match arms) at that depth."""
+        out: dict[int, list[int]] = {}
+        for m in _ARROW.finditer(self.text):
+            out.setdefault(self.depth_at(m.start()), []).append(m.start())
+        return out
 
-#: Indexes by the id of their text (the text is kept, so the id stays its own).
-_TEXTS: dict[int, tuple[str, _Text]] = {}
+
+#: Indexes by the id of their text (the text is kept, so the id stays its own), least recently
+#: used first.
+_TEXTS: OrderedDict[int, tuple[str, _Text]] = OrderedDict()
 _cached_chars = 0
 
 
 def _text(text: str) -> _Text:
-    """The index of ``text``, built on first use and kept while the cache has room."""
+    """The index of ``text``, built on first use. Past _CACHE_CHARS the least recently used
+    indexes are dropped one by one, so the texts a rule pass is reading stay indexed."""
     global _cached_chars
-    hit = _TEXTS.get(id(text))
+    key = id(text)
+    hit = _TEXTS.get(key)
     if hit is not None and hit[0] is text:
+        _TEXTS.move_to_end(key)
         return hit[1]
-    if _cached_chars > _CACHE_CHARS:
-        _TEXTS.clear()
-        _cached_chars = 0
     index = _Text(text)
-    _TEXTS[id(text)] = (text, index)
+    _TEXTS[key] = (text, index)
     _cached_chars += len(text) + 64
+    while _cached_chars > _CACHE_CHARS and len(_TEXTS) > 1:
+        _, (old, _) = _TEXTS.popitem(last=False)
+        _cached_chars -= len(old) + 64
     return index
 
 
@@ -604,11 +634,6 @@ def _scan_close(code: str, i: int) -> int:
     return len(code)
 
 
-def _close(code: str, i: int) -> int:
-    """Index just past the bracket that closes the one at ``i``."""
-    return _text(code).end(i)
-
-
 def _split(text: str, angle: bool = False) -> list[str]:
     """Top-level comma split; ``angle`` also nests <...> (types, not expressions)."""
     parts, depth, cur = [], 0, []
@@ -637,38 +662,171 @@ def _root(arg: str) -> str:
     return m.group(1) if m else ''
 
 
-def _bindings(body: str) -> tuple[list[tuple[str, str]], list[tuple[frozenset, str]]]:
-    """`let p = name[.into()|.clone()|..];` pairs and `for (pattern) in name` loops of a body."""
+def _bindings(body: str) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """The alias graph of a body: `let p = name[.into()|.clone()|..];` and `for (pattern) in name`
+    give edges name -> p; returned forwards (source -> targets) and backwards."""
     def compute():
-        lets = [(m.group(1), m.group(2)) for m in _ALIAS_LET.finditer(body)]
-        loops = [(frozenset(re.findall(r'[A-Za-z_]\w*', m.group(1) or m.group(2))), m.group(3)) for m in _ALIAS_FOR.finditer(body)]
-        return lets, loops
+        forward: dict[str, set[str]] = {}
+        backward: dict[str, set[str]] = {}
+
+        def edge(source, target):
+            forward.setdefault(source, set()).add(target)
+            backward.setdefault(target, set()).add(source)
+        for m in _ALIAS_LET.finditer(body):
+            edge(m.group(2), m.group(1))
+        for m in _ALIAS_FOR.finditer(body):
+            for target in re.findall(r'[A-Za-z_]\w*', m.group(1) or m.group(2)):
+                edge(m.group(3), target)
+        return forward, backward
     return _memo(body, 'bindings', compute)
 
 
-def _aliases(body: str, names: set[str]) -> set[str]:
+def _reach_names(graph: dict[str, set[str]], names) -> frozenset:
+    """``names`` and what the graph reaches from them in at most three steps."""
+    out, frontier = set(names), set(names)
+    for _ in range(3):
+        frontier = {t for n in frontier for t in graph.get(n, ()) if t not in out}
+        if not frontier:
+            break
+        out |= frontier
+    return frozenset(out)
+
+
+def _aliases(body: str, names) -> frozenset:
     """``names`` plus `let p = name[.into()|.clone()|.to_bytes()|.to_array()]` bindings and loop
-    variables over them."""
+    variables over them (three steps deep)."""
     key = ('aliases', frozenset(names))
     memo = _text(body).memo
-    if key in memo:
-        return set(memo[key])
-    lets, loops = _bindings(body)
-    out = set(names)
-    for _ in range(3):
-        grew = {target for target, source in lets if source in out}
-        for targets, source in loops:
-            if source in out:
-                grew |= targets
-        if grew <= out:
-            break
-        out |= grew
-    memo[key] = frozenset(out)
+    if key not in memo:
+        memo[key] = _reach_names(_bindings(body)[0], key[1])
+    return memo[key]
+
+
+def _kin(body: str, name: str) -> frozenset:
+    """Names that may hold the same value as ``name``: its aliases, what it was bound from, and
+    their other aliases (`let a = from.clone(); let b = from.clone()` makes a, b and from kin)."""
+    key = ('kin', name)
+    memo = _text(body).memo
+    if key not in memo:
+        memo[key] = _aliases(body, _reach_names(_bindings(body)[1], {name}))
+    return memo[key]
+
+
+#: A word that stands for a variable: not a field or method name (`y` in `x.y`).
+_FREE_WORD = re.compile(r'(?<![\w.])\w+')
+
+
+def _uses(text: str, names) -> bool:
+    """One of ``names`` occurs in ``text`` as a variable. One pass over the words of the text,
+    however many names there are."""
+    return bool(names) and not frozenset(names).isdisjoint(_FREE_WORD.findall(text))
+
+
+def _body_uses(body: str, names) -> bool:
+    """_uses for a function body, whose words are read once."""
+    return not _memo(body, 'free-words', lambda: frozenset(_FREE_WORD.findall(body))).isdisjoint(names)
+
+
+def _word_positions(body: str, names) -> list[int]:
+    """Sorted starts of the words of ``body`` that are one of ``names`` used as a variable."""
+    index = _memo(body, 'word-positions', lambda: _positions_by_word(body))
+    return sorted(p for n in names for p in index.get(n, ()))
+
+
+def _positions_by_word(body: str) -> dict[str, list[int]]:
+    out: dict[str, list[int]] = {}
+    for m in _FREE_WORD.finditer(body):
+        out.setdefault(m.group(), []).append(m.start())
     return out
 
 
-def _uses(text: str, names: set[str]) -> bool:
-    return any(re.search(r'(?<![\w.])' + re.escape(n) + r'\b', text) for n in names)
+def _word_before(t: str, j: int) -> tuple[int, str]:
+    """The word that ends at ``j`` (after skipping whitespace back), as (start, word)."""
+    while j > 0 and t[j - 1].isspace():
+        j -= 1
+    k = j
+    while k > 0 and _word(t[k - 1]):
+        k -= 1
+    return k, t[k:j]
+
+
+def _word_after(t: str, i: int) -> tuple[int, str]:
+    """The word that starts at ``i``, as (end, word)."""
+    e = i
+    while e < len(t) and _word(t[e]):
+        e += 1
+    return e, t[i:e]
+
+
+def _self_compares(body: str, names) -> list[tuple[int, int]]:
+    """Spans of `[x.]contract == <self>` and `<self> == [x.]contract`, where <self> is
+    env.current_contract_address() or a word of ``names``, as the alternation
+    `\\b(?:\\w+\\s*\\.\\s*)?contract\\s*==\\s*(?:&\\s*)?(?:self|names)(?!\\w)|(?:self|names)\\s*==\\s*(?:&\\s*)?(?:\\w+\\s*\\.\\s*)?contract\\b`
+    finds them (left to right, without overlap), read outward from each `==` so that the cost
+    does not grow with the number of names."""
+    t, n, out, last = body, len(body), [], 0
+    tx = _text(body)
+    self_starts, self_ends = tx.found(_SELF)
+    self_by_end = dict(zip(self_ends, self_starts))
+    for m in _EQEQ.finditer(t):
+        q = m.start()
+        if q < last:
+            continue
+        k = q + 2
+        while k < n and t[k].isspace():
+            k += 1
+        amp = k
+        if amp < n and t[amp] == '&':
+            amp += 1
+            while amp < n and t[amp].isspace():
+                amp += 1
+        left_start, left = _word_before(t, q)
+        # contract == <self>
+        if left == 'contract':
+            start = left_start
+            d = start
+            while d > 0 and t[d - 1].isspace():
+                d -= 1
+            if d > 0 and t[d - 1] == '.':
+                p, prefix = _word_before(t, d - 1)
+                if prefix and p >= last:
+                    start = p
+            if start >= last:
+                own = _SELF.match(t, amp)
+                if own and not (own.end() < n and _word(t[own.end()])):
+                    out.append((start, own.end()))
+                    last = own.end()
+                    continue
+                e, word = _word_after(t, amp)
+                if word in names and _NAME_START.match(word):
+                    out.append((start, e))
+                    last = e
+                    continue
+        # <self> == contract
+        j = q
+        while j > 0 and t[j - 1].isspace():
+            j -= 1
+        start = self_by_end.get(j, -1)
+        if start < 0 and left in names and _NAME_START.match(left):
+            start = left_start
+        if start < last:
+            continue
+        e, word = _word_after(t, amp)
+        if word != 'contract':
+            d = e
+            while d < n and t[d].isspace():
+                d += 1
+            if not (word and d < n and t[d] == '.'):
+                continue
+            d += 1
+            while d < n and t[d].isspace():
+                d += 1
+            e, word = _word_after(t, d)
+            if word != 'contract':
+                continue
+        out.append((start, e))
+        last = e
+    return out
 
 
 def _receiver(code: str, dot: int) -> str:
@@ -700,9 +858,9 @@ def _receiver(code: str, dot: int) -> str:
     return code[start:dot]
 
 
-def _auth_roots(text: str) -> list[tuple[str, bool]]:
+def _auth_roots(text: str) -> list[tuple[str, bool, int]]:
     """For each require_auth[_for_args] call: the first link of the `a.b.c` chain it is called on,
-    and whether the character just before that link is a word character or a '.'."""
+    whether the character just before that link is a word character or a '.', and where it is."""
     def compute():
         out = []
         for m in _AUTH.finditer(text):
@@ -725,7 +883,7 @@ def _auth_roots(text: str) -> list[tuple[str, bool]]:
                 else:
                     break
             if root and _NAME_START.match(root):
-                out.append((root, at > 0 and (_word(text[at - 1]) or text[at - 1] == '.')))
+                out.append((root, at > 0 and (_word(text[at - 1]) or text[at - 1] == '.'), at))
         return out
     return _memo(text, 'auth_roots', compute)
 
@@ -785,6 +943,28 @@ def _headed(text: str, head: re.Pattern, end: int | None = None):
         pos = stop + 1
 
 
+def _match_arms(body: str, brace: int) -> list[tuple[str, int, int]]:
+    """The top-level arms of the match block that opens at ``brace``, as (pattern, start and end of
+    the arm's expression), at most _MAX_ARGS. An arm ends at its block's close or at the next
+    top-level comma."""
+    tx = _text(body)
+    close, level = tx.end(brace) - 1, tx.depth.get(brace, 0) + 1
+    arrows, commas = tx.arrows.get(level, []), tx.commas.get(level, [])
+    out, edge = [], brace + 1
+    for q in islice(arrows[bisect_right(arrows, brace):bisect_left(arrows, close)], _MAX_ARGS):
+        i = q + 2
+        while i < close and body[i].isspace():
+            i += 1
+        if i < close and body[i] == '{':
+            end = tx.end(i)
+        else:
+            c = bisect_left(commas, i)
+            end = commas[c] if c < len(commas) and commas[c] < close else close
+        out.append((body[edge:q].strip().lstrip(','), q + 2, end))
+        edge = end
+    return out
+
+
 def _loops(body: str) -> list[tuple[int, int]]:
     """(match end, closing index) of every loop body or iterator closure: for/while/loop blocks and
     .for_each/.all/.any/.map calls (a call inside a loop header is part of that header)."""
@@ -816,7 +996,38 @@ def _loops(body: str) -> list[tuple[int, int]]:
 
 def _in_loop(body: str, pos: int) -> bool:
     """``pos`` lies inside a for/while/loop body or an iterator closure (for_each, all, map)."""
-    return any(e <= pos < c for e, c in _loops(body))
+    def cover():  # the loops' spans merged, so a lookup is a bisect
+        merged: list[list[int]] = []
+        for e, c in sorted(_loops(body)):
+            if merged and e <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], c)
+            else:
+                merged.append([e, c])
+        return [e for e, _ in merged], [c for _, c in merged]
+    starts, ends = _memo(body, 'loop-cover', cover)
+    k = bisect_right(starts, pos) - 1
+    return k >= 0 and pos < ends[k]
+
+
+def _approves_unlisted(body: str) -> tuple[int, str] | None:
+    """Where a check over the contexts approves what it does not list: `if fn_name != x { continue
+    / Ok }` with no rejection in that branch, or `match fn_name { .., _ => {} }` (offset, snippet)."""
+    tx = _text(body)
+    for start, head_end, brace in _headed(body, _IF_HEAD):
+        if not tx.has(_DENY_NE, head_end, brace):
+            continue
+        close = tx.end(brace)
+        if tx.has(_CONTINUE_OR_OK, brace, close) and not tx.has(_ERR_OR_PANIC, brace, close):
+            return start, body[start:brace + 1]
+    for start, head_end, brace in _headed(body, _MATCH_HEAD):
+        if not _DENY_WORD.search(body, head_end, brace) or _CONTEXT_WORD.search(body, head_end, brace):
+            continue
+        close = tx.end(brace)
+        k = tx.first(_WILD_APPROVE, brace, close)
+        if k >= 0:
+            starts, ends = tx.found(_WILD_APPROVE)
+            return start, body[start:brace + 1] + ' .. ' + body[starts[k]:ends[k]]
+    return None
 
 
 def _fields(body: str) -> dict[tuple[str, str], str]:
@@ -845,11 +1056,12 @@ def _typed_lets(body: str) -> dict[str, list[tuple[str | None, str]]]:
     return _memo(body, 'typed_lets', compute)
 
 
-def _drop_to_semi(text: str, head: re.Pattern) -> str:
-    """re.sub(head + r'[^;]*;', '', text), cutting from each head to the next ';'."""
+def _drop_to_semi(text: str, head: re.Pattern, names=None) -> str:
+    """re.sub(head + r'[^;]*;', '', text), cutting from each head to the next ';'; with ``names``,
+    only the heads whose first group is one of them."""
     out, last = [], 0
     for m in head.finditer(text):
-        if m.start() < last:
+        if m.start() < last or (names is not None and m.group(1) not in names):
             continue
         semi = text.find(';', m.end())
         if semi < 0:
@@ -992,7 +1204,14 @@ class _Fn:
 
     @cached_property
     def sites(self) -> list[_Site]:
-        return _text(self.body).sites
+        # Read without the body's bracket index, which the call graph does not need.
+        return _call_sites(self.body)
+
+    @cached_property
+    def site_roots(self) -> list[tuple[str, ...]]:
+        """Per call site (as ``sites``), the variable each argument passes ('' for none), read once."""
+        tx = _text(self.body)
+        return [tuple(_root(a) for a in tx.args(s.paren)) for s in self.sites]
 
     @cached_property
     def called(self) -> list[str]:
@@ -1005,7 +1224,7 @@ def _params(signature: str) -> dict:
     if not m:
         return {}
     out = {}
-    for part in _split(signature[m.end():_scan_close(signature, m.end() - 1) - 1], angle=True):
+    for part in _split(signature[m.end():_scan_close(signature, m.end() - 1) - 1], angle=True)[:_MAX_ARGS]:
         pm = re.match(r'(?:mut\s+)?([A-Za-z_]\w*)\s*:\s*(.+)$', part, re.S)
         if pm:
             out[pm.group(1)] = ' '.join(pm.group(2).split())
@@ -1013,17 +1232,22 @@ def _params(signature: str) -> dict:
 
 
 def _impls(code: str) -> list[tuple[int, int, str]]:
-    """(the impl's '{', its closing index, its header) of each #[contractimpl] block."""
-    out, pos = [], 0
+    """(the impl's '{', its closing index, its header) of each #[contractimpl] block: the header
+    `impl ..` runs to the first '{' or ';' after it, found by a bisect."""
+    tx, out, pos = _text(code), [], 0
     while (m := _IMPL_ATTR.search(code, pos)):
         run = _ATTRS.match(code, m.end()).end()
-        head = _IMPL_HEAD.match(code, run)
-        if head:
-            out.append((head.end() - 1, _close(code, head.end() - 1), head.group(1).strip()))
-            pos = head.end()
-        else:
+        if not _IMPL_WORD.match(code, run):
             # Every other contractimpl attribute of this run is followed by the same text.
             pos = max(run, m.end())
+            continue
+        stop = tx.next_stop(run + 4)
+        if stop >= tx.n:
+            break
+        if code[stop] == '{':
+            out.append((stop, tx.end(stop), code[run + 4:stop].strip()))
+        # A header that ends in ';' ends every later attribute's header before that ';' too.
+        pos = stop + 1
     return out
 
 
@@ -1075,6 +1299,7 @@ class _Crate:
             self.local.setdefault((f.file, f.name), []).append(f)
         self.store = self._names(self._closure(lambda f: bool(_STORE_READ.search(f.body))))
         self._stored_memo: dict = {}
+        self._receiver_memo: dict = {}
         self._compared_memo: dict = {}
         self.strong = self._closure(lambda f: self._strong_receiver(f.body))
         self.auth = self._closure(lambda f: bool(_AUTH.search(f.body)))
@@ -1129,11 +1354,10 @@ class _Crate:
         if key in self._bound:
             return self._bound[key]
         out = []
-        for s in fn.sites:
+        for s, roots in zip(fn.sites, fn.site_roots):
             helpers = [h for h in self.resolve(s.name, fn.file) if h is not fn] if s.crate else []
-            if not helpers:
+            if not helpers or names.isdisjoint(roots):
                 continue
-            roots = [_root(a) for a in _args(fn.body, s.paren)]
             for h in helpers:
                 params = list(h.params)
                 if params and params[0] in {'self'}:
@@ -1146,10 +1370,15 @@ class _Crate:
 
     def _strong_receiver(self, body: str) -> bool:
         """require_auth on the contract itself, on a stored address, or on a store helper's result."""
+        if id(body) not in self._receiver_memo:
+            self._receiver_memo[id(body)] = bool(_AUTH.search(body)) and self._stored_receiver(body)
+        return self._receiver_memo[id(body)]
+
+    def _stored_receiver(self, body: str) -> bool:
         tx = _text(body)
-        # x.require_auth() on a variable bound to a stored address (`let`, let-else, a match arm on
-        # a store read, a loop over a stored list).
-        if any(self._stored(body, root) for root, _ in _auth_roots(body)):
+        # x.require_auth() on a variable bound (where it is called) to a stored address: `let`,
+        # let-else, a match arm on a store read whose other arms reject, a loop over a stored list.
+        if any(self._stored(body, root, at) for root, _, at in _auth_roots(body)):
             return True
         statements: dict[int, int] = {}
         for m in _AUTH.finditer(body):
@@ -1166,35 +1395,41 @@ class _Crate:
             if k < len(heads) and sites[k].paren < last and sites[k].name in self.store:
                 return True
             root = _ROOT_AT.match(body, start, last)
-            if root and self._stored(body, root.group(1)):
+            if root and self._stored(body, root.group(1), start):
                 return True
         return False
 
-    def _stored_bindings(self, body: str) -> tuple[dict, dict]:
-        """Where a variable's value comes from: let bindings (to the next ';'), `Some(x) =>` arms of a
-        match (its scrutinee), and loop variables (the iterated expression and its variable)."""
+    def _stored_bindings(self, body: str) -> dict[str, list[tuple[int, str, int, int, str]]]:
+        """Where a variable's value comes from, per variable in source order, as (where it is bound,
+        kind, value start, value end, iterated variable): let bindings (the value runs to the next
+        ';'), `Some(x) =>` arms of a match whose other arms all reject (the scrutinee), and loop
+        variables (the iterated expression and the variable it names)."""
         def compute():
-            tx, values, loops = _text(body), {}, {}
+            tx, out = _text(body), {}
             for m in _STORED_LET.finditer(body):
-                values.setdefault(m.group(1), []).append((m.end(), tx.next_semi(m.end())))
+                out.setdefault(m.group(1), []).append((m.start(), 'let', m.end(), tx.next_semi(m.end()), ''))
             for start, head_end, brace in _headed(body, _MATCH_HEAD):
-                level, close = tx.depth[brace] + 1, tx.end(brace)
-                starts, _ = tx.found(_SOME_ARM)
-                first = bisect_left(starts, brace)
-                for i in range(first, min(len(starts), first + _MAX_ARGS)):
-                    if starts[i] >= close:
-                        break
-                    if tx.depth_at(starts[i]) == level:
-                        arm = _SOME_ARM.match(body, starts[i])
-                        values.setdefault(arm.group(1), []).append((head_end, brace))
+                some, others = [], []
+                for pattern, a, b in _match_arms(body, brace):
+                    arm = _SOME_ARM_PATTERN.fullmatch(pattern)
+                    if arm:
+                        some.append((a, arm.group(1)))
+                    else:
+                        others.append(tx.has(_REJECT, a, b))
+                # `None => {}` lets the call go on without the stored address's authorization.
+                if others and all(others):
+                    for a, var in some:
+                        out.setdefault(var, []).append((a, 'arm', head_end, brace, ''))
             for start, head_end, brace in _headed(body, _FOR_HEAD):
                 b = _LOOP_BINDING.match(body, head_end, brace)
                 if not b:
                     continue
                 source = _NAME_AT.match(body, b.end(), brace)
                 for var in re.findall(r'[A-Za-z_]\w*', b.group(1) or b.group(2)):
-                    loops.setdefault(var, []).append((b.end(), brace, source.group() if source else ''))
-            return values, loops
+                    out.setdefault(var, []).append((start, 'loop', b.end(), brace, source.group() if source else ''))
+            for bindings in out.values():
+                bindings.sort()
+            return out
         return _memo(body, 'stored_bindings', compute)
 
     def _stored_value(self, body: str, a: int, b: int) -> bool:
@@ -1204,22 +1439,41 @@ class _Crate:
         call = _HEAD_CALL.match(body, a, b)
         return bool(call and call.group(1) in self.store)
 
-    def _stored(self, body: str, var: str, depth: int = 0) -> bool:
-        """``var`` is bound to a storage read, a store helper's result or the contract address,
-        directly, through a let-else or a match arm, or as the variable of a loop over one."""
-        key = (id(body), var, depth)
+    def _stored(self, body: str, var: str, at: int | None = None, depth: int = 0) -> bool:
+        """``var`` is bound to a storage read, a store helper's result or the contract address:
+        directly, through a let-else, a rejecting match or a copy (`let a = admin.clone()`), or as
+        the variable of a loop over a stored list that cannot default to empty. With ``at``, the
+        binding in effect there (the last one before it) decides; a later shadowing binding does
+        not stand for an earlier one."""
+        key = (id(body), var, at, depth)
         if key not in self._stored_memo:
-            values, loops = self._stored_bindings(body)
-            self._stored_memo[key] = (
-                any(self._stored_value(body, a, b) for a, b in values.get(var, ()))
-                or any(self._stored_value(body, a, b) or (depth < 1 and src and src != var and self._stored(body, src, depth + 1))
-                       for a, b, src in loops.get(var, ())))
+            bindings = self._stored_bindings(body).get(var, [])
+            if at is not None:
+                bindings = bindings[max(bisect_left(bindings, (at,)) - 1, 0):bisect_left(bindings, (at,))]
+            self._stored_memo[key] = any(self._binding_stored(body, b, depth) for b in bindings)
         return self._stored_memo[key]
 
-    def _stored_side(self, body: str, expr: str) -> bool:
+    def _binding_stored(self, body: str, binding: tuple[int, str, int, int, str], depth: int) -> bool:
+        where, kind, a, b, source = binding
+        if kind != 'loop':
+            if self._stored_value(body, a, b):
+                return True
+            # A copy (`let admin = admin.clone();`): the binding in effect before this one decides.
+            copied = _root(body[a:min(b, a + _ARG_TEXT)]) if kind == 'let' else ''
+            return bool(depth < 2 and copied and self._stored(body, copied, where, depth + 1))
+        stored = self._stored_value(body, a, b) or (depth < 1 and source and self._stored(body, source, where, depth + 1))
+        if not stored:
+            return False
+        # A list read with a default (`unwrap_or(Vec::new(&e))`) may be empty: then nobody authorizes.
+        values = [(a, b)] + [(va, vb) for _, k, va, vb, _ in self._stored_bindings(body).get(source, [])
+                             if k == 'let' and va < where][-1:]
+        tx = _text(body)
+        return not any(tx.has(_DEFAULTED, va, vb) and not tx.has(_PANICS, va, vb) for va, vb in values)
+
+    def _stored_side(self, body: str, expr: str, at: int | None = None) -> bool:
         call = _HEAD_CALL.match(expr)
         root = _root(expr)
-        return bool(_STORE_READ.search(expr) or (call and call.group(1) in self.store) or (root and self._stored(body, root)))
+        return bool(_STORE_READ.search(expr) or (call and call.group(1) in self.store) or (root and self._stored(body, root, at)))
 
     def compared(self, body: str) -> set[str]:
         """Variables compared (==, !=, assert_eq!, assert_ne!) with a stored address."""
@@ -1229,13 +1483,13 @@ class _Crate:
             for m in _ASSERT_EQ.finditer(body):
                 parts = _args(body, m.end() - 1)[:2]
                 if len(parts) == 2:
-                    pairs.append((parts[0], parts[1]))
+                    pairs.append((parts[0], parts[1], m.start()))
             out = set()
-            for a, b in pairs:
+            for a, b, at in pairs:
                 ra, rb = _root(a), _root(b)
-                if ra and ra not in out and self._stored_side(body, b):
+                if ra and ra not in out and self._stored_side(body, b, at):
                     out.add(ra)
-                if rb and rb not in out and self._stored_side(body, a):
+                if rb and rb not in out and self._stored_side(body, a, at):
                     out.add(rb)
             self._compared_memo[key] = out
         return self._compared_memo[key]
@@ -1278,10 +1532,10 @@ def _eq_operand(t: str, i: int, step: int, lo: int) -> int:
         return i
 
 
-def _eq_pairs(body: str) -> list[tuple[str, str]]:
+def _eq_pairs(body: str) -> list[tuple[str, str, int]]:
     """The operands of each `==` / `!=` comparison, as `([&\\w.:()]+?)\\s*[!=]=\\s*([&\\w.:()]+)`
-    pairs them (left to right, without overlap), read outward from each operator; a turbofish
-    (`get::<K, Address>(&key)`) stays part of its operand."""
+    pairs them (left to right, without overlap), read outward from each operator, with where the
+    comparison starts; a turbofish (`get::<K, Address>(&key)`) stays part of its operand."""
     t, out, last = body, [], 0
     for m in _EQ_OP.finditer(t):
         i = m.start()
@@ -1299,7 +1553,7 @@ def _eq_pairs(body: str) -> list[tuple[str, str]]:
         e = _eq_operand(t, k, 1, last)
         if e == k:
             continue
-        out.append((t[r:j], t[k:e]))
+        out.append((t[r:j], t[k:e], r))
         last = e
     return out
 
@@ -1443,8 +1697,8 @@ class SorobanRules:
             return True
         if any(root in names and (var, f) in fields for (var, f), root in _fields(body).items()):
             return True
-        for s in fn.sites:
-            if not any(_root(a) in names for a in _args(body, s.paren)):
+        for s, roots in zip(fn.sites, fn.site_roots):
+            if names.isdisjoint(roots):
                 continue
             if s.segment and _LOWER_SEGMENT.fullmatch(s.segment) and _LOWER_START.match(s.name):
                 return True  # a module function such as spending_limit::enforce(..., &smart_account)
@@ -1519,9 +1773,9 @@ class SorobanRules:
         callers = {p for p, t in fn.params.items() if not re.search(r'\bEnv\b', t) and p != 'self'}
         if self.crate.calls(fn, self.crate.auth) or _WEAK_ATTR.search(fn.attrs):
             return True
-        for s in fn.sites:
+        for s, roots in zip(fn.sites, fn.site_roots):
             if s.name in self.crate.store or (s.segment and _ROLE_LIBRARY.search(s.segment)):
-                if any(_root(a) in callers for a in _args(fn.body, s.paren)):
+                if not callers.isdisjoint(roots):
                     return True
         return bool(self.crate.compared(fn.body) & callers)
 
@@ -1559,9 +1813,9 @@ class SorobanRules:
             self.library_auth.append(f"{fn.file}:{fn.line}")
             return
         delegated = any(self._has(f, _DELEGATE) for f in scope)
-        payload_read = _uses(fn.body, _aliases(fn.body, {payload}))
+        payload_read = _body_uses(fn.body, _aliases(fn.body, {payload}))
         signer_names = _aliases(fn.body, {signature})
-        auths = any(root not in signer_names for f in scope for root, _ in _auth_roots(f.body))
+        auths = any(root not in signer_names for f in scope for root, _, _ in _auth_roots(f.body))
         if not payload_read and not auths and not delegated:
             self._emit("soroban-check-auth-unauthenticated", Severity.CRITICAL,
                        "The custom account's __check_auth authenticates nobody",
@@ -1578,7 +1832,7 @@ class SorobanRules:
         handed = [(a, b) for s in fn.sites if s.crate and self.crate.resolve(s.name, fn.file)
                   for a, b in tx.spans(s.paren) if _root(tx.part(a, b)) in context_names]
         direct = _blank_spans(fn.body, handed)
-        read = _uses(direct, context_names) or any(_uses(h.body, _aliases(h.body, got))
+        read = _uses(direct, context_names) or any(_body_uses(h.body, _aliases(h.body, got))
                                                     for h, got in self.crate.bound(fn, context_names))
         if not read and not delegated and self._restricts(fn.file):
             self._emit("soroban-check-auth-contexts-ignored", Severity.HIGH,
@@ -1637,23 +1891,10 @@ class SorobanRules:
         if any(self._rejects(f.body) for f in scope):
             return
         for f in scope:
-            body, tx = f.body, _text(f.body)
-            for start, head_end, brace in _headed(body, _IF_HEAD):
-                if not tx.has(_DENY_NE, head_end, brace):
-                    continue
-                close = tx.end(brace)
-                if tx.has(_CONTINUE_OR_OK, brace, close) and not tx.has(_ERR_OR_PANIC, brace, close):
-                    self._deny(fn, f, start, body[start:brace + 1])
-                    return
-            for start, head_end, brace in _headed(body, _MATCH_HEAD):
-                if not _DENY_WORD.search(body, head_end, brace) or _CONTEXT_WORD.search(body, head_end, brace):
-                    continue
-                close = tx.end(brace)
-                k = tx.first(_WILD_APPROVE, brace, close)
-                if k >= 0:
-                    starts, ends = tx.found(_WILD_APPROVE)
-                    self._deny(fn, f, start, body[start:brace + 1] + ' .. ' + body[starts[k]:ends[k]])
-                    return
+            site = _memo(f.body, 'approves-unlisted', lambda: _approves_unlisted(f.body))
+            if site:
+                self._deny(fn, f, *site)
+                return
 
     def _deny(self, fn: _Fn, where: _Fn, offset: int, snippet: str) -> None:
         self._emit("soroban-check-auth-deny-list", Severity.HIGH,
@@ -1687,21 +1928,24 @@ class SorobanRules:
         params = list(fn.params)
         signed = _aliases(fn.body, {params[1], params[2]})
         selfs = _aliases(fn.body, set(_SELF_LETS.findall(fn.body)))
+        # What each helper receives the contract address and the signature values as.
+        received_self, received_signed = {}, {}
+        for received, names in ((received_self, selfs), (received_signed, signed)):
+            for h, got in self.crate.bound(fn, names):
+                received.setdefault(id(h), set()).update(got)
         for f in scope:
-            names = selfs if f is fn else {p for h, got in self.crate.bound(fn, selfs) if h is f for p in got} | selfs
-            selves = '|'.join([_SELF.pattern] + [re.escape(n) for n in sorted(names)])
-            pattern = re.compile(r'\b(?:\w+\s*\.\s*)?contract\s*==\s*(?:&\s*)?(?:' + selves + r')(?!\w)|'
-                                 r'(?:' + selves + r')\s*==\s*(?:&\s*)?(?:\w+\s*\.\s*)?contract\b')
-            tx = _text(f.body)
-            others = signed | {p for h, got in self.crate.bound(fn, signed) if h is f for p in got}
-            used = re.compile(r'(?<![\w.])(?:' + '|'.join(map(re.escape, sorted(others))) + r')\b') if others else None
-            for m in islice(pattern.finditer(f.body), _MAX_SITES):
-                end = tx.next_lbrace(m.end())
+            names = selfs | received_self.get(id(f), set()) if f is not fn else selfs
+            others = signed | received_signed.get(id(f), set()) if f is not fn else signed
+            tx, used = _text(f.body), None
+            compares = _memo(f.body, ('self-compares', frozenset(names)), lambda: _self_compares(f.body, names))
+            for start, stop in islice(compares, _MAX_SITES):
+                end = tx.next_lbrace(stop)
                 if end >= tx.n:
                     continue
                 close = tx.end(end)
                 # A self-call branch that checks another signature or address is not the spending key alone.
-                extra = tx.has(_SELF_ADMIN_EXTRA, end, close) or (used is not None and tx.has(used, end, close))
+                used = _word_positions(f.body, others) if used is None else used
+                extra = tx.has(_SELF_ADMIN_EXTRA, end, close) or _within(used, end, close)
                 if tx.has(_OK_UNIT, end, close) and not extra:
                     severity = Severity.HIGH if self.limits_declared else Severity.MEDIUM
                     self._emit("soroban-account-self-admin", severity,
@@ -1711,7 +1955,7 @@ class SorobanRules:
                                "including an agent driven by a prompt injection, can raise its own cap or add a "
                                "recipient and then spend under the new limit."
                                + (" The .tmark declares spending limits, which this makes the agent able to change." if self.limits_declared else ""),
-                               f, m.start(), m.group(0),
+                               f, start, f.body[start:stop],
                                "Require a separate administrator signature (or a timelock) for calls to the account's own "
                                "configuration functions, distinct from the key that authorizes spending.",
                                grade=EvidenceGrade.CONFIRMED if f is fn else EvidenceGrade.INFERRED)
@@ -1763,8 +2007,9 @@ class SorobanRules:
             # policy is one half of a pair, not a missing total.
             if self._paired_policy(fn):
                 return
-            raw = self.sources.get(fn.file, '')
-            if _SPENDING_POLICY_DOC.search(raw) and (_PER_TX_DOC.search(raw) or _PER_TX_NAME.search(f"{fn.owner} {fn.file}")):
+            notes = self._once(('comments', fn.file), lambda: _comment_text(self.sources.get(fn.file, '')))
+            if _pairs_with_spending_policy(notes, fn.owner) and (
+                    _PER_TX_DOC.search(notes) or _PER_TX_NAME.search(f"{fn.owner} {fn.file}")):
                 severity = Severity.INFO
                 note = (" The contract documents itself as a per-transaction cap used together with a spending-limit "
                         "policy; that policy, attached to the same context rule, is what bounds the total.")
@@ -1793,8 +2038,8 @@ class SorobanRules:
                        + ", so the policy's limits can be used up or reset by a third party.",
                        fn, None, f"fn enforce(.., {account})",
                        "Call smart_account.require_auth() at the start of enforce.")
-        if signers and not _uses(fn.body, _aliases(fn.body, {signers})) and not any(
-                _uses(h.body, got) for h, got in self.crate.bound(fn, {signers})):
+        if signers and not _body_uses(fn.body, _aliases(fn.body, {signers})) and not any(
+                _body_uses(h.body, got) for h, got in self.crate.bound(fn, {signers})):
             self._emit("soroban-policy-signers-unread", Severity.MEDIUM,
                        "The policy approves without looking at which signers authenticated",
                        "enforce never reads authenticated_signers. A context rule may consist of a policy alone, and "
@@ -1839,7 +2084,7 @@ class SorobanRules:
         if self._strong(fn) or _ROLE_ATTR.search(fn.attrs):
             return  # a bare has_role attribute is reported by _roles
         params = set(fn.params)
-        receivers = {root for root, dotted in _auth_roots(body) if not dotted}
+        receivers = {root for root, dotted, _ in _auth_roots(body) if not dotted}
         weak = self._weak(fn)
         offset = sink.start() if sink else via.start
         semi = body.find(';', offset)
@@ -1848,11 +2093,9 @@ class SorobanRules:
         if receivers and receivers <= params:
             # The only authorization is the caller's own: unless the parameter decides something
             # else, anyone passes their own address and signs.
-            rest = body
-            for n in receivers:
-                rest = _drop_to_semi(rest, re.compile(r'(?<![\w.])' + re.escape(n) + r'\s*\.\s*require_auth(?:_for_args)?\s*\('))
+            rest = _drop_to_semi(body, _NAMED_AUTH, receivers)
             rest = _drop_statements(_drop_statements(rest, _ANY_SINK), _EMIT)
-            if not _uses(rest, set().union(*(_aliases(body, {n}) for n in receivers))) and not weak:
+            if not _uses(rest, _aliases(body, receivers)) and not weak:
                 receivers = set()
             else:
                 weak = True
@@ -1995,8 +2238,8 @@ class SorobanRules:
                        "authorization in this function.", grade=EvidenceGrade.INFERRED, gap=True, confidence=0.7)
             return
         owners = _aliases(fn.body, {owner})
-        handed = any(_root(a) in owners for s in fn.sites if s.crate and self.crate.resolve(s.name, fn.file)
-                     for a in _args(fn.body, s.paren))
+        handed = any(not owners.isdisjoint(roots) for s, roots in zip(fn.sites, fn.site_roots)
+                     if s.crate and self.crate.resolve(s.name, fn.file))
         self._emit("soroban-token-move-allowance", Severity.CRITICAL,
                    "Anyone can spend the allowances users gave this contract",
                    f"transfer_from moves tokens from `{owner}` to `{dest}`, both chosen by the caller, "
@@ -2006,52 +2249,84 @@ class SorobanRules:
                    f"Call {owner}.require_auth() before transfer_from, or take the source from storage.",
                    gap=handed, grade=EvidenceGrade.INFERRED if handed else EvidenceGrade.CONFIRMED)
 
-    def _payments(self, fn: _Fn) -> list[tuple[int, int, str]]:
-        """(start, after '(', source variable) of each transfer, transfer_from, approve or burn_from
-        on a token client: the calls whose recipient and amount an authorization should cover."""
+    def _payments(self, fn: _Fn) -> list[tuple[int, int, str, bool, frozenset]]:
+        """(start, after '(', source variable, whether the source is the contract itself, the words
+        of the arguments) of each transfer, transfer_from, approve or burn_from on a token client:
+        the calls whose recipient and amount an authorization should cover (at most _MAX_SITES)."""
         def compute():
-            out, tx = [], _text(fn.body)
+            out, tx, selfs = [], None, frozenset()
             for c in _PAYMENT.finditer(fn.body):
+                if len(out) >= _MAX_SITES:
+                    break
                 if not self._token_client(fn, _receiver(fn.body, c.start())):
                     continue
+                if tx is None:
+                    tx, selfs = _text(fn.body), _aliases(fn.body, set(_SELF_LETS.findall(fn.body)))
                 args = tx.args(c.end() - 1)
                 index = 1 if c.group(1) in {'transfer_from', 'burn_from'} else 0
-                out.append((c.start(), c.end(), _root(args[index]) if len(args) > index else ''))
+                source = args[index] if len(args) > index else ''
+                words = frozenset(_FREE_WORD.findall(fn.body, c.end(), min(tx.end(c.end() - 1), c.end() + _ARG_TEXT)))
+                out.append((c.start(), c.end(), _root(source), bool(_SELF.search(source)) or _root(source) in selfs, words))
             return out
         return self._once(('payments', id(fn)), compute)
 
+    def _let_value(self, body: str, name: str, before: int) -> str | None:
+        """The value of the first `let name = value;` of ``body`` that ends before ``before``."""
+        lets = _memo(body, 'let-values', lambda: _let_values(body))
+        for start, semi in lets.get(name, ())[:1]:
+            if semi < before:
+                return body[start:semi]
+        return None
+
     def _auth_args(self, fn: _Fn) -> None:
-        """D: the address whose tokens move signs with require_auth_for_args over a list that leaves
-        out the recipient or the amount. Another signer's partial authorization (an oracle signing
-        its price) is not this defect, and neither is a source that also gives a full
-        require_auth()."""
+        """D: an address signs with require_auth_for_args over a list that leaves out the recipient or
+        the amount of a payment that signature is what authorizes: a move of the signer's own tokens
+        (the signer, an alias of the source, or a copy of the same value), or a payout of tokens the
+        contract holds when nothing else in the function authorizes the call as a whole. Another
+        signer's partial authorization beside the payer's full require_auth() (an oracle signing
+        its price) is not this defect."""
         body = fn.body
+        if not _AUTH_FOR_ARGS.search(body):
+            return
+        payments = self._payments(fn)
+        if not payments:
+            return
         tx = _text(body)
         _, plain, _ = _auth_receivers(body)
+        # Someone authorizes every argument: a plain require_auth, a stored administrator, an auth
+        # helper or an access-control attribute. A payout of the contract's own tokens is then theirs.
+        whole = not any(own for _, _, _, own, _ in payments) or bool(
+            plain or self._strong(fn) or self.crate.calls(fn, self.crate.auth) or _WEAK_ATTR.search(fn.attrs))
         for m in islice(_AUTH_FOR_ARGS.finditer(body), _MAX_SITES):
             signer = _root(_receiver(body, m.start()))
-            signers = _aliases(body, {signer}) if signer else set()
-            if not signers or signers & plain:
+            if not signer:
+                continue
+            judged = [(words, own) for start, _, source, own, words in payments if start > m.end() and (
+                (own and not whole) or (not own and source and signer in _kin(body, source)
+                                         and plain.isdisjoint(_kin(body, source))))]
+            if not judged:
                 continue
             args = body[m.end():min(tx.end(m.end() - 1) - 1, m.end() + _ARG_TEXT)]
             if re.fullmatch(r'\s*(?:&\s*)?[A-Za-z_]\w*\s*', args):
-                bound = re.compile(r'\blet\s+(?:mut\s+)?' + re.escape(args.strip(' &')) + r'\b[^=;]{0,256}=\s*([^;]*);').search(
-                    body, 0, m.start())
-                if not bound:
+                args = self._let_value(body, args.strip().lstrip('&').strip(), m.start())
+                if args is None:
                     continue
-                args = bound.group(1)
-            moved = ' '.join(body[c_end:min(tx.end(c_end - 1), c_end + _ARG_TEXT)]
-                             for c_start, c_end, source in self._payments(fn) if c_start > m.end() and source in signers)
+            moved = frozenset().union(*(words for words, _ in judged))
+            signed = frozenset(_FREE_WORD.findall(args))
             missing = [p for p in fn.params_of(r'\bAddress\b')
                        if re.fullmatch(r'to|recipient|dest|destination|spender|receiver|payee', p)
-                       and _uses(moved, {p}) and not _uses(args, _aliases(body, {p}))]
-            missing += [p for p in fn.params_of(r'^i128$') if _uses(moved, {p}) and not _uses(args, _aliases(body, {p}))]
+                       and p in moved and _aliases(body, {p}).isdisjoint(signed)]
+            missing += [p for p in fn.params_of(r'^i128$') if p in moved and _aliases(body, {p}).isdisjoint(signed)]
             if missing:
+                held = all(own for _, own in judged)
                 self._emit("soroban-auth-args-incomplete", Severity.HIGH,
                            "The authorized arguments leave out where the tokens go or how many",
                            "require_auth_for_args signs over a list that omits " + ", ".join(f"`{p}`" for p in missing) +
-                           ", which the function then uses to move the signer's tokens. A signature for one call can be "
-                           "submitted with a different recipient or amount.",
+                           (", which the function then uses to pay out tokens the contract holds, and no other "
+                            "authorization covers the call. Whoever submits the signed authorization chooses them."
+                            if held else
+                            ", which the function then uses to move the signer's tokens. A signature for one call can be "
+                            "submitted with a different recipient or amount."),
                            fn, m.start(), body[m.start():min(tx.end(m.end() - 1), m.start() + _ARG_TEXT)],
                            "Include every argument that decides the payment (recipient and amount) in "
                            "require_auth_for_args, or use require_auth(), which covers all arguments.")
@@ -2068,14 +2343,13 @@ class SorobanRules:
             if not re.search(r'amount|deposit|value', p):
                 continue
             names = _aliases(body, {p})
-            if not any(_uses(body[c.end():min(tx.end(c.end() - 1), c.end() + _ARG_TEXT)], names)
+            used = _word_positions(body, names)
+            if not any(_within(used, c.end(), min(tx.end(c.end() - 1), c.end() + _ARG_TEXT))
                        for c in self._moves(fn, 'transfer|transfer_from')):
                 continue
-            alt = '|'.join(map(re.escape, names))
-            checked = re.search(rf'\b(?:{alt})\s*(?:<=?|>=?)\s*[01]\b|\b[01]\s*(?:<=?|>=?)\s*(?:{alt})\b|'
-                                rf'\b(?:{alt})\s*\.\s*(?:is_positive|is_negative|signum)', body) or any(
-                re.search(r'(?:<=?|>=?)\s*[01]\b|\b[01]\s*(?:<=?|>=?)|is_positive|is_negative', h.body)
-                for h, _ in self.crate.bound(fn, names)) or _lower_bounded(body, alt)
+            checked = _signed_check(body, names) or any(
+                self._once(('positive', id(h)), lambda h=h: bool(_POSITIVE_ANY.search(h.body)))
+                for h, _ in self.crate.bound(fn, names)) or _lower_bounded(body, names)
             if not checked:
                 problems.append((p, f"`{p}` is never required to be positive"))
         for p in fn.params:
@@ -2113,24 +2387,28 @@ class SorobanRules:
 
     def _monotonic(self, fn: _Fn) -> bool:
         """A parameter is checked against a stored value and then stored: a sequence number, round
-        or timestamp that only moves forward makes an old signed message fail, like a nonce."""
+        or timestamp that only moves forward makes an old signed message fail, like a nonce. The
+        words of the written statements and of the comparisons are read once; each parameter's
+        aliases are then looked up in them."""
         body = fn.body
         tx = _text(body)
         writes = {}
         for m in _STORE_WRITE_CALL.finditer(body):
             writes.setdefault(tx.next_semi(m.end()), m.end())
-        for p in fn.params:
-            names = _aliases(body, {p})
-            used = re.compile(r'(?<![\w.])(?:' + '|'.join(map(re.escape, sorted(names))) + r')\b')
-            starts = [m.start() for m in used.finditer(body)]
-            if not any(bisect_left(starts, a) < len(starts) and starts[bisect_left(starts, a)] < semi
-                       for semi, a in writes.items()):
-                continue
-            for left, after, right, before in _comparisons(body):
-                for other in ([after] if left in names else []) + ([before] if right in names else []):
-                    if other and (_STORE_READ.search(other) or self.crate._stored(body, _root(other) or other.split('.')[0])):
-                        return True
-        return False
+        written: set[str] = set()
+        for semi, a in writes.items():
+            written.update(_FREE_WORD.findall(body, a, semi))
+        candidates = [names for names in (_aliases(body, {p}) for p in fn.params) if not names.isdisjoint(written)]
+        if not candidates:
+            return False
+        wanted = frozenset().union(*candidates)
+        compared: set[str] = set()
+        for left, after, right, before in _comparisons(body):
+            for word, other in ((left, after), (right, before)):
+                if word in wanted and word not in compared and other and (
+                        _STORE_READ.search(other) or self.crate._stored(body, _root(other) or other.split('.')[0])):
+                    compared.add(word)
+        return any(not names.isdisjoint(compared) for names in candidates)
 
     def _ledger_names(self, file: str) -> set[str]:
         """Words compared (in one statement) with env.ledger() or a variable read from it, on either
@@ -2150,12 +2428,10 @@ class SorobanRules:
                     pos = lends[k]
                 else:
                     pos = semi  # every later let of this statement fails the same way
-            spans = list(zip(lstarts, lends))
-            if clocks:
-                spans += [(m.start(), m.end()) for m in re.finditer(r'\b(?:' + '|'.join(map(re.escape, sorted(clocks))) + r')\b', code)]
+            words = [(m.start(), m.end(), m.group()) for m in re.finditer(r'\w+', code)]
+            spans = list(zip(lstarts, lends)) + [(s, e) for s, e, w in words if w in clocks]
             spans.sort()
             ops = [m.start() for m in _CMP_OP.finditer(code)]
-            words = [(m.start(), m.end(), m.group()) for m in re.finditer(r'\w+', code)]
             word_starts = [w[0] for w in words]
             names, edges = set(), [-1] + tx.bounds + [tx.n]
             span_starts = [s for s, _ in spans]
@@ -2302,29 +2578,151 @@ class SorobanRules:
         fn = self._innermost(file, offset)
         if fn is None:
             return False
-        loads = re.compile(r'\.\s*(?:get|has)\s*(?:::<[^>]{0,256}>\s*)?\(\s*&\s*' + re.escape(family.group(1)) + r'\s*\(')
-        if self._once(('loads', id(fn), family.group(1)), lambda: any(loads.search(f.body) for f in self._scope(fn))):
+        if any(family.group(1) in self._loaded(f) for f in self._scope(fn)):
             return False
-        callers = [fn] if fn.entry else self._once(
-            ('callers', id(fn)), lambda: [f for f in self.crate.fns if f.entry and f.file == file and self.crate.calls(f, {id(fn)})])
+        callers = [fn] if fn.entry else self._entry_callers(file).get(id(fn), [])
         return any(not self._strong(f) for f in callers)
 
+    def _loaded(self, fn: _Fn) -> set[str]:
+        """Key families (`DataKey::Channel`, `Channel`) that ``fn`` reads with get(&Key(..)) or has(&Key(..))."""
+        return self._once(('loaded', id(fn)), lambda: set(_LOADS.findall(fn.body)))
 
-def _lower_bounded(body: str, alt: str) -> bool:
+    def _entry_callers(self, file: str) -> dict[int, list[_Fn]]:
+        """Function id -> the entry points of ``file`` that call it directly (read once per file)."""
+        def compute():
+            out: dict[int, list[_Fn]] = {}
+            for f in self.crate.fns:
+                if not (f.entry and f.file == file):
+                    continue
+                for name in f.called:
+                    for h in self.crate.resolve(name, f.file):
+                        callers = out.setdefault(id(h), [])
+                        if h is not f and (not callers or callers[-1] is not f):
+                            callers.append(f)
+            return out
+        return self._once(('entry-callers', file), compute)
+
+
+def _let_values(body: str) -> dict[str, list[tuple[int, int]]]:
+    """Per name, where the value of each `let name[: T] = value;` starts and its ';' (in order)."""
+    tx, out = _text(body), {}
+    for m in _STATE_LET.finditer(body):
+        out.setdefault(m.group(1), []).append((m.end(), tx.next_semi(m.end())))
+    return out
+
+
+def _cmp_ops(body: str) -> list[tuple]:
+    """Each '<' or '>' of a body with its operands, read once: (position, operator, start of the
+    word before it, that word, whether a lone 0 or 1 follows, the word after it, the word after it
+    past a '&', where that word ends). The operator's optional '=' and whitespace are skipped."""
+    def compute():
+        t, n, out = body, len(body), []
+        for m in _CMP_OP.finditer(t):
+            o = m.start()
+            before_start, before = _word_before(t, o)
+            k = o + 1 + (o + 1 < n and t[o + 1] == '=')
+            while k < n and t[k].isspace():
+                k += 1
+            after_end, after = _word_after(t, k)
+            if k < n and t[k] == '&':
+                a = k + 1
+                while a < n and t[a].isspace():
+                    a += 1
+                ref_end, ref = _word_after(t, a)
+            else:
+                ref_end, ref = after_end, after
+            digit = k < n and t[k] in '01' and (k + 1 >= n or not _word(t[k + 1]))
+            out.append((o, t[o], before_start, before, digit, after, ref, ref_end))
+        return out
+    return _memo(body, 'cmp-ops', compute)
+
+
+def _within(positions: list[int], a: int, b: int) -> bool:
+    k = bisect_left(positions, a)
+    return k < len(positions) and positions[k] < b
+
+
+def _signed_check(body: str, names) -> bool:
+    """`amount <= 0`, `0 < amount` or `amount.is_positive()` for a name of ``names``, as
+    `\\b(?:names)\\s*(?:<=?|>=?)\\s*[01]\\b|\\b[01]\\s*(?:<=?|>=?)\\s*(?:names)\\b|
+    \\b(?:names)\\s*\\.\\s*(?:is_positive|is_negative|signum)` matches, without an alternation of the names."""
+    if any((before in names and digit) or (before in ('0', '1') and after in names)
+           for _, _, _, before, digit, after, _, _ in _cmp_ops(body)):
+        return True
+    return any(_word_before(body, m.start())[1] in names for m in _SIGN_METHOD.finditer(body))
+
+
+def _lower_bounded(body: str, names) -> bool:
     """An amount is held to a lower bound: `if amount < MIN { panic }`, `assert!(amount >= min)`."""
     tx = _text(body)
-    comparison = re.compile(rf'(?:\b(?:{alt})\s*>|<=?\s*(?:&\s*)?(?:{alt})\b)')
+    ops = _cmp_ops(body)
+    at = [op[0] for op in ops]
+
+    def compared(a: int, b: int, below: str) -> bool:
+        # `name <op>` with <op> == below, or `<other op>=? &? name`, inside [a, b).
+        for o, ch, before_start, before, _, _, ref, ref_end in ops[bisect_left(at, a):bisect_left(at, b)]:
+            if (ch == below and before in names and before_start >= a) or (ch != below and ref in names and ref_end <= b):
+                return True
+        return False
     seen = set()
     for m in _GUARD_MACRO.finditer(body):
         semi = tx.next_semi(m.end())
         if semi in seen:
             continue  # an earlier macro of this statement searched the same text
         seen.add(semi)
-        if comparison.search(body, m.end(), semi):
+        if compared(m.end(), semi, '>'):
             return True
-    lower = re.compile(rf'\b(?:{alt})\s*<|>=?\s*(?:&\s*)?(?:{alt})\b')
     for start, head_end, brace in _headed(body, _IF_HEAD):
-        if lower.search(body, head_end, brace) and tx.has(_REJECT, brace, tx.end(brace)):
+        if compared(head_end, brace, '<') and tx.has(_REJECT, brace, tx.end(brace)):
+            return True
+    return False
+
+
+def _comment_text(source: str) -> str:
+    """The text of a Rust source's comments (doc comments included), one after another: what the
+    authors say, not identifiers. Literals are skipped as stellar_native's masker skips them."""
+    out, i, n = [], 0, len(source)
+    while (m := _LEXEME.search(source, i)):
+        i, token = m.start(), m.group()
+        if token == '//':
+            end = source.find('\n', i)
+            end = n if end < 0 else end
+            out.append(source[i + 2:end].lstrip('/!'))
+        elif token == '/*':
+            depth, end = 1, i + 2
+            while end < n and depth:
+                if source.startswith('/*', end):
+                    depth, end = depth + 1, end + 2
+                elif source.startswith('*/', end):
+                    depth, end = depth - 1, end + 2
+                else:
+                    end += 1
+            out.append(source[i + 2:end].strip('*!/'))
+        elif token == '"':
+            end = i + 1
+            while end < n and source[end] != '"':
+                end += 2 if source[end] == '\\' else 1
+            end += 1
+        elif token == "'":
+            char = _CHAR.match(source, i)
+            end = char.end() if char else i + 1
+        else:
+            found = source.find('"' + m.group(1), m.end())
+            end = n if found < 0 else found + 1 + len(m.group(1))
+        i = max(end, i + 1)
+    return ' '.join(' '.join(part.split()) for part in out)
+
+
+def _pairs_with_spending_policy(notes: str, owner: str) -> bool:
+    """The comments name a spending-limit policy other than ``owner`` that this one works beside
+    ("deployed alongside the SpendingLimitPolicy"); a policy describing itself as one does not count."""
+    own = re.sub(r'[^a-z0-9]', '', owner.lower())
+    for m in _PAIRED_WITH.finditer(notes):
+        named = _SPENDING_POLICY_NAME.search(notes, m.end(), min(len(notes), m.end() + 80))
+        if not named:
+            continue
+        name = re.sub(r'[^a-z0-9]', '', named.group().lower())
+        if not own or (own not in name and name not in own):
             return True
     return False
 

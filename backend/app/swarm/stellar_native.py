@@ -291,8 +291,9 @@ class StellarNativeAuditor(BaseAuditor):
         everything = [{**fn, 'file': name} for name in built for fn in soroban.crate.raw[name]]
         # Entry points are the public functions of a #[contractimpl] block; a crate's client or
         # helper modules that only use soroban_sdk types expose none.
+        impl_files = {name for name, text in rust_files.items() if '#[contractimpl' in text}
         functions = [fn for fn in everything if fn['public']
-                     and (artifact.source_kind != SourceKind.REPO or '#[contractimpl' in rust_files[fn['file']])]
+                     and (artifact.source_kind != SourceKind.REPO or fn['file'] in impl_files)]
         # Constructor deployment authorization and custom-account __check_auth
         # are separate boundaries; requiring require_auth inside them is unsound.
         mutating = [fn for fn in functions if fn['name'] not in {'__constructor', '__check_auth'}
@@ -365,7 +366,7 @@ class StellarNativeAuditor(BaseAuditor):
         # that grow with use make every call costlier and, once it is full, cannot be added.
         records = []
         for name, code in built.items():
-            if '#[contractimpl' not in rust_files[name]:
+            if name not in impl_files:
                 continue
             newlines = None
             for m in re.finditer(r"\.instance\(\)\s*\.set\(\s*&\s*(?:\w+::)?\w+\(\s*[^)\s]", code):

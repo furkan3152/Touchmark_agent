@@ -1079,6 +1079,9 @@ impl C {
     'admin.require_auth();',
     'caller.require_auth(); if e.storage().instance().get::<DataKey, Address>(&DataKey::Admin).unwrap() != caller { panic!("no"); }',
     'let admins: Vec<Address> = e.storage().instance().get(&DataKey::Admins).unwrap(); for a in admins.iter() { a.require_auth(); }',
+    'let admin: Address = e.storage().instance().get(&DataKey::Admin).unwrap(); let admin = admin.clone(); admin.require_auth();',
+    'let admins: Vec<Address> = e.storage().instance().get(&DataKey::Admins).unwrap_or_else(|| panic!("none")); '
+    'for a in admins.iter() { a.require_auth(); }',
 ])
 def test_stored_administrator_in_other_shapes_is_a_strong_guard(settings, run, guard):
     verdict = audit(settings, run, GUARDED_UPGRADE.replace('PARAMS', '').replace('GUARD', guard))
@@ -1189,6 +1192,42 @@ HOSTILE = {
     'comment block before a call': _hostile(PAY_HEAD + '        // a note\n' * 4000 + '        .transfer(&from, &to, &amount);\n    }\n'),
     'whitespace after operators': _hostile(UPGRADE_HEAD + '        let a = ' + ' ' * 40000 + '(1); spent += ' + ' ' * 40000
                                            + '; for b in ' + ' ' * 40000 + '(c) {}' + UPGRADE_SINK),
+    # Each impl header was read to the end of the file.
+    'contractimpl attributes without a block': {'src/lib.rs': 'use soroban_sdk::{contract, contractimpl, Env};\n'
+                                                + '#[contractimpl] impl X ' * 10000, 'Cargo.toml': CARGO},
+    # Helpers that create records, each called by entry points: every entry point was read per helper.
+    'record-writing helpers': {'Cargo.toml': CARGO, 'src/lib.rs': (
+        'use soroban_sdk::{contract, contractimpl, token, Address, Env};\n#[contract]\npub struct C;\n'
+        + ''.join(f'fn h{i}(e: &Env, a: u32) {{ e.storage().instance().set(&K(a), &1); }}\n' for i in range(1500))
+        + '#[contractimpl]\nimpl C {\n    pub fn dep(e: Env, f: Address, t: Address) { f.require_auth(); '
+        'token::Client::new(&e, &t).transfer(&f, &e.current_contract_address(), &1); }\n'
+        + ''.join(f'    pub fn e{i}(e: Env, a: u32) {{ h{i}(&e, a); h{(i + 1) % 1500}(&e, a); }}\n' for i in range(1500)) + '}\n')},
+    # Thousands of aliases of one parameter: each was an alternative of one regex, run over the body.
+    'aliases of a signed round': _hostile('    pub fn submit(e: Env, round: u64, sig: BytesN<64>, key: BytesN<32>, msg: Bytes) {\n'
+                                          '        e.crypto().ed25519_verify(&key, &msg, &sig);\n'
+                                          + ''.join(f'        let a{i} = round;\n' for i in range(9000))
+                                          + '        e.storage().instance().set(&1u32, &round);\n    }\n'),
+    'aliases of the contract address': _hostile(
+        '    pub fn __check_auth(e: Env, payload: BytesN<32>, sig: BytesN<64>, ctx: Vec<Context>) -> Result<(), E> {\n'
+        '        e.crypto().ed25519_verify(&k, &payload.into(), &sig);\n'
+        + ''.join(f'        let s{i} = e.current_contract_address();\n' for i in range(5000))
+        + '        for c in ctx.iter() { if c.contract == s0 { return Ok(()); } let amount = 1; }\n        Ok(())\n    }\n'
+        '    pub fn set_limit(e: Env, l: i128) { e.current_contract_address().require_auth(); e.storage().instance().set(&1, &l); }\n'),
+    'aliases of a deposited amount': _hostile('    pub fn deposit(e: Env, from: Address, amount: i128) {\n        from.require_auth();\n'
+                                              + ''.join(f'        let a{i} = amount;\n' for i in range(14000))
+                                              + '        token::Client::new(&e, &e.current_contract_address()).transfer(&from, '
+                                              '&e.current_contract_address(), &amount);\n    }\n'),
+    'aliases beside long authorized argument lists': _hostile(
+        PAY_HEAD + ''.join(f'        let a{i} = amount;\n' for i in range(4000))
+        + ('        from.require_auth_for_args((' + 'x, ' * 1300 + 'amount, to).into_val(&e));\n') * 32 + PAY_SINK),
+    'many parameters sharing aliases': _hostile(
+        '    pub fn submit(e: Env, ' + ', '.join(f'p{i}: i128' for i in range(600)) + ', sig: BytesN<64>) {\n'
+        '        e.crypto().ed25519_verify(&k, &m, &sig);\n' + ''.join(f'        let x = p{i};\n' for i in range(600))
+        + '        let y = x;\n' * 8000 + '        if y < z { }\n' * 8000 + '        e.storage().instance().set(&1u32, &y);\n    }\n'),
+    'record families in one function': _hostile(
+        '    pub fn open(e: Env, payer: Address) {\n        token::Client::new(&e, &t).transfer(&payer, '
+        '&e.current_contract_address(), &1);\n'
+        + ''.join(f'        e.storage().instance().set(&K{i}(id), &1);\n' for i in range(6000)) + '    }\n'),
 }
 
 
@@ -1197,3 +1236,78 @@ def test_hostile_source_is_analysed_in_linear_time(settings, run, name):
     start = time.perf_counter()
     verdict = audit(settings, run, HOSTILE[name], kind=SourceKind.REPO)
     assert verdict.status == 'completed' and time.perf_counter() - start < 3
+
+
+@pytest.mark.parametrize('guard', [
+    # No administrator stored: the upgrade goes ahead with nobody's authorization.
+    'match e.storage().instance().get::<DataKey, Address>(&DataKey::Admin) { Some(admin) => admin.require_auth(), None => {} }',
+    'let admins: Vec<Address> = e.storage().instance().get(&DataKey::Admins).unwrap_or(Vec::new(&e)); '
+    'for a in admins.iter() { a.require_auth(); }',
+    # The stored administrator is shadowed by the caller before it authorizes.
+    'let Some(admin) = e.storage().instance().get::<DataKey, Address>(&DataKey::Admin) else { panic!() }; '
+    'let admin = caller; admin.require_auth();',
+])
+def test_stored_administrator_that_may_be_absent_or_replaced_is_a_gap(settings, run, guard):
+    verdict = audit(settings, run, GUARDED_UPGRADE.replace('PARAMS', '').replace('GUARD', guard))
+    [gap] = rule(verdict, 'soroban-upgrade-weak-guard')
+    assert gap.kind is FindingKind.EVIDENCE_GAP
+
+
+WITHDRAW = TOKEN.replace('BODY', '''pub fn withdraw(env: Env, user: Address, to: Address, amount: i128) {
+        user.require_auth_for_args((amount,).into_val(&env));
+        GUARD
+        token::Client::new(&env, &usdc(&env)).transfer(&env.current_contract_address(), &RECIPIENT, &amount);
+    }''')
+
+
+def test_partial_authorization_of_a_payout_from_the_contract_is_high(settings, run):
+    [finding] = rule(audit(settings, run, WITHDRAW.replace('GUARD', '').replace('RECIPIENT', 'to')),
+                     'soroban-auth-args-incomplete')
+    assert finding.severity is Severity.HIGH and '`to`' in finding.detail and 'the contract holds' in finding.detail
+    # Near misses: an administrator authorizes the whole call, or the user withdraws to itself.
+    guarded = WITHDRAW.replace('GUARD', 'admin(&env).require_auth();').replace('RECIPIENT', 'to')
+    assert rule(audit(settings, run, guarded), 'soroban-auth-args-incomplete') == []
+    to_self = WITHDRAW.replace('GUARD', '').replace('RECIPIENT', 'user')
+    assert rule(audit(settings, run, to_self), 'soroban-auth-args-incomplete') == []
+
+
+@pytest.mark.parametrize('body', [
+    'let payer = from.clone();\n        payer.require_auth_for_args((amount,).into_val(&env));\n        SOURCE = from;',
+    'from.require_auth_for_args((amount,).into_val(&env));\n        SOURCE = from.clone();',
+])
+def test_payer_that_signs_through_a_copy_is_still_the_payer(settings, run, body):
+    source = TOKEN.replace('BODY', f'''pub fn pay(env: Env, from: Address, to: Address, amount: i128) {{
+        {body.replace('SOURCE', 'let src')}
+        token::Client::new(&env, &usdc(&env)).transfer(&src, &to, &amount);
+    }}''')
+    [finding] = rule(audit(settings, run, source), 'soroban-auth-args-incomplete')
+    assert finding.severity is Severity.HIGH and '`to`' in finding.detail and "signer's tokens" in finding.detail
+
+
+def test_lone_per_call_cap_named_like_a_spending_limit_policy_stays_medium(settings, run):
+    lone = TX_CAP.split('\n', 1)[1]
+    crate = {'contracts/cap/Cargo.toml': CARGO}
+    # Its own names say "spending limit policy" and "max per tx", but no comment pairs it with another policy.
+    named = lone.replace('CapPolicy', 'SpendingLimitPolicy').replace('cap', 'max_per_tx')
+    # A doc comment that calls the policy itself a per-transaction spending limit policy.
+    described = '//! Spending limit policy: caps each transaction (per transaction).\n' + lone
+    for source in (named, described):
+        [finding] = rule(audit(settings, run, {**crate, 'contracts/cap/src/lib.rs': source}, kind=SourceKind.REPO),
+                         'soroban-policy-per-call-cap')
+        assert finding.severity is Severity.MEDIUM
+
+
+def test_each_text_is_indexed_once_when_the_index_cache_is_small(settings, run, monkeypatch):
+    from backend.app.swarm import soroban_rules
+    monkeypatch.setattr(soroban_rules, '_CACHE_CHARS', 3000)
+    built, original = [], soroban_rules._Text.__init__
+
+    def counting(self, text):
+        built.append(text)  # kept, so no two texts share an id
+        original(self, text)
+    monkeypatch.setattr(soroban_rules._Text, '__init__', counting)
+    head = 'use soroban_sdk::{contract, contractimpl, Address, Env};\n#[contract]\npub struct C;\n#[contractimpl]\nimpl C {\n'
+    files = {'Cargo.toml': CARGO, **{f'src/m{i}.rs': head + f'    pub fn f{i}(e: Env, a: Address) {{\n'
+                                     + '([{}]), ' * 300 + '\n    }\n}\n' for i in range(6)}}
+    assert audit(settings, run, files, kind=SourceKind.REPO).status == 'completed'
+    assert built and len({id(text) for text in built}) == len(built)
