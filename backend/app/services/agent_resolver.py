@@ -245,7 +245,8 @@ class AgentResolver:
                     step("contract", "unknown_executable", "the executable type is not one this reader knows")
                 elif facts.get("wasm_hash"):
                     step("contract_code", "verified" if facts.get("wasm_hash_verified") else facts.get("code", "unverified"),
-                         f"wasm {facts.get('wasm_hash')}, {len(facts.get('functions', []))} functions")
+                         f"wasm {facts.get('wasm_hash')}, "
+                         f"{len(facts.get('functions', [])) + facts.get('functions_omitted', 0)} functions")
                     graph = (facts.get("profile") or {}).get("callgraph") or {}
                     if facts.get("profile_error") or graph.get("status") == "undecoded":
                         step("contract_callgraph", "undecoded", facts.get("profile_error") or graph.get("error", ""))

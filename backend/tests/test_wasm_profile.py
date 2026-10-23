@@ -106,7 +106,7 @@ def test_profile_records_upgrade_exports_unproven_authentication_and_delegated_s
     assert set(facts["upgrade_exports"]) == {"migrate", "upgrade"}
     assert facts["upgrade_exports"]["migrate"].endswith("import l.6 (update_current_contract_wasm)")
     assert facts["upgrade_auth_unproven"] == ["migrate"]  # another contract may hold the check
-    assert facts["delegates_read"] is True and facts["decoder"] == "3"
+    assert facts["delegates_read"] is True and facts["decoder"] == "4"
 
 
 # --------------------------------------------------------------------------- data flow
@@ -225,14 +225,18 @@ def test_every_sdk_storage_read_reaches_has_contract_data():
 
 # --------------------------------------------------------------------------- invokable names
 def test_exports_no_transaction_can_invoke_are_left_out():
-    # Function names are SCSymbols: at most 32 bytes of [A-Za-z0-9_]; the host looks them up by name.
-    names = ["not-a-symbol", "a.b", "x" * 33, "x" * 32, "_start", "transfer"]
-    wasm = raw_module([(3, 1), (0, 1)], ["l._"], [1, 1], [(n, 1 + (n == "transfer")) for n in names],
-                      [(0, b"\x42\x00\x42\x00\x42\x00\x10\x00"), (0, b"\x42\x00")])
+    # Function names are SCSymbols: at most 32 bytes of [A-Za-z0-9_]; the host looks them up by name,
+    # refuses its reserved prefix "__" unless it makes the call itself (__check_auth, __constructor:
+    # frame.rs RESERVED_CONTRACT_FN_PREFIX) and passes at most 32 arguments (vm.rs MAX_VM_ARGS).
+    names = ["not-a-symbol", "a.b", "x" * 33, "x" * 32, "_start", "__upgrade", "__check_auth", "_up", "y" * 100,
+             "transfer"]
+    wasm = raw_module([(3, 1), (0, 1), (33, 1), (32, 1)], ["l._"], [1, 1, 2, 3],
+                      [(n, 1 + (n == "transfer")) for n in names] + [("wide", 3), ("widest", 4)],
+                      [(0, b"\x42\x00\x42\x00\x42\x00\x10\x00"), (0, b"\x42\x00"), (0, b"\x42\x00"), (0, b"\x42\x00")])
     facts = profile(wasm, ["transfer"])
-    assert facts["hidden_exports"] == ["_start", "x" * 32]
-    assert facts["uninvokable_exports"] == sorted(["not-a-symbol", "a.b", "x" * 33])
-    assert set(facts["exports"]) == {"_start", "transfer", "x" * 32}
+    assert facts["hidden_exports"] == ["__check_auth", "_start", "_up", "widest", "x" * 32]
+    assert facts["uninvokable_exports"] == sorted(["not-a-symbol", "a.b", "x" * 33, "__upgrade", "y" * 64, "wide"])
+    assert set(facts["exports"]) == {"__check_auth", "_start", "_up", "transfer", "widest", "x" * 32}
 
 
 # --------------------------------------------------------------------------- re-exported host functions
@@ -250,6 +254,39 @@ def test_an_exported_import_passes_its_arguments_straight_to_the_host(host, para
         assert found["reaches"] == [host]
         assert {k: found["flows"][k] for k in flows} == flows
         assert found["flows"]["upgrade_code_checked"] == [] and found["flows"]["upgrade_code_lost"] == []
+
+
+def test_an_exported_import_under_the_reserved_prefix_is_left_out():
+    wasm = raw_module([(1, 1), (0, 1)], ["l.6"], [1], [("__upgrade", 0), ("_up", 0), ("hello", 1)],
+                      [(0, b"\x42\x00")])
+    facts = profile(wasm, ["hello"])
+    assert facts["uninvokable_exports"] == ["__upgrade"] and set(facts["upgrade_exports"]) == {"_up"}
+    assert facts["exports"]["_up"]["flows"]["upgrade_code"] == [0]
+
+
+# --------------------------------------------------------------------------- which exports are described
+def test_exports_findings_can_come_from_are_described_before_padding():
+    # 70 unauthenticated getters sort ahead of the exports the rules read: an unlisted export that
+    # calls another contract, a custom account that reads delegated signers and checks a signature,
+    # and an admin-gated upgrade (whose path the upgradeable disclosure shows).
+    getters = {f"get_{i}": ["l.1"] for i in range(70)}
+    wasm = contract_wasm(dict(getters, sweep_all=["d._"], __check_auth=["a.9", "c.0"], upgrade=["a.0", "l.6(p0)"]),
+                         spec=dict({n: [] for n in getters}, __check_auth=[], upgrade=[("h", "bytes32")]))
+    facts = profile(wasm, [*getters, "__check_auth", "upgrade"])
+    assert {"sweep_all", "__check_auth", "upgrade"} <= set(facts["exports"])
+    assert facts["exports_omitted"] == 73 - 64 and facts["exports_omitted_unauthenticated"] == 0
+    assert facts["delegates_read"] and facts["upgrade_exports"]["upgrade"].startswith("export upgrade -> ")
+    # What does not fit and could raise a finding is counted: open upgrades, unauthenticated writers.
+    many = {f"up_{i}": ["l.6(p0)"] for i in range(40)} | {f"put_{i}": ["l._(c,p0,c)"] for i in range(40)}
+    facts = profile(contract_wasm(dict(getters, **many)), [*getters, *many])
+    assert facts["exports_omitted"] == 150 - 64 and facts["exports_omitted_unauthenticated"] == 80 - 64
+    assert set(facts["exports"]) == set(many) - set(sorted(many, key=lambda n: (n.startswith("put"), n))[64:])
+
+
+def test_unlisted_exports_beyond_the_name_list_keep_the_risky_ones_first():
+    padding = {f"a{i:03d}": ["l.1"] for i in range(300)}
+    facts = profile(contract_wasm(dict(padding, zz_sweep=["d._"], listed=["l.1"])), ["listed"])
+    assert facts["hidden_exports"][0] == "zz_sweep" and facts["hidden_exports_omitted"] == 301 - 256
 
 
 # --------------------------------------------------------------------------- memory the flow forgets

@@ -15,7 +15,8 @@ out-pointer) into the arguments of update_current_contract_wasm,
 update_current_contract_executable_ref and put_contract_data, and into any host function
 that could check them. A memory write it cannot place forgets every slot, so the flow can
 miss a path but does not invent one; what an argument lost that way is recorded, because
-"nothing checks the hash" is only shown when nothing about the hash was forgotten.
+"nothing checks the hash" is only shown when nothing about the hash was forgotten (an open
+upgrade whose hash was is left undecided: an evidence gap).
 
 The codes are named from soroban_env_host_fns.json, a subset of rs-soroban-env's env.json
 pinned to one commit. The decoder knows the instructions a Soroban build contains (MVP,
@@ -41,7 +42,7 @@ HOST_FUNCTIONS: dict[str, tuple[str, int | None]] = {k: (v[0], v[1]) for k, v in
 #: The rs-soroban-env commit the table was taken from.
 HOST_TABLE_COMMIT: str = _TABLE["source"]["commit"]
 #: Bumped whenever the decoder or the facts it derives change.
-DECODER_VERSION = "3"
+DECODER_VERSION = "4"
 
 #: update_current_contract_wasm, update_current_contract_executable_ref: replace own code.
 UPGRADE = frozenset({"l.6", "l.j"})
@@ -72,6 +73,13 @@ HOST_ENTRY_POINTS = frozenset({"__check_auth", "__constructor"})
 #: SCSYMBOL_LIMIT, rs-soroban-env symbol.rs encode_byte). The host looks an invoked function
 #: up by that name, so an export named otherwise cannot be invoked.
 _SYMBOL = re.compile(r"[A-Za-z0-9_]{0,32}")
+#: Names the host refuses to invoke unless it makes the call itself, which it does only for
+#: HOST_ENTRY_POINTS (rs-soroban-env 0c99950e host/frame.rs RESERVED_CONTRACT_FN_PREFIX,
+#: checked in call_n_internal for transactions and contract calls alike).
+_RESERVED_PREFIX = "__"
+#: The host passes an invoked function at most this many arguments (vm.rs MAX_VM_ARGS), and
+#: the VM calls a function only with as many as it takes.
+_MAX_VM_ARGS = 32
 #: Host functions whose call paths are recorded for findings.
 _TRACED = UPGRADE | EXTERNAL_REF | CALL | {PUT_DATA, DELEGATED_SIGNERS}
 #: Storage and executable-tag writes; what an unlisted export must not reach unauthenticated.
@@ -113,6 +121,9 @@ _MAX_OFFSETS, _MAX_SLOTS, _MAX_WRITES, _MAX_OFFSET = 4, 512, 64, 1 << 20
 #: Facts kept per module: exports described in detail, names per list, functions shown per
 #: call path (the first and last few), argument indexes per flow.
 _MAX_EXPORTS, _MAX_NAMES, _MAX_HOPS, _MAX_ARGS = 64, 256, 12, 32
+#: Characters kept of a listed name (an invokable one has at most 32; imports and uninvokable
+#: exports can be as long as the module).
+_MAX_NAME = 64
 _HEAD, _TAIL = 6, 4
 _EMPTY: frozenset = frozenset()
 #: The source "anything the caller had stored" (see the data flow notes below).
@@ -339,16 +350,18 @@ def profile(wasm: bytes, spec_names: list[str] | None = None) -> dict:
 
     Reachability follows direct calls through every branch, so a host function missing from
     an export's set is never called by it, except through call_indirect, which is recorded.
-    Only exports a transaction can invoke (named by a valid symbol) are analysed, and at most
-    _MAX_EXPORTS of them are described (``exports_omitted`` counts the rest). Raises WasmError
-    when the module itself cannot be read; a body the decoder does not know only leaves the
-    call graph out (``callgraph.status`` says why), and a body the data flow cannot follow
-    only leaves the flows out (``dataflow.status``).
+    Only exports a transaction can invoke (named by a valid symbol outside the host's reserved
+    prefix, taking at most _MAX_VM_ARGS arguments) and the host entry points are analysed, and
+    at most _MAX_EXPORTS of them are described, those findings can come from first
+    (``exports_omitted`` counts the rest, ``exports_omitted_unauthenticated`` those of them a
+    finding could come from). Raises WasmError when the module itself cannot be read; a body
+    the decoder does not know only leaves the call graph out (``callgraph.status`` says why),
+    and a body the data flow cannot follow only leaves the flows out (``dataflow.status``).
     """
     module = parse_module(wasm)
     imports = set(module.func_imports)
     known = sorted(i for i in imports if i in HOST_FUNCTIONS)
-    exports = {n: i for n, i in module.exports.items() if _SYMBOL.fullmatch(n)}
+    exports = {n: i for n, i in module.exports.items() if _invokable(module, n, i)}
     out: dict = {
         "decoder": DECODER_VERSION, "host_table_commit": HOST_TABLE_COMMIT,
         "imports": known, **_listed("unknown_imports", sorted(imports - set(known))),
@@ -362,8 +375,7 @@ def profile(wasm: bytes, spec_names: list[str] | None = None) -> dict:
     hidden: list[str] = []
     if spec_names:
         named = set(spec_names)
-        hidden = sorted(n for n in exports if n not in named and n not in SDK_EXPORTS
-                        and (not n.startswith("__") or n in HOST_ENTRY_POINTS))
+        hidden = sorted(n for n in exports if n not in named and n not in SDK_EXPORTS)
         out.update(_listed("hidden_exports", hidden))
         out.update(_listed("spec_only", sorted(named - set(module.exports))))
     imported = len(module.func_imports)
@@ -388,6 +400,7 @@ def profile(wasm: bytes, spec_names: list[str] | None = None) -> dict:
     reaches = {name: reach.of(index) for name, index in exports.items()}
     hidden_set = set(hidden)
     ranked = sorted(exports, key=lambda n: reach.rank(n, *reaches[n], n in hidden_set))
+    candidates = {n for n in exports if reach.candidate(n, *reaches[n], n in hidden_set)}
     details: dict = {}
     for name in sorted(ranked[:_MAX_EXPORTS]):
         index, (bits, indirect) = exports[name], reaches[name]
@@ -401,8 +414,9 @@ def profile(wasm: bytes, spec_names: list[str] | None = None) -> dict:
     out["exports"] = details
     if len(ranked) > _MAX_EXPORTS:
         out["exports_omitted"] = len(ranked) - _MAX_EXPORTS
+        out["exports_omitted_unauthenticated"] = sum(n in candidates for n in ranked[_MAX_EXPORTS:])
     if len(hidden) > _MAX_NAMES:  # list the unlisted exports findings can come from first
-        risky = [n for n in hidden if reach.unguarded(*reaches[n], _RISKY)]
+        risky = [n for n in hidden if n in candidates]
         out.update(_listed("hidden_exports", risky + sorted(hidden_set - set(risky))))
     upgraders = {n: r for n, r in details.items() if set(r["reaches"]) & UPGRADE}
     out["upgrade_exports"] = {n: next(p for c, p in sorted(r["paths"].items()) if c in UPGRADE)
@@ -414,9 +428,21 @@ def profile(wasm: bytes, spec_names: list[str] | None = None) -> dict:
     return out
 
 
+def _invokable(module: Module, name: str, index: int) -> bool:
+    """A transaction or another contract can invoke the export by its name and pass it its
+    arguments, or the host calls it itself."""
+    if not _SYMBOL.fullmatch(name) or (name.startswith(_RESERVED_PREFIX) and name not in HOST_ENTRY_POINTS):
+        return False
+    try:
+        return module.types[module.func_types[index]][0] <= _MAX_VM_ARGS
+    except IndexError:  # an invalid module: keep it in view
+        return True
+
+
 def _listed(key: str, names: list[str]) -> dict:
-    """A list of names cut at _MAX_NAMES, with the count of the rest."""
-    out: dict = {key: names[:_MAX_NAMES]}
+    """A list of names cut at _MAX_NAMES, each cut at _MAX_NAME characters, with the count of
+    the rest."""
+    out: dict = {key: [n[:_MAX_NAME] for n in names[:_MAX_NAMES]]}
     if len(names) > _MAX_NAMES:
         out[f"{key}_omitted"] = len(names) - _MAX_NAMES
     return out
@@ -521,17 +547,28 @@ class _Reach:
             self._names[bits] = tuple(c for i, c in enumerate(self.codes) if bits >> i & 1)
         return self._names[bits]
 
-    def unguarded(self, bits: int, indirect: bool, codes) -> bool:
-        """Reaches one of ``codes`` with no authentication, contract call or indirect call."""
-        return bool(bits & self.mask(codes)) and not bits & self.mask(AUTH | CALL) and not indirect
+    def candidate(self, name: str, bits: int, indirect: bool, hidden: bool) -> bool:
+        """Whether an on-chain finding can come from the export, as the rules decide them: a
+        host entry point (delegated signers), or one that reaches no authentication or signature
+        check and reaches an upgrade (open or gated by another contract), writes storage or tags
+        with no contract or indirect call (a writer of what an upgrade installs), or is unlisted
+        and reaches an upgrade, a contract call or a storage write (hidden-export)."""
+        if name in HOST_ENTRY_POINTS:
+            return True
+        if bits & self.mask(AUTH):
+            return False
+        return bool(bits & self.mask(UPGRADE) or (hidden and bits & self.mask(_RISKY))
+                    or (bits & self.mask(_WRITES) and not bits & self.mask(CALL) and not indirect))
 
     def rank(self, name: str, bits: int, indirect: bool, hidden: bool) -> tuple:
-        """Exports findings can come from first: unauthenticated before authenticated, then
-        upgrades and host entry points, storage and tag writers, other traced calls; unlisted
-        before listed."""
+        """Exports findings can come from first (host entry points first), then the rest; in
+        each group upgrades, then storage and tag writers, other traced calls and the rest, those
+        with no authentication or contract call first, unlisted before listed."""
         kind = (0 if bits & self.mask(UPGRADE) or name in HOST_ENTRY_POINTS else
                 1 if bits & self.mask(_WRITES) else 2 if bits & self.mask(_TRACED) else 3)
-        return bool(bits & self.mask(AUTH | CALL)) or indirect, kind, not hidden, name
+        guarded = bool(bits & self.mask(AUTH | CALL)) or indirect
+        return (not self.candidate(name, bits, indirect, hidden), name not in HOST_ENTRY_POINTS, kind, guarded,
+                not hidden, name)
 
     def paths(self, name: str, index: int, bits: int) -> dict[str, str]:
         out = {}
@@ -827,8 +864,9 @@ class _DataFlow:
         """Which parameters of a function reach the code an upgrade installs, a storage write,
         or a host function that can check them (``checked``: precise or through memory), and
         which installed ones the flow may have lost track of on the way (``upgrade_code_lost``:
-        a check on those could go unseen). An exported host function (a re-export of an
-        import) passes its arguments straight to the host."""
+        memory, a global or an indirect call it could not follow, where a check could go unseen).
+        An exported host function (a re-export of an import) passes its arguments straight to
+        the host."""
         if index not in self._flows:
             if index < self.imported:
                 sinks, lost = self._host_sinks(index), _EMPTY

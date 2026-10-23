@@ -749,16 +749,29 @@ class StellarNativeAuditor(BaseAuditor):
 
     def _incomplete(self, profile: dict, where: str) -> list[Finding]:
         """An evidence gap when the bytecode review could have missed an unauthenticated upgrade
-        or writer: exports left undescribed, or an open upgrade the data flow did not follow."""
+        or writer: exports a finding could come from left undescribed, or an open upgrade whose
+        code the data flow did not follow or lost track of."""
         reasons = []
-        if profile.get("exports_omitted"):
-            reasons.append(f"{profile['exports_omitted']} exports beyond the {len(profile.get('exports') or {})} "
-                           "described were not analysed")
-        untraced = sorted(n for n, r in (profile.get("exports") or {}).items() if n not in HOST_ENTRY_POINTS
-                          and set(r["reaches"]) & UPGRADE and _open(r) and r.get("flows") is None)
+        exports = profile.get("exports") or {}
+        if "exports_omitted_unauthenticated" in profile:
+            if profile["exports_omitted_unauthenticated"]:
+                reasons.append(f"{profile['exports_omitted_unauthenticated']} of the {profile['exports_omitted']} "
+                               f"exports beyond the {len(exports)} described reach an upgrade, a storage write or a "
+                               "contract call with no authentication and were not analysed")
+        elif profile.get("exports_omitted"):  # facts from before that count was kept
+            reasons.append(f"{profile['exports_omitted']} exports beyond the {len(exports)} described were not "
+                           "analysed")
+        open_upgrades = {n: r for n, r in sorted(exports.items()) if n not in HOST_ENTRY_POINTS
+                         and set(r["reaches"]) & UPGRADE and _open(r)}
+        untraced = [n for n, r in open_upgrades.items() if r.get("flows") is None]
         if untraced:
             reasons.append(f"the data flow stopped ({(profile.get('dataflow') or {}).get('error', 'incomplete')}) "
                            f"before tracing where {', '.join(untraced[:3])} gets the code it installs")
+        lost = [n for n, r in open_upgrades.items() if _code_lost(r.get("flows"))]
+        if lost:
+            reasons.append(f"{', '.join(lost[:3])} installs the code its caller names, and the data flow lost track "
+                           "of a copy of that argument in memory, a global or an indirect call it could not follow, "
+                           "where a check would go unseen")
         if not reasons:
             return []
         return [_gap(self.finding("onchain-contract-bytecode-incomplete", Severity.MEDIUM,
@@ -830,6 +843,16 @@ def _open(reach: dict) -> bool:
     return not set(reach["reaches"]) & (AUTH | CALL) and not reach["indirect"]
 
 
+def _code_lost(flows: dict | None) -> bool:
+    """The code the caller names reaches the upgrade with nothing seen checking it, but the data
+    flow lost track of a copy of that argument, and a check on the copy would be unseen: CRITICAL
+    is decided neither way. Code that comes from no argument the flow saw does not count, even
+    after an argument was lost: an SDK timelock installs a hash the host unpacked from a stored
+    struct into memory, after its operation id went through memory too."""
+    return bool(flows and flows["upgrade_code"] and not flows.get("upgrade_code_checked")
+                and flows.get("upgrade_code_lost"))
+
+
 def _upgrade_risks(profile: dict | None, functions: list[dict] | None) -> tuple[list[tuple[Severity, str, str]], list[str]]:
     """Upgrade exports the bytecode shows anyone can steer, as (severity, export, evidence),
     and notes on unauthenticated upgrade exports it cannot decide (those raise no risk).
@@ -838,9 +861,11 @@ def _upgrade_risks(profile: dict | None, functions: list[dict] | None) -> tuple[
     function that could check it sees that argument, and the data flow lost no copy of it.
     HIGH: the code comes from storage, or the argument is checked against something (or a
     copy was lost), and another unauthenticated export stores a caller-supplied value of a
-    type the code is stored as. Anything else is a note."""
+    type the code is stored as. Anything else is a note; where a lost argument leaves the
+    CRITICAL undecided, _incomplete raises the evidence gap."""
     exports = (profile or {}).get("exports") or {}
-    inputs = {f["name"]: f.get("inputs", []) for f in functions or []}
+    # A function whose parameters the facts cut short is untyped, like an export not in the spec.
+    inputs = {f["name"]: None if f.get("inputs_omitted") else f.get("inputs", []) for f in functions or []}
     risks: list[tuple[Severity, str, str]] = []
     notes: list[str] = []
     for name, reach in sorted(exports.items()):
@@ -864,8 +889,8 @@ def _upgrade_risks(profile: dict | None, functions: list[dict] | None) -> tuple[
             continue
         writers = _code_writers(exports, inputs, upgrades)
         if unchecked:  # the flow dropped a copy of it, and a check on that copy would not be seen
-            how = (f"installs the {named} its caller passes; the data flow lost track of a copy of it (memory or a "
-                   "global it could not follow), so whether anything checks it was not traced")
+            how = (f"installs the {named} its caller passes; the data flow lost track of a copy of it (memory, a "
+                   "global or an indirect call it could not follow), so whether anything checks it was not traced")
         elif flows["upgrade_code"]:
             how = f"installs the {named} its caller passes after passing it to a host function that can check it"
         elif flows["upgrade_tag"]:
