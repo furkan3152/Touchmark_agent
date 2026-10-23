@@ -21,6 +21,7 @@ from ..models import (
     Severity,
     SwarmMemberStats,
 )
+from .capabilities import executes_code
 from .llm import LlmClient
 from .policy import PASS_SCORE, actionable_risks, assurance_level, audit_surface_coverage, warnings
 
@@ -259,10 +260,7 @@ class SynthesisJudge:
         dangerous_tools = [
             tool
             for tool in artifact.tools
-            if tool.origin == "declared" and any(
-                marker in tool.name.lower()
-                for marker in ("shell", "exec", "bash", "eval", "python", "run_code", "subprocess")
-            )
+            if tool.origin == "declared" and executes_code(tool.name)
         ]
         network_tools = [tool for tool in artifact.tools if tool.network_access]
         out: list[Finding] = []

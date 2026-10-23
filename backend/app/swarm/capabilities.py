@@ -13,25 +13,49 @@ The submitted artifact (and its input commitment) is never modified.
 
 from __future__ import annotations
 
+import re
+
 from ..models import AgentArtifact, ToolSpec
 from .codeflow import CodeProfile, analyse_code
 
 _IMPLEMENTATION = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".mts", ".cts")
 _SIGNING_SCOPE_WORDS = ("sign", "wallet", "transfer", "spend", "payment", "account")
-_EXEC_WORDS = ("shell", "exec", "bash", "eval", "python", "run_code", "subprocess")
 #: Capabilities that exercise authority. Building an unsigned operation (payment or
 #: account_control alone) drafts a transaction for someone else to sign; it is not authority.
 FINANCIAL_CAPABILITIES = ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation")
 OVERSIGHT_WORDS = ("human", "confirm", "approval", "escalate", "operator", "onay")
+#: Paths that are not the agent as it runs: tests, end-to-end and sandbox harnesses, examples
+#: and demos, setup and maintenance scripts, docs and repository tooling. On held-out agents,
+#: declaration checks that counted these reported the operator's own deploy or setup script
+#: as an undeclared capability of the agent.
+NOT_SHIPPED = re.compile(
+    r"(?:^|/)(?:tests?|spec|__tests__|e2e[^/]*|[^/]*-e2e|fixtures?|examples?|demos?|sandbox[^/]*|scripts?|docs?|"
+    r"benchmarks?|\.github|\.husky)/|\.(?:test|spec)\.|(?:^|/)(?:setup\.py|conftest\.py)$", re.I)
+
+
+def shipped(location: str) -> bool:
+    """Whether a path or path:line location is part of the agent as it runs."""
+    return not NOT_SHIPPED.search(location.split(":", 1)[0])
 
 
 def _signing(tool: ToolSpec) -> bool:
     return tool.requires_signature or any(w in scope.lower() for scope in tool.scopes for w in _SIGNING_SCOPE_WORDS)
 
 
+_EXEC_TOKENS = frozenset({"shell", "exec", "bash", "sh", "zsh", "powershell", "eval", "python", "subprocess",
+                          "cmd", "command", "commands", "spawn"})
+
+
+def executes_code(name: str) -> bool:
+    """Whether a tool name says it runs code or commands. Matched by word, so execute_payment
+    (a payment) is not code execution, while run_code, exec, shell_command and runCommand are."""
+    words = [w.lower() for w in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", name)]
+    return bool(_EXEC_TOKENS.intersection(words)) or any(
+        a == "run" and b in {"code", "script", "command", "python", "shell"} for a, b in zip(words, words[1:]))
+
+
 def _executes(tool: ToolSpec) -> bool:
-    text = (tool.name + " " + " ".join(tool.scopes)).lower()
-    return any(w in text for w in _EXEC_WORDS)
+    return executes_code(tool.name) or any(executes_code(scope) for scope in tool.scopes)
 
 
 def has_source(artifact: AgentArtifact) -> bool:
@@ -58,9 +82,20 @@ def profile_for(artifact: AgentArtifact) -> CodeProfile:
     return analyse_code(artifact.code_files, declared_entrypoints(artifact))
 
 
+def _shipped_has(profile: CodeProfile, capability: str) -> bool:
+    return any(shipped(loc.render()) for loc in profile.capabilities.get(capability, []))
+
+
 def _where(profile: CodeProfile, *capabilities: str) -> str:
-    locations = [loc.render() for cap in capabilities for loc in profile.capabilities.get(cap, [])[:2]]
+    locations = [r for cap in capabilities for r in [loc.render() for loc in profile.capabilities.get(cap, [])]
+                 if shipped(r)]
     return "; ".join(locations[:4])
+
+
+def _tmark_signs(artifact: AgentArtifact) -> bool:
+    """A valid .tmark that declares a held key and what it signs discloses signing authority."""
+    authority = (((artifact.raw_metadata.get("tmark") or {}).get("declared") or {}).get("authority") or {})
+    return bool(authority.get("holds_keys") and authority.get("signs"))
 
 
 def effective_artifact(artifact: AgentArtifact) -> AgentArtifact:
@@ -73,21 +108,24 @@ def effective_artifact(artifact: AgentArtifact) -> AgentArtifact:
     added: list[ToolSpec] = []
 
     financial = [cap for cap in FINANCIAL_CAPABILITIES if profile.has(cap)]
-    if financial and not any(_signing(t) for t in declared):
+    # Observed tools describe the agent as it runs: capabilities found only in tests, setup
+    # scripts or demos are not added (the rules judge those paths on their own terms).
+    shipped_financial = [cap for cap in financial if _shipped_has(profile, cap)]
+    if shipped_financial and not any(_signing(t) for t in declared) and not _tmark_signs(artifact):
         scopes = ["sign:tx"]
         if profile.has("payment") or profile.has("contract_invocation"):
             scopes.append("transfer")
         if profile.has("account_control"):
             scopes.append("account:admin")
         added.append(ToolSpec(name="observed:stellar_signing", origin="observed", requires_signature=True,
-                              scopes=scopes, description="Observed in source: " + _where(profile, *financial)))
-    if profile.has("code_execution") and not any(_executes(t) for t in declared):
+                              scopes=scopes, description="Observed in source: " + _where(profile, *shipped_financial)))
+    if _shipped_has(profile, "code_execution") and not any(_executes(t) for t in declared):
         added.append(ToolSpec(name="observed:code_execution", origin="observed", scopes=["exec:process"],
                               description="Observed in source: " + _where(profile, "code_execution")))
-    if profile.has("network_fetch") and not any(t.network_access for t in declared):
+    if _shipped_has(profile, "network_fetch") and not any(t.network_access for t in declared):
         added.append(ToolSpec(name="observed:network_fetch", origin="observed", network_access=True,
                               scopes=["network:http"], description="Observed in source: " + _where(profile, "network_fetch")))
-    if profile.has("file_access") and not any("file" in s or "fs" in s for t in declared for s in t.scopes):
+    if _shipped_has(profile, "file_access") and not any("file" in s or "fs" in s for t in declared for s in t.scopes):
         added.append(ToolSpec(name="observed:file_access", origin="observed", scopes=["read:files"],
                               description="Observed in source: " + _where(profile, "file_access")))
 

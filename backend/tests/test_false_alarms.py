@@ -269,3 +269,18 @@ def test_a_candidate_rated_no_issue_is_dismissed():
          "quote": "const dest = PLACEHOLDER", "reviewed_severity": "none", "reason": "benchmark placeholder"}]})
     f = out[0].findings[0]
     assert not f.is_risk and f.penalty == 0 and "finds no issue" in f.detail
+
+
+def test_an_unconfirmed_high_rule_finding_does_not_block_on_its_own():
+    ids = ["security-path-untrusted-to-financial-sink", "intent-tmark-authority-mismatch",
+           "stellar_native-stellar-secret-seed", "security-path-external-transaction-signed"]
+    verdicts = {"security-path-untrusted-to-financial-sink": "partial", "intent-tmark-authority-mismatch": "unverifiable",
+                "stellar_native-stellar-secret-seed": "partial", "security-path-external-transaction-signed": "confirmed"}
+    out = AuditSwarm._apply_disputes([_verdict(i) for i in ids], {"results": [
+        {"finding_id": i, "verdict": v, "quote_verified": v != "unverifiable", "quote": "pay(dest, amount)" if v != "unverifiable" else "",
+         "reason": "r"} for i, v in verdicts.items()]})
+    sink, tmark, seed, confirmed = (v.findings[0] for v in out)
+    assert sink.severity == Severity.MEDIUM and sink.is_risk and "did not confirm" in sink.detail
+    assert tmark.severity == Severity.MEDIUM
+    assert seed.severity == Severity.HIGH  # a committed secret is a fact, not an inference
+    assert confirmed.severity == Severity.HIGH

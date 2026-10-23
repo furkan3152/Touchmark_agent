@@ -64,7 +64,9 @@ def test_the_verifier_lowers_an_overrated_finding_but_not_a_critical_or_fund_fin
     assert lowered.severity == Severity.LOW and "Independent verification rates this low" in lowered.detail
     assert run("reliability-ai-functional-defect-2", Severity.CRITICAL).severity == Severity.CRITICAL
     assert run("security-ai-unauthorized-payment-3", Severity.HIGH).severity == Severity.HIGH
-    assert run("security-path-untrusted-to-financial-sink", Severity.HIGH).severity == Severity.HIGH
+    # A pattern rule the verifier only partly confirms no longer blocks on its own: on blind-labelled
+    # agents such findings were high in 2 of 12 (orchestrator._apply_disputes).
+    assert run("security-path-untrusted-to-financial-sink", Severity.HIGH).severity == Severity.MEDIUM
 
 
 # ----------------------------------------------------------------- payment bypasses no verifier checked

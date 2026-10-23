@@ -14,6 +14,7 @@ from bisect import bisect_left, bisect_right
 
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from ..stellar.canonical import NETWORK_MARKERS
+from .capabilities import shipped
 from .network_rules import MAINNET_REACHABLE, mask, network_hits as binding_hits
 
 #: Signing against the public network: its passphrase, the SDK constants for it, its CAIP-2 id,
@@ -302,16 +303,19 @@ def tmark_findings(artifact: AgentArtifact, auditor: str) -> list[Finding]:
 
     out: list[Finding] = []
     profile = artifact.code_profile or {}
-    caps = profile.get("capabilities", {})
+    # The declaration describes the agent as it runs; authority used only by tests, setup
+    # scripts or demos is not the agent's (capabilities.NOT_SHIPPED).
+    caps = {cap: kept for cap, locs in (profile.get("capabilities") or {}).items()
+            if (kept := [loc for loc in locs if shipped(loc)])}
     controls = profile.get("controls", {})
     authority, limits = declared["authority"], declared.get("limits") or {}
 
     # Network: a testnet-only agent must not carry the public network's passphrase, nor let a
     # tool argument, a paid server's challenge or a fallback pick mainnet (network_rules).
     if declared["agent"]["network"] == "testnet":
-        hits = network_hits(artifact.code_files, _MAINNET)
+        hits = network_hits({n: t for n, t in artifact.code_files.items() if shipped(n)}, _MAINNET)
         chosen = [f"{h.file}:{h.line} ({_CHOOSES_MAINNET[h.rule]})" for h in binding_hits(artifact.code_files)[0]
-                  if h.rule in MAINNET_REACHABLE]
+                  if h.rule in MAINNET_REACHABLE and shipped(h.file)]
         if hits or chosen:
             out.append(_finding(
                 "intent-tmark-network-mismatch", Severity.HIGH, "Declared testnet only, but the code can use the public network",
