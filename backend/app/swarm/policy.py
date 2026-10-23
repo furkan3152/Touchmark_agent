@@ -131,6 +131,7 @@ EVIDENCE_GAP_RULES = frozenset({
 WARNING_RULES = frozenset({"compliance-no-human-oversight", "intent-full-autonomy-over-funds"})
 #: Gaps that make a pass impossible: the reviewed scope itself is incomplete.
 BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface",
+                           "security-deep-review-incomplete",
                            "security-controls-unverifiable", "stellar_native-onchain-source-unbound",
                            "stellar_native-onchain-contract-code-unresolved",
                            "stellar_native-onchain-contract-bytecode-incomplete",

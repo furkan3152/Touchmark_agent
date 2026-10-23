@@ -190,6 +190,7 @@ class AuditSwarm:
             from ..services.finding_verifier import verify_artifact
             verification = await verify_artifact(finding_verifier, artifact, [f for v in verdicts for f in v.findings])
             verdicts = self._apply_disputes(verdicts, verification)
+        verdicts = self._require_deep_review(artifact, verdicts, deep_record)
         verdicts = self._consolidate(verdicts)
 
         score, badge, dim_scores, findings, notes, disagreement, breakdown, assurance = (
@@ -334,6 +335,41 @@ class AuditSwarm:
                 changed = True
             updated.append(self._rescore(verdict, findings) if changed else verdict)
         return updated
+
+    def _require_deep_review(self, artifact, verdicts, deep_record: dict):
+        """Pattern rules cannot see application logic: a replayable payment proof, an endpoint
+        anyone can call, a budget keyed on an address an attacker can rotate. On agents no rule
+        author had seen, rules alone passed one with three such high defects. So a passing
+        decision needs a completed deep review that read every file holding the agent's
+        authority; without one the decision is needs_evidence, never pass."""
+        from ..models import Dimension, Finding, FindingKind
+        from ..services.deep_review import authority_files
+        if not artifact.code_files:
+            return verdicts
+        needed = authority_files(artifact)
+        read = set((deep_record.get("coverage") or {}).get("files_read") or [])
+        status = deep_record.get("status") or "not_run"
+        unread = sorted(needed - read)
+        if status == "completed" and not unread:
+            return verdicts
+        reason = (f"The deep review did not run ({status})." if status != "completed" else
+                  f"The deep review did not read {len(unread)} file(s) holding the agent's authority.")
+        gap = Finding(
+            id="security-deep-review-incomplete", dimension=Dimension.SECURITY, severity=Severity.MEDIUM,
+            title="The code holding the agent's authority was not fully read by the deep review",
+            detail=reason + " Pattern rules cannot judge application logic such as replayable payment "
+                   "proofs, unauthenticated endpoints or budgets an attacker can sidestep, so the audit "
+                   "cannot pass on rules alone.",
+            evidence=", ".join(unread[:20]) or status, evidence_grade=EvidenceGrade.CONFIRMED,
+            remediation="Run the audit with the deep review enabled and enough time to read these files.",
+            auditor="security", confidence=0.9, kind=FindingKind.EVIDENCE_GAP)
+        out, added = [], False
+        for verdict in verdicts:
+            if not added and verdict.dimension is Dimension.SECURITY:
+                verdict = self._rescore(verdict, [*verdict.findings, gap])
+                added = True
+            out.append(verdict)
+        return out
 
     @staticmethod
     def _apply_disputes(verdicts, verification: dict):

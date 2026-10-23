@@ -73,3 +73,18 @@ def run() -> callable:
         return asyncio.run(coro)
 
     return _run
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "deep_review_required: keep the rule that a pass needs a completed deep review")
+
+
+@pytest.fixture(autouse=True)
+def _rules_judged_alone(request, monkeypatch):
+    """Most tests check what the rules decide on a fixture, without a model. In production a
+    pass also needs a deep review that read the agent's authority files
+    (AuditSwarm._require_deep_review); tests marked deep_review_required keep that rule."""
+    if request.node.get_closest_marker("deep_review_required"):
+        return
+    from backend.app.swarm.orchestrator import AuditSwarm
+    monkeypatch.setattr(AuditSwarm, "_require_deep_review", lambda self, artifact, verdicts, record: verdicts)
