@@ -127,6 +127,8 @@ class Tool(_Strict):
     moves_funds: bool
     signs: bool
     network: bool
+    #: Reads or writes local files (a spend ledger, a keystore, a cache).
+    files: bool = False
     max_amount: Money | None = None
 
     @model_validator(mode="after")
@@ -241,7 +243,8 @@ def to_declaration(tm: Tmark) -> dict:
     set for a USDC cap, for readers of the older field."""
     usdc = lambda m: float(m.amount) if m and _is_usdc(m.asset) else None  # noqa: E731
     tools = [{"name": t.name, "description": t.description,
-              "scopes": (["payments"] if t.moves_funds else []) + (["sign"] if t.signs else []),
+              "scopes": (["payments"] if t.moves_funds else []) + (["sign"] if t.signs else [])
+                        + (["files"] if t.files else []),
               "requires_signature": t.signs, "network_access": t.network,
               "spend_limit_usdc": usdc(t.max_amount), "spend_limit": cap(t.max_amount)} for t in tm.tools]
     capabilities = list(tm.authority.signs) + (["network"] if any(t.network for t in tm.tools) else [])

@@ -69,7 +69,9 @@ class Settings(BaseSettings):
     deep_review_passes: int = Field(default=2, ge=1, le=3)
     deep_review_timeout_seconds: float = Field(default=240.0, ge=30.0, le=900.0)
     # Independent re-check of each finding by a second model (services/finding_verifier.py).
-    enable_finding_verification: bool = False
+    # On by default (it still needs an API key): a medium payment bypass that no verifier
+    # checked holds back a pass, so without it a model-reviewed agent can never pass.
+    enable_finding_verification: bool = True
     verifier_model: str = "claude-sonnet-5-5"
     verifier_effort: str = Field(default="medium", pattern="^(low|medium|high|xhigh|max)$")
     # Gerçek endpoint'e adversarial payload yalnız izole hedefte açık opt-in ile gönderilir.

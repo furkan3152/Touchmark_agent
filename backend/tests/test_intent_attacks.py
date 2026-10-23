@@ -91,7 +91,9 @@ def test_a_rule_the_code_enforces_is_not_reported_as_prompt_only(tmp_path):
 
 
 def test_a_per_call_cap_without_a_running_total_is_reported(tmp_path):
-    _, ids = audit(tmp_path, {}, base="safe-treasury-agent")
+    # The safe example before it kept a daily budget: a cap per payment and nothing else.
+    per_call_only = (Path(__file__).parent / "fixtures" / "per_call_cap_agent.ts").read_text()
+    _, ids = audit(tmp_path, {"src/index.ts": per_call_only}, base="safe-treasury-agent")
     assert "security-per-call-cap-only" in ids
 
 
