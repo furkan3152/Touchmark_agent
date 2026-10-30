@@ -77,7 +77,7 @@
   byId("checkout-requester").addEventListener("input",()=>{resetQuote();message("Requester changed. Get a fresh quote for this public account.");});
   byId("checkout-connect").addEventListener("click",async()=>{if(working)return;lock(true);const token=revision;try{const wallet=await walletState(true);assertCurrent(token);resetQuote();byId("checkout-requester").value=wallet.address;message("Freighter connected on Testnet. Your wallet has not signed a transaction.");}catch(error){message(error.message);}finally{lock(false);}});
   for(const id of ["checkout-quote","checkout-refresh"])byId(id).addEventListener("click",async()=>{if(working)return;lock(true);try{message("Checking the quoted scope and current ledger state…");await refreshQuote();}catch(error){message(error.message);}finally{lock(false);}});
-  byId("checkout-download").addEventListener("click",()=>{if(!prepared)return;const url=URL.createObjectURL(new Blob([prepared.unsigned_xdr],{type:"text/plain;charset=utf-8"}));const link=node("a");link.href=url;link.download=`veritas-testnet-${prepared.step}.xdr`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
+  byId("checkout-download").addEventListener("click",()=>{if(!prepared)return;const url=URL.createObjectURL(new Blob([prepared.unsigned_xdr],{type:"text/plain;charset=utf-8"}));const link=node("a");link.href=url;link.download=`touchmark-testnet-${prepared.step}.xdr`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
   byId("checkout-sign").addEventListener("click",async()=>{
     if(working||!prepared||!checkout)return;lock(true);const token=revision;const transaction=prepared;
     try {
