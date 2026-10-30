@@ -16,7 +16,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   ctx=await browser.newContext({viewport:{width:1440,height:1000},recordVideo:{dir:OUT,size:{width:1440,height:1000}},reducedMotion:'reduce',acceptDownloads:true});
   const page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto('http://127.0.0.1:8769',{waitUntil:'networkidle'});
-  async function caption(text){await page.evaluate(text=>{let e=document.getElementById('trial-tutorial-caption');if(!e){e=document.createElement('div');e.id='trial-tutorial-caption';Object.assign(e.style,{position:'fixed',bottom:'20px',left:'40px',right:'40px',zIndex:'99999',padding:'18px 24px',background:'#10202bf0',color:'white',font:'19px system-ui',borderRadius:'12px',boxShadow:'0 4px 30px #0003',pointerEvents:'none'});document.body.append(e);}e.textContent='KAYIT AÇIKLAMASI • '+text;},text);}
+  async function caption(text){await page.evaluate(text=>{let e=document.getElementById('trial-tutorial-caption');if(!e){e=document.createElement('div');e.id='trial-tutorial-caption';Object.assign(e.style,{position:'fixed',bottom:'20px',left:'40px',right:'40px',zIndex:'99999',padding:'18px 24px',background:'#10202bf0',color:'white',font:'19px system-ui',borderRadius:'12px',boxShadow:'0 4px 30px #0003',pointerEvents:'none'});document.body.append(e);}e.textContent='RECORDING NOTE • '+text;},text);}
   await caption('Real localhost recording. InvoicePilot: an agent that pays a Testnet invoice on a model decision.');await pause(4000);
   await page.locator('#tab-files').click();
   await page.locator('#source-files').setInputFiles(ROOT+'/research/customer-trial-2026-10-15/invoicepilot.veritas');
