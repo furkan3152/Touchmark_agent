@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -110,7 +111,7 @@ class Recorder:
 async def record(url: str, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
-        browser = await p.chromium.launch(executable_path="/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+        browser = await p.chromium.launch(executable_path=os.environ.get("CHROME_PATH"))
         context = await browser.new_context(viewport={"width": 1280, "height": 720}, color_scheme="light",
                                             record_video_dir=str(out / "raw"), record_video_size={"width": 1280, "height": 720})
         page = await context.new_page()
