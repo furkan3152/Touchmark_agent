@@ -8,10 +8,24 @@ from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .stellar.networks import TESTNET, NetworkGuardError, StellarNetwork, resolve_network
+
+#: Default SQLite file when DATABASE_URL is unset or empty.
+DEFAULT_DATABASE_FILE = "./data/touchmark.db"
+#: Defaults from before the rename (local runs, Docker image). While one of them exists and
+#: touchmark.db does not, the legacy file stays in use so existing data is not left behind.
+LEGACY_DATABASE_FILES = ("./data/agentveritas-stellar.db", "./data/agentveritas.db")
+
+
+def default_database_url() -> str:
+    if not Path(DEFAULT_DATABASE_FILE).exists():
+        legacy = [name for name in LEGACY_DATABASE_FILES if Path(name).is_file()]
+        if legacy:
+            return "sqlite:///" + max(legacy, key=lambda name: Path(name).stat().st_mtime)
+    return "sqlite:///" + DEFAULT_DATABASE_FILE
 
 
 class Settings(BaseSettings):
@@ -118,13 +132,20 @@ class Settings(BaseSettings):
     swarm_stake_usdc: float = 5.0
     auditor_timeout_seconds: float = Field(default=30.0, ge=0.1, le=300.0)
 
-    database_url: str = "sqlite:///./data/agentveritas-stellar.db"
+    #: Empty means default_database_url(): touchmark.db, or a legacy file that already exists.
+    database_url: str = ""
     data_dir: str = "./data"
     event_database: str = "./data/stellar-events.db"
     deployment_manifest: str = "./deployments/stellar-testnet.json"
     ingest_root: str = ""
     allow_local_path_ingest: bool = False
     max_ingest_bytes: int = 8_000_000
+
+    @model_validator(mode="after")
+    def _resolve_database_url(self) -> "Settings":
+        if not self.database_url.strip():
+            self.database_url = default_database_url()
+        return self
 
     @property
     def network(self) -> StellarNetwork:

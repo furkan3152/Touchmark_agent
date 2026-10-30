@@ -6,9 +6,9 @@ monitoring must run on a durable single-worker service, never ephemeral /tmp.
 import os
 
 os.environ["STATELESS_STUDIO"] = "true"
-os.environ.setdefault("DATA_DIR", "/tmp/agentveritas-studio")
-os.environ.setdefault("EVENT_DATABASE", "/tmp/agentveritas-studio/events.db")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/agentveritas-studio/unused.db")
+os.environ.setdefault("DATA_DIR", "/tmp/touchmark-studio")
+os.environ.setdefault("EVENT_DATABASE", "/tmp/touchmark-studio/events.db")
+os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/touchmark-studio/unused.db")
 
 from backend.app.api import app  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402

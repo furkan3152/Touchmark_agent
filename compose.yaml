@@ -1,5 +1,5 @@
 services:
-  agentveritas:
+  touchmark:
     build: .
     ports:
       - "127.0.0.1:8000:8000"
@@ -7,7 +7,8 @@ services:
     environment:
       DATA_DIR: /app/data
       EVENT_DATABASE: /app/data/events.db
-      DATABASE_URL: sqlite:////app/data/agentveritas.db
+      # Empty: /app/data/touchmark.db, or the pre-rename agentveritas.db already in the volume.
+      DATABASE_URL: ""
       OFFICIAL_ORDERS_DATABASE: /app/data/official-orders.db
     volumes:
       - veritas-data:/app/data
@@ -18,4 +19,5 @@ services:
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 volumes:
+  # Named before the rename. Kept so existing deployments keep their data volume.
   veritas-data:

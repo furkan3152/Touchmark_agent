@@ -4,10 +4,11 @@
  *   npm install --prefix /tmp/touchmark-browser playwright@1.62.1
  *   /tmp/touchmark-browser/node_modules/.bin/playwright install chromium
  *   NODE_PATH=/tmp/touchmark-browser/node_modules node scripts/verify_browser_ui.cjs
- * The project .venv must contain backend dependencies. VERITAS_PYTHON overrides it.
- * Screenshots + result.json go to a temporary directory (or VERITAS_BROWSER_OUTPUT).
- * Existing browser installations can use VERITAS_CHROMIUM_EXECUTABLE; Lambda-style
- * distributions may also set VERITAS_CHROMIUM_MODULE for their launch arguments.
+ * The project .venv must contain backend dependencies. TOUCHMARK_PYTHON overrides it.
+ * Screenshots + result.json go to a temporary directory (or TOUCHMARK_BROWSER_OUTPUT).
+ * Existing browser installations can use TOUCHMARK_CHROMIUM_EXECUTABLE; Lambda-style
+ * distributions may also set TOUCHMARK_CHROMIUM_MODULE for their launch arguments.
+ * Each TOUCHMARK_* variable also accepts its pre-rename VERITAS_* name.
  * No private credentials, remote agent repositories, funded orders or wallet signing
  * are used. AI, execution and official orders are disabled in this local server.
  */
@@ -17,13 +18,14 @@ const path=require('node:path');
 const {spawn}=require('node:child_process');
 const net=require('node:net');
 const os=require('node:os');
-const {chromium:pw}=require(process.env.VERITAS_PLAYWRIGHT_MODULE||'playwright');
+const env=(name)=>process.env['TOUCHMARK_'+name]??process.env['VERITAS_'+name];
+const {chromium:pw}=require(env('PLAYWRIGHT_MODULE')||'playwright');
 const ROOT=path.resolve(__dirname,'..');
-const OUT=process.env.VERITAS_BROWSER_OUTPUT||fs.mkdtempSync(path.join(os.tmpdir(),'touchmark-browser-'));
+const OUT=env('BROWSER_OUTPUT')||fs.mkdtempSync(path.join(os.tmpdir(),'touchmark-browser-'));
 fs.mkdirSync(OUT,{recursive:true});
 const launchOptions={headless:true};
-if(process.env.VERITAS_CHROMIUM_EXECUTABLE)launchOptions.executablePath=process.env.VERITAS_CHROMIUM_EXECUTABLE;
-if(process.env.VERITAS_CHROMIUM_MODULE)launchOptions.args=require(process.env.VERITAS_CHROMIUM_MODULE).args;
+if(env('CHROMIUM_EXECUTABLE'))launchOptions.executablePath=env('CHROMIUM_EXECUTABLE');
+if(env('CHROMIUM_MODULE'))launchOptions.args=require(env('CHROMIUM_MODULE')).args;
 const pause=(ms)=>new Promise(r=>setTimeout(r,ms));
 async function freePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 
@@ -40,7 +42,7 @@ function assertLayout(value,label){
 
 (async()=>{
  const port=await freePort(); const base=`http://127.0.0.1:${port}`;
- const server=spawn(process.env.VERITAS_PYTHON||path.join(ROOT,'.venv','bin','python'),['-m','uvicorn','app:app','--host','127.0.0.1','--port',String(port)],{cwd:ROOT,env:{...process.env,STELLAR_NETWORK:'offline',ENABLE_SANDBOX_RUNTIME:'false',STATELESS_STUDIO:'true',ENABLE_PUBLIC_AI_REVIEW:'false',ENABLE_OFFICIAL_ORDERS:'false',LLM_API_KEY:''},stdio:['ignore','ignore','pipe']});
+ const server=spawn(env('PYTHON')||path.join(ROOT,'.venv','bin','python'),['-m','uvicorn','app:app','--host','127.0.0.1','--port',String(port)],{cwd:ROOT,env:{...process.env,STELLAR_NETWORK:'offline',ENABLE_SANDBOX_RUNTIME:'false',STATELESS_STUDIO:'true',ENABLE_PUBLIC_AI_REVIEW:'false',ENABLE_OFFICIAL_ORDERS:'false',LLM_API_KEY:''},stdio:['ignore','ignore','pipe']});
  let serverError=''; server.stderr.on('data',x=>{serverError+=x.toString();});
  let browser;
  try{
@@ -137,9 +139,9 @@ function assertLayout(value,label){
   // Optional live-chain QA of an already executed, delivered report. This is
   // report rendering/readback, not a recording of wallet signing or execution.
   let deliveredReport = null;
-  if(process.env.VERITAS_DELIVERED_REPORT && process.env.VERITAS_DELIVERY_PROOF){
-   const envelope=JSON.parse(fs.readFileSync(process.env.VERITAS_DELIVERED_REPORT,'utf8'));
-   const proof=JSON.parse(fs.readFileSync(process.env.VERITAS_DELIVERY_PROOF,'utf8'));
+  if(env('DELIVERED_REPORT') && env('DELIVERY_PROOF')){
+   const envelope=JSON.parse(fs.readFileSync(env('DELIVERED_REPORT'),'utf8'));
+   const proof=JSON.parse(fs.readFileSync(env('DELIVERY_PROOF'),'utf8'));
    assert.equal(proof.status,'verified');
    const delivery=proof.delivery;
    assert.equal(delivery.report_sha256,envelope.report_sha256);

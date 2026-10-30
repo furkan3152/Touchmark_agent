@@ -16,10 +16,10 @@ from backend.app.config import Settings
 # The global services created when test modules import `backend.app.api` must not
 # write to the repository's or the user's `.env` data path either. Safe, process-local
 # paths are set up before the fixtures and removed when Python exits.
-_TEST_PROCESS_DATA = Path(tempfile.mkdtemp(prefix="agentveritas-stellar-pytest-"))
+_TEST_PROCESS_DATA = Path(tempfile.mkdtemp(prefix="touchmark-pytest-"))
 os.environ["DATA_DIR"] = str(_TEST_PROCESS_DATA)
 os.environ["EVENT_DATABASE"] = str(_TEST_PROCESS_DATA / "events.db")
-os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_PROCESS_DATA / 'agentveritas.db'}"
+os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_PROCESS_DATA / 'touchmark.db'}"
 atexit.register(shutil.rmtree, _TEST_PROCESS_DATA, ignore_errors=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

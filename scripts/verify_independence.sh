@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd -P)"
-OTHER="${AGENTVERITAS_ARC_PATH:-../agentveritas-arc}"
+OTHER="${TOUCHMARK_ARC_PATH:-${AGENTVERITAS_ARC_PATH:-../agentveritas-arc}}"
 
 if find backend frontend contracts scripts -type l -print -quit | grep -q .; then
   echo "ERROR: symlink found in the source tree"
