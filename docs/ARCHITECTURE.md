@@ -212,4 +212,45 @@ backend/app/swarm/      codeflow.py, jsflow.py, auditors, policy.py, judge.py
 backend/app/stellar/    ledger reads, authority, SEP-53 ownership, auth-entry inspection
 contracts/              agent-registry, audit-credential, audit-escrow, agent-account
 scripts/                audit_agent.py, evaluate.py, deploy_demo_testnet.py
+scripts/pilot/          one-off testnet pilot, customer-trial and recording scripts
 ```
+
+## 6. Compatibility identifiers
+
+Touchmark was first published as AgentVeritas. The identifiers below keep the old name on
+purpose. Most are part of something that is signed, hashed or stored on-chain, and changing
+one would stop earlier reports, capsules, orders, signatures or contracts from verifying.
+Treat them as frozen protocol constants, not branding.
+
+| Identifier | Where | Why it stays |
+|---|---|---|
+| `AgentVeritas Stellar ownership proof` | `stellar/ownership.py` | SEP-53 message owners have signed. |
+| `AgentVeritas official audit order`, `agentveritas-stellar:official-order:v1` | `services/order_identity.py` | Signed order challenge and its HMAC domain. |
+| `agentveritas.demo.agent:`, `.demo.request:`, `.demo.ticket.v1`, `.demo.no-endpoint` | `services/demo_flow.py` | Seeds of on-chain demo agent and request ids, and the ticket HMAC. |
+| `agentveritas:stellar:<agent>:<job>` | `stellar/attestation.py` | Hashed into registry request ids. |
+| `veritas.testnet-checkout/v1`, `veritas.testnet-checkout.quote/v1`, `veritas.checkout.agent/v1`, `veritas.checkout.request/v1`, `urn:veritas:plan:` | `services/testnet_checkout.py` | Signed quotes, hashed agent and request ids, and the plan URI registered on-chain. |
+| `agentveritas.stellar.policy.2026-10-23.1` | `swarm/policy.py` | Bound into artifact and finding commitments that credentials rely on. |
+| `agentveritas.audit.v2`, `agentveritas.runtime.v1`, `agentveritas.stellar.testnet-deployment.v1`, `agentveritas.assurance.v1`, `agentveritas.discovery.v1`, `agentveritas.soroban-invocation/v1`, `agentveritas.soroban-auth-inspection.v1`, `veritas.catalog/v1` | reports, runtime results, `deployments/stellar-testnet.json`, API responses | The first three are inside hashed reports and records and are compared exactly by their readers. The rest are response labels kept in the same namespace, so no artifact mixes old and new ids. |
+| `veritas.capsule/v1`, `veritas.capsule-plan/v1`, `veritas.blueprint/v1`, `veritas.engagement-plan/v1`, `veritas-official` / `Veritas Official` | capsules, Blueprint, audit plans | Inside sealed capsules and hashed plans whose digest is on-chain. |
+| `veritas.testnet-order-delivery/v1`, `veritas.order-receipt/v1`, `veritas.credential-metadata/v1`, `veritas.execution/v1`, `veritas.execution-journal/v1` | stored orders, receipts, credentials, brokered runs | Stored orders and the receipts customers hold are checked against these ids; credential metadata and journals carry them. |
+| `veritas.json`, `veritas-runtime.json` | Blueprint and execution-contract file names | Embedded and hashed in sealed capsules. `touchmark.json` already names the ownership declaration, and `.tmark` replaces the Blueprint. |
+| `VERITAS_SYNTHETIC_CANARY`, `VERITAS_SYNTHETIC_SECRET`, `VERITAS_TENANT_A`/`_B`, `VERITAS_OTHER_TENANT`, `VERITAS_UNUSED_FIXTURE_MUST_NOT_BE_SENT` | capsule scenarios | Canary values in sealed capsules and in generated cases hashed into plans. |
+| `execution_contract.py`, `execution_broker.py`, `workflow_runtime.py`, `execution_journal.py` (memo `Veritas isolated audit`, `veritas-broker-no-credential`) | `services/` | Their source bytes form the reviewed execution profile digest in brokered plans; they are left byte-identical. |
+| `agentveritas.evaluation/v1`, `agentveritas.synthetic-evaluation.v1`, `agentveritas.verifier-calibration/v1`, `agentveritas.demo-deployment.v1`, and the `agentveritas.*` / `veritas.*` ids written by `scripts/pilot/` | evidence written by `scripts/` | Match the committed records these scripts regenerate. |
+| `agent-veritas-{registry,escrow,credential,account}`, `agent_veritas_*.wasm`, `AgentVeritas/session/v1`, contract names `AgentVeritas Registry`, `AgentVeritas Audit Escrow` | `contracts/`, `backend/deploy.py`, deploy scripts | Must match the deployed testnet WASM and contracts in `deployments/`. |
+
+Legacy names that are still read as fallbacks: `agentveritas.json` and
+`.well-known/agentveritas.json` (after `touchmark.json`), `./data/agentveritas-stellar.db`
+and `./data/agentveritas.db` (used while `./data/touchmark.db` does not exist), `.veritas`
+capsule files, the `agentveritas_stellar_admin_key` browser session key, and the
+`VERITAS_*` / `AGENTVERITAS_ARC_PATH` script variables. The compose volume keeps the name
+`veritas-data` so existing deployments keep their data.
+
+Records keep the name they were written with: `docs/evidence/`, `research/`,
+`deployments/`, and the reproduction constants in `scripts/pilot/` (hashed fixture strings
+and the `furkan3152/agentveritas-stellar` source URL registered on-chain). The demo agent
+sources in `examples/demo/` and their test copy are audited byte for byte, so their
+comments are left as they were. `scripts/verify_independence.sh` still looks for the
+sibling project by its name, `agentveritas-arc`, and `SECURITY.md` keeps the
+`security@agentveritas.dev` contact until a Touchmark mailbox is confirmed.
+
