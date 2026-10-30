@@ -88,20 +88,20 @@ MESSAGES.update({
 })
 CODE_MESSAGES = {
 "Soroban authorization paths require review": ("Soroban authorization not evidenced", "A write-capable contract surface lacks recognized require_auth enforcement.", "Require authorization for the exact action arguments and add negative authorization tests."),
-"eval() kullanımı": ("Dynamic eval() execution", "Dynamic evaluation can interpret untrusted input as executable code.", "Remove dynamic evaluation or isolate execution with strictly bounded input."),
-"exec() kullanımı": ("Dynamic exec() execution", "Dynamic execution may allow untrusted content to become code.", "Remove dynamic execution and use explicit, typed operations."),
-"shell=True ile subprocess": ("Subprocess invokes a shell", "Shell invocation increases command-injection risk if any argument is attacker-influenced.", "Use argument arrays with shell=False, validate each argument and isolate the process."),
-"os.system() kullanımı": ("Host shell command execution", "A host shell command is executed. Inspect how command input is constructed.", "Use fixed executable paths and validated argument arrays in an isolated runtime."),
-"TLS doğrulaması kapalı": ("TLS verification disabled", "The request configuration disables certificate verification.", "Enable certificate verification and use a trusted CA bundle."),
-"Kodda gömülü özel anahtar": ("Signing secret embedded in source", "A source pattern resembles a hardcoded private key or mnemonic.", "Rotate exposed credentials and move signing authority into an isolated signer."),
-"Kodda gömülü API anahtarı": ("API credential embedded in source", "A source pattern resembles a hardcoded API credential.", "Rotate the credential and load it from a secret manager with least privilege."),
-"Doğrulanmamış varlık yetkisi": ("Untrusted asset or administrative authority", "An asset or administrative action appears to consume untrusted input.", "Require exact authorization and validate the asset, issuer and permitted action."),
-"Aşırı yüksek slippage toleransı": ("Excessive slippage tolerance", "A trading parameter permits large adverse price movement.", "Set bounded slippage and validate the actual execution venue and minimum output."),
-"Çıkışsız sonsuz döngü": ("Loop without an evident exit", "The source pattern contains an indefinite loop without a nearby recognized stop condition.", "Add iteration, time and resource bounds and test cancellation."),
-"Kullanıcı girdisiyle birleştirilmiş URL": ("URL constructed from external input", "Input-derived URL construction may allow server-side request forgery.", "Allowlist destinations and reject private addresses, redirects and rebinding."),
+"Dynamic eval() execution": ("Dynamic eval() execution", "Dynamic evaluation can interpret untrusted input as executable code.", "Remove dynamic evaluation or isolate execution with strictly bounded input."),
+"Dynamic exec() execution": ("Dynamic exec() execution", "Dynamic execution may allow untrusted content to become code.", "Remove dynamic execution and use explicit, typed operations."),
+"Subprocess invokes a shell": ("Subprocess invokes a shell", "Shell invocation increases command-injection risk if any argument is attacker-influenced.", "Use argument arrays with shell=False, validate each argument and isolate the process."),
+"Host shell command execution": ("Host shell command execution", "A host shell command is executed. Inspect how command input is constructed.", "Use fixed executable paths and validated argument arrays in an isolated runtime."),
+"TLS verification disabled": ("TLS verification disabled", "The request configuration disables certificate verification.", "Enable certificate verification and use a trusted CA bundle."),
+"Signing secret embedded in source": ("Signing secret embedded in source", "A source pattern resembles a hardcoded private key or mnemonic.", "Rotate exposed credentials and move signing authority into an isolated signer."),
+"API credential embedded in source": ("API credential embedded in source", "A source pattern resembles a hardcoded API credential.", "Rotate the credential and load it from a secret manager with least privilege."),
+"Untrusted asset or administrative authority": ("Untrusted asset or administrative authority", "An asset or administrative action appears to consume untrusted input.", "Require exact authorization and validate the asset, issuer and permitted action."),
+"Excessive slippage tolerance": ("Excessive slippage tolerance", "A trading parameter permits large adverse price movement.", "Set bounded slippage and validate the actual execution venue and minimum output."),
+"Loop without an evident exit": ("Loop without an evident exit", "The source pattern contains an indefinite loop without a nearby recognized stop condition.", "Add iteration, time and resource bounds and test cancellation."),
+"URL constructed from external input": ("URL constructed from external input", "Input-derived URL construction may allow server-side request forgery.", "Allowlist destinations and reject private addresses, redirects and rebinding."),
 }
 
-# Support stable rule IDs and legacy code-pattern identifiers.
+# Keyed by stable rule ID, or by title for the source code-pattern rules.
 def english_finding(finding: Finding) -> Finding:
     message = MESSAGES.get(finding.id) or CODE_MESSAGES.get(finding.title)
     if message:

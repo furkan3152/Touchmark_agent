@@ -1,6 +1,6 @@
-"""Reliability Prober: uptime, latency, hata oranı, maliyet verimliliği.
+"""Reliability Prober: uptime, latency, error rate, cost efficiency.
 
-Canlı probe sonuçları CONFIRMED; kod/prompt'ta bir mekanizmanın yokluğu INFERRED.
+Live probe results are CONFIRMED; the absence of a mechanism in code or prompt is INFERRED.
 """
 
 from __future__ import annotations
@@ -39,17 +39,17 @@ class ReliabilityAuditor(BaseAuditor):
                 self.finding(
                     "no-endpoint",
                     Severity.LOW,
-                    "Canlı endpoint verilmedi",
-                    "Uptime, gecikme ve başarı oranı ölçülemedi; bu boyut yalnızca statik "
-                    "sinyallere dayanıyor.",
-                    remediation="Sürekli izleme ve tam güvenilirlik skoru için MCP/A2A/HTTP "
-                    "endpoint'i kaydedin.",
+                    "No live endpoint supplied",
+                    "Uptime, latency and success rate could not be measured; this dimension rests "
+                    "only on static signals.",
+                    remediation="Register an MCP/A2A/HTTP endpoint for continuous monitoring and a "
+                    "full reliability score.",
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.5,
                 )
             )
             findings += self._static_reliability(artifact)
-            return findings, scenarios, "Endpoint yok; yalnızca statik sinyaller değerlendirildi."
+            return findings, scenarios, "No endpoint; only static signals were assessed."
 
         stats = await self._probe(
             artifact.endpoint_url, PROBE_COUNT_DEEP if deep else PROBE_COUNT_BASIC
@@ -59,9 +59,9 @@ class ReliabilityAuditor(BaseAuditor):
         scenarios += [
             ScenarioResult(
                 scenario_id="R-01",
-                name="Endpoint erişilebilir",
+                name="Endpoint reachable",
                 passed=stats["success"] > 0,
-                reason=f"{stats['success']}/{stats['total']} istek başarılı",
+                reason=f"{stats['success']}/{stats['total']} requests succeeded",
             ),
             ScenarioResult(
                 scenario_id="R-02",
@@ -76,10 +76,10 @@ class ReliabilityAuditor(BaseAuditor):
                 self.finding(
                     "endpoint-down",
                     Severity.HIGH,
-                    "Endpoint yanıt vermiyor",
-                    f"{stats['total']} denemenin hiçbiri başarılı olmadı. "
-                    f"Son hata: {stats['last_error']}",
-                    remediation="Servisi ayağa kaldırın ve health-check endpoint'i ekleyin.",
+                    "Endpoint not responding",
+                    f"None of {stats['total']} attempts succeeded. "
+                    f"Last error: {stats['last_error']}",
+                    remediation="Bring the service up and add a health-check endpoint.",
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.95,
                 )
@@ -89,10 +89,10 @@ class ReliabilityAuditor(BaseAuditor):
                 self.finding(
                     "flaky-endpoint",
                     Severity.MEDIUM,
-                    "Endpoint kararsız",
-                    f"Başarı oranı %{success_rate * 100:.0f}. Kararsız servis iş teslim "
-                    "güvenilirliğini düşürür.",
-                    remediation="Yeniden deneme, devre kesici ve kapasite ölçeklemesi ekleyin.",
+                    "Endpoint unstable",
+                    f"Success rate is {success_rate * 100:.0f}%. An unstable service lowers delivery "
+                    "reliability.",
+                    remediation="Add retries, a circuit breaker and capacity scaling.",
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.9,
                 )
@@ -103,10 +103,10 @@ class ReliabilityAuditor(BaseAuditor):
                 self.finding(
                     "high-latency",
                     Severity.MEDIUM,
-                    "Yüksek gecikme",
-                    f"p95 gecikme {stats['p95_ms']}ms. Agent yanıt süresi "
-                    "ledger onayı öncesindeki kullanıcı deneyimini bozuyor.",
-                    remediation="Model çağrılarını paralelleştirin, önbellek ve streaming ekleyin.",
+                    "High latency",
+                    f"p95 latency is {stats['p95_ms']}ms. The agent's response time "
+                    "degrades the user experience before ledger confirmation.",
+                    remediation="Parallelise model calls and add caching and streaming.",
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.9,
                 )
@@ -117,12 +117,12 @@ class ReliabilityAuditor(BaseAuditor):
                 self.finding(
                     "unauthenticated-endpoint",
                     Severity.HIGH,
-                    "Kimlik doğrulaması olmayan endpoint",
-                    "Endpoint kimlik doğrulaması istemeden istekleri kabul ediyor. Herkes agent'ı "
-                    "kullanabilir; maliyet istismarı ve yetkisiz işlem riski var.",
+                    "Unauthenticated endpoint",
+                    "The endpoint accepts requests without authentication. Anyone can use the agent; "
+                    "there is a risk of cost abuse and unauthorized transactions.",
                     evidence="probe: 2xx response without credentials",
-                    remediation="API anahtarı veya agent cüzdan imzası ile kimlik doğrulaması "
-                    "zorunlu kılın.",
+                    remediation="Require authentication with an API key or an agent wallet "
+                    "signature.",
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.9,
                 )
@@ -130,8 +130,8 @@ class ReliabilityAuditor(BaseAuditor):
 
         findings += self._static_reliability(artifact)
         notes = (
-            f"{stats['total']} probe → başarı %{success_rate * 100:.0f}, "
-            f"ortalama {stats['avg_ms']}ms, p95 {stats['p95_ms']}ms."
+            f"{stats['total']} probes → {success_rate * 100:.0f}% success, "
+            f"average {stats['avg_ms']}ms, p95 {stats['p95_ms']}ms."
         )
         return findings, scenarios, notes
 
@@ -146,9 +146,9 @@ class ReliabilityAuditor(BaseAuditor):
                 self.finding(
                     "no-error-handling",
                     Severity.MEDIUM,
-                    "Hata yönetimi görünmüyor",
-                    "Kod veya prompt içinde hata yakalama/yeniden deneme sinyali yok.",
-                    remediation="Hata sınıflarını tanımlayın, backoff'lu yeniden deneme ekleyin.",
+                    "No visible error handling",
+                    "There is no error-handling or retry signal in the code or prompt.",
+                    remediation="Define error classes and add retries with backoff.",
                     grade=EvidenceGrade.INFERRED,
                     confidence=0.7,
                 )
@@ -161,9 +161,9 @@ class ReliabilityAuditor(BaseAuditor):
                 self.finding(
                     "no-cost-controls",
                     Severity.LOW,
-                    "Maliyet/oran kontrolü yok",
-                    "Token veya gas maliyetini sınırlayan bir mekanizma bulunamadı.",
-                    remediation="Önbellek, oran sınırı ve token bütçesi tanımlayın.",
+                    "No cost or rate control",
+                    "No mechanism that bounds token or gas cost was found.",
+                    remediation="Define caching, a rate limit and a token budget.",
                     grade=EvidenceGrade.INFERRED,
                     confidence=0.6,
                 )
@@ -190,7 +190,7 @@ class ReliabilityAuditor(BaseAuditor):
                     success += 1
                     auth_open = True
                 elif resp.status_code in (401, 403):
-                    success += 1  # servis ayakta, kimlik doğrulaması istiyor
+                    success += 1  # service is up and requires authentication
                 else:
                     last_error = f"HTTP {resp.status_code}"
             except Exception as exc:

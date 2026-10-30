@@ -21,15 +21,15 @@ import pytest
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 
 
-# --------------------------------------------------------------------- yardımcı
+# ---------------------------------------------------------------------- helpers
 def _tokens() -> dict[str, str]:
-    """`tokens.css` içindeki hex değerli CSS değişkenleri."""
+    """Hex-valued CSS variables in `tokens.css`."""
     text = (FRONTEND / "tokens.css").read_text(encoding="utf-8")
     return dict(re.findall(r"^\s*(--[a-z0-9-]+):\s*(#[0-9a-fA-F]{6})", text, re.M))
 
 
 def _relative_luminance(hex_color: str) -> float:
-    """WCAG 2.1 relatif parlaklık."""
+    """WCAG 2.1 relative luminance."""
     channels = [int(hex_color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
     linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
@@ -41,26 +41,26 @@ def _contrast(fg: str, bg: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
-#: (açıklama, ön plan tokenı, arka plan tokenı, gereken oran)
-#: Eşik 4.5 = WCAG AA normal metin. Kararlar burada belgelidir: bir tonu
-#: değiştirmek isteyen kişi hangi çiftin kısıtladığını görür.
+#: (description, foreground token, background token, required ratio)
+#: Threshold 4.5 = WCAG AA normal text. Decisions are documented here: anyone who
+#: wants to change a tone can see which pair constrains it.
 CONTRAST_CASES = [
-    ("başlık / kart", "--text", "--surface-1", 4.5),
-    ("gövde / kart", "--text-2", "--surface-1", 4.5),
-    ("ikincil / kart", "--text-3", "--surface-1", 4.5),
-    ("gövde / bölüm başlığı", "--text-2", "--surface-2", 4.5),
-    ("ikincil / bölüm başlığı", "--text-3", "--surface-2", 4.5),
-    # surface-4 en zorlu zemin: .card-step ve segment hover orada.
-    ("ikincil / surface-4", "--text-3", "--surface-4", 4.5),
-    ("input değeri / input", "--text", "--surface-3", 4.5),
+    ("heading / card", "--text", "--surface-1", 4.5),
+    ("body / card", "--text-2", "--surface-1", 4.5),
+    ("secondary / card", "--text-3", "--surface-1", 4.5),
+    ("body / section header", "--text-2", "--surface-2", 4.5),
+    ("secondary / section header", "--text-3", "--surface-2", 4.5),
+    # surface-4 is the hardest background: .card-step and segment hover sit on it.
+    ("secondary / surface-4", "--text-3", "--surface-4", 4.5),
+    ("input value / input", "--text", "--surface-3", 4.5),
     ("placeholder / input", "--text-4", "--surface-3", 4.5),
     ("footer / canvas", "--text-4", "--surface-canvas", 4.5),
-    ("bağlantı / kart", "--accent-text", "--surface-1", 4.5),
-    ("aksan metni / aksan zemin", "--accent-text", "--accent-bg", 4.5),
-    # Buton hover'da kontrast DÜŞMEMELİ; ikisi de ölçülür.
-    ("primary buton / aksan", "--accent-fg", "--accent", 4.5),
-    ("primary buton / aksan hover", "--accent-fg", "--accent-hover", 4.5),
-    # Dört skor bandı: renk burada bilgi taşır, okunurluk pazarlık konusu değil.
+    ("link / card", "--accent-text", "--surface-1", 4.5),
+    ("accent text / accent background", "--accent-text", "--accent-bg", 4.5),
+    # Contrast MUST NOT drop on button hover; both states are measured.
+    ("primary button / accent", "--accent-fg", "--accent", 4.5),
+    ("primary button / accent hover", "--accent-fg", "--accent-hover", 4.5),
+    # The four score bands: color carries information here, legibility is not negotiable.
     ("SAFE badge", "--safe-text", "--safe-bg", 4.5),
     ("CAUTION badge", "--caution-text", "--caution-bg", 4.5),
     ("HIGH_RISK badge", "--risk-text", "--risk-bg", 4.5),
@@ -70,30 +70,30 @@ CONTRAST_CASES = [
 
 @pytest.mark.parametrize("label,fg,bg,required", CONTRAST_CASES)
 def test_contrast_meets_wcag_aa(label, fg, bg, required):
-    """Renkle taşınan her bilgi okunabilir olmalı."""
+    """Every piece of information carried by color must be legible."""
     tokens = _tokens()
-    assert fg in tokens, f"{fg} tanımsız"
-    assert bg in tokens, f"{bg} tanımsız"
+    assert fg in tokens, f"{fg} is undefined"
+    assert bg in tokens, f"{bg} is undefined"
 
     ratio = _contrast(tokens[fg], tokens[bg])
     assert ratio >= required, (
         f"{label}: {ratio:.2f}:1 < {required}:1 "
-        f"({fg}={tokens[fg]} üzerinde {bg}={tokens[bg]})"
+        f"({fg}={tokens[fg]} on {bg}={tokens[bg]})"
     )
 
 
 def test_text_hierarchy_is_monotonic():
-    """Metin tonları sırayla sönükleşmeli; aksi hâlde hiyerarşi yanıltır."""
+    """Text tones must get dimmer in order; otherwise the hierarchy misleads."""
     t = _tokens()
     lums = [_relative_luminance(t[k]) for k in ("--text", "--text-2", "--text-3", "--text-4")]
     assert lums == sorted(lums, reverse=True), lums
 
 
 def test_surface_elevation_is_monotonic():
-    """Yükseklik merdiveni: her yüzey bir öncekinden açık olmalı.
+    """Elevation ladder: every surface must be lighter than the one before.
 
-    Koyu temada yükseklik gölgeyle değil tonla kurulur; sıra bozulursa
-    kartlar zeminin altında görünür.
+    In the dark theme elevation comes from tone, not shadow; if the order breaks,
+    cards appear below the background.
     """
     t = _tokens()
     keys = ["--surface-canvas", "--surface-1", "--surface-2", "--surface-3", "--surface-4", "--surface-5"]
@@ -101,23 +101,23 @@ def test_surface_elevation_is_monotonic():
     assert lums == sorted(lums), dict(zip(keys, lums))
 
 
-# ------------------------------------------------------------- token disiplini
+# ------------------------------------------------------------ token discipline
 def test_no_raw_hex_outside_tokens():
-    """`styles.css` ham renk içermemeli; tema tek dosyadan yönetilir.
+    """`styles.css` must not contain raw colors; the theme is managed from one file.
 
-    Bir bileşene doğrudan `#1a1a1a` yazmak, o bileşeni tema değişiminden
-    kopartır ve kontrast testlerinin kapsamı dışına çıkarır.
+    Writing `#1a1a1a` directly into a component cuts it off from theme changes and
+    takes it out of the contrast tests' scope.
     """
     css = (FRONTEND / "styles.css").read_text(encoding="utf-8")
     leaks = re.findall(r"#[0-9a-fA-F]{3,8}\b", css)
-    assert leaks == [], f"styles.css içinde ham hex: {leaks}"
+    assert leaks == [], f"raw hex in styles.css: {leaks}"
 
 
 def test_every_used_token_is_defined():
-    """`var(--x)` ile çağrılan her token `tokens.css`'te tanımlı olmalı.
+    """Every token referenced with `var(--x)` must be defined in `tokens.css`.
 
-    Tanımsız bir token sessizce boşa düşer: kenarlık kaybolur veya metin
-    miras aldığı rengi alır. Görsel bir hata, konsola hiçbir şey yazmaz.
+    An undefined token silently resolves to nothing: a border disappears or the text
+    takes its inherited color. A visual bug that writes nothing to the console.
     """
     defined = set(
         re.findall(
@@ -127,43 +127,42 @@ def test_every_used_token_is_defined():
     used = set()
     for name in ("styles.css", "index.html"):
         used |= set(re.findall(r"var\((--[a-z0-9-]+)", (FRONTEND / name).read_text(encoding="utf-8")))
-    assert used <= defined, f"tanımsız token: {sorted(used - defined)}"
+    assert used <= defined, f"undefined token: {sorted(used - defined)}"
 
 
 def test_no_glassmorphism_or_decorative_gradients():
-    """Reddedilen görsel teknikler geri sızmamalı.
+    """Rejected visual techniques must not leak back in.
 
-    `backdrop-filter` koyu temada metin kontrastını öngörülemez kılar:
-    okunabilirlik arkasından ne geçtiğine bağlanır ve ölçülemez.
-    `background-clip: text` gradient metin üretir; küçük punto kontrastı
-    ölçülemez hâle gelir.
+    `backdrop-filter` makes text contrast unpredictable in the dark theme: legibility
+    depends on whatever passes behind it and cannot be measured. `background-clip: text`
+    produces gradient text; small-type contrast becomes unmeasurable.
 
-    Gradient *dolgu* da yasak, ama şekil çizen gradientler değil: `select`
-    okundaki `linear-gradient(45deg, transparent 50%, renk 50%)` bir renk
-    geçişi değil, keskin kenarlı bir üçgen. Ayrım testte açıkça yapılır:
-    iki farklı opak renk arasında geçiş varsa bu dekoratif dolgudur.
+    Gradient *fills* are banned too, but not gradients that draw shapes: the
+    `linear-gradient(45deg, transparent 50%, color 50%)` in the `select` arrow is not a
+    color transition but a sharp-edged triangle. The test makes the distinction
+    explicit: a transition between two different opaque colors is a decorative fill.
     """
     css = (FRONTEND / "styles.css").read_text(encoding="utf-8")
 
     for banned in ("backdrop-filter", "background-clip: text", "-webkit-background-clip"):
-        assert banned not in css, f"yasaklı teknik geri geldi: {banned}"
+        assert banned not in css, f"banned technique is back: {banned}"
 
     for gradient in re.findall(r"(?:linear|radial|conic)-gradient\(([^;]*?)\)", css):
-        # `transparent` içeren gradient şekil çizer, renk harmanlamaz.
+        # A gradient with `transparent` draws a shape; it does not blend colors.
         if "transparent" in gradient:
             continue
         colors = re.findall(r"var\((--[a-z0-9-]+)\)|#[0-9a-fA-F]{3,8}", gradient)
-        assert len(set(colors)) <= 1, f"dekoratif gradient dolgu: {gradient.strip()[:80]}"
+        assert len(set(colors)) <= 1, f"decorative gradient fill: {gradient.strip()[:80]}"
 
 
 
-# ------------------------------------------------------------- DOM sözleşmesi
+# ----------------------------------------------------------------- DOM contract
 def test_every_queried_id_exists_in_html():
-    """`app.js`'in aradığı her id HTML'de bulunmalı.
+    """Every id `app.js` looks up must exist in the HTML.
 
-    Eksik id `null` döner; `?.` zinciri sayesinde istisna da fırlatılmaz.
-    Sonuç: panel sessizce boş kalır ve hata gizlenir. Bu testin varlık
-    sebebi tam olarak o sessizlik.
+    A missing id returns `null`, and thanks to the `?.` chain no exception is thrown
+    either. The result: the panel silently stays empty and the bug is hidden. That
+    silence is exactly why this test exists.
     """
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
     js = (FRONTEND / "app.js").read_text(encoding="utf-8")
@@ -171,29 +170,29 @@ def test_every_queried_id_exists_in_html():
     html_ids = set(re.findall(r'\bid="([^"]+)"', html))
     queried = set(re.findall(r'\$\("#([A-Za-z0-9_-]+)"\)', js))
     queried |= set(re.findall(r'getElementById\("([A-Za-z0-9_-]+)"\)', js))
-    # loader("panelId", …): panel kökleri de aynı sözleşmeye tabi.
+    # loader("panelId", …): panel roots follow the same contract.
     queried |= set(re.findall(r'loader\(\s*"([A-Za-z0-9_-]+)"', js))
 
-    assert queried <= html_ids, f"HTML'de olmayan id: {sorted(queried - html_ids)}"
+    assert queried <= html_ids, f"id missing from the HTML: {sorted(queried - html_ids)}"
 
 
 def test_tabs_and_panes_are_paired():
-    """Her sekmenin karşılığı bir panel olmalı, tersi de geçerli.
+    """Every tab must have a matching pane, and vice versa.
 
-    Eşleşmeyen sekme tıklanır ama hiçbir şey açmaz; kullanıcı formu
-    dolduramaz ve neden olduğunu anlamaz.
+    An unmatched tab can be clicked but opens nothing; the user cannot fill in the
+    form and does not understand why.
     """
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
     tabs = set(re.findall(r'data-tab="([^"]+)"', html))
     panes = set(re.findall(r'data-pane="([^"]+)"', html))
-    assert tabs == panes, f"sekme={sorted(tabs)} panel={sorted(panes)}"
+    assert tabs == panes, f"tabs={sorted(tabs)} panes={sorted(panes)}"
 
 
 def test_every_input_has_a_label():
-    """Etiketsiz alan ekran okuyucuda anonim kalır.
+    """An unlabelled field stays anonymous to a screen reader.
 
-    `placeholder` etiket değildir: yazmaya başlayınca kaybolur ve ekran
-    okuyucular hepsini okumaz.
+    `placeholder` is not a label: it disappears once you start typing, and screen
+    readers do not all read it.
     """
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
     labelled = set(re.findall(r'<label[^>]*\bfor="([^"]+)"', html))
@@ -201,9 +200,9 @@ def test_every_input_has_a_label():
     unlabelled = []
     for tag in re.findall(r"<(?:input|select|textarea)\b[^>]*>", html):
         if 'type="checkbox"' in tag:
-            continue  # sarmalayıcı <label class="field-check"> içinde
+            continue  # inside a wrapping <label class="field-check">
         m = re.search(r'\bid="([^"]+)"', tag)
         if not m or m.group(1) not in labelled:
             unlabelled.append(tag[:70])
-    assert unlabelled == [], f"etiketsiz alan: {unlabelled}"
+    assert unlabelled == [], f"unlabelled field: {unlabelled}"
 

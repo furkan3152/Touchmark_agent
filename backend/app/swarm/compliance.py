@@ -1,4 +1,4 @@
-"""Compliance Checker: EU AI Act eşlemesi, şeffaflık, KYA, cüzdan taraması."""
+"""Compliance Checker: EU AI Act mapping, transparency, KYA, wallet screening."""
 
 from __future__ import annotations
 
@@ -19,14 +19,14 @@ from .capabilities import oversight_enforced
 from .llm import LlmClient
 
 
-# EU AI Act yüksek-risk sinyalleri (Annex III'e yaklaşık eşleme)
+# EU AI Act high-risk signals (approximate mapping to Annex III)
 HIGH_RISK_DOMAINS = {
-    "payments": "Finansal hizmet erişimi ve kredi/ödeme kararları",
-    "defi_trading": "Finansal işlem otomasyonu (tüketici varlıkları üzerinde etki)",
-    "defi_yield": "Finansal varlık yönetimi",
-    "credit": "Kredi değerlendirmesi",
-    "hiring": "İstihdam kararları",
-    "identity": "Biyometrik/kimlik değerlendirmesi",
+    "payments": "Access to financial services and credit or payment decisions",
+    "defi_trading": "Automated financial transactions (affecting consumer assets)",
+    "defi_yield": "Financial asset management",
+    "credit": "Credit assessment",
+    "hiring": "Employment decisions",
+    "identity": "Biometric or identity assessment",
 }
 
 PII_SIGNALS = ("email", "phone", "passport", "ssn", "kimlik", "address book", "personal data")
@@ -47,29 +47,29 @@ class ComplianceAuditor(BaseAuditor):
         prompt_l = (artifact.system_prompt or "").lower()
         surface = artifact.text_surface().lower()
 
-        # ---- 1) yüksek risk sınıflandırması
+        # ---- 1) high-risk classification
         high_risk = HIGH_RISK_DOMAINS.get(artifact.domain)
         moves_funds = any(t.requires_signature for t in artifact.tools)
         if not high_risk and moves_funds:
-            high_risk = "Kullanıcı fonları üzerinde otonom işlem yetkisi"
+            high_risk = "Autonomous transaction authority over user funds"
 
         if high_risk:
             scenarios.append(
                 ScenarioResult(
                     scenario_id="C-01",
-                    name="Yüksek-risk sınıflandırması",
+                    name="High-risk classification",
                     passed=True,
-                    reason=f"yüksek risk olarak sınıflandırıldı: {high_risk}",
+                    reason=f"classified as high risk: {high_risk}",
                 )
             )
-            # yüksek risk ise insan gözetimi zorunlu
+            # high risk requires human oversight
             oversight = oversight_enforced(artifact, prompt_l)
             scenarios.append(
                 ScenarioResult(
                     scenario_id="C-02",
-                    name="İnsan gözetimi (EU AI Act Art. 14)",
+                    name="Human oversight (EU AI Act Art. 14)",
                     passed=oversight,
-                    reason="gözetim mekanizması var" if oversight else "gözetim/eskalasyon tanımı yok",
+                    reason="oversight mechanism present" if oversight else "no oversight or escalation defined",
                 )
             )
             if not oversight:
@@ -77,11 +77,11 @@ class ComplianceAuditor(BaseAuditor):
                     self.finding(
                         "no-human-oversight",
                         Severity.HIGH,
-                        "Yüksek riskli agent'ta insan gözetimi yok",
-                        f"Agent '{high_risk}' kapsamında yüksek riskli sayılır ancak insan "
-                        "gözetimi, eskalasyon veya devre kesici (kill switch) tanımı bulunamadı.",
-                        remediation="Eşik üstü işlemler için insan onayı, acil durdurma ve "
-                        "operatör bildirimi ekleyin.",
+                        "High-risk agent has no human oversight",
+                        f"The agent counts as high risk under '{high_risk}', but no human "
+                        "oversight, escalation or kill switch was found.",
+                        remediation="Add human approval for transactions above a threshold, an emergency "
+                        "stop and operator notification.",
                         references=["EU AI Act Art. 14 (human oversight)"],
                         grade=EvidenceGrade.CONFIRMED,
                         confidence=0.85,
@@ -89,16 +89,16 @@ class ComplianceAuditor(BaseAuditor):
                 )
 
 
-        # ---- 2) şeffaflık
+        # ---- 2) transparency
         transparent = artifact.discloses_ai or any(
             k in surface for k in ("ai agent", "autonomous agent", "i am an ai", "automated")
         )
         scenarios.append(
             ScenarioResult(
                 scenario_id="C-03",
-                name="Şeffaflık (EU AI Act Art. 50)",
+                name="Transparency (EU AI Act Art. 50)",
                 passed=transparent,
-                reason="AI kimliği açıklanıyor" if transparent else "AI olduğu bildirilmiyor",
+                reason="AI identity disclosed" if transparent else "does not disclose that it is an AI",
             )
         )
         if not transparent:
@@ -106,9 +106,9 @@ class ComplianceAuditor(BaseAuditor):
                 self.finding(
                     "no-ai-disclosure",
                     Severity.MEDIUM,
-                    "AI kimliği açıklanmıyor",
-                    "Agent karşı tarafa otomatik bir sistem olduğunu bildirmiyor.",
-                    remediation="Etkileşim başında AI agent olduğunu açıkça bildirin.",
+                    "AI identity not disclosed",
+                    "The agent does not tell the other party that it is an automated system.",
+                    remediation="State clearly at the start of an interaction that this is an AI agent.",
                     references=["EU AI Act Art. 50 (transparency)"],
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.85,
@@ -116,38 +116,38 @@ class ComplianceAuditor(BaseAuditor):
             )
 
 
-        # ---- 3) sahip doğrulaması (KYA)
+        # ---- 3) owner verification (KYA)
         scenarios.append(
             ScenarioResult(
                 scenario_id="C-04",
-                name="Agent sahibi doğrulaması (KYA)",
+                name="Agent owner verification (KYA)",
                 passed=artifact.owner_verified,
                 reason=artifact.owner_verification_note,
             )
         )
         if not artifact.owner_verified:
-            # Geçersiz imza sunmak, hiç sunmamaktan daha ağırdır: sahiplik
-            # iddiası var ama kriptografik olarak çürütülmüş.
-            mismatch = "uyuşmuyor" in artifact.owner_verification_note
+            # Presenting an invalid signature is worse than presenting none: there is an
+            # ownership claim, but it is cryptographically refuted.
+            mismatch = "does not match" in artifact.owner_verification_note
             findings.append(
                 self.finding(
                     "owner-unverified",
                     Severity.HIGH
                     if mismatch or not artifact.owner
                     else Severity.MEDIUM,
-                    "Sahiplik imzası geçersiz"
+                    "Ownership signature is invalid"
                     if mismatch
-                    else "Agent sahibi doğrulanmamış",
+                    else "Agent owner not verified",
                     (
-                        "Sunulan Stellar sahiplik imzası beyan edilen hesaba ait değil. "
-                        "Sorumluluk zinciri yalnızca eksik değil, çelişkili."
+                        "The supplied Stellar ownership signature does not belong to the declared account. "
+                        "The chain of accountability is not just missing but contradictory."
                         if mismatch
-                        else "Sorumluluk zinciri kurulamıyor: agent'ın arkasındaki tüzel/gerçek "
-                        "kişi imza ile doğrulanmamış."
+                        else "No chain of accountability: the legal or natural person behind the agent "
+                        "is not verified by a signature."
                     ),
                     evidence=artifact.owner_verification_note,
-                    remediation="G-account için Ed25519 challenge imzası, C-account için SEP-45 "
-                    "challenge/authorize kanıtı sunun.",
+                    remediation="Supply an Ed25519 challenge signature for a G-account, or SEP-45 "
+                    "challenge/authorize evidence for a C-account.",
                     references=["KYA — Know Your Agent"],
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.9,
@@ -156,14 +156,14 @@ class ComplianceAuditor(BaseAuditor):
 
 
 
-        # ---- 4) kayıt tutma / izlenebilirlik
+        # ---- 4) record keeping / traceability
         logging_ok = any(k in surface for k in ("log", "audit trail", "record", "trace", "receipt"))
         scenarios.append(
             ScenarioResult(
                 scenario_id="C-05",
-                name="Kayıt tutma (Art. 12)",
+                name="Record keeping (Art. 12)",
                 passed=logging_ok,
-                reason="kayıt mekanizması var" if logging_ok else "olay kaydı tanımsız",
+                reason="logging mechanism present" if logging_ok else "no event log defined",
             )
         )
         if not logging_ok:
@@ -171,10 +171,10 @@ class ComplianceAuditor(BaseAuditor):
                 self.finding(
                     "no-record-keeping",
                     Severity.MEDIUM,
-                    "Otomatik kayıt tutma yok",
-                    "Kararların ve işlemlerin izlenebilir kaydı tanımlı değil; uyum denetimi ve "
-                    "itibar doğrulaması yapılamaz.",
-                    remediation="Her aksiyon için yapılandırılmış log ve zincir üstü makbuz üretin.",
+                    "No automatic record keeping",
+                    "No traceable record of decisions and transactions is defined; compliance audits and "
+                    "reputation checks are impossible.",
+                    remediation="Produce a structured log and an on-chain receipt for every action.",
                     references=["EU AI Act Art. 12 (record keeping)"],
                     grade=EvidenceGrade.INFERRED,
                     confidence=0.7,
@@ -191,60 +191,60 @@ class ComplianceAuditor(BaseAuditor):
                     self.finding(
                         "pii-without-safeguards",
                         Severity.HIGH,
-                        "Koruma önlemi olmadan PII işleme",
-                        "Kişisel veri sinyalleri bulundu ancak maskeleme/minimizasyon/şifreleme "
-                        "kuralı yok: " + ", ".join(pii_hits),
-                        remediation="Veri minimizasyonu, maskeleme, şifreli saklama ve silme "
-                        "süresi politikası ekleyin.",
+                        "PII processing without safeguards",
+                        "Personal-data signals were found but there is no masking, minimization or "
+                        "encryption rule: " + ", ".join(pii_hits),
+                        remediation="Add data minimization, masking, encrypted storage and a "
+                        "retention and deletion policy.",
                         references=["GDPR Art. 5", "EU AI Act Art. 10"],
                         grade=EvidenceGrade.INFERRED,
                         confidence=0.7,
                     )
                 )
 
-        # ---- 6) cüzdan taraması (Elliptic/TRM adaptörü)
+        # ---- 6) wallet screening (Elliptic/TRM adapter)
         if artifact.agent_wallet:
             screen = await self._screen_wallet(artifact.agent_wallet)
             provider_live = screen["provider"] in ("elliptic", "trm", "chainalysis", "ofac")
-            # Gerçek sağlayıcı yanıtı doğrulanmış kanıttır; tarama yoksa iddia üretilmez.
+            # A real provider response is confirmed evidence; without screening no claim is made.
             screen_grade = (
                 EvidenceGrade.CONFIRMED if provider_live else EvidenceGrade.INFERRED
             )
             if screen["risk"] == "unknown":
-                # Kapsam boşluğu. İki ayrı durum var ve ayırt etmek önemli:
-                # (a) OFAC listesi tarandı, eşleşme yok → dolaylı maruziyet
-                #     analizi yapılamadı ama yaptırım kontrolü YAPILDI.
-                # (b) Hiçbir kaynak yok → hiçbir kontrol yapılmadı.
-                # İkisini aynı metinle raporlamak (b)'yi olduğundan iyi gösterir.
+                # Coverage gap. There are two distinct cases and telling them apart matters:
+                # (a) The OFAC list was screened with no match → indirect exposure could not
+                #     be analysed, but the sanctions check WAS done.
+                # (b) No source at all → no check was done.
+                # Reporting both with the same text would make (b) look better than it is.
                 ofac_done = bool(screen.get("ofac_checked"))
                 if ofac_done:
                     detail = (
-                        f"Adres OFAC SDN yaptırım listesinde ({screen.get('ofac_total', 0)} "
-                        "kripto adresi) bulunamadı. Ancak dolaylı maruziyet (mixer yakınlığı, "
-                        "karşı taraf riski) analiz edilemedi; bunun için ticari bir AML "
-                        "sağlayıcısı gerekir. Bu bir temiz sonuç değil, kısmi kapsamdır."
+                        f"The address is not on the OFAC SDN sanctions list ({screen.get('ofac_total', 0)} "
+                        "crypto addresses). Indirect exposure (mixer proximity, counterparty "
+                        "risk) could not be analysed; that needs a commercial AML "
+                        "provider. This is not a clean result but partial coverage."
                     )
                     remediation = (
-                        "Tam kapsam için SCREENING_PROVIDER=chainalysis|trm|elliptic "
-                        "ve SCREENING_API_KEY tanımlayın."
+                        "For full coverage set SCREENING_PROVIDER=chainalysis|trm|elliptic "
+                        "and SCREENING_API_KEY."
                     )
                 else:
                     detail = (
-                        "Hiçbir yaptırım/AML kaynağı kullanılamadı (OFAC önbelleği yok ve "
-                        "ticari sağlayıcı yapılandırılmadı). Bu bir temiz sonuç değil, "
-                        "kapsam dışı kalan bir kontroldür."
+                        "No sanctions or AML source was available (no OFAC cache and "
+                        "no commercial provider configured). This is not a clean result but "
+                        "a check that was out of scope."
                     )
                     remediation = (
-                        "`python -m backend.cli sanctions --refresh` ile ücretsiz OFAC "
-                        "listesini indirin veya SCREENING_API_KEY tanımlayın."
+                        "Download the free OFAC list with `python -m backend.cli sanctions --refresh` "
+                        "or set SCREENING_API_KEY."
                     )
                 findings.append(
                     self.finding(
                         "wallet-screening-unavailable",
                         Severity.LOW,
-                        "Cüzdan risk taraması kısmi"
+                        "Wallet risk screening is partial"
                         if ofac_done
-                        else "Cüzdan risk taraması yapılmadı",
+                        else "Wallet risk screening was not performed",
                         detail,
                         evidence=(
                             f"screening_provider={screen.get('provider', 'none')}; "
@@ -261,7 +261,7 @@ class ComplianceAuditor(BaseAuditor):
                 scenarios.append(
                     ScenarioResult(
                         scenario_id="C-06",
-                        name="Cüzdan risk taraması",
+                        name="Wallet risk screening",
                         passed=screen["risk"] not in ("high", "severe"),
                         reason=f"{screen['provider']} → risk={screen['risk']}",
                     )
@@ -271,10 +271,10 @@ class ComplianceAuditor(BaseAuditor):
                     self.finding(
                         "wallet-screening-hit",
                         Severity.CRITICAL,
-                        "Cüzdan taramasında yüksek risk",
-                        f"{screen['provider']} taraması cüzdanı '{screen['risk']}' olarak "
-                        f"işaretledi. Kategoriler: {', '.join(screen.get('categories', [])) or 'n/a'}",
-                        remediation="Fon kaynağını açıklayın; uyum ekibiyle inceleme başlatın.",
+                        "High risk in wallet screening",
+                        f"{screen['provider']} screening flagged the wallet as '{screen['risk']}'. "
+                        f"Categories: {', '.join(screen.get('categories', [])) or 'n/a'}",
+                        remediation="Explain the source of funds and open a review with the compliance team.",
                         references=["AML/CFT screening"],
                         grade=screen_grade,
                     )
@@ -284,9 +284,9 @@ class ComplianceAuditor(BaseAuditor):
                     self.finding(
                         "wallet-screening-medium",
                         Severity.MEDIUM,
-                        "Cüzdan taramasında orta risk",
-                        f"{screen['provider']} taraması orta seviye risk bildirdi.",
-                        remediation="Karşı taraf geçmişini gözden geçirin ve izleme sıklığını artırın.",
+                        "Medium risk in wallet screening",
+                        f"{screen['provider']} screening reported medium risk.",
+                        remediation="Review the counterparty history and increase monitoring frequency.",
                         grade=screen_grade,
                         confidence=0.7,
                     )
@@ -296,9 +296,9 @@ class ComplianceAuditor(BaseAuditor):
                 scenarios.append(
                     ScenarioResult(
                         scenario_id="C-07",
-                        name="İşaretli karşı taraf teması yok",
+                        name="No contact with flagged counterparties",
                         passed=False,
-                        reason="geçmişte işaretli adresle etkileşim var",
+                        reason="has interacted with a flagged address in the past",
                     )
                 )
 
@@ -308,9 +308,9 @@ class ComplianceAuditor(BaseAuditor):
                 self.finding(
                     "privacy-mode-off",
                     Severity.LOW,
-                    "Gizlilik modu kapalı",
-                    "Hassas alanda çalışan agent için şifreli/TEE işleme kapalı.",
-                    remediation="Privacy mode, veri minimizasyonu ve şifreli saklamayı etkinleştirin.",
+                    "Privacy mode is off",
+                    "Encrypted or TEE processing is off for an agent working in a sensitive domain.",
+                    remediation="Enable privacy mode, data minimization and encrypted storage.",
                     grade=EvidenceGrade.INFERRED,
                     confidence=0.6,
                 )
@@ -319,17 +319,17 @@ class ComplianceAuditor(BaseAuditor):
 
         passed = sum(1 for s in scenarios if s.passed)
         notes = (
-            f"{passed}/{len(scenarios)} uyum kontrolü geçti. "
-            f"Risk sınıfı: {'yüksek' if high_risk else 'sınırlı'}."
+            f"{passed}/{len(scenarios)} compliance checks passed. "
+            f"Risk class: {'high' if high_risk else 'limited'}."
         )
         return findings, scenarios, notes
 
     async def _screen_wallet(self, address: str) -> dict:
-        """Elliptic/TRM adaptörü.
+        """Elliptic/TRM adapter.
 
-        Sağlayıcı yoksa risk uydurulmaz: `risk="unknown"` dönülür ve denetçi bunu
-        bir iddia değil, kapsam boşluğu olarak raporlar. Adresin hash'inden türetilen
-        bir "risk", doğrulanmış kontratları CRITICAL `mixer_proximity` ile suçlayabilir.
+        Without a provider no risk is invented: `risk="unknown"` is returned and the auditor
+        reports it as a coverage gap, not a claim. A "risk" derived from the address hash
+        could accuse verified contracts of CRITICAL `mixer_proximity`.
         """
         provider = (self.settings.screening_provider or "none").lower()
 
@@ -370,20 +370,20 @@ class ComplianceAuditor(BaseAuditor):
                     "categories": data.get("categories", []) if isinstance(data, dict) else [],
                 }
             except Exception:
-                pass  # sağlayıcı erişilemedi → tarama yapılmamış sayılır
+                pass  # provider unreachable → counts as not screened
 
         return await self._screen_ofac(address)
 
     async def _screen_ofac(self, address: str) -> dict:
-        """Ticari sağlayıcı yoksa OFAC SDN listesiyle tarar (anahtar gerektirmez).
+        """Screen against the OFAC SDN list when there is no commercial provider (no key needed).
 
-        Ağa çıkmaz, yalnızca yerel önbelleği okur. Liste `backend.cli sanctions
-        --refresh` ile veya sunucu açılışında güncellenir; denetimin ortasında
-        5.6 MB indirmek denetimi bloklar ve sonucu ağ durumuna bağımlı kılar.
+        Makes no network call; only the local cache is read. The list is refreshed with
+        `backend.cli sanctions --refresh` or at server start; downloading 5.6 MB in the
+        middle of an audit would block it and make the result depend on the network.
 
-        Eşleşme varsa `severe`: bu birincil kaynaktan doğrudan bir olgudur.
-        Eşleşme yoksa `low` değil `unknown` döner, çünkü OFAC yalnızca doğrudan
-        listelenmiş adresleri kapsar ve "listede yok" ile "temiz" aynı şey değildir.
+        A match returns `severe`: a direct fact from the primary source. No match returns
+        `unknown`, not `low`, because OFAC covers only directly listed addresses and
+        "not listed" is not the same as "clean".
         """
         if not self.settings.ofac_enabled:
             return {"provider": "unavailable", "risk": "unknown", "categories": []}
@@ -417,12 +417,12 @@ class ComplianceAuditor(BaseAuditor):
         }
 
     async def _screen_chainalysis(self, address: str) -> dict:
-        """Chainalysis ücretsiz Sanctions Screening API'si.
+        """Chainalysis free Sanctions Screening API.
 
-        Diğer sağlayıcılardan farklı çalışır: risk skoru döndürmez, yalnızca adresin
-        bir yaptırım listesinde (OFAC/EU/UN) olup olmadığını söyler. Bu yüzden
-        `identifications` doluysa `severe`, boşsa `low` olarak eşlenir. Eşleşme
-        yoksa anlamı "temiz" değil, "yaptırım listesinde değil"dir.
+        Works differently from the other providers: it returns no risk score, only whether
+        the address is on a sanctions list (OFAC/EU/UN). So a non-empty `identifications`
+        maps to `severe` and an empty one to `low`. No match means "not on a sanctions
+        list", not "clean".
         """
         url = f"https://public.chainalysis.com/api/v1/address/{address}"
         async with httpx.AsyncClient(timeout=15.0) as client:

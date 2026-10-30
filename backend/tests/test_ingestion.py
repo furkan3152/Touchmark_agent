@@ -48,7 +48,7 @@ def test_ingest_onchain_address(settings, run):
 
     assert artifact.source_kind is SourceKind.ONCHAIN_ADDRESS
     assert artifact.agent_wallet == ADDR
-    # RPC/Horizon yok → veri uydurulmaz.
+    # No RPC/Horizon → no data is invented.
     assert artifact.onchain.data_source == "none"
 
 
@@ -71,9 +71,9 @@ def test_ingest_local_path_reads_code(settings, run, repo_root):
     )
 
     assert artifact.source_kind is SourceKind.REPO
-    assert artifact.code_files, "kod dosyaları okunmalı"
-    assert artifact.system_prompt, "system prompt bulunmalı"
-    assert artifact.dependencies, "requirements.txt parse edilmeli"
+    assert artifact.code_files, "code files must be read"
+    assert artifact.system_prompt, "system prompt must be found"
+    assert artifact.dependencies, "requirements.txt must be parsed"
 
 
 def test_ingest_safe_agent_manifest(settings, run, repo_root):
@@ -82,7 +82,7 @@ def test_ingest_safe_agent_manifest(settings, run, repo_root):
         svc.ingest(IngestRequest(kind="repo", local_path=str(repo_root / "examples" / "safe_agent")))
     )
     assert artifact.name != "unnamed-agent"
-    assert artifact.tools, "agent.json içindeki araçlar okunmalı"
+    assert artifact.tools, "tools in agent.json must be read"
 
 
 def test_ingest_zip_base64(settings, run):
@@ -107,7 +107,7 @@ def test_ingest_zip_base64(settings, run):
 def test_missing_local_path_raises(settings, run):
     svc = IngestionService(settings)
     with pytest.raises(Exception):
-        run(svc.ingest(IngestRequest(kind="repo", local_path="/tmp/kesinlikle-yok-12345")))
+        run(svc.ingest(IngestRequest(kind="repo", local_path="/tmp/definitely-missing-12345")))
 
 
 # --------------------------------------------------------------- 4) sihirbaz
@@ -128,13 +128,13 @@ def test_wizard_user_input_overrides_template(settings, run):
             IngestRequest(
                 kind="wizard",
                 template="trading_agent",
-                name="Benim Ajanım",
+                name="My Agent",
                 agent_wallet=ADDR,
                 domain="trading",
             )
         )
     )
-    assert artifact.name == "Benim Ajanım"
+    assert artifact.name == "My Agent"
     assert artifact.agent_wallet == ADDR
     assert artifact.domain == "trading"
 

@@ -1,4 +1,4 @@
-"""Stellar RPC, Soroban contract yapılandırması ve event-ingestion durumu."""
+"""Stellar RPC, Soroban contract configuration and event-ingestion status."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class ChainStatusService:
         }
         blockers: list[str] = []
         if self.settings.rpc_enabled and not health.get("reachable"):
-            blockers.append(f"RPC sağlıksız: {health.get('error') or health.get('status')}")
+            blockers.append(f"RPC unhealthy: {health.get('error') or health.get('status')}")
         deployments = await self.deployed_contracts()
         contract_map = {row["key"]: row for row in deployments["contracts"]}
         response_entries = self.events.confirmed_responses(
@@ -50,9 +50,9 @@ class ChainStatusService:
                 except Exception as exc:
                     response_proof = {"confirmed": False, "error": str(exc)}
         if not self.settings.agent_registry_contract_id:
-            blockers.append("AGENT_REGISTRY_CONTRACT_ID tanımlı değil")
+            blockers.append("AGENT_REGISTRY_CONTRACT_ID is not set")
         elif not contract_map["agent_registry"]["onchain_verified"]:
-            blockers.append("AgentRegistry deploy transaction/hash kanıtı canlı doğrulanmadı")
+            blockers.append("AgentRegistry deploy transaction/hash evidence was not verified live")
         return {
             "network": self.settings.network_summary(),
             "rpc": health,
@@ -100,11 +100,11 @@ class ChainStatusService:
         return data
 
     async def deployed_contracts(self) -> dict:
-        """Release manifestini canlı deploy tx readback'iyle birlikte doğrular.
+        """Verify the release manifest together with a live readback of the deploy tx.
 
-        Yapılandırılmış bir C... kimliği tek başına deployment kanıtı değildir. Kod
-        kontratları için ID eşliği, release anındaki local/on-chain WASM hash eşliği
-        ve deploy transaction'ının canlı RPC'de ``SUCCESS`` olması birlikte gerekir.
+        A configured C... id alone is not deployment evidence. Code contracts need a
+        matching id, matching local and on-chain WASM hashes at release time, and the
+        deploy transaction reading ``SUCCESS`` on live RPC, all together.
         """
         rows = self.contracts()
         manifest = self._deployment_manifest()
@@ -145,7 +145,7 @@ class ChainStatusService:
                 note=(
                     "configured ID + pinned WASM hash + live deploy tx SUCCESS"
                     if id_match and hash_match and live_success
-                    else "ID, pinned WASM hash ve canlı deploy tx SUCCESS birlikte gerekli"
+                    else "ID, pinned WASM hash and live deploy tx SUCCESS are all required"
                 ),
             )
 
@@ -160,9 +160,9 @@ class ChainStatusService:
             manifest_id_match=sac_match,
             deterministic_native_sac=sac_match,
             note=(
-                "Testnet native XLM SAC kimliği release manifestiyle eşleşiyor"
+                "Testnet native XLM SAC id matches the release manifest"
                 if sac_match
-                else "native SAC kimliği doğrulanmadı"
+                else "native SAC id not verified"
             ),
         )
         verified = sum(bool(row["onchain_verified"]) for row in rows.values())
@@ -170,7 +170,7 @@ class ChainStatusService:
             "contracts": list(rows.values()),
             "verified_code_contracts": verified,
             "manifest_loaded": bool(manifest),
-            "note": "configured tek başına deployed değildir; canlı tx ve pinned hash birlikte aranır",
+            "note": "configured alone does not mean deployed; a live tx and pinned hash are both required",
         }
 
     async def onchain_attestations(self, limit: int = 20) -> dict:
@@ -193,31 +193,31 @@ class ChainStatusService:
     async def sync_registry_events(self, start_ledger: int) -> dict:
         contract_id = self.settings.agent_registry_contract_id
         if not contract_id:
-            raise ValueError("AGENT_REGISTRY_CONTRACT_ID gerekli")
+            raise ValueError("AGENT_REGISTRY_CONTRACT_ID is required")
         return await self.ingester.sync("agent-registry", [contract_id], start_ledger)
 
     async def confirm_attestation(self, attestation: Attestation) -> dict:
-        """Event eşleşmesini ve transaction SUCCESS durumunu birlikte doğrular."""
+        """Verify the event match and the transaction SUCCESS status together."""
         if not self.settings.agent_registry_contract_id:
-            return {"confirmed": False, "reason": "registry contract ID tanımsız"}
+            return {"confirmed": False, "reason": "registry contract ID not set"}
         event = self.events.find_response(
             self.settings.agent_registry_contract_id,
             attestation.request_id,
             attestation.report_hash,
         )
         if not event:
-            return {"confirmed": False, "reason": "eşleşen responded event bulunamadı"}
+            return {"confirmed": False, "reason": "no matching responded event found"}
         tx_hash = str(event.get("tx_hash") or "")
         if not tx_hash:
-            return {"confirmed": False, "reason": "event transaction hash taşımıyor"}
+            return {"confirmed": False, "reason": "event carries no transaction hash"}
         try:
             transaction = await self.rpc.get_transaction(tx_hash)
         except Exception as exc:
-            return {"confirmed": False, "reason": f"transaction readback başarısız: {exc}"}
+            return {"confirmed": False, "reason": f"transaction readback failed: {exc}"}
         if transaction.get("status") != "SUCCESS":
             return {
                 "confirmed": False,
-                "reason": f"transaction status SUCCESS değil: {transaction.get('status')}",
+                "reason": f"transaction status is not SUCCESS: {transaction.get('status')}",
             }
         net = self.settings.network_or_none
         return {
@@ -237,13 +237,13 @@ class ChainStatusService:
             "backend_signing": False,
             "confirmed": False,
             "mode": "external_signature_required" if self.settings.audit_escrow_enabled else "disabled",
-            "note": "Escrow agent validation çekirdeğinden bağımsızdır.",
+            "note": "Escrow is independent of the agent validation core.",
         }
 
     async def probe_address(self, address: str) -> dict:
         out = {"address": address, "source": "none", "account": None, "contract": None}
         if not is_valid_stellar_address(address):
-            out["error"] = "geçersiz Stellar StrKey/checksum; G... veya C... bekleniyor"
+            out["error"] = "invalid Stellar StrKey/checksum; expected G... or C..."
             return out
         net = self.settings.network_or_none
         if address.startswith("G") and self.settings.horizon_url:
@@ -264,7 +264,7 @@ class ChainStatusService:
             out.update(source="rpc-required", contract=True)
             out["note"] = "Contract ledger entry verification adapter is pending."
         else:
-            out["error"] = "G... account veya C... contract bekleniyor"
+            out["error"] = "expected a G... account or C... contract"
         if net:
             out["explorer_url"] = (
                 net.explorer_account(address)

@@ -1,4 +1,4 @@
-"""AgentVeritas Stellar ağ, Soroban ve audit ayarları."""
+"""Touchmark settings: Stellar network, Soroban and audit."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
     admin_rate_limit_per_minute: int = 60
 
-    # LLM; privacy-mode için ayrıca opt-in gerekir.
+    # LLM; privacy mode needs a separate opt-in.
     enable_sandbox_runtime: bool = False
     enable_brokered_runtime: bool = False
     audit_testnet_funding_secret: str = Field(default="", repr=False, exclude=True)
@@ -74,10 +74,10 @@ class Settings(BaseSettings):
     enable_finding_verification: bool = True
     verifier_model: str = "claude-sonnet-5-5"
     verifier_effort: str = Field(default="medium", pattern="^(low|medium|high|xhigh|max)$")
-    # Gerçek endpoint'e adversarial payload yalnız izole hedefte açık opt-in ile gönderilir.
+    # Adversarial payloads go to a real endpoint only for an isolated target with explicit opt-in.
     enable_active_agent_probes: bool = False
 
-    # Stellar ağ ve Soroban kontratları.
+    # Stellar network and Soroban contracts.
     stellar_network: str = TESTNET
     allow_mainnet: bool = False
     stellar_rpc_url: str = ""
@@ -85,13 +85,13 @@ class Settings(BaseSettings):
     agent_registry_contract_id: str = ""
     audit_escrow_contract_id: str = ""
     sac_contract_id: str = ""
-    # Boş bırakılırsa deployment manifestindeki asset türünden çözülür.
+    # If empty, resolved from the asset type in the deployment manifest.
     escrow_asset_code: str = ""
     enable_audit_escrow: bool = False
-    # Backend tx imzalamaz; bu değer yalnız hazırlanmış çağrıları görünür kılar.
+    # The backend never signs transactions; this only exposes the prepared calls.
     external_signing_required: bool = True
 
-    # SEP web-session/anchor modülleri çekirdekten bağımsızdır.
+    # SEP web-session and anchor modules are independent of the core.
     sep1_domain: str = ""
     sep10_web_auth_endpoint: str = ""
     sep45_web_auth_endpoint: str = ""
@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     sep31_transfer_server: str = ""
     sep38_quote_server: str = ""
 
-    # Rapor yayınlama ve compliance.
+    # Report publishing and compliance.
     pinata_jwt: str = ""
     ipfs_gateway: str = "https://gateway.pinata.cloud/ipfs/"
     screening_provider: str = "none"
@@ -108,12 +108,12 @@ class Settings(BaseSettings):
     enable_ofac_screening: bool = True
     ofac_max_age_hours: float = 24.0
 
-    # Ekonomi yalnız opsiyonel escrow için kullanılır.
+    # Economics are used only for the optional escrow.
     platform_fee_bps: int = 1500
     price_basic_usdc: float = 2.0
     price_deep_usdc: float = 25.0
-    # İzleme çekirdek doğrulama akışında ücretli değildir. Ücretli bir ürün
-    # eklenecekse ayrı bir imzalı ödeme modülü ve zincir kanıtı gerekir.
+    # Monitoring is free in the core validation flow. A paid product would need
+    # a separate signed payment module and on-chain evidence.
     monitor_tick_price_usdc: float = 0.0
     swarm_stake_usdc: float = 5.0
     auditor_timeout_seconds: float = Field(default=30.0, ge=0.1, le=300.0)
@@ -165,7 +165,7 @@ class Settings(BaseSettings):
 
     @property
     def chain_enabled(self) -> bool:
-        """Backend signing yoktur; prepared invocation zincir başarısı değildir."""
+        """The backend has no signing; a prepared invocation is not on-chain success."""
         return False
 
     @property
@@ -178,11 +178,11 @@ class Settings(BaseSettings):
 
     @property
     def resolved_escrow_asset_code(self) -> str:
-        """Aktif escrow birimini yapılandırma veya release manifestinden çöz.
+        """Resolve the active escrow unit from configuration or the release manifest.
 
-        Kalıcı model alanları geriye uyumluluk için ``*_usdc`` adını taşıyor.
-        Bu nedenle gerçek SAC native XLM olduğunda kullanıcı yüzeyinde yanlış
-        bir USDC settlement iddiası üretmemek için ayrı bir kanıtlı etiket gerekir.
+        Persisted model fields keep the ``*_usdc`` name for backward compatibility, so
+        when the real SAC is native XLM a separate, evidenced label is needed to avoid
+        a false USDC settlement claim in the user interface.
         """
         if self.escrow_asset_code.strip():
             return self.escrow_asset_code.strip().upper()
@@ -278,50 +278,50 @@ class Settings(BaseSettings):
                 "key": "AGENT_REGISTRY_CONTRACT_ID",
                 "enabled": bool(self.agent_registry_contract_id),
                 "value": self.agent_registry_contract_id,
-                "unlocks": "Soroban validation invocation hazırlığı ve event doğrulaması",
-                "fallback": "rapor yalnız offchain; zincir başarısı iddia edilmez",
+                "unlocks": "Soroban validation invocation preparation and event verification",
+                "fallback": "report stays off-chain; no on-chain success is claimed",
             },
             {
                 "key": "AUDIT_ESCROW_CONTRACT_ID",
                 "enabled": self.audit_escrow_enabled,
                 "value": "Soroban escrow" if self.audit_escrow_enabled else "",
-                "unlocks": "opsiyonel SAC tabanlı audit escrow çağrısı hazırlığı",
-                "fallback": "agent validation ödeme gerektirmeden tamamlanır",
+                "unlocks": "preparation of the optional SAC-based audit escrow call",
+                "fallback": "agent validation completes without payment",
             },
             {
                 "key": "LLM_API_KEY",
                 "enabled": self.llm_enabled,
                 "value": self.llm_provider,
-                "unlocks": "heuristiklere bağlamsal ikinci görüş",
-                "fallback": "deterministik heuristik motor",
+                "unlocks": "contextual second opinion on the heuristics",
+                "fallback": "deterministic heuristic engine",
             },
             {
-                "key": "(anahtarsız)",
+                "key": "(keyless)",
                 "enabled": self.ofac_enabled,
                 "value": "OFAC SDN",
-                "unlocks": "yerel yaptırım listesi kontrolü",
-                "fallback": "kontrol çalıştırılmaz ve raporda kapsam boşluğu yazılır",
+                "unlocks": "local sanctions list check",
+                "fallback": "the check does not run and the report records a coverage gap",
             },
             {
                 "key": "SCREENING_API_KEY",
                 "enabled": self.screening_enabled,
                 "value": self.screening_provider if self.screening_enabled else "",
-                "unlocks": "desteklenen sağlayıcıyla adres risk taraması",
-                "fallback": "risk sonucu unknown; temiz adres iddiası üretilmez",
+                "unlocks": "address risk screening with a supported provider",
+                "fallback": "risk result is unknown; no clean-address claim is made",
             },
             {
                 "key": "PINATA_JWT",
                 "enabled": self.ipfs_enabled,
                 "value": "",
-                "unlocks": "raporun IPFS'e pinlenmesi",
-                "fallback": "yerel content-addressed store",
+                "unlocks": "pinning the report to IPFS",
+                "fallback": "local content-addressed store",
             },
             {
                 "key": "SEP10/SEP45 endpoints",
                 "enabled": bool(self.sep10_web_auth_endpoint or self.sep45_web_auth_endpoint),
                 "value": "web auth",
-                "unlocks": "G/M ve C account web session sahipliği",
-                "fallback": "G-account için imzalı challenge; C-account kabul edilmez",
+                "unlocks": "web-session ownership for G/M and C accounts",
+                "fallback": "signed challenge for G-accounts; C-accounts are not accepted",
             },
         ]
 
@@ -345,8 +345,8 @@ class Settings(BaseSettings):
         try:
             os.chmod(path, 0o700)
         except OSError:
-            # Salt-okunur/container dosya sistemlerinde asıl yazma işlemi de
-            # fail-closed olur; sırf chmod desteği yok diye health importu çökmesin.
+            # On read-only or container file systems the actual write fails closed too;
+            # the health import must not crash just because chmod is unsupported.
             pass
         return path
 

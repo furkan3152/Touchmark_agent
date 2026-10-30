@@ -1,4 +1,4 @@
-"""Domain modelleri: normalize edilmiş agent artifact, bulgular, denetim raporu, job."""
+"""Domain models: normalised agent artifact, findings, audit report, job."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class Severity(str, Enum):
         return {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}[self.value]
 
     def downgrade(self, steps: int = 1) -> "Severity":
-        """Kanıt gücü zayıfsa ciddiyeti kademe kademe indirir."""
+        """Lower the severity step by step when the evidence is weak."""
         order = [
             Severity.INFO,
             Severity.LOW,
@@ -53,16 +53,16 @@ class Severity(str, Enum):
 
 
 class EvidenceGrade(str, Enum):
-    """Bulgunun kanıt gücü. Skor cezası ve badge tavanı buna göre ölçeklenir.
+    """Strength of a finding's evidence. The score penalty and badge ceiling scale with it.
 
-    Bu ayrım kritik: "kodda gömülü özel anahtar" doğrudan kanıttır, ama
-    "prompt'ta savunma cümlesi yok" yalnızca bir çıkarımdır. İkisini aynı
-    ağırlıkta cezalandırmak yanlış pozitif üretir.
+    The distinction is critical: "private key embedded in code" is direct evidence, but
+    "no defence sentence in the prompt" is only an inference. Penalising both equally
+    produces false positives.
     """
 
-    CONFIRMED = "confirmed"  # doğrudan kanıt: kod eşleşmesi, canlı probe, açık config
-    INFERRED = "inferred"  # savunma kanıtının yokluğu (statik çıkarım)
-    SIMULATED = "simulated"  # gerçek indexer yok, türetilmiş zincir verisi
+    CONFIRMED = "confirmed"  # direct evidence: code match, live probe, explicit config
+    INFERRED = "inferred"  # missing defence evidence (static inference)
+    SIMULATED = "simulated"  # no real indexer, derived chain data
 
     @property
     def penalty_multiplier(self) -> float:
@@ -70,7 +70,7 @@ class EvidenceGrade(str, Enum):
 
     @property
     def blocks_badge(self) -> bool:
-        """Yalnızca doğrulanmış kanıt badge tavanını zorlar."""
+        """Only confirmed evidence enforces the badge ceiling."""
         return self is EvidenceGrade.CONFIRMED
 
 
@@ -97,7 +97,7 @@ class FindingKind(str, Enum):
 
 
 class AssuranceLevel(str, Enum):
-    """Rapor girdilerinin Stellar kimlik ve ledger verisine bağlılık seviyesi."""
+    """How strongly the report inputs are bound to Stellar identity and ledger data."""
 
     VERIFIED = "verified"
     PARTIAL = "partial"
@@ -110,9 +110,9 @@ class Dimension(str, Enum):
     ECONOMIC = "economic"
     COMPLIANCE = "compliance"
     RELIABILITY = "reliability"
-    #: Stellar'a özgü riskler: Soroban auth, TTL, events, trustlines, SEP sınırları.
+    #: Stellar-specific risks: Soroban auth, TTL, events, trustlines, SEP boundaries.
     STELLAR_NATIVE = "stellar_native"
-    #: Kaynak, bağımlılık, build ve release izlenebilirliği.
+    #: Source, dependency, build and release traceability.
     PROVENANCE = "provenance"
 
 
@@ -171,29 +171,29 @@ class ToolSpec(BaseModel):
 
 
 class OnchainActivity(BaseModel):
-    """Ajanın Stellar account/contract davranış özeti.
+    """Summary of the agent's Stellar account or contract behaviour.
 
-    `data_source` bulgunun kanıt gücünü belirler:
-      - "indexer"   : davranış alanlarını gerçekten hesaplayan kalıcı indexer
-      - "horizon_account": yalnız account/balance kaydı; davranış kanıtı değildir
-      - "rpc"       : belirli Soroban state/event readback'i
-      - "simulated" : RPC yok, deterministik türetilmiş veri → ciddiyet bir kademe düşer
-      - "none"      : veri yok, ekonomik boyut denetlenemez
+    `data_source` sets the evidence strength of findings:
+      - "indexer"   : a durable indexer that actually computes the behaviour fields
+      - "horizon_account": only an account/balance record; not behavioural evidence
+      - "rpc"       : readback of specific Soroban state or events
+      - "simulated" : no RPC, deterministic derived data → severity drops one step
+      - "none"      : no data, the economic dimension cannot be audited
     """
 
     address: str = ""
     data_source: str = "none"
 
-    #: Stellar account'taki XLM ve varsa USDC güven hattı bakiyesi.
+    #: XLM balance of the Stellar account and the USDC trustline balance, if any.
     balance_xlm: float | None = None
     balance_usdc: float | None = None
-    fee_runway_txs: int | None = None  # yalnız ölçüldüyse; varsayım üretilmez
+    fee_runway_txs: int | None = None  # only when measured; never assumed
     is_contract: bool | None = None
 
     tx_count: int = 0
 
     unique_counterparties: int = 0
-    top_counterparty_share: float = 0.0  # 0..1 konsantrasyon
+    top_counterparty_share: float = 0.0  # 0..1 concentration
     total_outflow_usdc: float = 0.0
     largest_single_outflow_usdc: float = 0.0
     failed_tx_ratio: float = 0.0
@@ -201,11 +201,11 @@ class OnchainActivity(BaseModel):
     unbounded_trustlines: int = 0
     interacted_with_flagged: bool = False
     first_seen_days: int = 0
-    night_activity_ratio: float = 0.0  # ani/otomatik davranış sinyali
+    night_activity_ratio: float = 0.0  # sudden/automated behaviour signal
 
 
 class AgentArtifact(BaseModel):
-    """Tüm yükleme yollarının normalize edildiği tek gösterim."""
+    """The single representation every intake path is normalised into."""
 
     id: str = Field(default_factory=lambda: f"agent_{uuid.uuid4().hex[:12]}")
     created_at: float = Field(default_factory=time.time)
@@ -228,9 +228,9 @@ class AgentArtifact(BaseModel):
     agent_contract_id: str = ""
     owner: str = ""
     owner_verified: bool = False
-    #: Sahiplik doğrulamasının neden başarılı/başarısız olduğu. Rapor bunu kanıt
-    #: olarak yazar; "imza verilmedi" ile "imza uyuşmuyor" ayırt edilebilir olmalı.
-    owner_verification_note: str = "sahiplik imzası verilmedi"
+    #: Why ownership verification succeeded or failed. The report writes this as
+    #: evidence; "no signature supplied" and "signature does not match" must be distinguishable.
+    owner_verification_note: str = "no ownership signature supplied"
 
 
     human_oversight: bool = False
@@ -251,7 +251,7 @@ class AgentArtifact(BaseModel):
     chain_authority: dict[str, Any] = Field(default_factory=dict)
 
     def text_surface(self) -> str:
-        """Denetçilerin tarayacağı birleşik metin yüzeyi."""
+        """The combined text surface the auditors scan."""
         parts = [self.name, self.description, self.system_prompt]
         parts += self.declared_capabilities
         parts += [f"{t.name} {t.description} {' '.join(t.scopes)}" for t in self.tools]
@@ -283,7 +283,7 @@ class Finding(BaseModel):
 
     @property
     def penalty(self) -> float:
-        """Skordan düşülecek etkin ceza. Kanıt boşlukları risk skorunu düşürmez.
+        """Effective penalty subtracted from the score. Evidence gaps never lower the risk score.
 
         Warnings lower the score by a quarter of a risk of the same severity and never
         make a report fail on their own.
@@ -360,11 +360,11 @@ class EscrowRecord(BaseModel):
     tx_ref: str = ""
     #: not_required | prepared | onchain | indeterminate
     mode: str = "not_required"
-    #: Aşama → tx hash; yalnız RPC state/event doğrulamasından sonra dolar.
+    #: Stage → tx hash; filled only after RPC state/event verification.
     tx_hashes: dict[str, str] = Field(default_factory=dict)
-    #: Zincir akışı denenip başarısız olduysa sebep.
+    #: Reason, if the on-chain flow was attempted and failed.
     note: str = ""
-    #: Bir tx yayınlanmış olabilir fakat güvenli nihai durum belirlenememiştir.
+    #: A tx may have been submitted but a safe final state could not be determined.
     indeterminate: bool = False
     failure_stage: str = ""
 
@@ -467,7 +467,7 @@ class SwarmMemberStats(BaseModel):
 
     @property
     def accuracy(self) -> float | None:
-        """Yalnız appeal-final ground truth varsa kalibrasyon doğruluğu döner."""
+        """Return calibration accuracy only when appeal-final ground truth exists."""
         if not self.adjudicated_findings:
             return None
         return round(self.correct_findings / self.adjudicated_findings, 3)

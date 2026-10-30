@@ -20,7 +20,7 @@ from backend.app.config import Settings
 from backend.app.models import AgentArtifact, OnchainActivity, Severity, SourceKind
 from backend.app.swarm.compliance import ComplianceAuditor
 
-# Gerçek SDN CSV'sinden alınmış biçim (adresler gerçekten listede).
+# Format taken from the real SDN CSV (the addresses really are listed).
 SDN_SAMPLE = (
     '36,"SOME ENTITY",-0- ,"CUBA",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0-\n'
     '999,"BAD ACTOR",-0- ,"CYBER2",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,'
@@ -58,7 +58,7 @@ def _artifact(wallet: str) -> AgentArtifact:
 
 
 def _seed_cache(tmp_path, *, fetched_at: float | None = None) -> OfacSanctionsList:
-    """Gerçek CSV'den ayıklanmış önbelleği diske yazar."""
+    """Write a cache extracted from the real CSV to disk."""
     s = _settings(tmp_path)
     sanctions = OfacSanctionsList(s.data_path)
     sanctions.save_cache(
@@ -72,7 +72,7 @@ def _seed_cache(tmp_path, *, fetched_at: float | None = None) -> OfacSanctionsLi
     return sanctions
 
 
-# ------------------------------------------------------------------- ayıklama
+# ------------------------------------------------------------------- extraction
 def test_extract_finds_all_chains():
     chains = extract_addresses(SDN_SAMPLE)
 
@@ -81,7 +81,7 @@ def test_extract_finds_all_chains():
 
 
 def test_hex_addresses_are_lowercased():
-    """OFAC karışık checksum yazımı kullanıyor; hex eşleşme case-insensitive olmalı."""
+    """OFAC uses mixed-case checksums; hex matching must be case-insensitive."""
     chains = extract_addresses(SDN_SAMPLE)
 
     assert chains["ETH"][0] == SANCTIONED_ETH.lower()
@@ -89,7 +89,7 @@ def test_hex_addresses_are_lowercased():
 
 
 def test_non_hex_addresses_keep_case():
-    """BTC ve TRX adresleri büyük/küçük harfe duyarlıdır; küçültmek eşleşmeyi bozar."""
+    """BTC and TRX addresses are case-sensitive; lower-casing them breaks matching."""
     chains = extract_addresses(SDN_SAMPLE)
 
     assert chains["XBT"][0] == "1Ai52Uw6usjhpcDrwSmkUvjuqLpcznUuyF"
@@ -97,7 +97,7 @@ def test_non_hex_addresses_keep_case():
 
 
 def test_extract_ignores_non_address_rows():
-    """Kripto adresi olmayan satırlar sonuca girmemeli."""
+    """Rows without a crypto address must not appear in the result."""
     plain = '36,"SOME ENTITY",-0- ,"CUBA",-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0- ,-0-\n'
     assert extract_addresses(plain) == {}
 
@@ -122,7 +122,7 @@ def test_lookup_reports_clean_address_as_not_listed(tmp_path):
 
 
 def test_lookup_without_cache_is_unavailable(tmp_path):
-    """Önbellek yoksa 'listede değil' denmez, bilinmiyor denir."""
+    """Without a cache the answer is unknown, not 'not listed'."""
     s = _settings(tmp_path)
     result = OfacSanctionsList(s.data_path).lookup_cached(CLEAN_ETH)
 
@@ -130,7 +130,7 @@ def test_lookup_without_cache_is_unavailable(tmp_path):
 
 
 def test_stale_cache_is_flagged(tmp_path):
-    """48 saat önceki liste kullanılabilir ama 'güncel değil' işaretlenmeli."""
+    """A 48-hour-old list can be used but must be marked as not current."""
     sanctions = _seed_cache(tmp_path, fetched_at=time.time() - 48 * 3600)
     result = sanctions.lookup_cached(SANCTIONED_ETH)
 
@@ -148,9 +148,9 @@ def test_corrupt_cache_is_treated_as_missing(tmp_path):
     assert sanctions.lookup_cached(CLEAN_ETH)["available"] is False
 
 
-# --------------------------------------------------- denetçi ile bütünleşmesi
+# ------------------------------------------------------ auditor integration
 def test_auditor_flags_sanctioned_wallet_as_critical(tmp_path, run):
-    """Yaptırımlı adres CRITICAL + CONFIRMED olmalı; bu birincil kaynak olgusudur."""
+    """A sanctioned address must be CRITICAL + CONFIRMED; it is a primary-source fact."""
     _seed_cache(tmp_path)
     verdict = run(ComplianceAuditor(_settings(tmp_path)).run(_artifact(SANCTIONED_ETH)))
 
@@ -161,7 +161,7 @@ def test_auditor_flags_sanctioned_wallet_as_critical(tmp_path, run):
 
 
 def test_auditor_does_not_flag_unlisted_wallet(tmp_path, run):
-    """Listede olmayan adres suçlanmamalı; yalnızca kısmi kapsam bildirilir."""
+    """An unlisted address must not be accused; only partial coverage is reported."""
     _seed_cache(tmp_path)
     verdict = run(ComplianceAuditor(_settings(tmp_path)).run(_artifact(CLEAN_ETH)))
 
@@ -171,21 +171,21 @@ def test_auditor_does_not_flag_unlisted_wallet(tmp_path, run):
     gaps = [f for f in verdict.findings if f.id.endswith("wallet-screening-unavailable")]
     assert len(gaps) == 1
     assert gaps[0].severity == Severity.LOW
-    # OFAC tarandığı için metin "kısmi" demeli, "yapılmadı" değil
-    assert "kısmi" in gaps[0].title.lower()
+    # OFAC was screened, so the text must say "partial", not "not performed"
+    assert "partial" in gaps[0].title.lower()
 
 
 def test_missing_cache_reports_no_scan_not_partial(tmp_path, run):
-    """Hiç kaynak yoksa mesaj 'yapılmadı' olmalı; kısmi kapsamla karıştırılmamalı."""
+    """With no source at all the message must say 'not performed', not partial coverage."""
     verdict = run(ComplianceAuditor(_settings(tmp_path)).run(_artifact(CLEAN_ETH)))
 
     gaps = [f for f in verdict.findings if f.id.endswith("wallet-screening-unavailable")]
     assert len(gaps) == 1
-    assert "yapılmadı" in gaps[0].title.lower()
+    assert "not performed" in gaps[0].title.lower()
 
 
 def test_ofac_can_be_disabled(tmp_path, run):
-    """ENABLE_OFAC_SCREENING=false ile kapatılabilir."""
+    """Can be turned off with ENABLE_OFAC_SCREENING=false."""
     _seed_cache(tmp_path)
     s = _settings(tmp_path, enable_ofac_screening=False)
     screen = run(ComplianceAuditor(s)._screen_wallet(SANCTIONED_ETH))
@@ -195,20 +195,20 @@ def test_ofac_can_be_disabled(tmp_path, run):
 
 
 def test_ofac_enabled_by_default_without_any_key(tmp_path):
-    """Anahtarsız da açık olmalı: kaynak kamuya açık."""
+    """Must be on without a key: the source is public."""
     s = _settings(tmp_path)
     assert s.ofac_enabled is True
     assert s.screening_enabled is False
 
 
 def test_audit_path_never_hits_network(tmp_path, run, monkeypatch):
-    """Denetim sırasında HTTP isteği atılmamalı; yalnızca önbellek okunur."""
+    """No HTTP request may be made during an audit; only the cache is read."""
     _seed_cache(tmp_path)
 
     from backend.app.compliance import ofac as ofac_mod
 
     def explode(*args, **kwargs):
-        raise AssertionError("denetim yolunda ağ isteği yapıldı")
+        raise AssertionError("a network request was made on the audit path")
 
     monkeypatch.setattr(ofac_mod.httpx, "AsyncClient", explode)
     verdict = run(ComplianceAuditor(_settings(tmp_path)).run(_artifact(SANCTIONED_ETH)))

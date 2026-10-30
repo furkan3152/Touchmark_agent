@@ -13,9 +13,9 @@ import pytest
 
 from backend.app.config import Settings
 
-# Test modülleri `backend.app.api`yi import ederken oluşan global servisler de
-# repo veya kullanıcı `.env` veri yoluna yazmamalıdır. Fixture'dan önce güvenli,
-# süreç-özel yollar kurulur ve Python kapanışında temizlenir.
+# The global services created when test modules import `backend.app.api` must not
+# write to the repository's or the user's `.env` data path either. Safe, process-local
+# paths are set up before the fixtures and removed when Python exits.
 _TEST_PROCESS_DATA = Path(tempfile.mkdtemp(prefix="agentveritas-stellar-pytest-"))
 os.environ["DATA_DIR"] = str(_TEST_PROCESS_DATA)
 os.environ["EVENT_DATABASE"] = str(_TEST_PROCESS_DATA / "events.db")
@@ -27,9 +27,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
-    """Tamamen çevrimdışı: LLM / RPC / IPFS / screening kapalı.
+    """Fully offline: LLM / RPC / IPFS / screening disabled.
 
-    `stellar_network="offline"` seçilir; testler RPC/Horizon'a çıkmaz.
+    `stellar_network="offline"` is selected; tests never reach RPC/Horizon.
     """
     return Settings(
         llm_provider="",
@@ -47,7 +47,7 @@ def settings(tmp_path) -> Settings:
 
 @pytest.fixture
 def testnet_settings(tmp_path) -> Settings:
-    """Gerçek Stellar testnet profili (yalnızca okuma; testler doğrudan kullanmaz)."""
+    """Real Stellar testnet profile (read-only; tests do not use it directly)."""
     return Settings(
         llm_provider="",
         stellar_network="testnet",
@@ -67,7 +67,7 @@ def repo_root() -> Path:
 
 @pytest.fixture
 def run() -> callable:
-    """Senkron testlerden coroutine çalıştırmak için küçük yardımcı."""
+    """Small helper to run coroutines from synchronous tests."""
 
     def _run(coro):
         return asyncio.run(coro)

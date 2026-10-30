@@ -1,8 +1,8 @@
-"""IPFS yayımlayıcı.
+"""IPFS publisher.
 
-PINATA_JWT varsa gerçek pinleme yapar; yoksa raporu yerel content-addressed store'a
-yazar ve CIDv1-benzeri deterministik bir tanımlayıcı üretir. Her iki durumda da
-rapor hash'i zincire yazılabilir ve doğrulanabilir.
+With PINATA_JWT it really pins; otherwise it writes the report to a local
+content-addressed store and produces a deterministic CIDv1-like identifier. Either
+way the report hash can be written on-chain and verified.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def _base32_lower(data: bytes) -> str:
 
 
 def local_cid(payload: bytes) -> str:
-    """Deterministik, doğrulanabilir yerel tanımlayıcı (CIDv1 raw sha2-256 formatı)."""
+    """Deterministic, verifiable local identifier (CIDv1 raw sha2-256 format)."""
     digest = hashlib.sha256(payload).digest()
     raw = CIDV1_PREFIX + MULTIHASH_PREFIX + digest
     return "b" + _base32_lower(raw)
@@ -47,11 +47,11 @@ class IpfsPublisher:
         return d
 
     async def publish(self, name: str, content: str) -> tuple[str, str]:
-        """(cid, uri) döndürür. Pinata varsa gerçek IPFS, yoksa yerel CAS."""
+        """Return (cid, uri): real IPFS with Pinata, otherwise the local CAS."""
         payload = content.encode("utf-8")
         cid = local_cid(payload)
 
-        # her durumda yerel kopya (denetlenebilirlik ve yeniden servis için)
+        # always keep a local copy (for auditability and re-serving)
         local_copy = self.store_dir / f"{cid}.json"
         local_copy.write_bytes(payload)
         os.chmod(local_copy, 0o600)

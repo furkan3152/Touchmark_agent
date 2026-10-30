@@ -1,4 +1,4 @@
-"""Audit sonucu görünümü; registry confirmation yerine geçmeyen offchain etiketler."""
+"""Audit result display: off-chain labels that do not stand in for registry confirmation."""
 
 from __future__ import annotations
 

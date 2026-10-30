@@ -57,7 +57,7 @@ def test_symlink_pointing_outside_root_is_rejected(tmp_path):
 
 def test_missing_directory_is_rejected(tmp_path):
     with pytest.raises(IngestGuardError, match="not found"):
-        resolve_ingest_path("yok-boyle-bir-dizin", tmp_path)
+        resolve_ingest_path("no-such-directory", tmp_path)
 
 
 def test_file_instead_of_directory_is_rejected(tmp_path):
@@ -66,14 +66,14 @@ def test_file_instead_of_directory_is_rejected(tmp_path):
         resolve_ingest_path("agent.json", tmp_path)
 
 
-# ------------------------------------------------------------ sır dosyaları
+# ----------------------------------------------------------------- secret files
 def test_keystore_is_not_read_as_agent_code(settings, run, tmp_path):
-    """Regresyon: `local_path=data/keystore` operatör özel anahtarını okuyordu."""
+    """Regression: `local_path=data/keystore` used to read the operator's private key."""
     root = tmp_path / "proj"
     keystore = root / "data" / "keystore"
     keystore.mkdir(parents=True)
     (keystore / "attestor.json").write_text('{"private_key": "0xdeadbeef"}')
-    (root / "agent.json").write_text('{"name":"Kapı Testi","capabilities":["x"]}')
+    (root / "agent.json").write_text('{"name":"Gate Test","capabilities":["x"]}')
 
     scoped = settings.model_copy(update={"ingest_root": str(root)})
     artifact = run(IngestionService(scoped).ingest(IngestRequest(kind="repo", local_path=".")))
@@ -116,7 +116,7 @@ def test_local_path_can_be_disabled(settings, run, tmp_path):
 
 
 def test_ingest_root_defaults_to_project_root():
-    """Varsayılan kök proje köküdür; `examples/` denetlenebilir kalmalı."""
+    """The default root is the project root; `examples/` must stay auditable."""
     s = Settings(_env_file=None, stellar_network="offline")
     assert (s.ingest_root_path / "examples").is_dir()
     assert (s.ingest_root_path / "backend" / "app").is_dir()
@@ -124,7 +124,7 @@ def test_ingest_root_defaults_to_project_root():
 
 # ---------------------------------------------------------------------- SSRF
 def _resolver_for(ip: str):
-    """`socket.getaddrinfo` yerine sabit IP döndüren test çözümleyicisi."""
+    """Test resolver that returns a fixed IP in place of `socket.getaddrinfo`."""
 
     def _resolve(host, port, **kwargs):
         return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, port))]
@@ -154,7 +154,7 @@ def test_public_target_is_accepted():
 
 
 def test_dns_rebinding_to_private_ip_is_rejected():
-    """Genel görünen bir isim özel IP'ye çözümlenirse reddedilir."""
+    """A public-looking name that resolves to a private IP is rejected."""
     with pytest.raises(IngestGuardError, match="internal network address"):
         guard_remote_url("https://evil.example.com/x", resolver=_resolver_for("10.1.2.3"))
 
@@ -197,7 +197,7 @@ def test_zip_path_traversal_entries_are_skipped(settings, run):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(
-            "agent.json", '{"name":"Zip Kapı","capabilities":["x"],"system_prompt":"careful"}'
+            "agent.json", '{"name":"Zip Gate","capabilities":["x"],"system_prompt":"careful"}'
         )
         zf.writestr("../../../etc/passwd.txt", "root:x:0:0")
         zf.writestr("keystore/attestor.json", '{"private_key":"0xbad"}')
@@ -233,5 +233,5 @@ def test_zip_secret_names_are_case_insensitive(settings, run):
 def test_invalid_zip_gives_clear_error(settings, run):
     svc = IngestionService(settings)
     with pytest.raises(IngestGuardError):
-        run(svc.ingest(IngestRequest(kind="repo", zip_base64="bu-base64-degil!!")))
+        run(svc.ingest(IngestRequest(kind="repo", zip_base64="this-is-not-base64!!")))
 

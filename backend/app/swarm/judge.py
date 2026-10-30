@@ -1,4 +1,4 @@
-"""Synthesis Judge: verdict'leri birleştirir, anlaşmazlığı ölçer, stake/ELO günceller."""
+"""Synthesis Judge: merges verdicts, measures disagreement, updates stake and ELO."""
 
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ def band_score(raw: float, actionable: list[Finding]) -> tuple[float, str]:
 
 
 class SynthesisJudge:
-    """Verdict'leri ağırlıklı skora çevirir ve swarm ekonomisini yönetir."""
+    """Turns verdicts into a weighted score and runs the swarm economy."""
 
     def __init__(self, settings: Settings, llm: LlmClient | None = None) -> None:
         self.settings = settings
@@ -149,7 +149,7 @@ class SynthesisJudge:
         if set(by_dim) != set(DIMENSION_WEIGHTS) or any(
             len(group) != 1 for group in by_dim.values()
         ):
-            raise ValueError("Synthesis Judge tam ve benzersiz boyut quorum'u gerektirir")
+            raise ValueError("Synthesis Judge requires a complete quorum of unique dimensions")
 
         dimension_scores: list[DimensionScore] = []
         for dim, weight in DIMENSION_WEIGHTS.items():
@@ -203,7 +203,7 @@ class SynthesisJudge:
                          "ownership and ledger evidence and a complete core review.")
 
         if artifact.privacy_mode:
-            notes.append("Gizlilik modu: hassas kanıtlar rapor gövdesinde maskelendi.")
+            notes.append("Privacy mode: sensitive evidence is masked in the report body.")
 
         return (
             score,
@@ -218,7 +218,7 @@ class SynthesisJudge:
 
     @staticmethod
     def badge_for(score: float) -> Badge:
-        """Skor → badge eşlemesi (dışarıdan da çağrılabilir; kontrat ile aynı eşikler)."""
+        """Score → badge mapping (callable from outside; same thresholds as the contract)."""
         for threshold, badge in BADGE_THRESHOLDS:
             if score >= threshold:
                 return badge
@@ -230,7 +230,7 @@ class SynthesisJudge:
 
     @staticmethod
     def _merge_findings(verdicts: list[AuditorVerdict]) -> list[Finding]:
-        """Finding kimliği çakışırsa sessiz veri kaybı yerine fail-closed."""
+        """Fail closed on a duplicate finding id rather than silently losing data."""
         merged: dict[str, Finding] = {}
         for v in verdicts:
             for f in v.findings:
@@ -269,12 +269,12 @@ class SynthesisJudge:
             out.append(Finding(
                 id="security-systemic-code-execution-wallet", dimension=Dimension.SECURITY,
                 severity=Severity.CRITICAL,
-                title="Birleşik kod yürütme ve Stellar imza yetkisi blast radius'u",
-                detail="Aynı agent güven sınırı hem kod/komut yürütme hem Stellar/Soroban işlem imzalama yetkisi taşıyor.",
+                title="Combined blast radius of code execution and Stellar signing authority",
+                detail="The same agent trust boundary holds both code/command execution and Stellar/Soroban transaction signing authority.",
                 evidence="command tools=" + ", ".join(t.name for t in dangerous_tools)
-                + "; imza araçları=" + ", ".join(t.name for t in signing_tools),
+                + "; signing tools=" + ", ".join(t.name for t in signing_tools),
                 evidence_grade=EvidenceGrade.CONFIRMED,
-                remediation="Kod yürütme ile imzalamayı ayrı güven alanlarına bölün; sandbox'a secret seed vermeyin ve imzayı Soroban policy/insan onayına bağlayın.",
+                remediation="Split code execution and signing into separate trust domains; never give the sandbox a secret seed, and gate signing on a Soroban policy or human approval.",
                 references=["OWASP LLM06 Excessive Agency", "Stellar external signing"],
                 auditor="synthesis-judge", confidence=0.95,
             ))
@@ -282,12 +282,12 @@ class SynthesisJudge:
             out.append(Finding(
                 id="security-systemic-network-to-execution", dimension=Dimension.SECURITY,
                 severity=Severity.HIGH,
-                title="Ağ içeriği ile kod yürütme yetkisi aynı agentta birleşiyor",
-                detail="Agent dış içerik alıp kod/komut çalıştırabiliyor; saldırgan tool çıktısı yürütmeye zincirlenebilir.",
+                title="Network content and code execution authority combined in one agent",
+                detail="The agent can take in external content and run code or commands; attacker tool output can be chained into execution.",
                 evidence="network tools=" + ", ".join(t.name for t in network_tools)
-                + "; komut araçları=" + ", ".join(t.name for t in dangerous_tools),
+                + "; command tools=" + ", ".join(t.name for t in dangerous_tools),
                 evidence_grade=EvidenceGrade.INFERRED,
-                remediation="Ağ çıktısını şemayla doğrulayın; yürütmeyi ağsız ve Stellar anahtarsız sandbox'a ayırın.",
+                remediation="Validate network output against a schema; move execution to a sandbox with no network and no Stellar keys.",
                 references=["OWASP LLM01 Prompt Injection"],
                 auditor="synthesis-judge", confidence=0.82,
             ))
@@ -295,11 +295,11 @@ class SynthesisJudge:
             out.append(Finding(
                 id="security-systemic-remote-unbounded-spend", dimension=Dimension.SECURITY,
                 severity=Severity.CRITICAL,
-                title="Kimliksiz endpoint ile limitsiz Stellar harcaması birleşiyor",
-                detail="Canlı probe kimliksiz erişimi, tool tanımı limitsiz imza/harcama yetkisini doğruladı.",
+                title="Unauthenticated endpoint combined with unlimited Stellar spending",
+                detail="The live probe confirmed unauthenticated access and the tool definition confirmed unlimited signing or spending authority.",
                 evidence="reliability-unauthenticated-endpoint + security-unbounded-spend",
                 evidence_grade=EvidenceGrade.CONFIRMED,
-                remediation="Endpoint auth uygulayın; imzayı harcama limiti, alıcı allowlist'i, Soroban authorization ve insan onayıyla sınırlandırın.",
+                remediation="Apply endpoint authentication; bound signing with a spending limit, a recipient allowlist, Soroban authorization and human approval.",
                 references=["OWASP LLM06 Excessive Agency", "Soroban authorization"],
                 auditor="synthesis-judge", confidence=0.98,
             ))
@@ -318,12 +318,12 @@ class SynthesisJudge:
         stats: dict[str, SwarmMemberStats],
         reward_pool_usdc: float,
     ) -> dict[str, float]:
-        """Ground truth yokken farklı uzmanlık boyutlarını birbirine karşı slash etmez."""
+        """Without ground truth, never slash different areas of expertise against each other."""
         payouts: dict[str, float] = {}
         del consensus
         names = [verdict.auditor for verdict in verdicts]
         if len(names) != len(set(names)):
-            raise ValueError("stake settlement yinelenen auditor kimliği içeriyor")
+            raise ValueError("stake settlement contains a duplicate auditor id")
         share = reward_pool_usdc / len(verdicts) if verdicts else 0.0
 
         for v in verdicts:
@@ -340,7 +340,7 @@ class SynthesisJudge:
     async def llm_arbitrate(
         self, artifact: AgentArtifact, verdicts: list[AuditorVerdict], score: float
     ) -> tuple[str, bool]:
-        """LLM varsa özet gerekçe üretir; yoksa deterministik özet döner."""
+        """Produce a summary rationale with the LLM when available; otherwise a deterministic summary."""
         llm_allowed = not artifact.privacy_mode or self.settings.allow_external_llm_for_private_audits
         if not self.llm.available or not llm_allowed:
             worst = max(
@@ -350,15 +350,15 @@ class SynthesisJudge:
             )
             if worst:
                 return (
-                    f"Toplam skor {score}. En kritik bulgu: {worst.title} "
+                    f"Overall score {score}. Most critical finding: {worst.title} "
                     f"({worst.severity.value}, {worst.dimension.value}).",
                     False,
                 )
-            return f"Toplam skor {score}. Kritik bulgu yok.", False
+            return f"Overall score {score}. No critical findings.", False
 
         summary = "\n".join(
             f"- {v.auditor} ({v.dimension.value}): {v.score} — "
-            + ("; ".join(f.title for f in v.findings[:4]) or "bulgu yok")
+            + ("; ".join(f.title for f in v.findings[:4]) or "no findings")
             for v in verdicts
         )
         data = await self.llm.judge(
@@ -374,4 +374,4 @@ class SynthesisJudge:
         )
         if data and isinstance(data.get("verdict"), str):
             return data["verdict"].strip()[:1200], True
-        return f"Toplam skor {score}.", True
+        return f"Overall score {score}.", True

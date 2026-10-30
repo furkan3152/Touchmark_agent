@@ -15,23 +15,23 @@ if str(REPO_ROOT) not in sys.path:
 
 
 def test_template_file_lists_every_supported_alias(tmp_path):
-    """Şablon, desteklenen her ücretsiz/temel anahtarı içermeli.
+    """The template must list every supported free or basic key.
 
-    Şablon ile ALIASES sözlüğü ayrışırsa kullanıcı doldurduğu satırın sessizce
-    yok sayıldığını göremez.
+    If the template and the ALIASES dict diverge, the user cannot see that a line
+    they filled in is silently ignored.
     """
     from scripts.import_keys import ALIASES, TEMPLATE
 
     for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "PINATA_JWT", "CHAINALYSIS_API_KEY"):
         assert name in TEMPLATE, name
         assert name in ALIASES, name
-    # OpenRouter varsayılan öneri olduğu için şablonda yorumsuz bulunmalı
+    # OpenRouter is the default suggestion, so it must be uncommented in the template
     assert "\nOPENROUTER_API_KEY=" in TEMPLATE
     assert "OPENROUTER_API_KEY" in ALIASES
 
 
 def test_openrouter_alias_sets_provider_and_model(tmp_path):
-    """OpenRouter model adları sağlayıcı önekli olmalı; varsayılan da düzeltilir."""
+    """OpenRouter model names must carry the provider prefix; the default is corrected too."""
     from scripts.import_keys import parse_key_file
 
     src = tmp_path / "keys.txt"
@@ -44,7 +44,7 @@ def test_openrouter_alias_sets_provider_and_model(tmp_path):
 
 
 def test_explicit_model_wins_over_openrouter_default(tmp_path):
-    """Kullanıcı model yazdıysa (örn. ücretsiz model) takma ad onu ezmemeli."""
+    """If the user set a model (e.g. a free model), the alias must not override it."""
     from scripts.import_keys import parse_key_file
 
     src = tmp_path / "keys.txt"
@@ -80,7 +80,7 @@ def test_import_maps_aliases_to_env_keys(tmp_path):
 
 
 def test_import_skips_empty_and_unknown_lines(tmp_path):
-    """Boş bırakılan satır .env'yi ezmemeli; bilinmeyen ad uyarı üretmeli."""
+    """An empty line must not overwrite .env; an unknown name must produce a warning."""
     from scripts.import_keys import parse_key_file
 
     src = tmp_path / "keys.txt"
@@ -94,7 +94,7 @@ def test_import_skips_empty_and_unknown_lines(tmp_path):
 
 
 def test_import_respects_explicit_provider(tmp_path):
-    """Kullanıcı sağlayıcıyı açıkça yazdıysa takma ad onu ezmemeli."""
+    """If the user set the provider explicitly, the alias must not override it."""
     from scripts.import_keys import parse_key_file
 
     src = tmp_path / "keys.txt"

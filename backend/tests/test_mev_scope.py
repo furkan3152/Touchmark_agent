@@ -38,7 +38,7 @@ def _mev_findings(settings, run, artifact) -> list:
 
 
 def test_plain_transfer_agent_gets_no_mev_finding(settings, run):
-    """Bordro ajanı takas yapmıyor: slippage bulgusu üretilmemeli."""
+    """A payroll agent does not swap: no slippage finding may be produced."""
     artifact = _artifact(
         domain="payments",
         system_prompt=PAYROLL_PROMPT,
@@ -55,7 +55,7 @@ def test_plain_transfer_agent_gets_no_mev_finding(settings, run):
 
 
 def test_scope_gap_is_recorded_not_hidden(settings, run):
-    """Kontrol atlandığında sessiz kalınmaz: E-02 kapsam dışı olarak yazılır."""
+    """A skipped check is not silent: E-02 is recorded as out of scope."""
     artifact = _artifact(
         domain="payments",
         system_prompt=PAYROLL_PROMPT,
@@ -65,15 +65,15 @@ def test_scope_gap_is_recorded_not_hidden(settings, run):
     e02 = [s for s in verdict.scenarios if s.scenario_id == "E-02"]
     assert len(e02) == 1
     assert e02[0].passed
-    assert "kapsam dışı" in e02[0].reason
+    assert "out of scope" in e02[0].reason
 
 
 def test_prompt_prohibition_is_not_a_capability(settings, run):
-    """'never trade, swap or lend' bir takas yeteneği değildir.
+    """'never trade, swap or lend' is not a swap capability.
 
-    Prompt metnini yetenek sinyali saymak, yasağı riske çevirirdi. Bu test
-    tam olarak o hatayı yakalar: prompt 'swap' kelimesini içeriyor ama ajan
-    takas yapamıyor.
+    Counting prompt text as a capability signal would turn the prohibition into a risk.
+    This test catches exactly that mistake: the prompt contains the word 'swap' but the
+    agent cannot swap.
     """
     artifact = _artifact(
         domain="payments",
@@ -84,9 +84,9 @@ def test_prompt_prohibition_is_not_a_capability(settings, run):
 
 
 def test_swap_tool_still_triggers_mev_finding(settings, run):
-    """Gerçek takas aracı varsa bulgu korunmalı; kapsam daraltma bir muafiyet değil."""
+    """With a real swap tool the finding must stay; narrowing the scope is not an exemption."""
     artifact = _artifact(
-        domain="payments",  # alan masum, araç değil
+        domain="payments",  # the domain is innocent, the tool is not
         system_prompt="Execute the best route for the user.",
         tools=[
             ToolSpec(
@@ -103,7 +103,7 @@ def test_swap_tool_still_triggers_mev_finding(settings, run):
 
 
 def test_defi_domain_triggers_mev_finding_without_tools(settings, run):
-    """defi_trading/defi_yield alanı tek başına fiyat maruziyeti kanıtıdır."""
+    """A defi_trading/defi_yield domain alone is evidence of price exposure."""
     for domain in ("defi_trading", "defi_yield"):
         artifact = _artifact(domain=domain, system_prompt="Maximise yield.", tools=[])
         hits = _mev_findings(settings, run, artifact)
@@ -112,7 +112,7 @@ def test_defi_domain_triggers_mev_finding_without_tools(settings, run):
 
 
 def test_mev_aware_agent_passes(settings, run):
-    """Slippage tavanı tanımlıysa takas ajanı da bulgu almaz."""
+    """With a slippage ceiling defined, a swapping agent gets no finding either."""
     artifact = _artifact(
         domain="defi_trading",
         system_prompt="Maximum slippage 50 bps; abort if price impact is higher.",

@@ -156,7 +156,7 @@ class SelfTestService:
             "Account auth",
             WARN,
             "web auth not configured; raw Ed25519 can only be used for G-account",
-            "SEP10_WEB_AUTH_ENDPOINT ve SEP45_WEB_AUTH_ENDPOINT",
+            "SEP10_WEB_AUTH_ENDPOINT and SEP45_WEB_AUTH_ENDPOINT",
         )
 
     def _check_ofac(self) -> dict:

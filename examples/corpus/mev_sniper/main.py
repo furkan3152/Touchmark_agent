@@ -17,7 +17,7 @@ API_KEY = "sk-live-9f2b7c1d4e8a6035"
 AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 
 MAX_TRUSTLINE = "922337203685.4775807"
-SLIPPAGE = 1.0  # %100 slippage: sandviçlenmeye açık
+SLIPPAGE = 1.0  # 100% slippage: open to sandwich attacks
 
 
 def trust_every_issuer(asset_code, issuer):

@@ -1,4 +1,4 @@
-"""Stellar ağ profilleri ve mainnet güvenlik kilidi."""
+"""Stellar network profiles and the mainnet safety lock."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ NETWORKS = {
 def resolve_network(key: str, *, allow_mainnet: bool = False) -> StellarNetwork:
     normalized = (key or "").strip().lower()
     if normalized not in NETWORKS:
-        raise NetworkGuardError(f"bilinmeyen Stellar ağı: {key}")
+        raise NetworkGuardError(f"unknown Stellar network: {key}")
     if normalized == MAINNET and not allow_mainnet:
-        raise NetworkGuardError("Stellar mainnet kilitli; ALLOW_MAINNET=true açıkça gerekli")
+        raise NetworkGuardError("Stellar mainnet is locked; ALLOW_MAINNET=true is required explicitly")
     return NETWORKS[normalized]

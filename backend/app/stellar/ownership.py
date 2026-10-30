@@ -1,4 +1,4 @@
-"""G-account imzası; C-account oturumları için SEP-45 sınırını açık tutar."""
+"""G-account signatures; keeps the SEP-45 boundary explicit for C-account sessions."""
 
 from __future__ import annotations
 
@@ -41,24 +41,24 @@ def verify_owner(
     network_passphrase: str,
 ) -> OwnershipCheck:
     if not owner or not signature:
-        return OwnershipCheck(False, "owner veya imza yok", evidence="sahiplik kanıtlanmadı")
+        return OwnershipCheck(False, "no owner or signature", evidence="ownership not proven")
     if owner.startswith("C"):
         return OwnershipCheck(
             False,
             "contract account",
-            evidence="C-account sahipliği raw imzayla doğrulanmaz; SEP-45 challenge gerekir",
+            evidence="C-account ownership cannot be verified with a raw signature; a SEP-45 challenge is required",
         )
     if not owner.startswith("G"):
-        return OwnershipCheck(False, "geçersiz Stellar owner", evidence="G... account bekleniyor")
+        return OwnershipCheck(False, "invalid Stellar owner", evidence="expected a G... account")
     try:
         raw_signature = base64.b64decode(signature, validate=True)
         message = canonical_message(agent_ref, owner, network_passphrase)
         Keypair.from_public_key(owner).verify(sep53_payload_hash(message), raw_signature)
     except Exception as exc:
-        return OwnershipCheck(False, "imza geçersiz", evidence=f"Ed25519 doğrulanamadı: {exc}")
+        return OwnershipCheck(False, "invalid signature", evidence=f"Ed25519 verification failed: {exc}")
     return OwnershipCheck(
         True,
         "ed25519",
         recovered=owner,
-        evidence=f"G-account SEP-53 Ed25519 imzası doğrulandı: {owner}",
+        evidence=f"G-account SEP-53 Ed25519 signature verified: {owner}",
     )

@@ -103,7 +103,7 @@ async def lifespan(app: FastAPI):
         task.cancel()
         try:
             await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001 - kapanış yolu
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown path
             pass
         pipeline.store.flush()
 
@@ -124,7 +124,7 @@ async def _monitor_loop() -> None:
             monitor_health["last_run_at"] = time.time()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - döngü ayakta kalmalı
+        except Exception as exc:  # noqa: BLE001 - the loop must stay alive
             monitor_health["errors"] += 1
             monitor_health["last_error"] = f"{type(exc).__name__}: {exc}"
             logger.warning("monitor tick failed: %s", monitor_health["last_error"])

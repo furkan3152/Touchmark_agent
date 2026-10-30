@@ -1,4 +1,4 @@
-"""Wizard template'leri: kullanıcı sıfırdan yazmak zorunda kalmasın."""
+"""Wizard templates, so users do not have to start from scratch."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from ..models import ToolSpec
 TEMPLATES: dict[str, dict] = {
     "trading_agent": {
         "name": "Trading Agent",
-        "description": "Stellar/SDEX üzerinde otonom spot alım-satım yapan agent.",
+        "description": "Agent that trades spot autonomously on Stellar/SDEX.",
         "declared_capabilities": ["market_analysis", "spot_trading", "risk_management"],
         "system_prompt": (
             "You are an autonomous trading agent operating on Stellar. Analyse market data, "
@@ -36,7 +36,7 @@ TEMPLATES: dict[str, dict] = {
     },
     "yield_optimizer": {
         "name": "Yield Optimizer",
-        "description": "Stablecoin getirisini protokoller arasında optimize eder.",
+        "description": "Optimises stablecoin yield across protocols.",
         "declared_capabilities": ["yield_scanning", "rebalancing", "protocol_risk_scoring"],
         "system_prompt": (
             "You are a yield optimisation agent. Find the best risk-adjusted stablecoin yield "
@@ -70,7 +70,7 @@ TEMPLATES: dict[str, dict] = {
     },
     "research_agent": {
         "name": "Research Agent",
-        "description": "Zincir verisi ve web kaynaklarından araştırma raporu üretir.",
+        "description": "Produces research reports from on-chain data and web sources.",
         "declared_capabilities": ["web_research", "onchain_analytics", "report_writing"],
         "system_prompt": (
             "You are a research agent. Gather information from the web and on-chain sources, "
@@ -96,7 +96,7 @@ TEMPLATES: dict[str, dict] = {
     },
     "payments_agent": {
         "name": "Payments Agent",
-        "description": "USDC nanopayment ve fatura ödemelerini yürütür.",
+        "description": "Runs USDC nanopayments and invoice payments.",
         "declared_capabilities": ["invoice_payment", "x402_nanopayments", "accounting"],
         "system_prompt": (
             "You are a payments agent. Settle invoices in USDC via x402. Verify the payee "

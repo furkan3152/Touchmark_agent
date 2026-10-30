@@ -1,1 +1,1 @@
-"""Stellar'a özgü, başka ağ katmanına bağımlı olmayan modüller."""
+"""Stellar-specific modules with no dependency on any other network layer."""

@@ -1,7 +1,7 @@
-"""Bellek içi + diske kalıcı depolama.
+"""In-memory store persisted to disk.
 
-Tek süreçli MVP için yeterli: agent'lar, job'lar, badge geçmişi ve monitoring
-abonelikleri JSON olarak diske yazılır, yeniden başlatmada geri yüklenir.
+Enough for a single-process MVP: agents, jobs, badge history and monitoring
+subscriptions are written to disk as JSON and restored on restart.
 """
 
 from __future__ import annotations
@@ -82,10 +82,10 @@ class Store:
         return self.path.with_name("state.json.bak")
 
     def _save_locked(self) -> None:
-        """Atomik, fsync'li ve owner-only kayıt; çağıran ``self._lock`` tutmalıdır.
+        """Atomic, fsync'ed, owner-only write; the caller must hold ``self._lock``.
 
-        Önceki sürüm ``state.json.bak`` olarak saklanır. Doğrulanamayan kayıtlar
-        silinmez, ham hâlleriyle geri yazılır.
+        The previous version is kept as ``state.json.bak``. Records that fail
+        validation are not deleted but written back in their raw form.
         """
         payload = {}
         for section, items in (("agents", self.agents), ("jobs", self.jobs),

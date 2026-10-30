@@ -1,8 +1,8 @@
-"""RPC olaylarını kalıcı cursor ve tekilleştirme ile SQLite'a işler.
+"""Writes RPC events to SQLite with a durable cursor and deduplication.
 
-Stellar RPC olay geçmişi kalıcı bir indeks değildir. Bu sınıf, uygulamanın
-işlediği cursor'u ve ham olayları yerel veritabanında saklar; yeniden başlatmada
-aynı olayın iki kez uygulanmasını engeller.
+Stellar RPC event history is not a permanent index. This class stores the cursor
+the application has processed and the raw events in a local database, so the same
+event is never applied twice after a restart.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ class StellarEventStore:
         return inserted
 
     def confirmed_responses(self, contract_id: str, limit: int = 20) -> list[dict]:
-        """Başarılı registry `responded` eventlerini decode ederek döndürür."""
+        """Decode and return successful registry `responded` events."""
         if not contract_id:
             return []
         with self._connect() as db:
@@ -155,7 +155,7 @@ class StellarEventStore:
         request_id: str,
         report_hash: str,
     ) -> dict | None:
-        """Beklenen request ve report hash'ini aynı confirmed eventte arar."""
+        """Look for the expected request and report hash in the same confirmed event."""
         request_id = request_id.removeprefix("0x").lower()
         report_hash = report_hash.removeprefix("0x").lower()
         for event in self.confirmed_responses(contract_id, limit=100):

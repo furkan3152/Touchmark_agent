@@ -35,7 +35,7 @@ def finding(
     )
 
 
-# --------------------------------------------------------------- ceza ağırlıkları
+# ---------------------------------------------------------------- penalty weights
 def test_penalty_scales_with_evidence_grade():
     confirmed = finding("a", Severity.HIGH, EvidenceGrade.CONFIRMED)
     inferred = finding("b", Severity.HIGH, EvidenceGrade.INFERRED)
@@ -48,7 +48,7 @@ def test_penalty_scales_with_evidence_grade():
 
 def test_confidence_floor_is_applied():
     low = finding("a", Severity.CRITICAL, confidence=0.1)
-    # 0.4 taban uygulanır, 0.1 değil
+    # the 0.4 floor applies, not 0.1
     assert low.penalty == Severity.CRITICAL.weight * 1.0 * 0.4
 
 
@@ -60,10 +60,10 @@ def test_severity_downgrade():
 
 # ------------------------------------------------------------------ score_from
 def test_score_from_has_diminishing_returns():
-    """Aynı ciddiyette çok bulgu bir boyutu sıfırlamamalı."""
+    """Many findings of the same severity must not zero a dimension."""
     many = [finding(f"f{i}", Severity.HIGH, EvidenceGrade.INFERRED) for i in range(10)]
     score = BaseAuditor.score_from(many, [])
-    assert score > 0.0, "10 adet INFERRED high bulgusu skoru sıfırlamamalı"
+    assert score > 0.0, "10 INFERRED high findings must not zero the score"
 
     one = BaseAuditor.score_from([many[0]], [])
     assert one > score
@@ -100,7 +100,7 @@ def test_confirmed_failed_scenario_gets_full_penalty():
             name="b",
             passed=False,
             evidence_grade=EvidenceGrade.CONFIRMED,
-            evidence="canlı Stellar probe başarısız",
+            evidence="live Stellar probe failed",
             executed=True,
         ),
     ]
@@ -119,7 +119,7 @@ def test_confirmed_critical_costs_more_than_inferred_critical():
     assert confirmed < inferred
 
 
-# ---------------------------------------------------------------- badge tavanı
+# ---------------------------------------------------------------- badge ceiling
 def test_blocks_badge_only_for_confirmed():
     assert EvidenceGrade.CONFIRMED.blocks_badge is True
     assert EvidenceGrade.INFERRED.blocks_badge is False

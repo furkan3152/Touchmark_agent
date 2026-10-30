@@ -1,8 +1,8 @@
-"""Kaynak ve build provenance denetçisi.
+"""Source and build provenance auditor.
 
-Bu boyut kodun güvenli olduğunu iddia etmez. İncelenen kaynak, kilitli
-bağımlılık ve yayımlanan artefakt arasında yeniden üretilebilir bir bağ olup
-olmadığını ölçer.
+This dimension does not claim the code is safe. It measures whether there is a
+reproducible link between the reviewed source, the locked dependencies and the
+published artifact.
 """
 
 from __future__ import annotations
@@ -73,9 +73,9 @@ class ProvenanceAuditor(BaseAuditor):
             findings.append(self.finding(
                 "missing-lockfile",
                 Severity.MEDIUM,
-                "Bağımlılık kilidi kanıtlanmadı",
-                "İncelenen dosya setinde desteklenen bir lockfile yok; aynı kaynak farklı bağımlılıklarla farklı davranabilir.",
-                remediation="Runtime ve build bağımlılıklarını lockfile ile sabitleyin; CI'da yalnız locked/frozen kurulum kullanın.",
+                "Dependency lock not established",
+                "The reviewed file set has no supported lockfile; the same source can behave differently with different dependencies.",
+                remediation="Pin runtime and build dependencies with a lockfile; use only locked/frozen installs in CI.",
                 grade=EvidenceGrade.INFERRED,
                 confidence=0.78,
             ))
@@ -85,9 +85,9 @@ class ProvenanceAuditor(BaseAuditor):
             findings.append(self.finding(
                 "no-release-pipeline",
                 Severity.LOW,
-                "Doğrulanabilir release pipeline görünmüyor",
-                "Kaynak→test→artefakt zincirini yeniden üreten bir CI tanımı denetim yüzeyinde bulunamadı.",
-                remediation="Pinlenmiş toolchain ile test/build yapan ve hash/provenance yayımlayan CI ekleyin.",
+                "No verifiable release pipeline",
+                "No CI definition that reproduces the source→test→artifact chain was found in the audit surface.",
+                remediation="Add CI that tests and builds with a pinned toolchain and publishes hashes and provenance.",
                 grade=EvidenceGrade.INFERRED,
                 confidence=0.68,
             ))
@@ -96,9 +96,9 @@ class ProvenanceAuditor(BaseAuditor):
             findings.append(self.finding(
                 "license-missing",
                 Severity.INFO,
-                "Lisans dosyası görünmüyor",
-                "Kaynağın yeniden kullanım ve dağıtım şartları belirlenemedi.",
-                remediation="Kök dizine açık bir LICENSE dosyası ekleyin.",
+                "No license file",
+                "The reuse and distribution terms of the source could not be determined.",
+                remediation="Add an explicit LICENSE file at the repository root.",
                 grade=EvidenceGrade.INFERRED,
                 confidence=0.65,
             ))
@@ -123,10 +123,10 @@ class ProvenanceAuditor(BaseAuditor):
             findings.append(self.finding(
                 "floating-dependencies",
                 Severity.LOW if only_ci_tags or not holds_authority else Severity.MEDIUM,
-                "Değişken bağımlılık/build girdileri bulundu",
-                "`latest`, wildcard veya alt sınır-only sürümler yeniden üretilebilirliği zayıflatıyor.",
+                "Mutable dependency or build inputs found",
+                "`latest`, wildcard or lower-bound-only versions weaken reproducibility.",
                 evidence="\n".join(floating[:5]),
-                remediation="Doğrudan bağımlılıkları ve container image'larını değişmez sürüm/digest ile sabitleyin.",
+                remediation="Pin direct dependencies and container images to immutable versions or digests.",
                 confidence=0.82,
             ))
 
@@ -134,9 +134,9 @@ class ProvenanceAuditor(BaseAuditor):
             findings.append(self.finding(
                 "sbom-missing",
                 Severity.LOW,
-                "SBOM kanıtı yok",
-                "Derin denetimde dağıtılan bileşen envanteri doğrulanamadı.",
-                remediation="Release sırasında CycloneDX veya SPDX SBOM üretin ve artefakt hash'iyle bağlayın.",
+                "No SBOM evidence",
+                "The deep audit could not verify the inventory of deployed components.",
+                remediation="Generate a CycloneDX or SPDX SBOM at release time and bind it to the artifact hash.",
                 grade=EvidenceGrade.INFERRED,
                 confidence=0.7,
             ))
@@ -144,9 +144,9 @@ class ProvenanceAuditor(BaseAuditor):
         scenarios = [
             ScenarioResult(
                 scenario_id="P-001",
-                name="Kaynak→artefakt izlenebilirliği",
+                name="Source→artifact traceability",
                 passed=workflow and not floating,
-                reason="CI ve değişmez build girdileri birlikte aranır.",
+                reason="CI and immutable build inputs are checked together.",
             )
         ]
-        return findings, scenarios, "Kaynak, dependency ve release provenance yüzeyi denetlendi."
+        return findings, scenarios, "Source, dependency and release provenance surface audited."

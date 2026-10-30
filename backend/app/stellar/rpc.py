@@ -1,4 +1,4 @@
-"""Salt-okunur Stellar RPC istemcisi; işlem imzalama veya yayınlama yapmaz."""
+"""Read-only Stellar RPC client; never signs or submits transactions."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class StellarRpc:
 
     async def call(self, method: str, params: dict | None = None) -> Any:
         if not self.url:
-            raise StellarRpcError("Stellar RPC kapalı")
+            raise StellarRpcError("Stellar RPC is disabled")
         payload = {
             "jsonrpc": "2.0",
             "id": next(self._ids),
@@ -39,17 +39,17 @@ class StellarRpc:
                 response.raise_for_status()
                 data = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise StellarRpcError(f"RPC isteği başarısız: {exc}") from exc
+            raise StellarRpcError(f"RPC request failed: {exc}") from exc
         if data.get("error"):
             err = data["error"]
             raise StellarRpcError(f"RPC {method}: {err.get('code')} {err.get('message')}")
         if "result" not in data:
-            raise StellarRpcError(f"RPC {method}: result yok")
+            raise StellarRpcError(f"RPC {method}: no result")
         return data["result"]
 
     async def health(self) -> dict:
         if not self.available:
-            return {"reachable": False, "error": "RPC kapalı"}
+            return {"reachable": False, "error": "RPC disabled"}
         try:
             health = await self.call("getHealth")
             ledger = await self.call("getLatestLedger")
@@ -65,11 +65,11 @@ class StellarRpc:
     async def get_events(self, params: dict) -> dict:
         result = await self.call("getEvents", params)
         if not isinstance(result, dict):
-            raise StellarRpcError("getEvents sözlük döndürmedi")
+            raise StellarRpcError("getEvents did not return a dict")
         return result
 
     async def get_transaction(self, tx_hash: str) -> dict:
         result = await self.call("getTransaction", {"hash": tx_hash})
         if not isinstance(result, dict):
-            raise StellarRpcError("getTransaction sözlük döndürmedi")
+            raise StellarRpcError("getTransaction did not return a dict")
         return result

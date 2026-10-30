@@ -50,7 +50,7 @@ class AuditPipeline:
     ) -> Job:
         artifact = self.store.get_agent(agent_id)
         if not artifact:
-            raise KeyError(f"agent bulunamadı: {agent_id}")
+            raise KeyError(f"agent not found: {agent_id}")
 
         job = Job(agent_id=agent_id, tier=tier, requester=requester)
         job.validation_request_hash = validation_request_hash or request_id(
@@ -61,7 +61,7 @@ class AuditPipeline:
             job.state = JobState.PREPARATION_BLOCKED
             job.error = job.escrow.note
         job.log(
-            f"job açıldı · tier={tier.value} · opsiyonel escrow={job.escrow.amount_usdc} "
+            f"job opened · tier={tier.value} · optional escrow={job.escrow.amount_usdc} "
             f"{self.settings.resolved_escrow_asset_code} · "
             f"validationRequest={job.validation_request_hash[:18]}…"
         )
@@ -92,23 +92,23 @@ class AuditPipeline:
         except ExternalSignatureRequired as exc:
             job.state = JobState.AWAITING_SIGNATURE
             job.error = str(exc)
-            job.log(f"DIŞ İMZA BEKLENİYOR: {exc}")
+            job.log(f"AWAITING EXTERNAL SIGNATURE: {exc}")
             self.store.put_job(job)
             raise
         except EscrowIndeterminateError as exc:
             job.state = JobState.INDETERMINATE
             job.error = str(exc)
-            job.log(f"ESCROW BELİRSİZ: {exc}")
+            job.log(f"ESCROW INDETERMINATE: {exc}")
             self.store.put_job(job)
             raise
         job.state = JobState.FUNDED
         job.log(
-            f"escrow yatırıldı ({job.escrow.mode}): {job.escrow.amount_usdc} "
+            f"escrow funded ({job.escrow.mode}): {job.escrow.amount_usdc} "
             f"{self.settings.resolved_escrow_asset_code} "
             f"({funder or 'anon'})"
         )
         if job.escrow.note:
-            job.log(f"escrow notu: {job.escrow.note}")
+            job.log(f"escrow note: {job.escrow.note}")
         return self.store.put_job(job)
 
     async def run_job(self, job_id: str) -> Job:
@@ -123,11 +123,11 @@ class AuditPipeline:
             JobState.DELIVERED,
             JobState.INDETERMINATE,
         ):
-            raise RuntimeError(f"job bu durumda yeniden çalıştırılamaz: {job.state.value}")
+            raise RuntimeError(f"job cannot be re-run in this state: {job.state.value}")
         artifact = self.store.get_agent(job.agent_id)
         if not artifact:
             job.state = JobState.FAILED
-            job.error = "agent artifact bulunamadı"
+            job.error = "agent artifact not found"
             return self.store.put_job(job)
 
         if job.escrow and not job.escrow.funded:
@@ -135,7 +135,7 @@ class AuditPipeline:
             job = self._job(job_id)
 
         job.state = JobState.RUNNING
-        job.log("swarm başlatıldı (7 denetçi paralel)")
+        job.log("swarm started (7 auditors in parallel)")
         self.store.put_job(job)
 
         try:
@@ -148,7 +148,7 @@ class AuditPipeline:
         except Exception as exc:
             job.state = JobState.FAILED
             job.error = f"{type(exc).__name__}: {exc}"
-            job.log(f"HATA: {job.error}")
+            job.log(f"ERROR: {job.error}")
             if job.escrow:
                 try:
                     await self.escrow.refund(job.escrow, "swarm_failure")
@@ -166,8 +166,8 @@ class AuditPipeline:
             return self.store.put_job(job)
 
         job.log(
-            f"swarm tamamlandı · skor={report.overall_score} · badge={report.badge.value} · "
-            f"{len(report.findings)} bulgu · {report.duration_ms} ms"
+            f"swarm finished · score={report.overall_score} · badge={report.badge.value} · "
+            f"{len(report.findings)} findings · {report.duration_ms} ms"
         )
 
         await self._publish_and_attest(job, artifact, report)
@@ -196,7 +196,7 @@ class AuditPipeline:
             except EscrowIndeterminateError as exc:
                 job.state = JobState.INDETERMINATE
                 job.error = str(exc)
-                job.log(f"SETTLEMENT BELİRSİZ: {exc}")
+                job.log(f"SETTLEMENT INDETERMINATE: {exc}")
                 return self.store.put_job(job)
             job.state = JobState.SETTLED
             job.log(
@@ -206,13 +206,13 @@ class AuditPipeline:
                 f"{self.settings.resolved_escrow_asset_code}"
             )
             if job.escrow.note:
-                job.log(f"escrow notu: {job.escrow.note}")
+                job.log(f"escrow note: {job.escrow.note}")
         else:
             job.state = JobState.COMPLETED
-            job.log("agent validation tamamlandı · ödeme çekirdeğe dahil değil")
+            job.log("agent validation finished · payment is not part of the core")
 
         self.badges.issue(artifact, report)
-        job.log(f"badge yayımlandı: {report.badge.value}")
+        job.log(f"badge issued: {report.badge.value}")
         return self.store.put_job(job)
 
     async def _publish_and_attest(
@@ -224,7 +224,7 @@ class AuditPipeline:
         cid, uri = await self.ipfs.publish(f"{job.id}.json", canonical_payload)
         report.report_cid = cid
         report.report_uri = uri
-        job.log(f"rapor yayımlandı: {cid}")
+        job.log(f"report published: {cid}")
 
         att = await self.attestor.attest(
             agent_address=artifact.agent_wallet,
@@ -236,11 +236,11 @@ class AuditPipeline:
         )
         report.attestation = att
         job.log(
-            f"attestation ({att.mode}) → Soroban registry {att.registry_contract_id[:12] or 'yok'} · "
+            f"attestation ({att.mode}) → Soroban registry {att.registry_contract_id[:12] or 'none'} · "
             f"confirmed={att.confirmed}"
         )
 
-        # markdown'ı da sakla
+        # keep the markdown too
         md = render_markdown(report, artifact)
         report_dir = self.settings.data_path / "reports"
         report_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -253,14 +253,14 @@ class AuditPipeline:
         job = self._job(job_id)
         artifact = self.store.get_agent(job.agent_id)
         if not job.report or not artifact:
-            raise KeyError("rapor hazır değil")
+            raise KeyError("report not ready")
         return render_markdown(job.report, artifact)
 
     def json_for(self, job_id: str) -> dict:
         job = self._job(job_id)
         artifact = self.store.get_agent(job.agent_id)
         if not job.report or not artifact:
-            raise KeyError("rapor hazır değil")
+            raise KeyError("report not ready")
         return report_to_dict(job.report, artifact)
 
     def committed_json_for(self, job_id: str) -> str:
@@ -275,7 +275,7 @@ class AuditPipeline:
         self, agent_id: str, interval_minutes: int, prepaid_usdc: float
     ) -> MonitorSubscription:
         if not self.store.get_agent(agent_id):
-            raise KeyError(f"agent bulunamadı: {agent_id}")
+            raise KeyError(f"agent not found: {agent_id}")
         sub = MonitorSubscription(
             agent_id=agent_id,
             interval_minutes=max(15, min(1440, interval_minutes)),
@@ -284,7 +284,7 @@ class AuditPipeline:
         return self.store.put_subscription(sub)
 
     async def monitor_tick(self, force: bool = False) -> list[dict]:
-        """Tüm aktif abonelikler için ücretsiz, kanıt-drift odaklı patrol turu."""
+        """Free patrol round over all active subscriptions, focused on evidence drift."""
         results: list[dict] = []
         now = time.time()
 
@@ -300,7 +300,7 @@ class AuditPipeline:
             price = self.settings.monitor_tick_price_usdc
             if sub.balance_usdc < price:
                 sub.active = False
-                sub.alerts.append("bakiye tükendi, izleme durduruldu")
+                sub.alerts.append("balance exhausted, monitoring stopped")
                 self.store.put_subscription(sub)
                 results.append({"subscription": sub.id, "status": "insufficient_balance"})
                 continue
@@ -320,7 +320,7 @@ class AuditPipeline:
                 drift = round(report.overall_score - sub.last_score, 1)
                 if drift <= -8:
                     sub.alerts.append(
-                        f"skor düşüşü {drift} ({sub.last_score} → {report.overall_score})"
+                        f"score drop {drift} ({sub.last_score} → {report.overall_score})"
                     )
             badge_rank = {
                 Badge.SAFE.value: 3,
@@ -329,9 +329,9 @@ class AuditPipeline:
                 Badge.BLOCKLIST.value: 0,
             }
             if sub.last_badge and badge_rank[report.badge.value] < badge_rank[sub.last_badge]:
-                sub.alerts.append(f"badge düşüşü: {sub.last_badge} → {report.badge.value}")
+                sub.alerts.append(f"badge downgrade: {sub.last_badge} → {report.badge.value}")
             elif not sub.last_badge and report.badge in (Badge.HIGH_RISK, Badge.BLOCKLIST):
-                sub.alerts.append(f"ilk denetim risk badge'i: {report.badge.value}")
+                sub.alerts.append(f"risk badge on first audit: {report.badge.value}")
 
             confirmed_risks = sorted(
                 finding.id
@@ -350,7 +350,7 @@ class AuditPipeline:
             )
             if new_confirmed_risks:
                 sub.alerts.append(
-                    "yeni doğrulanmış high/critical bulgu: "
+                    "new confirmed high/critical finding: "
                     + ", ".join(new_confirmed_risks)
                 )
 
@@ -362,7 +362,7 @@ class AuditPipeline:
                 < assurance_rank[sub.last_assurance_level]
             ):
                 sub.alerts.append(
-                    f"kanıt güvencesi düştü: {sub.last_assurance_level} → {current_assurance}"
+                    f"evidence assurance dropped: {sub.last_assurance_level} → {current_assurance}"
                 )
 
             sub.ticks += 1
@@ -397,7 +397,7 @@ class AuditPipeline:
     def _job(self, job_id: str) -> Job:
         job = self.store.get_job(job_id)
         if not job:
-            raise KeyError(f"job bulunamadı: {job_id}")
+            raise KeyError(f"job not found: {job_id}")
         return job
 
     def stats(self) -> dict:

@@ -55,8 +55,8 @@ def test_safe_agent_is_not_blocklisted(settings, repo_root):
 
     assert report is not None
     assert report.badge in (Badge.SAFE, Badge.CAUTION), (
-        f"iyi yapılandırılmış ajan {report.badge} aldı — yanlış pozitif "
-        f"(skor {report.overall_score})"
+        f"well-configured agent got {report.badge} — false positive "
+        f"(score {report.overall_score})"
     )
     assert report.overall_score >= 65.0
 
@@ -65,9 +65,9 @@ def test_safe_agent_dimensions_are_healthy(settings, repo_root):
     _, _, job = _audit(settings, repo_root, "safe_agent", AuditTier.BASIC)
     scores = {d.dimension: d.score for d in job.report.dimension_scores}
 
-    assert len(scores) == EXPECTED_DIMENSIONS, "tüm boyutlar skorlanmalı"
-    assert Dimension.STELLAR_NATIVE in scores, "Stellar'a özgü boyut çalışmalı"
-    # hiçbir boyut çıkarım kaynaklı olarak sıfırlanmamalı
+    assert len(scores) == EXPECTED_DIMENSIONS, "every dimension must be scored"
+    assert Dimension.STELLAR_NATIVE in scores, "the Stellar-specific dimension must run"
+    # no dimension may be zeroed by inference alone
     assert min(scores.values()) > 40.0, scores
 
 
@@ -77,7 +77,7 @@ def test_vulnerable_agent_is_flagged(settings, repo_root):
     report = job.report
 
     assert report.badge in (Badge.HIGH_RISK, Badge.BLOCKLIST), (
-        f"kasıtlı zafiyetli ajan {report.badge} aldı (skor {report.overall_score})"
+        f"deliberately vulnerable agent got {report.badge} (score {report.overall_score})"
     )
     counts = report.counts()
     assert counts["critical"] >= 1, counts
@@ -90,8 +90,8 @@ def test_vulnerable_agent_has_confirmed_evidence(settings, repo_root):
         for f in job.report.findings
         if f.severity is Severity.CRITICAL and f.evidence_grade is EvidenceGrade.CONFIRMED
     ]
-    assert confirmed_critical, "gömülü özel anahtar / eval gibi doğrudan kanıt beklenir"
-    # doğrudan kanıt dosya/satır referansı taşımalı
+    assert confirmed_critical, "direct evidence such as an embedded private key or eval is expected"
+    # direct evidence must carry a file/line reference
     assert any(f.evidence for f in confirmed_critical)
 
 
@@ -108,7 +108,7 @@ def test_safe_scores_clearly_above_vulnerable(settings, repo_root):
 
     gap = safe_job.report.overall_score - vuln_job.report.overall_score
     assert gap >= 25.0, (
-        f"ayrım gücü zayıf: safe={safe_job.report.overall_score} "
+        f"weak discrimination: safe={safe_job.report.overall_score} "
         f"vuln={vuln_job.report.overall_score}"
     )
 
@@ -121,7 +121,7 @@ def test_report_is_published_and_attested(settings, repo_root):
     assert report.report_cid.startswith("bafkrei")
     assert report.report_uri
     assert report.attestation is not None
-    # Registry yapılandırılmadı: zincir sonucu veya sahte hash üretilmemeli.
+    # No registry configured: no on-chain result or fake hash may be produced.
     assert report.attestation.mode == "unavailable"
     assert report.attestation.confirmed is False
     assert report.attestation.tx_hash == ""

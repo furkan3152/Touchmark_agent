@@ -147,7 +147,7 @@ def main() -> int:
 
     audit = sub.add_parser("audit", help="run agent audit")
     source = audit.add_mutually_exclusive_group(required=True)
-    source.add_argument("--address", help="G... account veya C... contract")
+    source.add_argument("--address", help="G... account or C... contract")
     source.add_argument("--repo")
     source.add_argument("--path")
     source.add_argument("--endpoint")

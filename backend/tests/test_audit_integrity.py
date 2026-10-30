@@ -48,8 +48,8 @@ class _NoEvidenceAuditor(BaseAuditor):
                 self.finding(
                     "claim",
                     severity=Severity.LOW,
-                    title="Doğrulanmamış iddia",
-                    detail="Kanıt metni bilerek boş.",
+                    title="Unverified claim",
+                    detail="Evidence text deliberately empty.",
                     grade=EvidenceGrade.CONFIRMED,
                 )
             ],
@@ -143,7 +143,7 @@ def test_confirmed_finding_without_evidence_is_downgraded(settings, run):
     verdict = run(_NoEvidenceAuditor(settings).run(_artifact()))
     assert verdict.status == "completed"
     assert verdict.findings[0].evidence_grade is EvidenceGrade.INFERRED
-    assert "confirmed yerine inferred" in verdict.notes
+    assert "downgraded from confirmed to inferred" in verdict.notes
 
 
 def test_private_audit_never_calls_llm_without_explicit_opt_in(settings, run):

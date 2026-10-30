@@ -26,9 +26,9 @@ def _settings(tmp_path, **kwargs) -> Settings:
     return Settings(**base)
 
 
-# --------------------------------------------------------------- screening kapısı
+# ------------------------------------------------------------- screening gate
 def test_provider_without_key_is_disabled(tmp_path):
-    """Yarım yapılandırma açık sayılmamalı; aksi halde sahte tarama sonucu üretilir."""
+    """A half configuration must not count as enabled; otherwise a fake screening result is produced."""
     s = _settings(tmp_path, screening_provider="trm", screening_api_key="")
     assert s.screening_enabled is False
 
@@ -39,7 +39,7 @@ def test_key_without_provider_is_disabled(tmp_path):
 
 
 def test_unknown_provider_is_disabled(tmp_path):
-    """Desteklenmeyen sağlayıcı adı sessizce kabul edilmemeli."""
+    """An unsupported provider name must not be accepted silently."""
     s = _settings(tmp_path, screening_provider="somethingelse", screening_api_key="secret")
     assert s.screening_enabled is False
 
@@ -51,13 +51,13 @@ def test_provider_and_key_enable_screening(tmp_path, provider):
 
 
 def test_chainalysis_provider_is_supported(tmp_path):
-    """Ücretsiz Chainalysis yaptırım API'si de geçerli bir sağlayıcıdır."""
+    """The free Chainalysis sanctions API is a valid provider too."""
     s = _settings(tmp_path, screening_provider="chainalysis", screening_api_key="secret")
     assert s.screening_enabled is True
 
 
 def test_disabled_screening_returns_unknown_not_risk(tmp_path, run):
-    """Kapalıyken `_screen_wallet` risk uydurmaz, 'unknown' döner."""
+    """When disabled, `_screen_wallet` invents no risk and returns 'unknown'."""
     from backend.app.swarm.compliance import ComplianceAuditor
 
     s = _settings(tmp_path, screening_provider="trm", screening_api_key="")
@@ -68,7 +68,7 @@ def test_disabled_screening_returns_unknown_not_risk(tmp_path, run):
     assert screen["categories"] == []
 
 
-# --------------------------------------------------------------------- LLM kapısı
+# --------------------------------------------------------------------- LLM gate
 def test_llm_requires_both_provider_and_key(tmp_path):
     assert _settings(tmp_path, llm_provider="anthropic").llm_enabled is False
     assert _settings(tmp_path, llm_api_key="secret").llm_enabled is False
@@ -83,7 +83,7 @@ def test_llm_provider_none_is_disabled(tmp_path):
 
 
 def test_openrouter_base_url_is_derived(tmp_path):
-    """OpenRouter için kullanıcının ayrıca LLM_BASE_URL yazması gerekmemeli."""
+    """For OpenRouter the user should not have to set LLM_BASE_URL as well."""
     s = _settings(tmp_path, llm_provider="openrouter", llm_api_key="k")
     assert s.llm_api_base == "https://openrouter.ai/api/v1"
     assert s.llm_enabled is True
@@ -107,9 +107,9 @@ def test_unknown_provider_fails_closed(tmp_path):
     assert not s.llm_enabled
 
 
-# ------------------------------------------------------------- entegrasyon raporu
+# --------------------------------------------------------------- integration report
 def test_integrations_list_capabilities_and_fail_closed_fallbacks(tmp_path):
-    """Her entegrasyon ne açtığını ve kapalıyken ne olduğunu söylemeli."""
+    """Every integration must say what it unlocks and what happens when it is off."""
     items = _settings(tmp_path).integrations()
 
     keys = [i["key"] for i in items]
@@ -117,7 +117,7 @@ def test_integrations_list_capabilities_and_fail_closed_fallbacks(tmp_path):
         "AGENT_REGISTRY_CONTRACT_ID",
         "AUDIT_ESCROW_CONTRACT_ID",
         "LLM_API_KEY",
-        "(anahtarsız)",
+        "(keyless)",
         "SCREENING_API_KEY",
         "PINATA_JWT",
         "SEP10/SEP45 endpoints",
@@ -125,16 +125,16 @@ def test_integrations_list_capabilities_and_fail_closed_fallbacks(tmp_path):
     for item in items:
         assert item["unlocks"]
         assert item["fallback"]
-    # OFAC anahtarsız çalıştığı için varsayılan olarak açık; diğerleri kapalı
+    # OFAC needs no key, so it is on by default; the others are off
     by_key = {i["key"]: i for i in items}
-    assert by_key["(anahtarsız)"]["enabled"] is True
+    assert by_key["(keyless)"]["enabled"] is True
     assert by_key["LLM_API_KEY"]["enabled"] is False
     assert by_key["SCREENING_API_KEY"]["enabled"] is False
     assert by_key["PINATA_JWT"]["enabled"] is False
 
 
 def test_integrations_never_leaks_secret_values(tmp_path):
-    """Rapor anahtar değerini değil, yalnızca sağlayıcı adını taşımalı."""
+    """The report must carry only the provider name, never the key value."""
     secret = "sk-super-secret-value"
     s = _settings(
         tmp_path,
@@ -155,7 +155,7 @@ def test_integrations_never_leaks_secret_values(tmp_path):
 
 
 
-# ------------------------------------------------------- Chainalysis eşlemesi
+# -------------------------------------------------------- Chainalysis mapping
 class _FakeResponse:
     def __init__(self, payload: dict) -> None:
         self._payload = payload
@@ -168,7 +168,7 @@ class _FakeResponse:
 
 
 class _FakeClient:
-    """httpx.AsyncClient yerine geçen, isteği kaydeden sahte istemci."""
+    """Fake client standing in for httpx.AsyncClient that records the request."""
 
     calls: list[dict] = []
 
@@ -201,7 +201,7 @@ def _screen_with(monkeypatch, tmp_path, run, payload: dict) -> dict:
 
 
 def test_chainalysis_sanctioned_address_is_severe(monkeypatch, tmp_path, run):
-    """`identifications` doluysa yaptırımlıdır, gri bölge yok."""
+    """A non-empty `identifications` means sanctioned; there is no grey zone."""
     payload = {"identifications": [{"category": "sanctions", "name": "OFAC SDN"}]}
     screen = _screen_with(monkeypatch, tmp_path, run, payload)
 
@@ -218,7 +218,7 @@ def test_chainalysis_clean_address_is_low(monkeypatch, tmp_path, run):
 
 
 def test_chainalysis_uses_x_api_key_header(monkeypatch, tmp_path, run):
-    """Chainalysis Bearer değil `X-API-Key` bekler; yanlış header 401 verir."""
+    """Chainalysis expects `X-API-Key`, not Bearer; the wrong header gives a 401."""
     _screen_with(monkeypatch, tmp_path, run, {"identifications": []})
 
     call = _FakeClient.calls[0]
@@ -228,12 +228,12 @@ def test_chainalysis_uses_x_api_key_header(monkeypatch, tmp_path, run):
 
 
 def test_chainalysis_network_error_falls_back_to_unknown(monkeypatch, tmp_path, run):
-    """Sağlayıcıya ulaşılamazsa risk uydurulmaz, 'unknown' döner."""
+    """When the provider is unreachable no risk is invented; 'unknown' is returned."""
     from backend.app.swarm import compliance as mod
 
     class Boom(_FakeClient):
         async def get(self, url, headers=None, **kwargs):
-            raise OSError("bağlantı yok")
+            raise OSError("no connection")
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", Boom({}))
     s = _settings(tmp_path, screening_provider="chainalysis", screening_api_key="test-key")
@@ -244,10 +244,10 @@ def test_chainalysis_network_error_falls_back_to_unknown(monkeypatch, tmp_path, 
 
 
 def test_screening_mode_is_boolean_not_provider_name(tmp_path):
-    """`modes.screening` sağlayıcı adı değil, gerçekten açık mı olduğudur.
+    """`modes.screening` is whether screening is really on, not the provider name.
 
-    Sağlayıcı adı dönseydi "none" bile dolu bir string olduğu için UI kapalı
-    entegrasyonu açık gösterirdi.
+    If it returned the provider name, even "none" would be a non-empty string and the
+    UI would show a disabled integration as enabled.
     """
     s = _settings(tmp_path, screening_provider="trm", screening_api_key="")
     assert s.screening_enabled is False

@@ -17,7 +17,7 @@ from backend.app.models import (
 )
 from backend.app.swarm.compliance import ComplianceAuditor
 
-# Geçerli biçimde üretilmiş test public key'leri; riskli olduklarına dair kanıt yok.
+# Validly generated test public keys; there is no evidence that they are risky.
 VERIFIED = [
     "GBSTXJ5BPYC7BWVXQNWHJVS675ZUOANGOQMC3UA4NSAJ4CYAZKCP3IF2",
     "GB3ZOFUNZ7EVPA7BMEKCYHMP7I76IP4O6MWZJOOOJ32ZY2R4J2EDHNRD",
@@ -43,7 +43,7 @@ def _artifact(wallet: str) -> AgentArtifact:
 
 @pytest.mark.parametrize("wallet", VERIFIED)
 def test_no_fabricated_screening_risk(settings, run, wallet):
-    """Sağlayıcı yoksa hiçbir adres 'yüksek risk' damgası almamalı."""
+    """Without a provider no address may be stamped 'high risk'."""
     checker = ComplianceAuditor(settings)
     verdict = run(checker.run(_artifact(wallet)))
 
@@ -53,7 +53,7 @@ def test_no_fabricated_screening_risk(settings, run, wallet):
 
 
 def test_screening_gap_reported_as_scope_not_claim(settings, run):
-    """Tarama yapılmadıysa tek bir LOW kapsam bulgusu üretilir."""
+    """Without screening a single LOW coverage finding is produced."""
     checker = ComplianceAuditor(settings)
     verdict = run(checker.run(_artifact(VERIFIED[0])))
 
@@ -61,13 +61,13 @@ def test_screening_gap_reported_as_scope_not_claim(settings, run):
     assert len(gaps) == 1
     gap = gaps[0]
     assert gap.severity == Severity.LOW
-    # Kapsam boşluğunun *kendisi* doğrulanmış bir olgudur (sağlayıcı gerçekten yok).
+    # The coverage gap *itself* is a confirmed fact (there really is no provider).
     assert gap.evidence_grade == EvidenceGrade.CONFIRMED
-    assert "kapsam" in gap.detail.lower() or "taranmadı" in gap.detail.lower()
+    assert "coverage" in gap.detail.lower() or "scope" in gap.detail.lower()
 
 
 def test_screening_not_counted_as_passed_scenario(settings, run):
-    """Yapılmamış tarama 'geçti' senaryosu olarak sayılmamalı (skor şişmesin)."""
+    """Screening that did not run must not count as a passed scenario (no score inflation)."""
     checker = ComplianceAuditor(settings)
     verdict = run(checker.run(_artifact(VERIFIED[1])))
 
@@ -76,7 +76,7 @@ def test_screening_not_counted_as_passed_scenario(settings, run):
 
 
 def test_screening_gap_costs_only_a_few_points(settings, run):
-    """Kapsam bulgusunun bedeli küçük olmalı; eski CRITICAL ~25 puan götürüyordu."""
+    """The coverage finding must cost little; the old CRITICAL took ~25 points."""
     checker = ComplianceAuditor(settings)
     with_wallet = run(checker.run(_artifact(VERIFIED[2])))
     without = run(checker.run(_artifact("")))
@@ -86,11 +86,11 @@ def test_screening_gap_costs_only_a_few_points(settings, run):
 
 
 def test_verified_contracts_score_consistently(settings, run):
-    """Aynı profildeki doğrulanmış kontratlar adres hash'ine göre farklı skor almamalı.
+    """Verified contracts with the same profile must not score differently by address hash.
 
-    Eski rastgele tarama, aynı davranışa sahip kontratlara adresine bağlı olarak
-    83.7 veya 82.6 gibi farklı skorlar veriyordu; determinizm adresten değil
-    kanıttan gelmelidir.
+    The old random screening gave contracts with identical behaviour different scores,
+    such as 83.7 or 82.6, depending on their address; determinism must come from the
+    evidence, not the address.
     """
     checker = ComplianceAuditor(settings)
     scores = {w: run(checker.run(_artifact(w))).score for w in VERIFIED}

@@ -21,15 +21,15 @@ import socket
 from pathlib import Path
 from urllib.parse import urlsplit
 
-#: Uzak kaynak çekmek için izin verilen şemalar. ``file://`` ve ``gopher://``
-#: gibi şemalar httpx'te desteklenmese de açıkça dışarıda tutulur.
+#: Schemes allowed for fetching remote sources. Schemes such as ``file://`` and
+#: ``gopher://`` are excluded explicitly even though httpx does not support them.
 ALLOWED_SCHEMES = ("http", "https")
 
-#: IPFS CID'inde beklenen karakter kümesi. Gateway'e giden yolda ``../``
-#: taşımamak için daraltılır.
+#: Character set expected in an IPFS CID, narrowed so the gateway path cannot
+#: carry ``../``.
 CID_RE = re.compile(r"^[A-Za-z0-9]+$")
 
-#: Uzak yanıtın kabul edilen üst boyutu (zip bomb / bellek koruması).
+#: Maximum accepted size of a remote response (zip bomb / memory protection).
 MAX_REMOTE_BYTES = 20 * 1024 * 1024
 
 

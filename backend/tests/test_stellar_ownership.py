@@ -10,7 +10,7 @@ PASSPHRASE = "Test SDF Network ; September 2015"
 
 
 def test_sep53_official_ascii_vector():
-    """SEP-53 Final'daki kanonik ASCII vektörüyle byte uyumluluğu."""
+    """Byte compatibility with the canonical ASCII vector in SEP-53 Final."""
     address = "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L"
     signature = base64.b64decode(
         "fO5dbYhXUhBMhe6kId/cuVq/AfEnHRHEvsP8vXh03M1uLpi5e46yO2Q8rEBzu3feXQewcQE5GArp88u6ePK6BA=="

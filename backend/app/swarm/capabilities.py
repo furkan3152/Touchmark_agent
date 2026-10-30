@@ -23,7 +23,7 @@ _SIGNING_SCOPE_WORDS = ("sign", "wallet", "transfer", "spend", "payment", "accou
 #: Capabilities that exercise authority. Building an unsigned operation (payment or
 #: account_control alone) drafts a transaction for someone else to sign; it is not authority.
 FINANCIAL_CAPABILITIES = ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation")
-OVERSIGHT_WORDS = ("human", "confirm", "approval", "escalate", "operator", "onay")
+OVERSIGHT_WORDS = ("human", "confirm", "approval", "escalate", "operator", "onay")  # "onay": Turkish for approval
 #: Paths that are not the agent as it runs: tests, end-to-end and sandbox harnesses, examples
 #: and demos, setup and maintenance scripts, docs and repository tooling. On held-out agents,
 #: declaration checks that counted these reported the operator's own deploy or setup script

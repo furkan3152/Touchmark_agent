@@ -29,7 +29,7 @@ def hash32(value: str, name: str) -> str:
     if len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized):
         raise InvocationParametersError(f"{name} must be a 32-byte hexadecimal value")
     if normalized == "0" * 64:
-        raise InvocationParametersError(f"{name} cannot be zero (sıfır)")
+        raise InvocationParametersError(f"{name} cannot be zero")
     return normalized
 
 

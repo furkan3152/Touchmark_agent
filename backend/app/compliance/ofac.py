@@ -1,19 +1,18 @@
-"""OFAC yaptırım listesi tarayıcısı (anahtar gerektirmez).
+"""OFAC sanctions list scanner (no key needed).
 
-Chainalysis / TRM / Elliptic ticari anahtar ister. ABD Hazinesi OFAC ise SDN
-listesini makine-okunur olarak ücretsiz yayımlar ve liste
-`Digital Currency Address - ETH 0x…` biçiminde kripto adresleri içerir. Bu modül
-listeyi indirir, kripto adreslerini ayıklar ve yerel bir sete koyar; eşleşme
-birincil kaynaktan geldiği için CONFIRMED kanıttır.
+Chainalysis / TRM / Elliptic require a commercial key. The US Treasury's OFAC
+publishes the SDN list for free in machine-readable form, and the list contains
+crypto addresses as `Digital Currency Address - ETH 0x…`. This module downloads
+the list, extracts the crypto addresses and puts them in a local set; a match is
+CONFIRMED evidence because it comes from the primary source.
 
-OFAC yalnızca doğrudan listelenmiş adresleri verir, "mixer'a 2 adım uzaklıkta"
-gibi dolaylı maruziyet analizi yapmaz. Eşleşme yoksa sonuç "temiz" değil,
-"yaptırım listesinde değil"dir; denetçi bunu `low` risk olarak değil, sınırlı
-kapsamlı bir kontrol olarak raporlar.
+OFAC lists only directly designated addresses and does no indirect exposure
+analysis such as "2 hops from a mixer". No match means "not on the sanctions list",
+not "clean"; the auditor reports it as a check of limited scope, not as `low` risk.
 
-Liste ~5.6 MB ve günde en fazla bir kez değişir. `data/sanctions/ofac-sdn.json`
-içine ayıklanmış adreslerle birlikte yazılır; `max_age_hours` içinde tekrar
-indirilmez. Ağ yoksa süresi geçmiş önbellek yine kullanılır (uyarıyla).
+The list is ~5.6 MB and changes at most once a day. It is written with the extracted
+addresses to `data/sanctions/ofac-sdn.json` and not downloaded again within
+`max_age_hours`. Without a network the expired cache is still used (with a warning).
 """
 
 from __future__ import annotations
@@ -25,15 +24,15 @@ from pathlib import Path
 
 import httpx
 
-#: OFAC'ın makine-okunur SDN dışa aktarımı (302 ile imzalı S3 URL'ine yönlendirir).
+#: OFAC's machine-readable SDN export (redirects with a 302 to a signed S3 URL).
 SDN_CSV_URL = "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV"
 
-#: `Digital Currency Address - ETH 0xabc…` kalıbı. Zincir kodu ve adres yakalanır.
+#: The `Digital Currency Address - ETH 0xabc…` pattern. Captures the chain code and address.
 ADDRESS_RE = re.compile(
     r"Digital Currency Address\s*-\s*([A-Z0-9]{2,6})\s+([a-zA-Z0-9]{20,120})"
 )
 
-#: Hex-address kullanan zincir kodları; OFAC girdilerini normalize etmek içindir.
+#: Chain codes that use hex addresses; used to normalise OFAC entries.
 HEX_CHAINS = frozenset({"ETH", "USDT", "USDC", "ETC", "BNB", "ARB", "BSC"})
 
 CACHE_NAME = "ofac-sdn.json"
@@ -41,21 +40,20 @@ DEFAULT_MAX_AGE_HOURS = 24.0
 
 
 def normalise(address: str) -> str:
-    """Arama için adresi normalize eder.
+    """Normalise an address for lookup.
 
-    Hex adresler (`0x…`, checksum karışık yazımlı) küçük harfe indirilir; `0X`
-    büyük harfli önek de hex sayılır. Diğer zincirler (BTC/TRX/XMR/XLM) base58 veya
-    base32 kullandığı için büyük/küçük harfe duyarlıdır ve dokunulmaz.
+    Hex addresses (`0x…`, mixed-case checksum) are lower-cased; an upper-case `0X`
+    prefix also counts as hex. Other chains (BTC/TRX/XMR/XLM) use base58 or base32,
+    so they are case-sensitive and left untouched.
     """
     return address.lower() if address[:2].lower() == "0x" else address
 
 
 def extract_addresses(csv_text: str) -> dict[str, list[str]]:
-    """SDN CSV metninden zincir → adres listesi çıkarır.
+    """Extract a chain → address list from the SDN CSV text.
 
-    Hex adresler küçük harfe indirilir (OFAC karışık checksum yazımı kullanıyor),
-    diğer zincirler (BTC, TRX, XMR) büyük/küçük harfe duyarlı olduğu için olduğu
-    gibi bırakılır.
+    Hex addresses are lower-cased (OFAC uses mixed-case checksums); other chains
+    (BTC, TRX, XMR) are case-sensitive and kept as they are.
     """
     out: dict[str, set[str]] = {}
     for chain, address in ADDRESS_RE.findall(csv_text):
@@ -66,13 +64,13 @@ def extract_addresses(csv_text: str) -> dict[str, list[str]]:
 
 
 class OfacSanctionsList:
-    """SDN listesini indirir, önbelleğe alır ve adres sorgular."""
+    """Download and cache the SDN list and look up addresses."""
 
     def __init__(self, data_dir: Path, max_age_hours: float = DEFAULT_MAX_AGE_HOURS) -> None:
         self.cache_path = Path(data_dir) / "sanctions" / CACHE_NAME
         self.max_age_hours = max_age_hours
 
-    # ------------------------------------------------------------- önbellek
+    # ---------------------------------------------------------------- cache
     def load_cache(self) -> dict | None:
         if not self.cache_path.exists():
             return None
@@ -93,12 +91,12 @@ class OfacSanctionsList:
         age_h = (time.time() - float(cache.get("fetched_at", 0))) / 3600.0
         return age_h < self.max_age_hours
 
-    # -------------------------------------------------------------- indirme
+    # ------------------------------------------------------------- download
     async def refresh(self, force: bool = False) -> dict:
-        """Gerekliyse listeyi indirir; her durumda kullanılabilir veri döndürür.
+        """Download the list if needed; always return usable data.
 
-        Ağ hatasında süresi geçmiş önbelleğe düşer ve `stale=True` işaretler:
-        eski veriyle taramak, hiç taramamaktan iyidir ama bu şeffaf olmalıdır.
+        On a network error it falls back to the expired cache and marks `stale=True`:
+        screening with old data beats not screening, but it must be visible.
         """
         cache = self.load_cache()
         if not force and self.is_fresh(cache):
@@ -125,14 +123,14 @@ class OfacSanctionsList:
         self.save_cache(payload)
         return payload
 
-    # -------------------------------------------------------------- sorgulama
+    # --------------------------------------------------------------- lookup
     def lookup_cached(self, address: str) -> dict:
-        """Adresi yalnızca önbellekten arar; ağa çıkmaz.
+        """Look the address up in the cache only; makes no network call.
 
-        Denetim yolunda kullanılan sürüm budur. Bir denetimin ortasında 5.6 MB
-        indirmek hem denetimi saniyelerce bloklar hem de sonucu ağ durumuna
-        bağımlı kılar. Önbellek yoksa `available=False` döner ve denetçi bunu
-        kapsam boşluğu olarak bildirir.
+        This is the version used on the audit path. Downloading 5.6 MB in the middle
+        of an audit would block it for seconds and make the result depend on the
+        network. Without a cache it returns `available=False` and the auditor reports
+        a coverage gap.
         """
         cache = self.load_cache()
         if not cache:

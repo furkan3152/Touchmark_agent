@@ -13,7 +13,7 @@ def test_testnet_profile_has_official_passphrase():
 
 
 def test_mainnet_is_fail_closed():
-    with pytest.raises(NetworkGuardError, match="mainnet kilitli"):
+    with pytest.raises(NetworkGuardError, match="mainnet is locked"):
         resolve_network("mainnet")
 
 

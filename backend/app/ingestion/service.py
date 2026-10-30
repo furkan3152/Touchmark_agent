@@ -1,9 +1,9 @@
-"""Ingestion: 4 yükleme yolunu tek AgentArtifact'e normalize eder.
+"""Ingestion: normalises the 4 intake paths into a single AgentArtifact.
 
-1) onchain_address: Stellar agent contract veya cüzdan adresi
-2) repo: GitHub / IPFS URI / yerel dizin / zip
+1) onchain_address: Stellar agent contract or wallet address
+2) repo: GitHub / IPFS URI / local directory / zip
 3) endpoint: MCP / A2A / HTTP endpoint (black-box)
-4) wizard: template + kullanıcı girdisi
+4) wizard: template + user input
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ from .templates import TEMPLATES
 STELLAR_ADDRESS_RE = re.compile(r"^[GC][A-Z2-7]{55}$")
 CODE_SUFFIXES = {".py", ".ts", ".js", ".tsx", ".jsx", ".sol", ".rs", ".go", ".json", ".yaml", ".yml", ".toml", ".lock", ".md", ".txt", ".example", ".sample", ".template"}
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "dist", "build", ".next"}
-#: Denetim yüzeyine hiçbir koşulda alınmayacak dizinler. `keystore` operatörün
-#: özel anahtarını, `sanctions` 5.6 MB'lık OFAC önbelleğini tutar; ikisi de
-#: denetlenen ajanın kodu değildir.
+#: Directories never taken into the audit surface. `keystore` holds the operator's
+#: private key and `sanctions` the 5.6 MB OFAC cache; neither is the audited
+#: agent's code.
 SECRET_DIRS = {
     "keystore",
     "sanctions",
@@ -49,7 +49,7 @@ SECRET_DIRS = {
     ".stellar",
     "stellar-cli",
 }
-#: Ad bazlı sır dosyaları; uzantı filtresi bunları yakalamıyor.
+#: Secret files matched by name; the extension filter does not catch them.
 SECRET_FILENAMES = {
     "signer.json",
     "state.json",
@@ -124,19 +124,19 @@ class IngestRequest(BaseModel):
     @model_validator(mode="after")
     def _check(self) -> "IngestRequest":
         if self.kind == "onchain_address" and not (self.address or self.agent_contract_id):
-            raise ValueError("address veya agent_contract_id gerekli")
+            raise ValueError("address or agent_contract_id is required")
         if self.kind == "onchain_address":
             reference = self.address or self.agent_contract_id
             if not is_valid_stellar_address(reference):
-                raise ValueError("geçersiz Stellar StrKey/checksum; G... veya C... bekleniyor")
+                raise ValueError("invalid Stellar StrKey/checksum; expected G... or C...")
         if self.agent_wallet and not is_valid_stellar_address(self.agent_wallet, account_only=True):
-            raise ValueError("agent_wallet geçerli bir G-account olmalı")
+            raise ValueError("agent_wallet must be a valid G-account")
         if self.kind in ("repo", "upload") and not (self.repo_url or self.local_path or self.zip_base64):
-            raise ValueError("repo_url, local_path veya zip_base64 gerekli")
+            raise ValueError("repo_url, local_path or zip_base64 is required")
         if self.kind == "endpoint" and not self.endpoint_url:
-            raise ValueError("endpoint_url gerekli")
+            raise ValueError("endpoint_url is required")
         if self.kind == "wizard" and not (self.template or self.system_prompt):
-            raise ValueError("template veya system_prompt gerekli")
+            raise ValueError("template or system_prompt is required")
         return self
 
 
@@ -155,13 +155,13 @@ class IngestionService:
         else:
             artifact = self._from_wizard(req)
 
-        # ortak alanların üzerine kullanıcı girdisi
+        # user input overrides the common fields
         if req.agent_wallet:
             artifact.agent_wallet = req.agent_wallet
         if req.owner:
             artifact.owner = req.owner
-        # Sahiplik: imza gerçekten kurtarılır. Boş string veya çöp imza
-        # "doğrulandı" sayılmaz; nedeni artefakta yazılır.
+        # Ownership: the signature is actually verified. An empty or garbage signature
+        # never counts as "verified"; the reason is written to the artifact.
         ownership = verify_owner(
             agent_ref=artifact.agent_wallet or artifact.agent_contract_id or artifact.name,
             owner=req.owner,
@@ -179,7 +179,7 @@ class IngestionService:
         if req.domain:
             artifact.domain = req.domain
 
-        # cüzdan varsa zincir davranışını ekle
+        # add on-chain behaviour when there is a wallet
         if artifact.agent_wallet and not artifact.onchain.address:
             artifact.onchain = await self.identity.onchain_activity(artifact.agent_wallet)
         return artifact
@@ -188,7 +188,7 @@ class IngestionService:
     async def _from_onchain(self, req: IngestRequest) -> AgentArtifact:
         reference = req.address or req.agent_contract_id
         if not STELLAR_ADDRESS_RE.match(reference) or not is_valid_stellar_address(reference):
-            raise ValueError("geçersiz Stellar adresi; G... account veya C... contract bekleniyor")
+            raise ValueError("invalid Stellar address; expected a G... account or C... contract")
         address = reference if reference.startswith("G") else ""
         contract_id = reference if reference.startswith("C") else req.agent_contract_id
         resolved = await self.identity.resolve(reference)
@@ -248,8 +248,8 @@ class IngestionService:
         elif req.local_path:
             if not self.settings.allow_local_path_ingest:
                 raise IngestGuardError(
-                    "yerel dizin denetimi kapalı (ALLOW_LOCAL_PATH_INGEST=false); "
-                    "repo_url veya zip yükleyin"
+                    "local directory audits are disabled (ALLOW_LOCAL_PATH_INGEST=false); "
+                    "upload a repo_url or zip"
                 )
             root = self.settings.ingest_root_path
             target = resolve_ingest_path(req.local_path, root)
@@ -259,7 +259,7 @@ class IngestionService:
             files = await self._read_remote(req.repo_url)
 
         if not files:
-            raise ValueError(f"kaynak okunamadı veya boş: {ref}")
+            raise ValueError(f"source could not be read or is empty: {ref}")
 
         manifest = self._parse_manifest(files)
         prompt = manifest.get("system_prompt") or self._find_prompt(files)
@@ -284,18 +284,18 @@ class IngestionService:
         )
 
     def _read_dir(self, root: Path) -> dict[str, str]:
-        """Kök altındaki kod dosyalarını okur.
+        """Read the code files under the root.
 
-        `root` çağrıdan önce `resolve_ingest_path` ile doğrulanmıştır; burada
-        ek olarak dosya bazlı iki filtre uygulanır:
+        `root` was validated with `resolve_ingest_path` before the call; two extra
+        per-file filters apply here:
 
-        * `SECRET_DIRS` / `SECRET_FILENAMES`: kök içinde olsa dahi sır taşıyan
-          yollar denetim yüzeyine alınmaz. `data/keystore/attestor.json`
-          operatörün özel anahtarıdır, denetlenen ajanın kodu değildir.
-        * symlink kaçışı: kök içindeki bir bağ dışarıyı gösteriyorsa atlanır.
+        * `SECRET_DIRS` / `SECRET_FILENAMES`: paths that hold secrets are never taken
+          into the audit surface, even inside the root. `data/keystore/attestor.json`
+          is the operator's private key, not the audited agent's code.
+        * symlink escape: a link inside the root that points outside is skipped.
         """
         if not root.exists():
-            raise ValueError(f"dizin bulunamadı: {root}")
+            raise ValueError(f"directory not found: {root}")
         out: dict[str, str] = {}
         skipped_secrets: list[str] = []
 
@@ -312,7 +312,7 @@ class IngestionService:
                 continue
             if path.suffix.lower() not in CODE_SUFFIXES:
                 continue
-            # Symlink kökün dışını gösteriyorsa okumak kaçış olur.
+            # Reading a symlink that points outside the root would be an escape.
             if path.is_symlink() and not is_within(path, root):
                 skipped_secrets.append(f"{path.name} (symlink)")
                 continue
@@ -327,22 +327,22 @@ class IngestionService:
         return out
 
     def _read_zip_b64(self, b64: str) -> dict[str, str]:
-        """Base64 zip'i okur.
+        """Read a base64 zip.
 
-        Zip girdisi tamamen denetlenen tarafın kontrolündedir, bu yüzden üç
-        kontrol gerekir: yol kaçışı (`../`, absolute), sır dosyaları ve toplam
-        açılmış boyut (zip bomb).
+        The zip input is fully controlled by the audited party, so three checks are
+        needed: path escape (`../`, absolute), secret files and total unpacked size
+        (zip bomb).
         """
         import base64
 
         try:
             raw = base64.b64decode(b64, validate=True)
         except (ValueError, TypeError) as exc:
-            raise IngestGuardError(f"zip_base64 çözümlenemedi: {exc}") from exc
+            raise IngestGuardError(f"zip_base64 could not be decoded: {exc}") from exc
         limit = min(MAX_REMOTE_BYTES, self.settings.max_ingest_bytes)
         if len(raw) > limit:
             raise IngestGuardError(
-                f"zip çok büyük: {len(raw)} bayt (üst sınır {limit})"
+                f"zip too large: {len(raw)} bytes (limit {limit})"
             )
 
         out: dict[str, str] = {}
@@ -350,7 +350,7 @@ class IngestionService:
         try:
             zf_ctx = zipfile.ZipFile(io.BytesIO(raw))
         except zipfile.BadZipFile as exc:
-            raise IngestGuardError(f"geçersiz zip: {exc}") from exc
+            raise IngestGuardError(f"invalid zip: {exc}") from exc
 
         with zf_ctx as zf:
             for info in zf.infolist():
@@ -361,7 +361,7 @@ class IngestionService:
                 if name.count("/") >= MAX_PATH_DEPTH or len(name) > 1024:
                     continue
                 parts = Path(name).parts
-                # Yol kaçışı: `../etc/passwd` veya `/etc/passwd`.
+                # Path escape: `../etc/passwd` or `/etc/passwd`.
                 if ".." in parts or Path(name).is_absolute() or name.startswith("/"):
                     continue
                 if any(part.lower() in SKIP_DIRS for part in parts):
@@ -379,13 +379,13 @@ class IngestionService:
         return out
 
     async def _read_remote(self, url: str) -> dict[str, str]:
-        """GitHub repo veya IPFS URI'den içerik çeker; erişim yoksa hata verir.
+        """Fetch content from a GitHub repo or IPFS URI; raise when it is unreachable.
 
-        URL denetlenen tarafın verdiği veridir, bu yüzden GitHub/IPFS dışındaki
-        her hedef `guard_remote_url` üzerinden geçer: yalnızca http/https ve
-        yalnızca genel internet adresleri. Aksi hâlde bu uç bir SSRF aracıdır:
-        `http://169.254.169.254/…` ile bulut metadata'sı veya `http://127.0.0.1:8000`
-        ile kendi API'si çekilebilirdi.
+        The URL is data supplied by the audited party, so every target other than
+        GitHub/IPFS goes through `guard_remote_url`: http/https only, and public internet
+        addresses only. Otherwise this endpoint would be an SSRF tool: it could fetch
+        cloud metadata via `http://169.254.169.254/…` or its own API via
+        `http://127.0.0.1:8000`.
         """
         if url.startswith("ipfs://") or "/ipfs/" in url:
             cid = guard_cid(url.split("ipfs://")[-1].split("/ipfs/")[-1])
@@ -404,17 +404,17 @@ class IngestionService:
                 except httpx.HTTPStatusError:
                     continue
                 return self._maybe_zip(content, f"{repo}-{branch}")
-            raise ValueError(f"GitHub reposu indirilemedi: {url}")
+            raise ValueError(f"GitHub repository could not be downloaded: {url}")
 
         safe_url = guard_remote_url(url)
         return self._maybe_zip(await self._fetch(safe_url, timeout=30.0), "remote_payload")
 
     async def _fetch(self, url: str, *, timeout: float) -> bytes:
-        """Streaming GET; her yönlendirme ve toplam boyut fail-closed doğrulanır."""
+        """Streaming GET; every redirect and the total size are validated fail-closed."""
         limit = min(MAX_REMOTE_BYTES, self.settings.max_ingest_bytes)
         url = guard_remote_url(url)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-            for _ in range(4):  # en fazla 4 yönlendirme
+            for _ in range(4):  # at most 4 redirects
                 async with client.stream("GET", url) as resp:
                     if resp.status_code in (301, 302, 303, 307, 308):
                         location = resp.headers.get("location", "")
@@ -426,7 +426,7 @@ class IngestionService:
                     declared = int(resp.headers.get("content-length", "0") or 0)
                     if declared > limit:
                         raise IngestGuardError(
-                            f"uzak içerik çok büyük: {declared} bayt (üst sınır {limit})"
+                            f"remote content too large: {declared} bytes (limit {limit})"
                         )
                     chunks: list[bytes] = []
                     received = 0
@@ -434,11 +434,11 @@ class IngestionService:
                         received += len(chunk)
                         if received > limit:
                             raise IngestGuardError(
-                                f"uzak içerik çok büyük: >{limit} bayt"
+                                f"remote content too large: >{limit} bytes"
                             )
                         chunks.append(chunk)
                     return b"".join(chunks)
-        raise IngestGuardError(f"çok fazla yönlendirme: {url}")
+        raise IngestGuardError(f"too many redirects: {url}")
 
     def _maybe_zip(self, content: bytes, label: str) -> dict[str, str]:
         if content[:2] == b"PK":
@@ -466,7 +466,7 @@ class IngestionService:
             base = Path(name).name.lower()
             if base in ("system_prompt.txt", "system_prompt.md", "prompt.txt", "prompt.md"):
                 return content
-        # kod içinde gömülü SYSTEM_PROMPT
+        # SYSTEM_PROMPT embedded in code
         pattern = re.compile(
             r"(?:SYSTEM_PROMPT|system_prompt|systemPrompt)\s*[:=]\s*(?:\(\s*)?[\"']{1,3}(.+?)[\"']{1,3}",
             re.DOTALL,
@@ -519,7 +519,7 @@ class IngestionService:
         if tools:
             return tools
 
-        # son çare: kod içindeki tool tanımlarını yakala
+        # last resort: pick up tool definitions in the code
         decl = re.compile(r"@tool\s*(?:\(.*?\))?\s*\n\s*def\s+(\w+)|def\s+(tool_\w+)")
         seen: set[str] = set()
         for content in files.values():
@@ -557,11 +557,11 @@ class IngestionService:
 
         headers = {"Authorization": req.auth_header} if req.auth_header else {}
         discovery_paths = ["/.well-known/agent.json", "/.well-known/agent-card.json", "/agent.json", "/"]
-        # Endpoint denetimi canlı probe yapar; hedef iç ağ olamaz (SSRF).
+        # Endpoint audits probe live; the target cannot be an internal network (SSRF).
         base = guard_remote_url(req.endpoint_url).rstrip("/")
 
-        # Yönlendirmeler burada reddedilir. Aksi hâlde genel bir endpoint'in
-        # redirect'i yeniden doğrulanmadan iç ağa dönebilir ve auth başlığı sızabilir.
+        # Redirects are refused here. Otherwise a public endpoint's redirect could turn
+        # to the internal network without revalidation and leak the auth header.
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             for path in discovery_paths:
                 try:

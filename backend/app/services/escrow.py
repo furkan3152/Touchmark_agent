@@ -104,7 +104,7 @@ class EscrowService:
             )
         record.funded = True
         record.mode = "not_required"
-        record.note = "Agent validation çekirdeğinde ödeme zorunlu değil."
+        record.note = "Payment is not required in the agent validation core."
         return record
 
     async def submit_deliverable(
@@ -165,7 +165,7 @@ class EscrowService:
             )
         record.settled = True
         record.payouts = {}
-        record.note = f"ödeme yok; refund uygulanmadı ({reason})"
+        record.note = f"no payment; no refund applied ({reason})"
         return record
 
     def charge_nanopayment(self, agent_id: str, purpose: str) -> dict:
@@ -174,7 +174,7 @@ class EscrowService:
             "purpose": purpose,
             "amount_usdc": 0.0,
             "scheme": "disabled",
-            "note": "monitoring billing çekirdek doğrulama akışında etkin değil",
+            "note": "monitoring billing is not active in the core validation flow",
         }
         self.nanopayment_ledger.append(entry)
         return entry

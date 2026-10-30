@@ -1,4 +1,4 @@
-"""Stellar/Soroban'a özgü agent ve entegrasyon denetçisi."""
+"""Auditor for Stellar/Soroban-specific agent and integration risks."""
 
 from __future__ import annotations
 
@@ -273,11 +273,11 @@ class StellarNativeAuditor(BaseAuditor):
                 self.finding(
                     "stellar-secret-seed",
                     severity,
-                    "Stellar secret seed kaynakta görünüyor",
-                    "S... secret seed doğrudan kod/manifest yüzeyinde bulundu."
-                    + (" Yalnızca test/örnek dosyalarında; yine de commit edilmiş anahtarlar döndürülmelidir." if test_only else ""),
+                    "Stellar secret seed visible in source",
+                    "An S... secret seed was found directly in the code or manifest surface."
+                    + (" Only in test or example files; committed keys must still be rotated." if test_only else ""),
                     evidence="; ".join(seed_locations + notes) or "secret seed pattern in submitted manifest text",
-                    remediation="Seed'i derhal döndürün; haricî signer/HSM kullanın ve geçmişten temizleyin.",
+                    remediation="Rotate the seed immediately; use an external signer or HSM and purge it from history.",
                     confidence=0.99,
                 )
             )
@@ -434,10 +434,10 @@ class StellarNativeAuditor(BaseAuditor):
                 self.finding(
                     "temporary-critical-state",
                     Severity.MEDIUM,
-                    "Kritik kayıt temporary storage kullanıyor olabilir",
-                    "Agent, validation veya escrow state'i süresi dolduğunda silinebilir.",
+                    "Critical state may use temporary storage",
+                    "Agent, validation or escrow state can be deleted when it expires.",
                     evidence="temporary keys: " + ", ".join(sorted(set(critical_keys))),
-                    remediation="Kritik kayıtları persistent storage'a taşıyın; temporary yalnız cache/idempotency penceresi olsun.",
+                    remediation="Move critical records to persistent storage; use temporary storage only for cache or idempotency windows.",
                     grade=EvidenceGrade.INFERRED,
                     confidence=0.7,
                 )
@@ -453,9 +453,9 @@ class StellarNativeAuditor(BaseAuditor):
                 self.finding(
                     "event-cursor-missing",
                     Severity.MEDIUM,
-                    "Soroban event ingestion cursor/dedup kanıtı yok",
-                    "RPC event geçmişi kalıcı indeks değildir; restart veya retention boşluğu kayıt kaybettirebilir.",
-                    remediation="Cursor'u dayanıklı DB'de tutun, event ID'yi unique yapın ve boşluk alarmı ekleyin.",
+                    "No cursor or dedup evidence for Soroban event ingestion",
+                    "RPC event history is not a permanent index; a restart or retention gap can lose records.",
+                    remediation="Keep the cursor in a durable DB, make the event ID unique and alert on gaps.",
                     grade=EvidenceGrade.INFERRED,
                     confidence=0.86,
                 )
@@ -477,9 +477,9 @@ class StellarNativeAuditor(BaseAuditor):
                     self.finding(
                         "sep45-boundary",
                         Severity.MEDIUM,
-                        "C-account auth için SEP-45 sınırı görünmüyor",
-                        "Raw Ed25519 veya SEP-10, contract account sahipliğini tek başına kanıtlamaz.",
-                        remediation="C-account oturumlarında SEP-45 challenge/authorize akışı kullanın.",
+                        "No SEP-45 boundary for C-account authentication",
+                        "Raw Ed25519 or SEP-10 alone does not prove contract-account ownership.",
+                        remediation="Use the SEP-45 challenge/authorize flow for C-account sessions.",
                         grade=EvidenceGrade.INFERRED,
                         confidence=0.8,
                     )
@@ -493,9 +493,9 @@ class StellarNativeAuditor(BaseAuditor):
                 self.finding(
                     "sep24-payout-confusion",
                     Severity.MEDIUM,
-                    "SEP-24 kullanıcı çekimi, üçüncü taraf payout gibi kullanılıyor olabilir",
-                    "Recipient payout için SEP-31 sınırı görünmüyor.",
-                    remediation="Kullanıcının kendi withdrawal akışını SEP-24, alıcı payout'unu SEP-31 ile ayırın.",
+                    "SEP-24 user withdrawal may be used as a third-party payout",
+                    "No SEP-31 boundary is visible for recipient payouts.",
+                    remediation="Separate the user's own withdrawal flow (SEP-24) from recipient payouts (SEP-31).",
                     confidence=0.84,
                 )
             )
@@ -552,7 +552,7 @@ class StellarNativeAuditor(BaseAuditor):
                 name="Event durability",
                 passed="getevents" not in lower
                 or bool(re.search(r"cursor|pagingtoken|sqlite|dedup|unique", lower)),
-                reason="RPC retention yerine durable cursor/dedup aranır.",
+                reason="Looks for a durable cursor or dedup rather than RPC retention.",
             ),
         ])
         if deep:
@@ -563,7 +563,7 @@ class StellarNativeAuditor(BaseAuditor):
                     passed="contract account" not in lower
                     or "sep-45" in lower
                     or "sep45" in lower,
-                    reason="C-account desteği ilan ediliyorsa SEP-45 aranır.",
+                    reason="SEP-45 is required when C-account support is announced.",
                 )
             )
         source = artifact.onchain.data_source

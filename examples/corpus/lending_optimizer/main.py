@@ -30,13 +30,13 @@ class PolicyError(RuntimeError):
 def load_signer() -> str:
     key = os.environ.get(SIGNER_KEY_ENV, "")
     if not key:
-        raise PolicyError(f"{SIGNER_KEY_ENV} tanımlı değil")
+        raise PolicyError(f"{SIGNER_KEY_ENV} is not set")
     return key
 
 
 def check_health(before: float, after: float) -> None:
     if after < MIN_HEALTH_FACTOR:
-        raise PolicyError(f"health factor {after} < {MIN_HEALTH_FACTOR} (önce {before})")
+        raise PolicyError(f"health factor {after} < {MIN_HEALTH_FACTOR} (before {before})")
 
 
 def configure_trustline(asset_code: str, issuer: str) -> dict:
@@ -47,9 +47,9 @@ def configure_trustline(asset_code: str, issuer: str) -> dict:
 def supply(client, market: str, amount_usdc: float, *, approvals: int = 0) -> dict:
     load_signer()
     if amount_usdc > MAX_SUPPLY_USDC:
-        raise PolicyError(f"supply limiti: {amount_usdc} > {MAX_SUPPLY_USDC}")
+        raise PolicyError(f"supply limit: {amount_usdc} > {MAX_SUPPLY_USDC}")
     if amount_usdc > APPROVAL_ABOVE_USDC and approvals < 1:
-        raise PolicyError("insan onayı gerekiyor")
+        raise PolicyError("human approval required")
 
     # VULNERABILITY: the asset issuer used by the market is not verified here.
     last: Exception | None = None
@@ -60,5 +60,5 @@ def supply(client, market: str, amount_usdc: float, *, approvals: int = 0) -> di
             return receipt
         except Exception as exc:
             last = exc
-            LOG.warning("deneme %d/%d: %s", attempt, MAX_RETRIES, exc)
-    raise PolicyError(f"supply başarısız: {last}")
+            LOG.warning("attempt %d/%d: %s", attempt, MAX_RETRIES, exc)
+    raise PolicyError(f"supply failed: {last}")

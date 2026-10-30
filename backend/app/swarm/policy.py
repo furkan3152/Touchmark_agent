@@ -1,4 +1,4 @@
-"""Stellar denetim politikası, commitment'ler ve kanıt güvencesi."""
+"""Stellar audit policy, commitments and evidence assurance."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def _canonical(payload: object) -> bytes:
 
 
 def artifact_commitment(artifact: AgentArtifact) -> str:
-    """Denetlenen girdiyi yerel kimlik ve ham metadata'dan bağımsız bağlar."""
+    """Bind the audited input independently of local identity and raw metadata."""
     artifact_payload = artifact.model_dump(
         mode="json", exclude={"id", "created_at", "raw_metadata", "code_profile", "chain_authority"}
     )
@@ -67,7 +67,7 @@ def artifact_commitment(artifact: AgentArtifact) -> str:
 
 
 def finding_set_commitment(findings: list[Finding]) -> str:
-    """Tüm finding içeriğini commit eder; hassas metni rapora açık etmez."""
+    """Commit to the full finding content without exposing sensitive text in the report."""
     payload = {
         "policy": AUDIT_POLICY_VERSION,
         "findings": [
@@ -86,7 +86,7 @@ def evidence_summary(findings: list[Finding]) -> dict[str, int]:
 
 
 def assurance_level(artifact: AgentArtifact, findings: list[Finding]) -> AssuranceLevel:
-    """Badge'den ayrı olarak kimlik ve Stellar ledger kanıtını derecelendirir."""
+    """Grade identity and Stellar ledger evidence separately from the badge."""
     if artifact.onchain.data_source == "simulated" or any(
         finding.evidence_grade is EvidenceGrade.SIMULATED for finding in findings
     ):

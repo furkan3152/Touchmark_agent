@@ -79,7 +79,7 @@ def test_configured_id_mismatch_stays_unverified(tmp_path, run):
 
     class MustNotCallRpc:
         async def get_transaction(self, _):
-            raise AssertionError("ID mismatch halinde RPC kanıtı kabul edilmemeli")
+            raise AssertionError("RPC evidence must not be accepted on an ID mismatch")
 
     result = run(ChainStatusService(settings, rpc=MustNotCallRpc()).deployed_contracts())
     rows = {row["key"]: row for row in result["contracts"]}

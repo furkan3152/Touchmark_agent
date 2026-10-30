@@ -1,4 +1,4 @@
-"""Stellar account/contract kimliği; kanıt yoksa mock kimlik üretmez."""
+"""Stellar account/contract identity; never produces a mock identity without evidence."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ..models import OnchainActivity
 
 
 def is_valid_stellar_address(value: str, *, account_only: bool = False) -> bool:
-    """StrKey sürümü ve checksum'u dahil G/C adres doğrulaması."""
+    """G/C address validation including the StrKey version and checksum."""
     try:
         if value.startswith("G"):
             StrKey.decode_ed25519_public_key(value)
@@ -57,6 +57,6 @@ class IdentityReader:
             address=address,
             data_source="horizon_account",
             balance_xlm=float(native.get("balance", 0) or 0),
-            # Account sequence işlem sayısı değildir; davranış metriği uydurulmaz.
+            # The account sequence is not a transaction count; no behaviour metric is invented.
             tx_count=0,
         )

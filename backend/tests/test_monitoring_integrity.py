@@ -69,5 +69,5 @@ def test_monitor_alerts_new_confirmed_risk_and_assurance_downgrade(settings, run
     assert second["drift"] == 0
     assert second["finding_set_changed"] is True
     assert second["new_confirmed_risks"] == ["security-new-critical"]
-    assert any("yeni doğrulanmış" in alert for alert in second["alerts"])
-    assert any("kanıt güvencesi düştü" in alert for alert in second["alerts"])
+    assert any("new confirmed" in alert for alert in second["alerts"])
+    assert any("evidence assurance dropped" in alert for alert in second["alerts"])
