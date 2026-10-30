@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """Reads API keys from a text file and imports them into `.env`.
 
-Why a separate tool
--------------------
-Manually copying keys into `.env` carries two risks: writing to the wrong line and
-leaking the key into the shell history. This tool reads the file, validates it
-**without ever printing the values**, and updates only the relevant lines of `.env`.
+The file is validated without printing any value, and only the relevant lines of
+`.env` are updated, so keys never land in shell history or on the wrong line.
 
-Usage
---------
+Usage:
     python scripts/import_keys.py --template ~/Masaüstü/agentveritas-keys.txt
     python scripts/import_keys.py ~/Masaüstü/agentveritas-keys.txt --dry-run
     python scripts/import_keys.py ~/Masaüstü/agentveritas-keys.txt

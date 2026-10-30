@@ -1,22 +1,16 @@
---------
-Chainalysis / TRM / Elliptic ticari anahtar ister ve self-serve kayıt her zaman
-mümkün değil. Oysa yaptırım verisinin **birincil kaynağı** zaten kamuya açık:
-ABD Hazinesi OFAC, SDN listesini makine-okunur olarak ücretsiz yayımlar ve liste
-`Digital Currency Address - ETH 0x…` biçiminde kripto adresleri içerir.
+"""OFAC yaptırım listesi tarayıcısı (anahtar gerektirmez).
 
-Bu modül o listeyi indirir, kripto adreslerini ayıklar ve yerel bir sete koyar.
-Sonuç **CONFIRMED** kanıttır: ticari bir sağlayıcının yorumu değil, birincil
-kaynaktan doğrudan eşleşmedir.
+Chainalysis / TRM / Elliptic ticari anahtar ister. ABD Hazinesi OFAC ise SDN
+listesini makine-okunur olarak ücretsiz yayımlar ve liste
+`Digital Currency Address - ETH 0x…` biçiminde kripto adresleri içerir. Bu modül
+listeyi indirir, kripto adreslerini ayıklar ve yerel bir sete koyar; eşleşme
+birincil kaynaktan geldiği için CONFIRMED kanıttır.
 
-Sınırları açıkça söylemek gerekir
----------------------------------
-OFAC yalnızca *doğrudan listelenmiş* adresleri verir. "Mixer'a 2 adım uzaklıkta"
-gibi dolaylı maruziyet analizi yapmaz — o ticari sağlayıcıların işidir. Bu yüzden
-eşleşme yoksa sonuç "temiz" değil, "**yaptırım listesinde değil**"dir; denetçi bunu
-`low` risk olarak değil, sınırlı kapsamlı bir kontrol olarak raporlar.
+OFAC yalnızca doğrudan listelenmiş adresleri verir, "mixer'a 2 adım uzaklıkta"
+gibi dolaylı maruziyet analizi yapmaz. Eşleşme yoksa sonuç "temiz" değil,
+"yaptırım listesinde değil"dir; denetçi bunu `low` risk olarak değil, sınırlı
+kapsamlı bir kontrol olarak raporlar.
 
-Önbellek
---------
 Liste ~5.6 MB ve günde en fazla bir kez değişir. `data/sanctions/ofac-sdn.json`
 içine ayıklanmış adreslerle birlikte yazılır; `max_age_hours` içinde tekrar
 indirilmez. Ağ yoksa süresi geçmiş önbellek yine kullanılır (uyarıyla).

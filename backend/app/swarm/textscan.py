@@ -1,10 +1,9 @@
 """Prompt metni tarama yardımcıları: kelime sınırı ve olumsuzlama duyarlı.
 
-Neden gerekli
--------------
-Denetçiler politika sinyallerini prompt metninde arıyor. Naif alt dize aramasının
-iki ciddi yanlış negatifi vardı ve ikisi de gerçek bir korpus taramasında ortaya
-çıktı:
+Denetçiler politika sinyallerini prompt metninde arar. Düz alt dize araması iki
+yanlış negatif üretir: ``"trust unlimited issuers"`` içindeki ``limit`` harcama
+politikası sayılır, ``"ask for their private key"`` içindeki ``private`` yürütme
+koruması kanıtı sayılır.
 
 Kurallar:
 

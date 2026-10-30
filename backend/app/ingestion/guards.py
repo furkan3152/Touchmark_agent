@@ -1,17 +1,16 @@
------------------
-`/api/v1/agents/ingest` was binding two fields controlled by the audited party directly
-to the file system and network:
+"""Ingestion input guards: local path sandbox and remote URL validation.
 
-* `local_path` was reading **any directory**. A `local_path=data/keystore` call
-  was pulling the operator's `attestor.json` (with `private_key` field) into the
-  artifact; the file was entering the server state and `data/state.json`.
-* `repo_url` was unconditionally making `client.get(url)` when GitHub/IPFS didn't match.
-  This is classic SSRF: a cloud metadata address like `http://169.254.169.254/...` or
-  an internal service like `http://127.0.0.1:8000/...` could be fetched.
+`/api/v1/agents/ingest` takes two fields controlled by the audited party that reach
+the file system and the network:
 
-This module enforces two invariants and both are **the standard of the audit itself**:
-input surface is narrowed with an allowlist, out-of-scope requests do not fail silently
-— they are rejected with the reason stated.
+* `local_path` must stay under the ingest root. Otherwise `local_path=data/keystore`
+  would pull the operator's `attestor.json` (with its `private_key`) into the artifact
+  and into `data/state.json`.
+* `repo_url` outside GitHub/IPFS is fetched only if it resolves to the public internet.
+  Otherwise it is an SSRF vector for cloud metadata (`http://169.254.169.254/...`) or
+  internal services (`http://127.0.0.1:8000/...`).
+
+Out-of-scope requests are rejected with the reason stated, never ignored silently.
 """
 
 from __future__ import annotations

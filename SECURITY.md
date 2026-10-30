@@ -4,7 +4,10 @@
 
 Only the current major version receives security fixes.
 
-Only the current major version is actively supported with security updates. 
+| Version | Supported |
+| ------- | --------- |
+| v1.x.x  | Yes       |
+| < v1.0  | No        |
 
 ## Reporting a vulnerability
 
@@ -16,7 +19,9 @@ We acknowledge reports within 48 hours and keep you updated while we verify and 
 
 In scope for security review and the bug bounty:
 
-## Out of Scope
+- Soroban contracts: unauthorized access, evidence tampering, bypassing audit checks, draining funds.
+- Python backend: logic flaws, broken authentication or authorization, data leaks, forged evidence.
+- API endpoints: injection, SSRF, broken access control and other OWASP Top 10 issues affecting the production services.
 
 Out of scope:
 

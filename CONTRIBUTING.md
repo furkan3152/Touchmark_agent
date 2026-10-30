@@ -19,9 +19,10 @@ source venv/bin/activate
 pip install -r backend/requirements-dev.txt
 ```
 
-### Code Style
+## Code style
 
-We enforce strict coding standards to keep our codebase clean and maintainable.
+- Python follows PEP 8. Use `black`, `isort` and `flake8`.
+- Rust uses the standard formatting. Run `cargo fmt` before committing; `cargo clippy` should pass without warnings.
 
 ## Tests
 
@@ -31,9 +32,15 @@ Run the full suite before opening a pull request:
 ./scripts/test.sh
 ```
 
-Ensure you have a local Stellar quickstart node running if you are running integration tests.
+It runs the Python tests offline, two end-to-end audits of the example agents, a syntax check of the frontend JavaScript, `cargo fmt`, `cargo clippy`, the contract tests and the WASM build. It needs Node.js and the Rust target above.
 
-## Pull Request Process
+## Pull requests
+
+1. Fork the repo and branch from `main`.
+2. Add tests for new behaviour and for bug fixes.
+3. Update the docs if you change a user-facing API, a CLI command or a contract interface.
+4. Make sure `./scripts/test.sh` passes.
+5. Open the pull request with the template, describe the change and link the issue it addresses.
 
 A maintainer will review it.
 
@@ -41,7 +48,6 @@ A maintainer will review it.
 
 We use [Conventional Commits](https://www.conventionalcommits.org/), which keeps the history readable and lets release notes be generated from it:
 
-Examples:
 - `feat: add evidence verification endpoint`
 - `fix: resolve overflow in Soroban contract`
 - `docs: update setup instructions in README`

@@ -1,20 +1,14 @@
 """Frontend design system invariants.
 
-Why test
-----------
-Interface decisions are embedded in code and break silently: someone changing `--text-3`
-to be "slightly dimmer" is enough for contrast to drop below AA, and nobody
-notices. These tests lock in four things:
+Making `--text-3` "slightly dimmer" is enough to drop contrast below AA without anyone
+noticing, so these tests pin down:
 
-1. **Contrast**: every text/background pair carrying information with color passes WCAG AA.
-   Score bands (SAFE/CAUTION/HIGH_RISK/BLOCKLIST) carry information — if unreadable,
-   the report is unreadable.
-2. **Token discipline**: no raw hex in `styles.css`, every token called via
-   `var()` is defined. Raw hex breaks single-point theme management.
-3. **DOM contract**: every id sought by `app.js` exists in HTML. A missing id
-   silently returns `null` and the panel remains empty — hiding the error.
-4. **Band thresholds**: `band()` thresholds in the frontend match
-   `BADGE_THRESHOLDS` in the backend. If they diverge, the UI shows the wrong color.
+1. Contrast: every text/background pair that carries information with color passes
+   WCAG AA, including the four score bands (SAFE/CAUTION/HIGH_RISK/BLOCKLIST).
+2. Tokens: no raw hex in `styles.css`, and every token used through `var()` is defined.
+3. DOM contract: every id `app.js` looks up exists in the HTML. A missing id returns
+   `null` and the panel stays empty without an error.
+4. Band thresholds: `band()` in the frontend matches `BADGE_THRESHOLDS` in the backend.
 """
 
 from __future__ import annotations

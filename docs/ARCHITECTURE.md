@@ -103,7 +103,7 @@ Nothing submitted is imported or executed.
    - Calibration: `scripts/calibrate_verifier.py` measures it against hand-labelled
      findings (see [EVIDENCE.md](EVIDENCE.md)).
 6. **Decision and score** (`swarm/policy.py`, `swarm/judge.py`).
-   - **Decision:**
+   - Decision:
      - `needs_fixes`: an actionable risk: high or critical, or a medium way around a payment or security control (or to funds, accounts or other users' data) that the independent verifier confirmed at the quoted line.
      - `needs_evidence`: no risk, but code, tools and instructions were not all reviewed.
      - `pass`: neither of the above.
