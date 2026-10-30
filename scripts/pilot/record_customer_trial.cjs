@@ -3,7 +3,7 @@
  */
 const fs=require('node:fs'),path=require('node:path'),{spawn}=require('node:child_process');
 const {chromium}=require('playwright');
-const ROOT=path.resolve(__dirname,'..'),OUT=process.env.TRIAL_VIDEO_OUT;
+const ROOT=path.resolve(__dirname,'..','..'),OUT=process.env.TRIAL_VIDEO_OUT;
 if(!OUT)throw Error('Set TRIAL_VIDEO_OUT');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{

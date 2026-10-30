@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from stellar_sdk import Keypair, SorobanServer
 from stellar_sdk.client.requests_client import RequestsClient
@@ -26,8 +26,8 @@ from backend.app.services.audit_product import EngagementRequest, audit_engageme
 from backend.app.services.capsule import parse_capsule
 from backend.app.services.order_identity import make_order_challenge
 from backend.app.stellar.ownership import sep53_payload_hash
-from scripts.fulfill_testnet_order import build_adapters
-from scripts.verify_official_order_testnet import checkout_transaction
+from scripts.pilot.fulfill_testnet_order import build_adapters
+from scripts.pilot.verify_official_order_testnet import checkout_transaction
 
 
 def write_private(path, value):

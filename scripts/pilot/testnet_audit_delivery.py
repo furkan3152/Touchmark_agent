@@ -29,7 +29,7 @@ from stellar_sdk import Account, Address, Asset, Keypair, Network, SorobanServer
 from stellar_sdk.contract import AssembledTransaction, ContractClient
 from stellar_sdk.contract.exceptions import SimulationFailedError
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 RPC = "https://soroban-testnet.stellar.org"
 HORIZON = "https://horizon-testnet.stellar.org"

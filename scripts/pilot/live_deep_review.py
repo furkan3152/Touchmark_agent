@@ -6,8 +6,8 @@ Starts with three pilot cases and only continues to the rest with ``--all`` when
 pilot ran cleanly. Generated seeds are never written anywhere and are redacted from
 every printed or saved result.
 
-    python scripts/live_deep_review.py            # pilot only
-    python scripts/live_deep_review.py --all      # pilot, then the remaining cases
+    python scripts/pilot/live_deep_review.py            # pilot only
+    python scripts/pilot/live_deep_review.py --all      # pilot, then the remaining cases
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from stellar_sdk import Keypair  # noqa: E402

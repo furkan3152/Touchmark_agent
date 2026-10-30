@@ -4,9 +4,9 @@
 Drives the demo in a browser: paste an agent, read the verdict, fix and re-test, stamp a
 passing agent on Stellar testnet. Title cards, captions and a visible cursor are injected
 into the page; long waits (the AI review, ledger transactions) are marked so that
-scripts/cut_howto.py can speed them up. Writes the raw recording and a marks file.
+scripts/pilot/cut_howto.py can speed them up. Writes the raw recording and a marks file.
 
-    python scripts/record_howto.py --url http://localhost:8011/ --out media-build/
+    python scripts/pilot/record_howto.py --url http://localhost:8011/ --out media-build/
 """
 from __future__ import annotations
 

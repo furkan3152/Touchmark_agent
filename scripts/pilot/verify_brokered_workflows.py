@@ -3,8 +3,8 @@
 import argparse,asyncio,json,os,re,sys
 from datetime import datetime,timezone
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
-from scripts.verify_deployed_integrations import private_read,put_private
+ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT))
+from scripts.pilot.verify_deployed_integrations import private_read,put_private
 async def verify(run_id):
  from vercel.blob import AsyncBlobClient
  from backend.app.config import Settings

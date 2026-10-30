@@ -16,12 +16,12 @@ import re
 import sys
 import tarfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 from backend.app.config import Settings
 from backend.app.reporting.generator import canonical_json
 from backend.app.services.order_publication import PrivateReportPublisher
-from scripts.verify_deployed_integrations import private_read, put_private
+from scripts.pilot.verify_deployed_integrations import private_read, put_private
 
 
 def operator_archive():
@@ -85,7 +85,7 @@ async def verify(run_id, attempt_id=None):
                         env={'UV_PYTHON_INSTALL_DIR':'/vercel/python'}, capture_output=True, kill_after=180)
                     if setup.returncode != 0:
                         raise ValueError('Trusted operator dependency setup failed')
-                    args = ['/vercel/operator/scripts/verify_durable_deep_order.py','--run-id',run_id]
+                    args = ['/vercel/operator/scripts/pilot/verify_durable_deep_order.py','--run-id',run_id]
                     if restart: args.append('--restart-only')
                     process = await box.run_process('/vercel/operator-venv/bin/python',args,
                         cwd='/vercel/operator',env=env,capture_output=True,kill_after=780)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Edit the raw how-to recording: speed up the marked waits and export MP4 plus a poster.
 
-    python scripts/cut_howto.py media-build/ frontend/brand/
+    python scripts/pilot/cut_howto.py media-build/ frontend/brand/
 """
 from __future__ import annotations
 

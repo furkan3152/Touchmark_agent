@@ -19,7 +19,7 @@ from stellar_sdk.contract import AssembledTransaction, ContractClient
 from stellar_sdk.contract.exceptions import SimulationFailedError
 from stellar_sdk.soroban_rpc import AuthMode, SendTransactionStatus
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RPC = "https://soroban-testnet.stellar.org"
 NETWORK = Network.TESTNET_NETWORK_PASSPHRASE
 KEY_PATH = ROOT / "data/agent-account-testnet-identity.json"

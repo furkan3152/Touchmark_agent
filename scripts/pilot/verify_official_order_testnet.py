@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import httpx
@@ -33,7 +33,7 @@ from backend.app.services.order_identity import make_order_challenge
 from backend.app.stellar.ownership import sep53_payload_hash
 from backend.app.services.studio import ReviewRequest
 from backend.app.services import testnet_checkout as checkout
-from scripts.fulfill_testnet_order import build_adapters
+from scripts.pilot.fulfill_testnet_order import build_adapters
 
 PRIVATE = ROOT / 'data/official-order-pilot-state.json'
 DATABASE = ROOT / 'data/official-order-pilot.db'

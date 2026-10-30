@@ -17,9 +17,9 @@ import re
 import sys
 import tempfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from scripts.verify_deployed_integrations import private_read, put_private
+from scripts.pilot.verify_deployed_integrations import private_read, put_private
 
 
 def load_agent(name):

@@ -8,9 +8,9 @@ import asyncio
 import json
 from pathlib import Path
 import sys
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
-from scripts import verify_official_order_testnet as driver
+from scripts.pilot import verify_official_order_testnet as driver
 from backend.app.services.capsule import parse_capsule,seal_capsule
 from backend.app.services.audit_product import EngagementRequest,build_plan
 BASE=ROOT/'research/customer-trial-2026-10-15'

@@ -1,7 +1,7 @@
 """Add explicit instrumented workflow metadata; never edit frozen agent business code."""
 import json,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
+ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT))
 from backend.app.services.capsule import parse_capsule,seal_capsule
 from backend.app.services.execution_contract import load_contract
 BASE=ROOT/'research/customer-trial-2026-10-15'
