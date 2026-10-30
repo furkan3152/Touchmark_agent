@@ -172,7 +172,7 @@ async def record(url: str, out: Path) -> None:
         await r.caption("4", "Read back from the ledger: anyone can check it. That stamp is the touchmark.")
         await r.pause(4.4)
         await page.evaluate("hv.hideCaption()")
-        await page.evaluate("""hv.card('<h1>Earn your <em>touchmark.</em></h1><p>Add <code>touchmark.json</code> with your Stellar account to receive the credential yourself.<br><br><code>agentveritas-stellar.vercel.app</code></p>')""")
+        await page.evaluate("""hv.card('<h1>Earn your <em>touchmark.</em></h1><p>Add <code>touchmark.json</code> with your Stellar account to receive the credential yourself.<br><br><code>touchmark-stellar.vercel.app</code></p>')""")
         await r.pause(4.8)
         await context.close()
         await browser.close()

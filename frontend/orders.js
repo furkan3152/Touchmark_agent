@@ -84,10 +84,10 @@
     clearTimer();generation++;capability=cap;render(value);byId("order-resume-token").value="";
     intake("Private order opened. Its source and report stay behind the order capability.");
   }
-  window.addEventListener("veritas:checkout-ready",(event)=>{context=event.detail;updateCreate();if(context.checkout.payment_confirmed&&!matchQuote(context.checkout.quote))intake("This funded request needs its existing private receipt. Resume that order; a replacement order will not be created.");});
-  window.addEventListener("veritas:checkout-reset",()=>{context=null;challenge=null;byId("order-challenge").hidden=true;updateCreate();});
-  window.addEventListener("veritas:order-required",(event)=>{event.preventDefault();if(!available()){event.detail.reject(new Error("Official order processing is unavailable. Funding stays blocked until the service is ready."));return;}if(!matchQuote(event.detail.quote)){event.detail.reject(new Error("Create or resume the private order matching this quote before funding."));return;}if(order.status!=="awaiting_payment"){event.detail.reject(new Error("This private order is not awaiting payment. Refresh its state before funding."));return;}event.detail.resolve({...capability});});
-  window.addEventListener("veritas:order-funded",(event)=>{if(matchQuote(event.detail.quote)&&order.status==="awaiting_payment")activate();});
+  window.addEventListener("touchmark:checkout-ready",(event)=>{context=event.detail;updateCreate();if(context.checkout.payment_confirmed&&!matchQuote(context.checkout.quote))intake("This funded request needs its existing private receipt. Resume that order; a replacement order will not be created.");});
+  window.addEventListener("touchmark:checkout-reset",()=>{context=null;challenge=null;byId("order-challenge").hidden=true;updateCreate();});
+  window.addEventListener("touchmark:order-required",(event)=>{event.preventDefault();if(!available()){event.detail.reject(new Error("Official order processing is unavailable. Funding stays blocked until the service is ready."));return;}if(!matchQuote(event.detail.quote)){event.detail.reject(new Error("Create or resume the private order matching this quote before funding."));return;}if(order.status!=="awaiting_payment"){event.detail.reject(new Error("This private order is not awaiting payment. Refresh its state before funding."));return;}event.detail.resolve({...capability});});
+  window.addEventListener("touchmark:order-funded",(event)=>{if(matchQuote(event.detail.quote)&&order.status==="awaiting_payment")activate();});
   byId("order-consent").addEventListener("change",updateCreate);
   async function prepareChallenge(action="create"){
     if(working||!context||!available()||!byId("order-consent").checked)return;
@@ -147,7 +147,7 @@
       const envelope=await request(`orders/${capability.order_id}/result`);if(current!==generation)return;
       if(!HEX.test(envelope.report_sha256||"")||envelope.report_sha256!==captured.report_sha256)throw new Error("The report does not match this order's recorded commitment.");
       const d=verifiedDelivery(captured)?captured.delivery:null;const credential=d?{contract_id:d.credential_contract_id,token_id:d.token_id,owner:d.owner}:null;
-      await new Promise((resolve,reject)=>window.dispatchEvent(new CustomEvent("veritas:order-report",{detail:{envelope,credential,order_id:captured.order_id,resolve,reject}})));
+      await new Promise((resolve,reject)=>window.dispatchEvent(new CustomEvent("touchmark:order-report",{detail:{envelope,credential,order_id:captured.order_id,resolve,reject}})));
       status(credential?"Report opened and its credential checked against the live ledger. Review the Credential tab for the returned status.":deliveredWithoutCredential(captured)?"Report opened. This audit did not pass, so no credential was issued.":"Report opened. An onchain credential is not yet verified for this order.");
     }catch(error){status(error.message);}finally{setWorking(false);}
   });
@@ -158,12 +158,12 @@
     try{
       const transaction=await request(`orders/${capability.order_id}/refund/prepare`,{method:"POST",body:{}});
       if(transaction.request_id!==captured.order_id||transaction.step!=="refund"||transaction.signer!==captured.requester)throw new Error("The refund transaction does not match this private order.");
-      await new Promise((resolve,reject)=>{const handled=!window.dispatchEvent(new CustomEvent("veritas:refund-prepared",{cancelable:true,detail:{transaction,order:captured,resolve,reject}}));if(!handled)reject(new Error("The wallet transaction panel is unavailable."));});
+      await new Promise((resolve,reject)=>{const handled=!window.dispatchEvent(new CustomEvent("touchmark:refund-prepared",{cancelable:true,detail:{transaction,order:captured,resolve,reject}}));if(!handled)reject(new Error("The wallet transaction panel is unavailable."));});
       byId("checkout-panel").open=true;status("Refund eligibility passed and an unsigned transaction was prepared. Review, sign and submit it explicitly in the wallet panel. No refund is confirmed yet.");
     }catch(error){status(`${error.message} No refund is assumed or automatically submitted.`);}finally{setWorking(false);}
   });
-  window.addEventListener("veritas:refund-pending",(event)=>{if(order?.order_id===event.detail.order_id){pendingRefund=order.order_id;byId("order-activate").hidden=false;byId("order-activate").textContent="Check refund receipt";}});
-  window.addEventListener("veritas:refund-submitted",async(event)=>{
+  window.addEventListener("touchmark:refund-pending",(event)=>{if(order?.order_id===event.detail.order_id){pendingRefund=order.order_id;byId("order-activate").hidden=false;byId("order-activate").textContent="Check refund receipt";}});
+  window.addEventListener("touchmark:refund-submitted",async(event)=>{
     if(!capability||capability.order_id!==event.detail.order_id||working)return;
     setWorking(true);try{render(await request(`orders/${capability.order_id}/refund/reconcile`,{method:"POST",body:{}}));}catch(error){status(`${error.message} Use Check refund receipt to read the escrow state again.`);}finally{setWorking(false);}
   });

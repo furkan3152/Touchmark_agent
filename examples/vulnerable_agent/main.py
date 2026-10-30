@@ -1,4 +1,4 @@
-"""Intentionally insecure example agent — for demonstrating AgentVeritas audits."""
+"""Intentionally insecure example agent — for demonstrating Touchmark audits."""
 
 import os
 import subprocess

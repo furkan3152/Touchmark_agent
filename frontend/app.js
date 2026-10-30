@@ -15,7 +15,9 @@
   "use strict";
 
   const API = "/api/v1";
-  const OPERATOR_KEY = "agentveritas_stellar_admin_key";
+  const OPERATOR_KEY = "touchmark_stellar_admin_key";
+  // Session key name before the rename; read once and moved to OPERATOR_KEY.
+  const LEGACY_OPERATOR_KEY = "agentveritas_stellar_admin_key";
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   let runtimeConfig = { billing: { enabled: false, asset_code: "SAC" } };
@@ -59,6 +61,11 @@
 
   const readOperatorKey = () => {
     try {
+      const legacy = sessionStorage.getItem(LEGACY_OPERATOR_KEY);
+      if (legacy !== null) {
+        if (!sessionStorage.getItem(OPERATOR_KEY)) sessionStorage.setItem(OPERATOR_KEY, legacy);
+        sessionStorage.removeItem(LEGACY_OPERATOR_KEY);
+      }
       return sessionStorage.getItem(OPERATOR_KEY) || "";
     } catch {
       return "";
@@ -69,6 +76,7 @@
     try {
       if (value) sessionStorage.setItem(OPERATOR_KEY, value);
       else sessionStorage.removeItem(OPERATOR_KEY);
+      sessionStorage.removeItem(LEGACY_OPERATOR_KEY);
       return true;
     } catch {
       return false;
@@ -941,7 +949,7 @@
     try {
       if (deep) {
         const operatorKey = $("#in-api-key")?.value || "";
-        if (operatorKey) sessionStorage.setItem("agentveritas_stellar_admin_key", operatorKey);
+        if (operatorKey) writeOperatorKey(operatorKey);
       }
       const d = await api(deep ? "/selftest/deep" : "/selftest", deep ? { method: "POST" } : {});
       const s = d.summary || {};

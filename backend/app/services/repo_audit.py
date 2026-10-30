@@ -73,7 +73,7 @@ VERIFY_RESERVE_SECONDS = 50.0
 #: An owner claim: the repository names the Stellar account its credential belongs to.
 #: touchmark.json is the current name; agentveritas.json is still read for older repositories.
 OWNERSHIP_FILES = ("touchmark.json", ".well-known/touchmark.json", "agentveritas.json", ".well-known/agentveritas.json")
-#: The Veritas Blueprint project map; still read for older repositories. .tmark replaces it.
+#: The Blueprint project map (legacy file name); still read for older repositories. .tmark replaces it.
 BLUEPRINT_FILE = "veritas.json"
 #: The one declaration file: identity, owner, authority, limits and tools (services/tmark.py).
 TMARK_FILE = ".tmark"
@@ -82,7 +82,7 @@ LICENSE_NAMES = {"license", "license.md", "license.txt", "licence", "licence.md"
 
 
 def ownership_claim(record: dict) -> dict:
-    """Parse agentveritas.json: {"stellar_owner": "G..."}. Committing this file shows that
+    """Parse touchmark.json (or legacy agentveritas.json): {"stellar_owner": "G..."}. Committing this file shows that
     whoever controls the repository names that account; the account's signature, required
     when the agent is registered, shows its key holder agrees."""
     if not record:
@@ -119,7 +119,7 @@ class _DeclaredTool(BaseModel):
 
 
 class _Declaration(BaseModel):
-    """The optional self-declaration in agentveritas.json, next to stellar_owner.
+    """The optional self-declaration in touchmark.json (or agentveritas.json), next to stellar_owner.
 
     A declaration states intent; it never closes a risk on its own. Declared tools are
     reconciled with what the source can do (swarm/capabilities.py), and a declared
@@ -140,7 +140,7 @@ class _Declaration(BaseModel):
 
 
 def declarations(selection: dict) -> dict:
-    """What the repository declares about itself (agentveritas.json, veritas.json).
+    """What the repository declares about itself (touchmark.json, agentveritas.json, veritas.json).
 
     Returns the parsed fields plus a record of which files were read, for the report."""
     out: dict = {"files": [], "errors": []}

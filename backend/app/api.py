@@ -30,7 +30,7 @@ from .services.demo_flow import DemoAuditRequest as DemoAuditRequestModel, DemoC
 from .studio_guard import StudioGuard
 from .services.studio_intake import AddressRequest, GitHubRequest, identify_address, import_github_bundle
 
-logger = logging.getLogger("agentveritas.api")
+logger = logging.getLogger("touchmark.api")
 
 settings = get_settings()
 pipeline = AuditPipeline(settings)
@@ -140,7 +140,7 @@ async def _monitor_loop() -> None:
 
 
 app = FastAPI(
-    title="AgentVeritas",
+    title="Touchmark",
     version=settings.version,
     description="Stellar agent validation layer — Soroban registry and evidence-first audits.",
     lifespan=lifespan,
@@ -640,8 +640,8 @@ async def stellar_info() -> Response:
     import json
     pilot = pilot_evidence()
     lines = ['VERSION="2.7.0"', 'NETWORK_PASSPHRASE="Test SDF Network ; September 2015"',
-             '', '[DOCUMENTATION]', 'ORG_DESCRIPTION="AgentVeritas official agent audit Testnet pilot."',
-             'ORG_GITHUB="furkan3152"', '', '[AGENTVERITAS]',
+             '', '[DOCUMENTATION]', 'ORG_DESCRIPTION="Touchmark official agent audit Testnet pilot."',
+             'ORG_GITHUB="furkan3152"', '', '[TOUCHMARK]',
              'STATUS="testnet_pilot"', 'INDEPENDENT_OPERATORS=false',
              'CREDENTIAL_STANDARD="custom_nontransferable_audit_record"']
     if pilot.get('available'):

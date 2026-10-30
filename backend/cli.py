@@ -1,4 +1,4 @@
-"""AgentVeritas Stellar CLI; does not include backend signer or on-chain write path."""
+"""Touchmark Stellar CLI; does not include a backend signer or an on-chain write path."""
 
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ def show_templates() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="agentveritas-stellar")
+    parser = argparse.ArgumentParser(prog="touchmark")
     sub = parser.add_subparsers(dest="command", required=True)
 
     audit = sub.add_parser("audit", help="run agent audit")

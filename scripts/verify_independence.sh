@@ -20,8 +20,8 @@ if grep -RIlE \
 fi
 
 if [[ -d "${OTHER}" ]]; then
-  STELLAR_INODES="$(mktemp /tmp/agentveritas-stellar-inodes.XXXXXX)"
-  OTHER_INODES="$(mktemp /tmp/agentveritas-other-inodes.XXXXXX)"
+  STELLAR_INODES="$(mktemp /tmp/touchmark-stellar-inodes.XXXXXX)"
+  OTHER_INODES="$(mktemp /tmp/touchmark-other-inodes.XXXXXX)"
   trap 'rm -f -- "${STELLAR_INODES}" "${OTHER_INODES}"' EXIT
   find "${ROOT}" \( -path '*/.venv' -o -path '*/target' -o -path '*/.pytest_cache' -o -path '*/__pycache__' -o -path '*/data' \) -prune -o -type f -printf '%D:%i\n' | sort -u >"${STELLAR_INODES}"
   find "${OTHER}" \( -path '*/.venv' -o -path '*/target' -o -path '*/.pytest_cache' -o -path '*/__pycache__' -o -path '*/data' \) -prune -o -type f -printf '%D:%i\n' | sort -u >"${OTHER_INODES}"

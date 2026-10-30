@@ -16,7 +16,7 @@ from .audit_product import audit_engagement
 from .order_publication import PrivateReportPublisher
 from .order_settlement import TestnetOrderSettlement
 
-logger = logging.getLogger('agentveritas.orders')
+logger = logging.getLogger('touchmark.orders')
 
 
 def order_capabilities(settings) -> dict:

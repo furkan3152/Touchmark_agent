@@ -451,7 +451,7 @@ class IngestionService:
     def _parse_manifest(files: dict[str, str]) -> dict:
         for name, content in files.items():
             base = Path(name).name.lower()
-            if base in ("agent.json", "agentveritas.json", "agent-card.json", "manifest.json"):
+            if base in ("agent.json", "touchmark.json", "agentveritas.json", "agent-card.json", "manifest.json"):
                 try:
                     data = json.loads(content)
                     if isinstance(data, dict):

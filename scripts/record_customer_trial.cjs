@@ -11,7 +11,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
  let browser,ctx;
  try{
   for(let i=0;i<100;i++){try{if((await fetch('http://127.0.0.1:8769/api/v1/health')).ok)break;}catch{}await pause(100);}
-  const c=require('/tmp/agentveritas-browser-qa/node_modules/@sparticuz/chromium');
+  const c=require('/tmp/touchmark-browser-qa/node_modules/@sparticuz/chromium');
   browser=await chromium.launch({executablePath:await c.executablePath(),args:c.args,headless:true});
   ctx=await browser.newContext({viewport:{width:1440,height:1000},recordVideo:{dir:OUT,size:{width:1440,height:1000}},reducedMotion:'reduce',acceptDownloads:true});
   const page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -47,6 +47,6 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   const promise=page.waitForEvent('download');await page.locator('#download-designed-report').click();const dl=await promise;await dl.saveAs(OUT+'/invoicepilot-source-report.html');
   await caption('7. The designed report was downloaded. Live Testnet results are in a separate evidence table; this recording does not verify a wallet signature.');await pause(5000);
   fs.writeFileSync(OUT+'/recording-evidence.json',JSON.stringify({real_local_backend:true,mocked_requests:false,deepPlan,decision,reportHash:hash,pageErrors:errors,wallet_extension_verified:false,nft_issued:false},null,2));
-  const video=page.video();await ctx.close();ctx=null;fs.renameSync(await video.path(),OUT+'/agentveritas-usage.webm');console.log('Real UI recording completed');
+  const video=page.video();await ctx.close();ctx=null;fs.renameSync(await video.path(),OUT+'/touchmark-usage.webm');console.log('Real UI recording completed');
  }finally{if(ctx)await ctx.close();if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(e=>{console.error(e);process.exitCode=1;});

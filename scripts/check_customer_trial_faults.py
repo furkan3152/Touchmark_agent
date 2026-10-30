@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent deterministic fault oracle, NOT an AgentVeritas runtime result.
+"""Independent deterministic fault oracle, NOT a Touchmark runtime result.
 
 Only the external model/ledger transport is substituted to inject an unknown
 payment outcome. The frozen business implementation and real SQLite journal run.

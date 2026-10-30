@@ -50,7 +50,7 @@ def verify_testnet() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="agentveritas-stellar-build")
+    parser = argparse.ArgumentParser(prog="touchmark-build")
     parser.add_argument("command", choices=("build", "hashes", "verify-testnet"))
     args = parser.parse_args()
     if args.command == "build":

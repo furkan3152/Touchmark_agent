@@ -62,9 +62,9 @@ class BadgeRegistry:
     @staticmethod
     def _label(badge: Badge, score: float) -> str:
         if badge == Badge.SAFE:
-            return f"Audited by AgentVeritas · {score:.0f}/100"
+            return f"Audited by Touchmark · {score:.0f}/100"
         if badge == Badge.CAUTION:
             return f"Audited · caution · {score:.0f}/100"
         if badge == Badge.HIGH_RISK:
             return f"High risk · {score:.0f}/100"
-        return "Blocklist recommendation · AgentVeritas"
+        return "Blocklist recommendation · Touchmark"

@@ -1,4 +1,4 @@
-"""Veritas Blueprint v1: explicit project map -> checked evidence graph -> audit plan.
+"""Blueprint v1 (veritas.json): explicit project map -> checked evidence graph -> audit plan.
 
 A declaration is never enforcement evidence. Compilation parses source; it does
 not import it, install dependencies, resolve URLs, or execute manifest commands.

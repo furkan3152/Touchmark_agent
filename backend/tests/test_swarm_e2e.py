@@ -164,7 +164,7 @@ def test_badge_record_and_markdown_are_produced(settings, repo_root):
     assert record["attestation_tx_hash"] == ""
 
     md = pipeline.markdown_for(job.id)
-    assert "AgentVeritas" in md
+    assert "Touchmark" in md
     assert job.report.badge.value in md
 
     payload = pipeline.json_for(job.id)

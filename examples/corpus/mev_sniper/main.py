@@ -2,7 +2,7 @@
 
 This file is an anti-pattern: embedded Stellar seed, unbounded trustlines, remote
 code execution, shell injection, infinite retries, disabled TLS verification.
-AgentVeritas is expected to flag this as BLOCKLIST.
+Touchmark is expected to flag this as BLOCKLIST.
 """
 
 import os

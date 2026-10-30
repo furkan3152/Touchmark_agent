@@ -260,7 +260,7 @@ def _check_owner_signature(chain: "_Chain", ticket: dict, signed_xdr: str) -> st
     host = getattr(ops[0], "host_function", None)
     invoke = getattr(host, "invoke_contract", None)
     if invoke is None or Address.from_xdr_sc_address(invoke.contract_address).address != chain.registry:
-        raise DemoError("The transaction must call the AgentVeritas registry.")
+        raise DemoError("The transaction must call the Touchmark registry.")
     name = invoke.function_name.sc_symbol.decode()
     if name != fn or [a.to_xdr() for a in invoke.args] != [a.to_xdr() for a in args]:
         raise DemoError("The transaction does not register this agent with the audited source.")

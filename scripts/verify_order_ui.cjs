@@ -45,12 +45,12 @@ function setup({available = true} = {}) {
     else throw new Error(`Unexpected request: ${url}`);
     return {ok,status,json:async()=>value};
   };
-  w.addEventListener('veritas:order-report',(event)=>{state.reportOpened++;assert.equal(event.detail.order_id,id);event.detail.resolve();});
+  w.addEventListener('touchmark:order-report',(event)=>{state.reportOpened++;assert.equal(event.detail.order_id,id);event.detail.resolve();});
   w.eval(fs.readFileSync(path.join(root,'frontend/checkout.js'),'utf8'));
   w.eval(fs.readFileSync(path.join(root,'frontend/orders.js'),'utf8'));
   w.document.getElementById('checkout-key').value='mock-pilot-key';
   const engagement={source:{network:'testnet',ai_assistance:false},tier_id:'quick',module_ids:['intent'],execution_consent:false,plan_sha256:planHash};
-  w.dispatchEvent(new w.CustomEvent('veritas:plan',{detail:{engagement,planned:{plan_sha256:planHash,plan:{source_sha256:sourceHash}}}}));
+  w.dispatchEvent(new w.CustomEvent('touchmark:plan',{detail:{engagement,planned:{plan_sha256:planHash,plan:{source_sha256:sourceHash}}}}));
   return {dom,w,state,summary};
 }
 
@@ -65,7 +65,7 @@ async function verifyReportBridge() {
     let deliveryStatus='invalid';
     w.fetch=async(url,options)=>({ok:true,json:async()=>url.endsWith('/catalog')?{tiers:[{id:'quick',name:'Preview',budgets:{runtime_cases:0},price:{amount:'3',live:false}}],modules:[{id:'intent',name:'Intent Analyst',description:'Declared intent',default_selected:true}]}:url.endsWith('/capabilities')?{ai_available:false,controls:[]}:url.endsWith('/delivery')?{status:deliveryStatus,report_sha256:JSON.parse(options.body).report_sha256,proof:{note:'Test-double ledger response'},artifacts:{html:'report',svg:'svg',metadata:{}}}:{available:false}});
     w.eval(fs.readFileSync(path.join(root,'frontend/studio.js'),'utf8'));await tick();
-    const open=(value,credential=null)=>new Promise((resolve,reject)=>w.dispatchEvent(new w.CustomEvent('veritas:order-report',{detail:{envelope:value,credential,order_id:id,resolve,reject}})));
+    const open=(value,credential=null)=>new Promise((resolve,reject)=>w.dispatchEvent(new w.CustomEvent('touchmark:order-report',{detail:{envelope:value,credential,order_id:id,resolve,reject}})));
     await open(envelope);
     assert.equal(w.document.getElementById('agent-name').value,'');assert.equal(w.document.getElementById('review-result').hidden,false);assert.equal(w.document.getElementById('download-bundle').hidden,true);assert.equal(w.document.getElementById('run-runtime').disabled,true);assert.equal(w.document.getElementById('report-hash').textContent,reportHash);
     await assert.rejects(open({...envelope,report_sha256:'0'.repeat(64)}),/integrity/);
@@ -90,11 +90,11 @@ async function verifyReportBridge() {
     state.order={...summary('failed'),failure_code:'settlement_failed',retryable:true,report_available:true,report_sha256:'4'.repeat(64)};w.document.getElementById('order-refresh').click();await tick();assert.match(w.document.getElementById('order-description').textContent,/does not imply a refund/);assert.equal(w.document.getElementById('order-open-report').hidden,false);assert.equal(w.document.getElementById('order-retry').hidden,false);
     w.document.getElementById('order-open-report').click();await tick();assert.equal(state.reportOpened,1);
     w.document.getElementById('order-retry').click();await tick();assert.equal(w.document.getElementById('order-state').textContent,'Settling on Stellar');
-    w.dispatchEvent(new w.CustomEvent('veritas:invalidate'));assert.equal(w.document.getElementById('official-order').hidden,false);assert.equal(w.document.getElementById('checkout-quote-result').hidden,true);
+    w.dispatchEvent(new w.CustomEvent('touchmark:invalidate'));assert.equal(w.document.getElementById('official-order').hidden,false);assert.equal(w.document.getElementById('checkout-quote-result').hidden,true);
     assert.equal(w.localStorage.length,0);assert.equal(w.sessionStorage.length,0);
     w.document.getElementById('order-resume-id').value=id;w.document.getElementById('order-resume-token').value='0'.repeat(64);w.document.getElementById('order-resume').click();await tick();assert.match(w.document.getElementById('order-intake-status').textContent,/invalid/);
     w.document.getElementById('order-resume-token').value=token;w.document.getElementById('order-resume').click();await tick();assert.equal(w.document.getElementById('order-resume-token').value,'');
-    w.dispatchEvent(new w.CustomEvent('veritas:plan',{detail:{engagement:{source:{network:'testnet'},tier_id:'quick',plan_sha256:planHash},planned:{plan_sha256:planHash,plan:{source_sha256:sourceHash}}}}));w.document.getElementById('checkout-quote').click();await tick();w.document.getElementById('order-recover').click();await tick();assert.match(w.document.getElementById('order-sign-create').textContent,/recover/);w.document.getElementById('order-sign-create').click();await tick();await tick();assert.equal(state.activeToken,'6'.repeat(64));assert.match(w.document.getElementById('order-intake-status').textContent,/previous access token is invalid/);
+    w.dispatchEvent(new w.CustomEvent('touchmark:plan',{detail:{engagement:{source:{network:'testnet'},tier_id:'quick',plan_sha256:planHash},planned:{plan_sha256:planHash,plan:{source_sha256:sourceHash}}}}));w.document.getElementById('checkout-quote').click();await tick();w.document.getElementById('order-recover').click();await tick();assert.match(w.document.getElementById('order-sign-create').textContent,/recover/);w.document.getElementById('order-sign-create').click();await tick();await tick();assert.equal(state.activeToken,'6'.repeat(64));assert.match(w.document.getElementById('order-intake-status').textContent,/previous access token is invalid/);
     w.document.getElementById('order-refund').click();await tick();assert.match(w.document.getElementById('checkout-transaction-detail').textContent,/Refund for order/);assert.equal(state.submissions,1);w.document.getElementById('checkout-sign').click();await tick();assert.equal(state.submissions,1);w.document.getElementById('checkout-submit').click();await tick();await tick();await tick();assert.equal(state.submissions,2);assert.equal(w.document.getElementById('order-state').textContent,'Refund confirmed');
   } finally {dom.window.close();}
   ({dom,w,state}=setup({available:false}));

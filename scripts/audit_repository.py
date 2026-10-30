@@ -1,4 +1,4 @@
-"""Audit a local agent repository checkout with the full Veritas pipeline.
+"""Audit a local agent repository checkout with the full Touchmark pipeline.
 
     python scripts/audit_repository.py PATH --name NAME --purpose "..." \
         [--forbid "goal" ...] [--reference https://github.com/o/r] [--revision SHA] \

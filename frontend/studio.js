@@ -120,7 +120,7 @@
       const list = node("ul", undefined, "plan-blockers"); blockers.forEach((item) => list.append(node("li", typeof item === "string" ? item : item.message || item.reason))); panel.append(node("strong", "Before this plan can run"), list);
     } else panel.append(node("p", "Plan prepared. Execution starts only when you run the review.", "help"));
     panel.append(node("code", `PLAN / ${value.plan_sha256}`, "blueprint-fingerprint"));
-    window.dispatchEvent(new CustomEvent("veritas:plan", {detail:{engagement:auditRequest(sourceInput()),planned:value}}));
+    window.dispatchEvent(new CustomEvent("touchmark:plan", {detail:{engagement:auditRequest(sourceInput()),planned:value}}));
   }
   byId("preview-audit-plan").addEventListener("click", async () => {
     if (busy) return;
@@ -131,13 +131,13 @@
   });
   byId("export-capsule").addEventListener("click", async () => {
     if (busy) return;
-    if (capsule) {download("agent.veritas", JSON.stringify(capsule,null,2)); return;}
+    if (capsule) {download("agent.tmcapsule", JSON.stringify(capsule,null,2)); return;}
     error(); setBusy(true);
     try {
       const value = await post("capsule/export", {source:sourceInput(),tier_id:activeTier,module_ids:[...selectedModules]});
       if (value.compiled?.source) loadBundle(value.compiled.source);
       capsule = value.capsule;
-      download("agent.veritas", JSON.stringify(capsule, null, 2));
+      download("agent.tmcapsule", JSON.stringify(capsule, null, 2));
       renderCapsuleState("Capsule exported. Review its declarations before sharing.");
     } catch (failure) {error(failure.message);}
     finally {setBusy(false);}
@@ -240,8 +240,8 @@
     } catch (failure) {byId("download-note").textContent = failure.message;}
     finally {button.disabled = false;button.textContent = previous;}
   }
-  byId("download-designed-report").addEventListener("click", (event) => deliveryAction(event.currentTarget,"html","agent-veritas-report.html","text/html;charset=utf-8"));
-  byId("download-evidence-card").addEventListener("click", (event) => deliveryAction(event.currentTarget,"svg","agent-veritas-evidence.svg","image/svg+xml;charset=utf-8"));
+  byId("download-designed-report").addEventListener("click", (event) => deliveryAction(event.currentTarget,"html","touchmark-report.html","text/html;charset=utf-8"));
+  byId("download-evidence-card").addEventListener("click", (event) => deliveryAction(event.currentTarget,"svg","touchmark-evidence.svg","image/svg+xml;charset=utf-8"));
   byId("prepare-delivery").addEventListener("click", async (event) => {
     if (!result || busy) return;
     const button = event.currentTarget; button.disabled = true;
@@ -279,7 +279,7 @@
     const rejected = (evidence.negative_simulations || []).filter((item) => item.rejected === true && item.transaction_submitted === false);
     const panel = byId("pilot-proof-content"); panel.hidden = false; panel.replaceChildren();
     byId("pilot-proof-state").textContent = "Lifecycle verified · Testnet";
-    byId("pilot-proof-summary").textContent = "A real source review funded through escrow. The report hash matched across registry, settlement and credential. Distinct signing roles, operated by Veritas Official.";
+    byId("pilot-proof-summary").textContent = "A real source review funded through escrow. The report hash matched across registry, settlement and credential. Distinct signing roles, operated by Touchmark Official.";
     const atomic = (text) => {
       if (!/^\d{1,20}$/.test(String(text))) return null;
       const value = BigInt(text); const whole = value / 10000000n;
@@ -299,7 +299,7 @@
     transactions.filter((tx) => labels[tx.label]).forEach((tx) => {const link=node("a",`${labels[tx.label]} ↗`);link.href=`https://stellar.expert/explorer/testnet/tx/${tx.hash}`;link.target="_blank";link.rel="noopener noreferrer";links.append(link);});
     Object.entries(evidence.contracts || {}).forEach(([name,contract]) => {if (!/^C[A-Z2-7]{55}$/.test(contract.id || "")) return;const link=node("a",`${name.charAt(0).toUpperCase()+name.slice(1)} contract ↗`);link.href=`https://stellar.expert/explorer/testnet/contract/${contract.id}`;link.target="_blank";link.rel="noopener noreferrer";links.append(link);});
     const reportURL = value.report_url || evidence.report?.uri || "";
-    if (/^https:\/\/raw\.githubusercontent\.com\/furkan3152\/agentveritas-stellar\/[a-f0-9]{40}\/deployments\/reports\/[a-f0-9]{64}\.json$/.test(reportURL)) {const link=node("a","Read the committed report ↗");link.href=reportURL;link.target="_blank";link.rel="noopener noreferrer";links.append(link);}
+    if (/^https:\/\/raw\.githubusercontent\.com\/furkan3152\/(?:agentveritas-stellar|Touchmark_agent)\/[a-f0-9]{40}\/deployments\/reports\/[a-f0-9]{64}\.json$/.test(reportURL)) {const link=node("a","Read the committed report ↗");link.href=reportURL;link.target="_blank";link.rel="noopener noreferrer";links.append(link);}
     details.append(links);
     if (evidence.report?.sha256) details.append(node("code",`REPORT / ${evidence.report.sha256}`,"blueprint-fingerprint"));
     if (rejected.length) details.append(node("p",`Rejected before transaction submission: ${rejected.map((item) => item.label.replaceAll("_"," ")).join("; ")}. These are RPC simulations, separate from successful ledger transactions.`));
@@ -359,7 +359,7 @@
     submitted = null;
     runtimeResult = null;
     auditPlan = null;
-    window.dispatchEvent(new CustomEvent("veritas:invalidate"));
+    window.dispatchEvent(new CustomEvent("touchmark:invalidate"));
     deliveryState = null;
     byId("audit-plan").hidden = true;
     byId("delivery-results").replaceChildren();
@@ -448,7 +448,8 @@
     try {
       const selected = [...event.target.files];
       if (selected.some((file) => file.size > 131072)) throw new Error("File too large. Source files must be at most 32 KB; an audit bundle at most 128 KiB.");
-      if (selected.length === 1 && selected[0].name.endsWith(".veritas")) {
+      // .tmcapsule is the current extension; .veritas capsules from before the rename still load.
+      if (selected.length === 1 && /\.(tmcapsule|veritas)$/.test(selected[0].name)) {
         const value = await post("capsule/import", {document: await selected[0].text()});
         loadBundle(value.source); capsule = value.capsule;
         if (capsule.audit?.tier) activeTier = capsule.audit.tier;
@@ -551,7 +552,7 @@
     const blueprint = plan.blueprint;
     if (blueprint) {
       const map = node("section", undefined, "blueprint-map");
-      map.append(node("span", "VERITAS BLUEPRINT / 01", "eyebrow"), node("h3", blueprint.status === "mapped" ? "Your project, mapped." : blueprint.status === "blocked" ? "Resolve the project map." : "Give your agent a project map."), node("p", blueprint.note || "The declaration could not be verified. Execution is blocked."));
+      map.append(node("span", "BLUEPRINT / 01", "eyebrow"), node("h3", blueprint.status === "mapped" ? "Your project, mapped." : blueprint.status === "blocked" ? "Resolve the project map." : "Give your agent a project map."), node("p", blueprint.note || "The declaration could not be verified. Execution is blocked."));
       blueprint.blockers.forEach((message) => map.append(node("p", message, "blueprint-blocker")));
       if (blueprint.components.length) {
         const table = node("table", undefined, "blueprint-table");
@@ -843,7 +844,7 @@
     finally { button.disabled = false; }
   });
 
-  window.addEventListener("veritas:order-report", async (event) => {
+  window.addEventListener("touchmark:order-report", async (event) => {
     const {envelope,credential,order_id} = event.detail;
     try {
       if (busy) throw new Error("Wait for the current review to finish before opening the order report.");

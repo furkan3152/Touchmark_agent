@@ -2,7 +2,7 @@
 
 An agent can be handed to us as:
 
-  * a registry agent id (64 hex)  -> AgentVeritas AgentRegistry record on Soroban
+  * a registry agent id (64 hex)  -> Touchmark AgentRegistry record on Soroban
   * a C... contract address        -> the deployed WASM, its spec and SEP-46 metadata
   * a G... account                 -> ledger authority (signers, thresholds, home domain)
   * a GitHub URL (optionally pinned to a commit)
@@ -109,7 +109,7 @@ class AgentResolver:
         if not url.startswith(("https://api.github.com/", "https://codeload.github.com/")):
             url = guard_remote_url(url)
         async with httpx.AsyncClient(timeout=30, follow_redirects=False, transport=self._transport) as client:
-            async with client.stream("GET", url, headers=headers or {"User-Agent": "AgentVeritas-Stellar"}) as response:
+            async with client.stream("GET", url, headers=headers or {"User-Agent": "Touchmark-Stellar"}) as response:
                 if response.status_code != 200:
                     raise ValueError(f"HTTP {response.status_code}")
                 body = bytearray()
@@ -131,7 +131,7 @@ class AgentResolver:
         try:
             raw = await self._get(f"https://api.github.com/repos/{owner}/{repo}/attestations/sha256:{wasm_hash}",
                                   limit=2_000_000, headers={"Accept": "application/vnd.github+json",
-                                                            "User-Agent": "AgentVeritas-Stellar"})
+                                                            "User-Agent": "Touchmark-Stellar"})
         except (ValueError, httpx.HTTPError) as exc:
             return {"status": "not_found", "detail": str(exc)[:120]}
         try:
@@ -416,7 +416,7 @@ async def audit_reference(reference: str, settings: Settings, *, network: str = 
         resolution["steps"].append({"check": "source_fetch", "result": "unavailable",
                                     "evidence": "the bound source could not be pinned to a commit; only on-chain evidence was reviewed"})
     if source["repository"] and _SHA.match(source.get("revision") or ""):
-        with tempfile.TemporaryDirectory(prefix="veritas-src-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="touchmark-src-") as tmp:
             try:
                 root = await resolver.download(source["repository"], source["revision"], Path(tmp))
             except ValueError as exc:

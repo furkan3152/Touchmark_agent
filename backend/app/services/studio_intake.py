@@ -25,7 +25,7 @@ class GitHubRequest(BaseModel):
 
 async def _github_json(client, endpoint: str, *, limit: int = 1_000_000, missing_ok: bool = False):
     async with client.stream("GET", "https://api.github.com/" + endpoint, headers={
-        "Accept": "application/vnd.github+json", "User-Agent": "AgentVeritas-Stellar",
+        "Accept": "application/vnd.github+json", "User-Agent": "Touchmark-Stellar",
     }) as response:
         if response.status_code == 404 and missing_ok:
             return None

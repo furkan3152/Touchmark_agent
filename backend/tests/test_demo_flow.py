@@ -67,8 +67,8 @@ def test_expired_tickets_are_refused(monkeypatch):
 
 
 def test_github_folder_links():
-    url = "https://github.com/furkan3152/agentveritas-stellar/tree/main/examples/demo/safe-treasury-agent"
-    assert parse_github(url) == ("furkan3152", "agentveritas-stellar", "main")
+    url = "https://github.com/furkan3152/Touchmark_agent/tree/main/examples/demo/safe-treasury-agent"
+    assert parse_github(url) == ("furkan3152", "Touchmark_agent", "main")
     assert github_subpath(url) == "examples/demo/safe-treasury-agent"
     assert github_subpath("https://github.com/o/r") == ""
     assert github_subpath("https://github.com/o/r/tree/main/../secret") == ""

@@ -32,7 +32,7 @@ async def run(args: argparse.Namespace) -> int:
     from backend.app.models import AuditTier
     from backend.app.services.pipeline import AuditPipeline
 
-    with tempfile.TemporaryDirectory(prefix="agentveritas-stellar-bench-") as temp:
+    with tempfile.TemporaryDirectory(prefix="touchmark-bench-") as temp:
         settings = Settings(
             stellar_network=args.network,
             allow_mainnet=False,

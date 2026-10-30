@@ -17,7 +17,7 @@ async def main(path: str) -> None:
     from backend.app.models import AuditTier
     from backend.app.services.pipeline import AuditPipeline
 
-    temp = tempfile.TemporaryDirectory(prefix="agentveritas-stellar-explain-")
+    temp = tempfile.TemporaryDirectory(prefix="touchmark-explain-")
     settings = Settings(
         stellar_network="offline",
         enable_audit_escrow=False,

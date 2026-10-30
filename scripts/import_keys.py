@@ -5,9 +5,9 @@ The file is validated without printing any value, and only the relevant lines of
 `.env` are updated, so keys never land in shell history or on the wrong line.
 
 Usage:
-    python scripts/import_keys.py --template ~/Masaüstü/agentveritas-keys.txt
-    python scripts/import_keys.py ~/Masaüstü/agentveritas-keys.txt --dry-run
-    python scripts/import_keys.py ~/Masaüstü/agentveritas-keys.txt
+    python scripts/import_keys.py --template ~/Desktop/touchmark-keys.txt
+    python scripts/import_keys.py ~/Desktop/touchmark-keys.txt --dry-run
+    python scripts/import_keys.py ~/Desktop/touchmark-keys.txt
 
 File format (lines starting with `#` are comments):
 
@@ -87,7 +87,7 @@ def normalise_name(raw: str) -> str:
     return cleaned
 
 TEMPLATE = """\
-# AgentVeritas — API keys
+# Touchmark — API keys
 # Fill out only the lines you have; none of them are mandatory.
 # After filling it out:  python scripts/import_keys.py THIS_FILE
 # Delete this file after the import is complete.

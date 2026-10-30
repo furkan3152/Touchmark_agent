@@ -41,7 +41,7 @@ try:
             if actual != dependency['version']:
                 print('\nAV_RESULT:' + json.dumps({'blocked': 'dependency_contract_mismatch', 'dependency': dependency['name']}))
                 sys.exit(0)
-    package = types.ModuleType('_veritas_submission')
+    package = types.ModuleType('_touchmark_submission')
     package.__path__ = ['/vercel/project']
     sys.modules[package.__name__] = package
     module_path = request['file'][:-3].replace('/', '.')

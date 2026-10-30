@@ -3,7 +3,7 @@
 Everything here is read with `getLedgerEntries` (no simulation, no transaction, no
 key): a contract's instance and executable, the WASM code itself, its contract spec
 (functions) and metadata (SEP-46 `contractmetav0`, including a declared source
-repository), and records in the AgentVeritas `AgentRegistry` contract.
+repository), and records in the Touchmark `AgentRegistry` contract.
 
 The WASM hash is recomputed from the downloaded bytes and compared with the hash the
 ledger references, so the functions and metadata reported belong to the code that
@@ -427,7 +427,7 @@ class SorobanReader:
         return facts
 
     async def registry_agent(self, registry_id: str, agent_id_hex: str) -> dict:
-        """An AgentVeritas AgentRegistry record (DataKey::Agent(id))."""
+        """A Touchmark AgentRegistry record (DataKey::Agent(id))."""
         agent_id = bytes.fromhex(agent_id_hex)
         if len(agent_id) != 32:
             raise ValueError("agent id must be 32 bytes (64 hex characters)")

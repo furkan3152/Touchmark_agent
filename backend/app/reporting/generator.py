@@ -131,7 +131,7 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
     lines: list[str] = []
     add = lines.append
 
-    add(f"# AgentVeritas Audit Report — {report.agent_name}")
+    add(f"# Touchmark Audit Report — {report.agent_name}")
     add("")
     add(f"**Trust Score: {report.overall_score}/100 · Badge: {BADGE_LABEL[report.badge.value]}**")
     add("")
@@ -268,7 +268,7 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
     add("---")
     add("")
     add(
-        "_AgentVeritas Stellar · Soroban agent validation. Prepared invocation or hash alone "
+        "_Touchmark Stellar · Soroban agent validation. Prepared invocation or hash alone "
         "is not on-chain success; confirmed field indicates ledger/state evidence._"
     )
     return "\n".join(lines)

@@ -24,7 +24,7 @@
 </p>
 
 > A **touchmark** is the maker's mark struck into tested metal: a promise that someone checked it and stands behind it.
-> Touchmark (formerly AgentVeritas) does the same for AI agents that hold Stellar keys.
+> Touchmark does the same for AI agents that hold Stellar keys.
 
 ---
 

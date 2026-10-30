@@ -1,9 +1,9 @@
 /* Real Chromium → localhost ASGI → source audit smoke; no mocked fetch or wallet.
  * Verified with Playwright 1.62.1 and @sparticuz/chromium 133.0.0 (Chromium 133.0.6943.0).
  * Optional local dependencies (kept outside the repository):
- *   npm install --prefix /tmp/veritas-browser playwright@1.62.1
- *   /tmp/veritas-browser/node_modules/.bin/playwright install chromium
- *   NODE_PATH=/tmp/veritas-browser/node_modules node scripts/verify_browser_ui.cjs
+ *   npm install --prefix /tmp/touchmark-browser playwright@1.62.1
+ *   /tmp/touchmark-browser/node_modules/.bin/playwright install chromium
+ *   NODE_PATH=/tmp/touchmark-browser/node_modules node scripts/verify_browser_ui.cjs
  * The project .venv must contain backend dependencies. VERITAS_PYTHON overrides it.
  * Screenshots + result.json go to a temporary directory (or VERITAS_BROWSER_OUTPUT).
  * Existing browser installations can use VERITAS_CHROMIUM_EXECUTABLE; Lambda-style
@@ -19,7 +19,7 @@ const net=require('node:net');
 const os=require('node:os');
 const {chromium:pw}=require(process.env.VERITAS_PLAYWRIGHT_MODULE||'playwright');
 const ROOT=path.resolve(__dirname,'..');
-const OUT=process.env.VERITAS_BROWSER_OUTPUT||fs.mkdtempSync(path.join(os.tmpdir(),'veritas-browser-'));
+const OUT=process.env.VERITAS_BROWSER_OUTPUT||fs.mkdtempSync(path.join(os.tmpdir(),'touchmark-browser-'));
 fs.mkdirSync(OUT,{recursive:true});
 const launchOptions={headless:true};
 if(process.env.VERITAS_CHROMIUM_EXECUTABLE)launchOptions.executablePath=process.env.VERITAS_CHROMIUM_EXECUTABLE;
@@ -59,7 +59,7 @@ function assertLayout(value,label){
   const page=await ctx.newPage();
   await page.goto(base,{waitUntil:'networkidle'});
   await page.waitForFunction(()=>document.querySelectorAll('#audit-tiers input').length===3&&document.querySelectorAll('#audit-modules input').length===8);
-  assert.equal(await page.title(),'AgentVeritas — Trust, with evidence.');
+  assert.equal(await page.title(),'Touchmark — Trust, with evidence.');
   assert.equal(await page.locator('#order-create').isDisabled(),true);
   const availability=await page.locator('#order-availability').textContent();
   assert(!availability.includes('Checking'),'Order availability did not resolve');
@@ -144,7 +144,7 @@ function assertLayout(value,label){
    const delivery=proof.delivery;
    assert.equal(delivery.report_sha256,envelope.report_sha256);
    const credential={contract_id:delivery.credential_contract_id,token_id:delivery.token_id,owner:delivery.owner};
-   await page.evaluate(({envelope,credential,order_id})=>new Promise((resolve,reject)=>window.dispatchEvent(new CustomEvent('veritas:order-report',{detail:{envelope,credential,order_id,resolve,reject}}))),{envelope,credential,order_id:proof.order_id});
+   await page.evaluate(({envelope,credential,order_id})=>new Promise((resolve,reject)=>window.dispatchEvent(new CustomEvent('touchmark:order-report',{detail:{envelope,credential,order_id,resolve,reject}}))),{envelope,credential,order_id:proof.order_id});
    await page.locator('[data-result-view="runtime"]').click();
    const runtimeText=await page.locator('#runtime-results').innerText();
    assert.match(runtimeText,/restart replay/);

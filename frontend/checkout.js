@@ -9,7 +9,7 @@
   let working = false, revision = 0;
   const message = (text) => {byId("checkout-status").textContent=text;};
   function clearTransaction() {prepared=null;signed=null;byId("checkout-transaction").hidden=true;byId("checkout-xdr").value="";byId("checkout-submit").hidden=true;}
-  function resetQuote() {revision++;window.dispatchEvent(new CustomEvent("veritas:checkout-reset"));checkout=null;clearTransaction();byId("checkout-quote-result").hidden=true;byId("checkout-refresh").hidden=true;}
+  function resetQuote() {revision++;window.dispatchEvent(new CustomEvent("touchmark:checkout-reset"));checkout=null;clearTransaction();byId("checkout-quote-result").hidden=true;byId("checkout-refresh").hidden=true;}
   function lock(value) {working=value;document.querySelectorAll("#checkout-panel button,#checkout-panel input").forEach((input)=>{input.disabled=value;});}
   function failure(value,status) {return typeof value.detail === "string" ? value.detail : Array.isArray(value.detail) ? value.detail.map((item)=>item.msg).join("; ") : value.detail?.message || `Checkout request failed (HTTP ${status}).`;}
   async function request(path,body,extraHeaders={}) {
@@ -43,8 +43,8 @@
     const details=node("details",undefined,"checkout-technical");details.append(node("summary","Quote identity and expiry"),node("code",`AGENT / ${quote.agent_id}`),node("code",`REQUEST / ${quote.request_id}`),node("code",`SOURCE / ${quote.source_sha256}`));
     if(Number.isFinite(quote.expires_at))details.append(node("p",`Quote expires ${new Date(quote.expires_at*1000).toISOString()}. Request a fresh quote after expiry.`,"help"));panel.append(details);
     byId("checkout-refresh").hidden=false;
-    window.dispatchEvent(new CustomEvent("veritas:checkout-ready",{detail:{engagement:{...engagement,plan_sha256:planned.plan_sha256},planned,checkout:value}}));
-    if(value.payment_confirmed===true)window.dispatchEvent(new CustomEvent("veritas:order-funded",{detail:{quote}}));
+    window.dispatchEvent(new CustomEvent("touchmark:checkout-ready",{detail:{engagement:{...engagement,plan_sha256:planned.plan_sha256},planned,checkout:value}}));
+    if(value.payment_confirmed===true)window.dispatchEvent(new CustomEvent("touchmark:order-funded",{detail:{quote}}));
     if(value.status==="refunded"){message("This Testnet escrow job was refunded. No further funding is requested for this job.");return;}
     if(value.status==="deadline_expired"){message("This escrow deadline has passed. No payment transaction will be prepared for this job.");return;}
     if(value.status==="settled"){message("This Testnet escrow is settled according to contract state. Review the official report and credential separately.");return;}
@@ -62,7 +62,7 @@
     try {
       clearTransaction();message("Reading the ledger and simulating the next transaction…");
       const step=checkout.next_step;
-      const capability=step==="fund"?await new Promise((resolve,reject)=>{const handled=!window.dispatchEvent(new CustomEvent("veritas:order-required",{cancelable:true,detail:{quote:checkout.quote,resolve,reject}}));if(!handled)reject(new Error("Create a private official order before funding. Order automation is unavailable in this workspace."));}):null;
+      const capability=step==="fund"?await new Promise((resolve,reject)=>{const handled=!window.dispatchEvent(new CustomEvent("touchmark:order-required",{cancelable:true,detail:{quote:checkout.quote,resolve,reject}}));if(!handled)reject(new Error("Create a private official order before funding. Order automation is unavailable in this workspace."));}):null;
       assertCurrent(token);
       const value=await request("checkout/prepare",{quote:checkout.quote,quote_signature:checkout.quote_signature,step},capability?{"X-Order-ID":capability.order_id,"X-Order-Token":capability.order_token}:{});assertCurrent(token);
       if(!value.unsigned_xdr){if(value.quote)renderQuote(value);else message("No transaction was prepared. Refresh ledger state to find the next step.");return;}
@@ -72,8 +72,8 @@
       message("Transaction prepared and simulated. Choose a download or review it in Freighter. Nothing has been signed or submitted.");
     }catch(error){message(error.message);}finally{lock(false);}
   }
-  window.addEventListener("veritas:plan",(event)=>{resetQuote();engagement=event.detail.engagement;planned=event.detail.planned;message("Audit plan ready. Connect a Testnet account or enter its public address, then request a quote.");});
-  window.addEventListener("veritas:invalidate",()=>{resetQuote();engagement=null;planned=null;message("Audit inputs changed. Preview a new audit plan before requesting a quote.");});
+  window.addEventListener("touchmark:plan",(event)=>{resetQuote();engagement=event.detail.engagement;planned=event.detail.planned;message("Audit plan ready. Connect a Testnet account or enter its public address, then request a quote.");});
+  window.addEventListener("touchmark:invalidate",()=>{resetQuote();engagement=null;planned=null;message("Audit inputs changed. Preview a new audit plan before requesting a quote.");});
   byId("checkout-requester").addEventListener("input",()=>{resetQuote();message("Requester changed. Get a fresh quote for this public account.");});
   byId("checkout-connect").addEventListener("click",async()=>{if(working)return;lock(true);const token=revision;try{const wallet=await walletState(true);assertCurrent(token);resetQuote();byId("checkout-requester").value=wallet.address;message("Freighter connected on Testnet. Your wallet has not signed a transaction.");}catch(error){message(error.message);}finally{lock(false);}});
   for(const id of ["checkout-quote","checkout-refresh"])byId(id).addEventListener("click",async()=>{if(working)return;lock(true);try{message("Checking the quoted scope and current ledger state…");await refreshQuote();}catch(error){message(error.message);}finally{lock(false);}});
@@ -89,7 +89,7 @@
     }catch(error){signed=null;byId("checkout-submit").hidden=true;message(error.message);}finally{lock(false);}
   });
 
-  window.addEventListener("veritas:refund-prepared",(event)=>{
+  window.addEventListener("touchmark:refund-prepared",(event)=>{
     event.preventDefault();
     try{
       if(working)throw new Error("Finish the current wallet action before preparing a refund.");
@@ -111,7 +111,7 @@
       if(transaction.expires_at<=Date.now()/1000)throw new Error("The signed transaction expired. Refresh ledger state before preparing a replacement.");
       const wallet=await walletState();assertCurrent(token);if(wallet.address!==checkout.quote.requester)throw new Error("Wallet account changed. Refresh the quote before submitting.");
       byId("checkout-submit").hidden=true;signed=null;
-      if(transaction.step==="refund")window.dispatchEvent(new CustomEvent("veritas:refund-pending",{detail:{order_id:transaction.request_id}}));
+      if(transaction.step==="refund")window.dispatchEvent(new CustomEvent("touchmark:refund-pending",{detail:{order_id:transaction.request_id}}));
       const sent=await rpc("sendTransaction",{transaction:signedXdr});assertCurrent(token);
       if(sent.hash!==transaction.transaction_hash)throw new Error("The returned transaction hash differs from the prepared transaction. Inspect ledger state before continuing.");
       if(!["PENDING","DUPLICATE"].includes(sent.status))throw new Error(`Transaction submission returned ${sent.status}. Refresh ledger state; payment is not confirmed.`);
@@ -123,7 +123,7 @@
         if(state.status==="FAILED")throw new Error("The transaction failed on Stellar Testnet. Refresh ledger state before preparing another transaction.");
         if(state.status==="SUCCESS"){confirmed=true;break;}
       }
-      if(confirmed){if(transaction.step==="refund"){window.dispatchEvent(new CustomEvent("veritas:refund-submitted",{detail:{order_id:transaction.request_id}}));message("The refund transaction succeeded on Testnet. Checking the saved order's refund state…");}else await refreshQuote();}else message("Transaction is still pending. Refresh ledger state to confirm the step; do not assume funding is complete.");
+      if(confirmed){if(transaction.step==="refund"){window.dispatchEvent(new CustomEvent("touchmark:refund-submitted",{detail:{order_id:transaction.request_id}}));message("The refund transaction succeeded on Testnet. Checking the saved order's refund state…");}else await refreshQuote();}else message("Transaction is still pending. Refresh ledger state to confirm the step; do not assume funding is complete.");
     }catch(error){message(error.message);}finally{clearTransaction();lock(false);}
   });
 })();

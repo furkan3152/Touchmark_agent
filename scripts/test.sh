@@ -5,9 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-TEST_DATA_DIR="$(mktemp -d /tmp/agentveritas-stellar-test.XXXXXX)"
+TEST_DATA_DIR="$(mktemp -d /tmp/touchmark-test.XXXXXX)"
 cleanup() {
-  if [[ -d "${TEST_DATA_DIR}" && "${TEST_DATA_DIR}" == /tmp/agentveritas-stellar-test.* ]]; then
+  if [[ -d "${TEST_DATA_DIR}" && "${TEST_DATA_DIR}" == /tmp/touchmark-test.* ]]; then
     rm -rf -- "${TEST_DATA_DIR}"
   fi
 }

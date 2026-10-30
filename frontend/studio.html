@@ -60,12 +60,12 @@
         </div>
         <div id="source-upload" class="source-panel" role="tabpanel" aria-labelledby="tab-files" hidden>
           <label for="source-files" class="upload-label">Choose your agent files</label>
-          <input id="source-files" type="file" multiple accept=".veritas,.py,.js,.ts,.rs,.go,.json,.md,.txt,.toml,.yaml,.yml">
+          <input id="source-files" type="file" multiple accept=".tmcapsule,.veritas,.py,.js,.ts,.rs,.go,.json,.md,.txt,.toml,.yaml,.yml">
           <label for="source-folder" class="text-button">Or choose a project folder</label><input id="source-folder" type="file" webkitdirectory multiple><p id="folder-status" class="help"></p>
-          <p class="help">Drop in a .veritas capsule, an agent-audit.json bundle, or source files. Up to 12 files, 32 KB per file and 64 KB total source.</p>
+          <p class="help">Drop in a .tmcapsule capsule (or an older .veritas one), an agent-audit.json bundle, or source files. Up to 12 files, 32 KB per file and 64 KB total source.</p>
         </div>
         <div id="file-list" class="file-list" aria-live="polite"></div>
-        <button type="button" id="discover-project" class="text-button">Map this project with Veritas Blueprint</button><p class="help">Include a root veritas.json to locate your entry point, instructions, tools and policies precisely. Discovery can create a draft for supported projects.</p><div id="discovery-results" class="discovery-card" hidden></div>
+        <button type="button" id="discover-project" class="text-button">Map this project with a Blueprint</button><p class="help">Include a root veritas.json to locate your entry point, instructions, tools and policies precisely. Discovery can create a draft for supported projects.</p><div id="discovery-results" class="discovery-card" hidden></div>
         <div class="examples"><span>Just exploring?</span><button type="button" data-example="reader">Try a read-only agent</button><button type="button" data-example="payment">Try an unsafe agent</button></div>
         <div class="section-heading second-step"><h2>Intended behavior</h2><span>Be specific</span></div>
         <label for="agent-name">Agent name</label><input id="agent-name" required maxlength="100" placeholder="e.g. Treasury assistant" autocomplete="off">
@@ -86,12 +86,12 @@
           <p class="help">Describe mcp_servers, delegates, memory_stores, allowed_domains and controls. Declarations are checked separately from source evidence.</p>
         </details>
         <section class="audit-builder" aria-labelledby="audit-builder-title">
-          <div class="section-heading second-step"><h2 id="audit-builder-title">Design your audit</h2><span class="official-badge">VERITAS OFFICIAL</span></div>
+          <div class="section-heading second-step"><h2 id="audit-builder-title">Design your audit</h2><span class="official-badge">TOUCHMARK OFFICIAL</span></div>
           <p class="builder-intro">One accountable operator. Specialist reviewers for the parts that matter to you.</p>
           <fieldset class="tier-picker"><legend>Choose the depth</legend><div id="audit-tiers" class="tier-options"><p class="help">Loading available review plans…</p></div></fieldset>
           <fieldset class="module-picker"><legend>Choose your reviewers <span id="module-count"></span></legend><div id="audit-modules" class="module-options"></div></fieldset>
           <p class="help operator-note">All official reviewers are operated by Touchmark. Baseline source checks always run; your selection shapes the investigation. Independent operators will join later.</p>
-          <details class="permissions capsule-details"><summary>Your Veritas capsule <span>.veritas</span></summary>
+          <details class="permissions capsule-details"><summary>Your Touchmark capsule <span>.tmcapsule</span></summary>
             <p class="help">A portable audit contract: source, intended behavior, authority boundaries and scenario expectations travel together. Fingerprints tie the plan to the exact evidence.</p>
             <div id="capsule-state" class="capsule-state">No capsule loaded. You can create one from your project.</div>
             <button type="button" id="export-capsule" class="text-button">Create & download capsule ↗</button><button type="button" id="edit-capsule-draft" class="text-button" hidden>Edit as a new draft</button>
@@ -165,7 +165,7 @@
         <p id="download-note" class="help">Download your report before leaving this tab.</p>
         <div class="result-tabs" role="group" aria-label="Report view"><button type="button" data-result-view="findings" aria-pressed="true">Findings</button><button type="button" data-result-view="coverage" aria-pressed="false">Coverage</button><button type="button" data-result-view="ai" aria-pressed="false">AI review</button><button type="button" data-result-view="runtime" aria-pressed="false">Runtime</button><button type="button" data-result-view="delivery" aria-pressed="false">Credential</button></div>
         <div id="view-delivery" hidden>
-          <div class="credential-card" id="credential-card"><div class="credential-top"><span>AGENTVERITAS</span><span>REPORT RECORD</span></div><div class="credential-symbol" aria-hidden="true">V</div><p class="credential-subtitle">VERSION-BOUND EVIDENCE</p><h3 id="credential-name">Your agent</h3><p id="credential-status">Local evidence record · not issued onchain</p><div class="credential-bottom"><span id="credential-short-hash">SHA-256 / —</span><span>STELLAR ↗</span></div></div>
+          <div class="credential-card" id="credential-card"><div class="credential-top"><span>TOUCHMARK</span><span>REPORT RECORD</span></div><div class="credential-symbol" aria-hidden="true">T</div><p class="credential-subtitle">VERSION-BOUND EVIDENCE</p><h3 id="credential-name">Your agent</h3><p id="credential-status">Local evidence record · not issued onchain</p><div class="credential-bottom"><span id="credential-short-hash">SHA-256 / —</span><span>STELLAR ↗</span></div></div>
           <p class="help" id="delivery-note">Your evidence card is ready to download. Onchain issuance is shown only after a matching ledger receipt is verified.</p>
           <div class="result-actions"><button type="button" id="download-evidence-card">Download SVG card</button><button type="button" id="prepare-delivery">Prepare evidence package</button></div>
           <div id="delivery-results" class="delivery-results" role="status"></div>

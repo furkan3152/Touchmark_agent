@@ -73,7 +73,7 @@ class EngagementRequest(BaseModel):
     @model_validator(mode='after')
     def validate_selection(self):
         if (self.source is None) == (self.capsule is None):
-            raise ValueError('Provide either source or a Veritas capsule.')
+            raise ValueError('Provide either source or a Touchmark capsule.')
         if len(set(self.module_ids)) != len(self.module_ids):
             raise ValueError('Choose each official specialist once.')
         return self
