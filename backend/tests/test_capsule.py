@@ -60,7 +60,7 @@ def test_capsule_roundtrip_and_plan_are_content_deterministic():
 
 
 def test_unaugmented_declared_scenario_passes_exact_text_without_policy_coaching():
-    capsule = parse_capsule((ROOT / 'examples/balance-reader.veritas').read_text())
+    capsule = parse_capsule((ROOT / 'examples/balance-reader.tmcapsule').read_text())
     cases = {case['id']: case for case in capsule_cases(capsule)}
     signing = cases['capsule_no_signing']
     # A prepended purpose containing "balance" would change which branch the fixture
@@ -147,7 +147,7 @@ def test_changed_declarations_change_commitments_but_not_callable_inputs(declara
 def test_pre_fix_contaminated_plan_acknowledgments_cannot_authorize_new_inputs(monkeypatch):
     """Reconstruct the actual prior wire inputs, rather than an arbitrary bad hash."""
     from backend.app.services import audit_product
-    capsule = parse_capsule((ROOT / 'examples/balance-reader.veritas').read_text())
+    capsule = parse_capsule((ROOT / 'examples/balance-reader.tmcapsule').read_text())
     current = compile_capsule(capsule)
     legacy = deepcopy(current)
     context = 'Declared purpose: ' + capsule.subject.purpose[:600] + '\nForbidden goals: ' + '; '.join(capsule.subject.forbidden_goals)[:800]

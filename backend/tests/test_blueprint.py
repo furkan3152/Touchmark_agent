@@ -143,7 +143,7 @@ def test_github_manifest_selects_exact_deep_source_before_unrelated_files(monkey
 def test_cli_checks_without_executing_and_refuses_overwrite_or_symlinks(tmp_path):
     sentinel = tmp_path / 'executed'
     (tmp_path/'main.py').write_text(f'open({str(sentinel)!r}, "w").write("bad")\ndef answer(prompt): return prompt')
-    command = [sys.executable, str(ROOT/'scripts/veritas.py')]
+    command = [sys.executable, str(ROOT/'scripts/blueprint.py')]
     assert subprocess.run([*command, 'init', str(tmp_path)], capture_output=True).returncode == 0
     manifest = (tmp_path/'veritas.json').read_text()
     assert subprocess.run([*command, 'init', str(tmp_path)], capture_output=True).returncode == 1

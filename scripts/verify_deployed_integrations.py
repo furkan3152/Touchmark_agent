@@ -129,7 +129,7 @@ async def verify(run_id):
         except Exception as exc:
             proof['ai_error'] = type(exc).__name__
         try:
-            capsule = parse_capsule((ROOT / 'examples/balance-reader.veritas').read_text())
+            capsule = parse_capsule((ROOT / 'examples/balance-reader.tmcapsule').read_text())
             request = EngagementRequest(capsule=capsule.model_dump(mode='json'),
                 tier_id=capsule.audit.tier, module_ids=capsule.audit.modules, execution_consent=True)
             request.plan_sha256 = build_plan(request, settings)['plan_sha256']
