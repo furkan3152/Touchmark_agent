@@ -227,9 +227,19 @@ class FindingVerifier:
         return result
 
     async def verify(self, findings: list[Finding], files: dict[str, str]) -> VerificationRun:
+        from .progress import emit
         run = VerificationRun(model=self.model)
+        done = [0]
+        emit("verifier", checked=0, total=len(findings))
 
         async def one(f: Finding) -> Verification:
+            try:
+                return await checked(f)
+            finally:
+                done[0] += 1
+                emit("verifier", checked=done[0], total=len(findings))
+
+        async def checked(f: Finding) -> Verification:
             timeout = self.timeout_seconds
             if self.deadline is not None:
                 timeout = min(timeout, self.deadline - time.monotonic())

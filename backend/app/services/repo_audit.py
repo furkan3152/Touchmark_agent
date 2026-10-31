@@ -450,6 +450,10 @@ def _declaration_record(declared: dict, root: Path) -> dict:
         info = declared["tmark"]
         record["tmark"] = {"status": info["status"], "errors": info["errors"],
                            **{k: info[k] for k in ("source", "repository_status", "mismatches") if k in info}}
+        if info.get("parsed") is not None:
+            from .tmark import summary
+            record["tmark"]["version"] = info["parsed"].tmark
+            record["tmark"]["summary"] = summary(info["parsed"])
     decl = declared.get("declaration")
     if decl is not None:
         record["tools_declared"] = [t.name for t in decl.tools]
@@ -696,9 +700,11 @@ async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer
     from ..swarm.orchestrator import AuditSwarm
     from ..reporting.english import english_report
     from ..swarm.policy import actionable_risks, finding_set_commitment
+    from .progress import emit
     isolated = settings.model_copy(update={
         "stellar_network": "offline", "llm_provider": "", "llm_api_key": "", "pinata_jwt": "",
         "enable_active_agent_probes": False, "enable_audit_escrow": False, "enable_ofac_screening": False})
+    emit("rules", files=len(artifact.code_files))
     report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=reviewer,
                                              finding_verifier=verifier)
     english_report(report)

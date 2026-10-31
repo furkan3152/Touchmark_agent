@@ -187,20 +187,34 @@ This review is the project's own. **No external audit has been done.** See
 | Model review | Line-quoted claims; cannot remove rule findings; isolated per request | Prompt injection in code comments; hallucinated claims are filtered, not eliminated |
 | Demo issuance | Server-signed ticket over report hash, score, source and named owner; per-client limits | One operator is admin and validator on the demo registry |
 | Ownership | `.tmark` (`owner.stellar_account`) at the audited commit names the owner account. The owner signs the registry registration (`owner.require_auth`); the server accepts only that exact call from that account, with its signature | Shows control of the repository and of the key, not real-world identity. A fork can name its own owner, but its credential names the fork. Without the file, ownership is not verified and the credential goes to the operator. |
-| Public API | Rate limits, CSP, no secrets in responses | Serverless instances keep limits per instance |
+| Public API | Rate limits, CSP, no secrets in responses; the paid model review has a durable allowance in Vercel Blob and needs the visitor's consent | Request-rate limits (StudioGuard) are still per serverless instance; the edge must bound request floods |
 
 ## 5. Deployment
 
 The public site is a stateless FastAPI app on Vercel (`app.py`):
 - `/` is the demo; `/studio` is the full Studio.
 - `/api/v1/demo/*` audits a reference and issues credentials.
+- `/api/v1/tmark/check` and `/api/v1/tmark/template` validate and draft declarations.
+
+`POST /api/v1/demo/audit` takes `{reference, tmark?, model_review_consent?}`. A supplied
+`.tmark` is validated first (a 422 lists each error with `field` and `line`) and then used as
+if committed, never as the owner. With `Accept: application/x-ndjson` the answer streams: a
+`stage` line per step (`queued`, `resolving`, `fetching`, `rules`, `deep_review` with files
+read, `verifier` with findings checked, `done`), a `heartbeat` every 10 s so idle proxies keep
+the connection, then one `result` (the same object as the plain JSON answer) or `error`
+(`status`, `detail`). `POST /api/v1/demo/compare` is rules-only on both sides and says so
+(`mode: rules_only`). `/api/v1/health` reports the deep review (`modes.deep_review`) apart from
+the optional AI second opinion (`modes.ai_second_opinion`; `modes.llm` is kept for older clients).
 
 Configuration:
 
 | Variable | Purpose |
 |---|---|
 | `DEMO_OPERATOR_SECRET` | Testnet key that admins the demo registry and acts as its validator. Created by `scripts/deploy_demo_testnet.py` and stored in gitignored `data/`. |
-| `ANTHROPIC_API_KEY` | With `ENABLE_DEEP_REVIEW` and `ENABLE_FINDING_VERIFICATION`, the demo adds the model review and verification: 5 audits per client and 60 overall per hour, stopped by a 250 s deadline (findings found so far are kept, and the page says the review stopped). Past the allowance, audits run the rules only. |
+| `ANTHROPIC_API_KEY` | With `ENABLE_DEEP_REVIEW` and `ENABLE_FINDING_VERIFICATION`, the demo adds the model review and verification, only when the visitor consents (`model_review_consent`), stopped by a 250 s deadline (findings found so far are kept, and the page says the review stopped). Without consent or past the allowance, audits run the rules only and say why. |
+| `BLOB_READ_WRITE_TOKEN` | Private Vercel Blob store. Also holds the model-review allowance (`services/rate_limit.py`), so it holds across serverless invocations: numbered slots claimed with create-only writes, per hashed client per hour, overall per hour and per day. Without a durable store on serverless the model review is off (fail closed). |
+| `DEEP_REVIEW_CLIENT_HOURLY_LIMIT`, `DEEP_REVIEW_HOURLY_LIMIT`, `DEEP_REVIEW_DAILY_LIMIT` | Model reviews per client per hour (5), overall per hour (60) and a hard daily ceiling (200). |
+| `DEEP_REVIEW_LIMIT_STORE`, `DEEP_REVIEW_RATE_SALT` | Allowance store (`auto`: Blob with a token, process memory only off serverless, otherwise none) and an optional key for hashing client addresses (derived from the Blob token when empty; raw addresses are never stored). |
 | `STELLAR_NETWORK`, `ALLOW_MAINNET` | Network selection. Mainnet stays off unless explicitly allowed. |
 | `ADMIN_API_KEY` | Operator API on a persistent deployment (not exposed on Vercel). |
 

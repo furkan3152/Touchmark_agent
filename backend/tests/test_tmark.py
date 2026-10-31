@@ -69,7 +69,10 @@ def test_a_valid_tmark_on_safe_code_passes_with_owner_and_purpose(tmp_path):
     assert out["decision"] == "pass"
     assert not [f for f in found if f.startswith("intent-tmark")]
     repo = out["report"]["repository"]
-    assert repo["declarations"]["tmark"] == {"status": "valid", "errors": [], "source": "repository"}
+    record = repo["declarations"]["tmark"]
+    assert {k: record[k] for k in ("status", "errors", "source", "version")} == {
+        "status": "valid", "errors": [], "source": "repository", "version": "1"}
+    assert record["summary"][0].startswith("Treasury agent")
     assert repo["ownership_claim"] == {"path": ".tmark", "stellar_owner": OWNER}
     assert out["report"]["subject"]["purpose"] == doc["agent"]["purpose"]
 

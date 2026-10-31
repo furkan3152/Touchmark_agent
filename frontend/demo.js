@@ -28,11 +28,120 @@
 
   function showError(message) { $("error").textContent = message; $("error").hidden = false; }
 
+  // A proxy or the platform answered instead of the audit (no JSON detail): say what to do.
+  function failureMessage(status) {
+    if (status === 502 || status === 503) return "The audit service did not answer (the connection was cut or the function restarted). Nothing was lost: run it again; large repositories may need a folder link instead of the whole repository.";
+    if (status === 504) return "The audit took longer than the time limit. Try a folder link to the agent's code, or run scripts/ci_audit.py locally.";
+    if (status === 413) return "The request is too large. Shorten the .tmark or audit a smaller folder.";
+    if (status === 429) return "Too many requests right now. Wait a minute and try again.";
+    return `The request failed (HTTP ${status}). Try again in a moment.`;
+  }
+
+  function requestError(data, status) {
+    const detail = data && data.detail;
+    if (typeof detail === "string") return new Error(detail);
+    if (detail && detail.tmark_errors) {
+      showTmarkErrors(detail.tmark_errors);
+      return new Error(detail.message || "The .tmark is not valid.");
+    }
+    return new Error(failureMessage(status));
+  }
+
   async function post(path, body) {
-    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    let response;
+    try {
+      response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    } catch {
+      throw new Error("The request did not reach the server. Check your connection and try again.");
+    }
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : `Request failed (${response.status})`);
+    if (!response.ok) throw requestError(data, response.status);
     return data;
+  }
+
+  const STAGES = { queued: "Starting", resolving: "Pinning the source", fetching: "Fetching the repository", rules: "Running the rules",
+    deep_review: "Model review", verifier: "Verifying findings", done: "Sealing the report" };
+
+  function progressLine(event) {
+    let text = STAGES[event.stage] || event.stage || "Working";
+    if (event.stage === "deep_review" && event.files_total) text += `: read ${event.files_read || 0} of ${event.files_total} files`;
+    if (event.stage === "verifier" && event.total) text += `: ${event.checked || 0} of ${event.total} findings checked`;
+    $("progress").textContent = `${text} · ${Math.round(event.elapsed || 0)} s`;
+    $("progress").hidden = false;
+    if (["resolving", "fetching"].includes(event.stage)) step("resolve", "active");
+    if (["rules", "deep_review", "verifier"].includes(event.stage)) { step("resolve", "done"); step("analyse", "active"); }
+    if (event.stage === "done") { step("analyse", "done"); step("decide", "active"); }
+  }
+
+  // The audit streams NDJSON (stage events and heartbeats) so the connection stays alive; a
+  // plain JSON answer (an older server, a proxy that buffers) is read the same way.
+  async function streamAudit(body) {
+    let response;
+    try {
+      response = await fetch("/api/v1/demo/audit", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(body) });
+    } catch {
+      throw new Error("The request did not reach the server. Check your connection and try again.");
+    }
+    if (!response.ok || !(response.headers.get("content-type") || "").includes("ndjson") || !response.body) {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw requestError(data, response.status);
+      return data;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", result = null;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buffer.indexOf("\n")) >= 0) {
+          const text = buffer.slice(0, cut).trim(); buffer = buffer.slice(cut + 1);
+          if (!text) continue;
+          const event = JSON.parse(text);
+          if (event.type === "result") result = event.data;
+          else if (event.type === "error") throw requestError({ detail: event.detail }, event.status);
+          else progressLine(event);
+        }
+      }
+    } catch (error) {
+      if (error instanceof SyntaxError || error.name === "TypeError") throw new Error(failureMessage(502));
+      throw error;
+    }
+    if (!result) throw new Error(failureMessage(502));
+    return result;
+  }
+
+  function showTmarkErrors(errors) {
+    const list = $("tmark-result"); list.textContent = "";
+    errors.forEach((e) => list.append(el("li", { class: "high" }, el("span", { class: "sev", text: e.line ? `line ${e.line}` : "file" }),
+      el("span", { class: "title", text: `${e.field}: ${e.message}` }))));
+    document.querySelector(".declare").open = true;
+  }
+
+  async function checkTmark() {
+    const text = $("tmark").value.trim();
+    const list = $("tmark-result"); list.textContent = "";
+    if (!text) { list.append(el("li", { class: "low" }, el("span", { class: "title", text: "Paste a .tmark or choose the file first." }))); return; }
+    try {
+      const data = await post("/api/v1/tmark/check", { text });
+      if (!data.valid) { showTmarkErrors(data.error_details || []); return; }
+      (data.summary || []).forEach((line) => list.append(el("li", { class: "low" }, el("span", { class: "title", text: line }))));
+    } catch (error) { showError(error.message); }
+  }
+
+  async function draftTmark() {
+    const reference = input.value.trim();
+    if (!reference) { showError("Enter the repository link above first; the draft is made from its code."); return; }
+    const button = $("tmark-draft"); button.disabled = true; button.textContent = "Reading the code…";
+    try {
+      const data = await post("/api/v1/tmark/template", { reference });
+      $("tmark").value = JSON.stringify(data.draft, null, 2);
+      const list = $("tmark-result"); list.textContent = "";
+      list.append(el("li", { class: "low" }, el("span", { class: "title", text: data.note })));
+    } catch (error) { showError(error.message); }
+    finally { button.disabled = false; button.textContent = "Draft one from the repository"; }
   }
 
   const STAMP_WORDS = { pass: "Touchmarked", needs_fixes: "Not yet", needs_evidence: "Show more" };
@@ -55,15 +164,22 @@
   }
 
   function tmarkLine(t) {
-  if (t.status === "valid") return ".tmark declared, checked against the code";
-  if (t.status === "invalid") return `.tmark invalid (${(t.errors || []).length} ${(t.errors || []).length === 1 ? "error" : "errors"}), not used`;
+  const which = t.source === "supplied" ? "your .tmark" : ".tmark";
+  if (t.status === "valid") {
+    let line = `${which} declared, checked against the code`;
+    if (t.source === "supplied" && t.repository_status === "valid") line += (t.mismatches || []).length ? `; differs from the repository's .tmark in ${t.mismatches.length} ${t.mismatches.length === 1 ? "place" : "places"}` : "; same as the repository's";
+    return line;
+  }
+  if (t.status === "invalid") return `${which} invalid (${(t.errors || []).length} ${(t.errors || []).length === 1 ? "error" : "errors"}), not used`;
+  if (t.status === "not_used") return "your .tmark was not used: no source is linked";
   return "no .tmark declaration";
 }
 
 function aiLine(ai) {
     if (ai.review === "no_source") return "AI review: not applicable; no source code is linked to this reference.";
     if (ai.review === "off") return "AI review: not enabled on this deployment; rules only.";
-    if (ai.review === "rate_limited") return "AI review: hourly allowance used; this audit used the rules only.";
+    if (ai.review === "no_consent") return "AI review: not run; you did not consent to sending the source. Rules only.";
+    if (["rate_limited", "store_unavailable", "not_configured"].includes(ai.review)) return "AI review: " + (ai.note || "allowance used; this audit used the rules only.");
     if (!ai.review) return "";
     const status = { completed: "completed", timeout: "stopped at the time limit (findings so far kept)",
       skipped: "skipped (no time left)", unavailable: "unavailable (provider error)", incomplete: "incomplete" }[ai.review] || ai.review;
@@ -149,21 +265,27 @@ function aiLine(ai) {
     $("error").hidden = true;
     $("result").hidden = true;
     $("steps").hidden = false;
+    $("tmark-result").textContent = "";
     resetSteps();
     run.disabled = true;
     step("resolve", "active");
-    const timers = [setTimeout(() => { step("resolve", "done"); step("analyse", "active"); }, 1600)];
+    const started = Date.now();
+    // Elapsed time keeps moving even when the server sends only heartbeats.
+    const clock = setInterval(() => { const p = $("progress"); p.hidden = false; p.textContent = p.textContent.replace(/· \d+ s$/, "") + `· ${Math.round((Date.now() - started) / 1000)} s`; }, 1000);
+    const body = { reference, model_review_consent: $("consent").checked };
+    const declared = $("tmark").value.trim();
+    if (declared) body.tmark = declared;
     try {
-      const data = await post("/api/v1/demo/audit", { reference });
-      timers.forEach(clearTimeout);
+      const data = await streamAudit(body);
       step("resolve", "done"); step("analyse", "done"); step("decide", "done");
       render(data);
       $("result").scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (error) {
-      timers.forEach(clearTimeout);
       resetSteps();
       showError(error.message);
     } finally {
+      clearInterval(clock);
+      $("progress").hidden = true; $("progress").textContent = "";
       run.disabled = false;
     }
   }
@@ -236,7 +358,8 @@ function aiLine(ai) {
       const data = await post("/api/v1/demo/compare", { before: current.reference, after: $("fixed").value.trim() });
       const c = data.comparison;
       const sign = c.score_change >= 0 ? "+" : "";
-      $("diff-head").textContent = `${c.before.decision} ${c.before.score} → ${c.after.decision} ${c.after.score} (${sign}${c.score_change})`;
+      $("diff-head").textContent = `${data.mode === "rules_only" ? "Rules only: " : ""}${c.before.decision} ${c.before.score} → ${c.after.decision} ${c.after.score} (${sign}${c.score_change})`;
+      $("diff-note").textContent = data.note || "";
       for (const [id, list] of [["diff-closed", c.closed], ["diff-remaining", c.remaining], ["diff-introduced", c.introduced]]) {
         const ul = $(id); ul.textContent = "";
         if (!list.length) ul.append(el("li", { class: "low" }, el("span", { class: "title", text: "None" })));
@@ -251,6 +374,24 @@ function aiLine(ai) {
   }
 
   $("recheck").addEventListener("submit", recheck);
+  $("tmark-check").addEventListener("click", checkTmark);
+  $("tmark-draft").addEventListener("click", draftTmark);
+  $("tmark-file").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (file.size > 64000) { showError("The .tmark is larger than 64 KB."); return; }
+    $("tmark").value = await file.text();
+    event.target.value = "";
+    checkTmark();
+  });
+  // Consent is needed only where the model review can run; say so when it cannot.
+  fetch("/api/v1/demo/config").then((r) => r.ok ? r.json() : null).then((config) => {
+    const review = config && config.model_review;
+    if (review && !review.available) {
+      $("consent").disabled = true;
+      $("consent-text").textContent = "The model review is not enabled on this deployment; the audit runs the deterministic rules only.";
+    }
+  }).catch(() => {});
   $("issue").addEventListener("click", issueCredential);
   function save(blob, name) {
     const link = el("a", { href: URL.createObjectURL(blob), download: name });

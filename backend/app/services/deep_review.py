@@ -326,7 +326,11 @@ class DeepReviewer:
                 return "Unknown file. Files: " + ", ".join(sorted(artifact.code_files))
             start = max(1, int(args.get("start_line", 1)))
             end = min(len(lines), int(args.get("end_line", start + 80)), start + 200)
-            result.files_read.add(args.get("path", ""))
+            if args.get("path", "") not in result.files_read:
+                result.files_read.add(args.get("path", ""))
+                from .progress import emit
+                emit("deep_review", files_read=len(result.files_read & result.reviewable) if result.reviewable
+                     else len(result.files_read), files_total=result.total_files)
             return "\n".join(f"{n}: {lines[n - 1]}" for n in range(start, end + 1)) or "(empty range)"
         if name == "search_source":
             try:
@@ -404,6 +408,8 @@ class DeepReviewer:
                 return result
         # The passes see the same time limit, so an extra pass starts only when it can finish.
         self._review_ends = time.monotonic() + timeout
+        from .progress import emit
+        emit("deep_review", files_read=0, files_total=result.total_files)
         try:
             await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=timeout)
             if result.status == "not_run":

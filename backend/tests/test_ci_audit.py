@@ -69,6 +69,7 @@ def test_a_supplied_tmark_is_used_as_if_committed(tmp_path, capsys):
     out = tmp_path / "r.json"
     ci_audit.main([str(repo), "--tmark", str(supplied), "--out", str(out)])
     report = json.loads(out.read_text())
-    assert report["repository"]["declarations"]["tmark"] == {"status": "valid", "errors": [], "source": "supplied",
-                                                             "repository_status": "missing"}
+    record = report["repository"]["declarations"]["tmark"]
+    assert {k: record[k] for k in ("status", "errors", "source", "repository_status")} == {
+        "status": "valid", "errors": [], "source": "supplied", "repository_status": "missing"}
     assert '"tmark": "valid"' in capsys.readouterr().out

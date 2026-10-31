@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .config import get_settings
 from .stellar.ownership import canonical_message, verify_owner
@@ -227,6 +227,13 @@ async def health() -> dict:
         "modes": {
             "operator_api": bool(settings.admin_api_key) and not settings.stateless_studio,
             "stateless_studio": settings.stateless_studio,
+            # Two different model integrations: the deep review and its verifier (Anthropic,
+            # ANTHROPIC_API_KEY) and the optional public AI second opinion (LLM_PROVIDER).
+            "deep_review": _model_review_status(),
+            "ai_second_opinion": {"configured": settings.llm_enabled,
+                                  "enabled": bool(settings.enable_public_ai_review and settings.llm_enabled),
+                                  "provider": settings.llm_provider if settings.llm_enabled else ""},
+            # Kept for older clients: the AI second opinion's provider (LLM_PROVIDER), not the deep review.
             "llm": settings.llm_enabled,
             "rpc": settings.rpc_enabled,
             "contract_submission": bool(getattr(app.state, 'official_fulfillment', None)),
@@ -752,14 +759,36 @@ async def studio_runtime(req: RuntimeRequest, authorization: str = Header(defaul
             raise HTTPException(status_code=503, detail="Isolated execution did not complete. Check Sandbox credentials, quota and provider logs. No runtime assurance is claimed.") from exc
 
 
+def _studio_ai_mode() -> str:
+    """Which model the Studio AI option uses (studio.review_source): the deep review first."""
+    if not len(settings.ai_review_api_key or settings.runtime_api_key) >= 32:
+        return ""  # no pilot key can be accepted, so the option cannot be used
+    if settings.enable_deep_review and settings.anthropic_api_key:
+        return "deep_review"
+    if settings.enable_public_ai_review and settings.llm_enabled:
+        return "second_opinion"
+    return ""
+
+
 @app.get("/api/v1/studio/capabilities")
 async def studio_capabilities() -> dict:
     from .services.assurance import ArchitectureManifest
     return {"runtime_available": settings.enable_sandbox_runtime and len(settings.runtime_api_key) >= 32,
             "soroban_auth_inspection_available": True,
             "runtime_auth_required": True, "runtime_adapter": "python_text",
-            "ai_available": settings.enable_public_ai_review and settings.llm_enabled,
-            "ai_provider": settings.llm_provider if settings.enable_public_ai_review else "",
+            # The AI option runs the deep review (Anthropic) when it is configured, otherwise the
+            # public second opinion (LLM_PROVIDER); either needs the private pilot access key.
+            "ai_available": _studio_ai_mode() != "",
+            "ai_mode": _studio_ai_mode(),
+            "ai_provider": ("anthropic" if _studio_ai_mode() == "deep_review"
+                            else settings.llm_provider if _studio_ai_mode() == "second_opinion" else ""),
+            "ai_model": (settings.deep_review_model if _studio_ai_mode() == "deep_review"
+                         else settings.llm_model if _studio_ai_mode() == "second_opinion" else ""),
+            "deep_review": {"configured": bool(settings.enable_deep_review and settings.anthropic_api_key),
+                            "verifier": bool(settings.enable_deep_review and settings.anthropic_api_key
+                                             and settings.enable_finding_verification)},
+            "ai_second_opinion": {"configured": bool(settings.enable_public_ai_review and settings.llm_enabled),
+                                  "provider": settings.llm_provider if settings.enable_public_ai_review else ""},
             "ai_connection": settings.llm_status(), "ai_auth_required": True,
             "controls": ArchitectureManifest.catalogue(), "checkout_enabled": False,
             "testnet_checkout_available": settings.stellar_network == 'testnet' and len(settings.runtime_api_key) >= 32 and len(settings.checkout_quote_signing_key) >= 32,
@@ -798,13 +827,18 @@ async def studio_resolve(req: ResolveRequest) -> dict:
 
 _demo_issuance: dict[str, deque] = defaultdict(deque)
 _demo_issuance_all: deque = deque()
-_demo_ai: dict[str, deque] = defaultdict(deque)
-_demo_ai_all: deque = deque()
 
 
 def _demo_client(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "") if os.environ.get("VERCEL") else ""
-    return (forwarded.split(",")[-1].strip() or (request.client.host if request.client else "unknown"))[:64]
+    """The visitor's address as Vercel reports it (x-real-ip, else the last x-forwarded-for
+    hop, which Vercel sets); elsewhere the socket peer. Headers are trusted only on Vercel.
+    The model-review allowance stores only an HMAC of it (services/rate_limit.py)."""
+    if os.environ.get("VERCEL"):
+        real = request.headers.get("x-real-ip", "").strip()
+        forwarded = request.headers.get("x-forwarded-for", "").split(",")[-1].strip()
+        if real or forwarded:
+            return (real or forwarded)[:64]
+    return (request.client.host if request.client else "unknown")[:64]
 
 
 def _demo_issuance_allowed(client: str) -> bool:
@@ -828,38 +862,129 @@ async def demo_config() -> dict:
     data = manifest()
     return {"issuance_enabled": issuance_enabled(), "network": "testnet",
             "contracts": {k: v.get("id") for k, v in data.get("contracts", {}).items()},
-            "operator": data.get("operator", "")}
+            "operator": data.get("operator", ""),
+            # The home page asks for consent before any source goes to a model.
+            "model_review": _model_review_status(),
+            "streaming": True}
 
 
-def _demo_ai_allowed(client: str) -> bool:
-    """The model review is paid per audit: 5 per client per hour, 60 per hour overall.
-    Past that, audits still run with the deterministic analysers only."""
-    now = time.monotonic()
-    mine = _demo_ai[client]
-    while mine and now - mine[0] >= 3600:
-        mine.popleft()
-    while _demo_ai_all and now - _demo_ai_all[0] >= 3600:
-        _demo_ai_all.popleft()
-    if len(mine) >= 5 or len(_demo_ai_all) >= 60:
-        return False
-    mine.append(now)
-    _demo_ai_all.append(now)
-    return True
+def _model_review_status() -> dict:
+    """What the model review needs and where its allowance lives, without calling anyone."""
+    from .services.rate_limit import store_kind
+    configured = bool(settings.enable_deep_review and settings.anthropic_api_key)
+    store = store_kind(settings)
+    return {"configured": configured, "available": configured and store != "none",
+            "provider": "anthropic" if configured else "", "model": settings.deep_review_model if configured else "",
+            "verifier": bool(configured and settings.enable_finding_verification),
+            "verifier_model": settings.verifier_model if configured and settings.enable_finding_verification else "",
+            "consent_required": True, "allowance_store": store,
+            "limits": {"per_client_per_hour": settings.deep_review_client_hourly_limit,
+                       "per_hour": settings.deep_review_hourly_limit, "per_day": settings.deep_review_daily_limit}}
+
+
+async def _model_review_allowed(request: Request, consent: bool) -> tuple[bool, dict | None]:
+    """(run the model review?, why not). Fails closed: no consent, no allowance or an
+    unreachable allowance store all mean rules only, never a failed audit."""
+    if not (settings.enable_deep_review and settings.anthropic_api_key):
+        return False, None
+    if not consent:
+        return False, {"reason": "no_consent", "note": "Rules only: the source was not sent to the model review "
+                                                       "because consent was not given."}
+    from .services.rate_limit import limiter_from_settings
+    try:
+        decision = await limiter_from_settings(settings).acquire(_demo_client(request))
+    except Exception as exc:  # noqa: BLE001 - the allowance must never fail the audit
+        logger.warning("model-review allowance failed: %s", type(exc).__name__)
+        return False, {"reason": "store_unavailable", "note": "The model-review allowance could not be checked; "
+                                                              "this audit used the rules only."}
+    if decision.allowed:
+        return True, None
+    reason = "rate_limited" if decision.reason in {"client_hour", "hour", "day"} else decision.reason
+    return False, {"reason": reason, "note": decision.message + " This audit used the rules only.", "limit": decision.reason}
+
+
+def _tmark_errors_detail(errors: list[dict]) -> dict:
+    return {"message": "The .tmark is not valid, so nothing was audited. Fix each field listed and try again.",
+            "tmark_errors": errors}
+
+
+#: Seconds between heartbeat lines on a streamed audit: below every common proxy idle timeout.
+HEARTBEAT_SECONDS = 10.0
+DEMO_REQUEST_SECONDS = 285
 
 
 @app.post("/api/v1/demo/audit")
-async def demo_audit(req: "DemoAuditRequestModel", request: Request) -> dict:
+async def demo_audit(req: "DemoAuditRequestModel", request: Request):
     """Audit a GitHub repository, folder or agent reference: the deterministic analysers, plus
-    the model review and verification when configured and within the per-client allowance."""
+    the model review and verification when configured, consented to and within the allowance.
+
+    With ``Accept: application/x-ndjson`` the response is a stream of JSON lines: ``stage``
+    events (resolving, fetching, rules, deep_review, verifier, done), a ``heartbeat`` every
+    few seconds, then one ``result`` (the same object as the plain response) or ``error``."""
+    from .services import tmark as tmark_format
     from .services.demo_flow import run_demo_audit
-    ai = bool(settings.enable_deep_review and settings.anthropic_api_key) and _demo_ai_allowed(_demo_client(request))
+    if req.tmark is not None:
+        parsed, errors = tmark_format.check(req.tmark)
+        if parsed is None:
+            raise HTTPException(status_code=422, detail=_tmark_errors_detail(errors))
+    async def run() -> dict:
+        ai, skipped = await _model_review_allowed(request, req.model_review_consent)
+        try:
+            return await asyncio.wait_for(run_demo_audit(req.reference, settings, ai=ai, tmark_text=req.tmark,
+                                                         skipped=skipped), timeout=DEMO_REQUEST_SECONDS)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(status_code=504, detail="The audit did not finish within the demo time limit. "
+                                                        "Large repositories can be audited with scripts/audit_agent.py.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if "application/x-ndjson" not in request.headers.get("accept", ""):
+        return await run()
+    return StreamingResponse(_stream(run), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+async def _stream(run):
+    """NDJSON lines for one audit: stage events as they happen, heartbeats while waiting."""
+    import json
+    from .services import progress
+    queue: asyncio.Queue = asyncio.Queue()
+    started = time.monotonic()
+    state = {"stage": "queued"}
+
+    def on_event(event: dict) -> None:
+        state["stage"] = event.get("stage", state["stage"])
+        queue.put_nowait(event)
+
+    def line(payload: dict) -> bytes:
+        return (json.dumps({**payload, "elapsed": round(time.monotonic() - started, 1)}, default=str) + "\n").encode()
+
+    token = progress.listen(on_event)
     try:
-        return await asyncio.wait_for(run_demo_audit(req.reference, settings, ai=ai), timeout=285)
-    except asyncio.TimeoutError as exc:
-        raise HTTPException(status_code=504, detail="The audit did not finish within the demo time limit. "
-                                                    "Large repositories can be audited with scripts/audit_agent.py.") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        task = asyncio.create_task(run())  # copies the context: the task reports to on_event
+    finally:
+        progress.stop(token)
+    yield line({"type": "stage", "stage": "queued"})
+    try:
+        while not task.done() or not queue.empty():
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
+                yield line({"type": "stage", **event})
+            except asyncio.TimeoutError:
+                if not task.done():
+                    yield line({"type": "heartbeat", "stage": state["stage"]})
+            if task.done() and queue.empty():
+                break
+        try:
+            yield line({"type": "result", "data": task.result()})
+        except HTTPException as exc:
+            yield line({"type": "error", "status": exc.status_code, "detail": exc.detail})
+        except Exception as exc:  # noqa: BLE001 - reported to the client, not hidden
+            logger.warning("streamed demo audit failed: %s", type(exc).__name__)
+            yield line({"type": "error", "status": 500, "detail": "The audit stopped on an internal error. Try again."})
+    finally:
+        if not task.done():
+            task.cancel()  # the client went away
 
 
 class TmarkCheckRequest(BaseModel):
@@ -868,17 +993,76 @@ class TmarkCheckRequest(BaseModel):
 
 @app.post("/api/v1/tmark/check")
 async def tmark_check(req: TmarkCheckRequest) -> dict:
-    """Validate a .tmark file: every error, by field. Nothing is stored."""
+    """Validate a .tmark file: every error with its field and line, the declaration as Touchmark
+    reads it and a plain summary. Nothing is stored."""
     from .services import tmark
-    parsed, errors = tmark.parse(req.text)
-    return {"valid": parsed is not None, "errors": errors,
-            **({"agent": parsed.agent.name, "network": parsed.agent.network} if parsed else {})}
+    parsed, details = tmark.check(req.text)
+    out = {"valid": parsed is not None, "errors": [f"{d['field']}: {d['message']}" for d in details],
+           "error_details": details, "latest_version": tmark.VERSION, "schema": tmark.SCHEMA_URL}
+    if parsed is not None:
+        out.update(agent=parsed.agent.name, network=parsed.agent.network, version=parsed.tmark,
+                   normalized=tmark.normalized(parsed), summary=tmark.summary(parsed))
+    return out
 
 
 @app.get("/api/v1/tmark/template")
 async def tmark_template() -> dict:
     from .services import tmark
     return tmark.template({"payment", "stellar_signing"})
+
+
+class TmarkDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    #: A GitHub repository or folder link (as on the home page) ...
+    reference: str = Field(default="", max_length=300)
+    #: ... or source files (as in Studio): {path: text}.
+    files: dict[str, str] = Field(default_factory=dict, max_length=200)
+    name: str = Field(default="", max_length=80)
+
+
+@app.post("/api/v1/tmark/template")
+async def tmark_draft(req: TmarkDraftRequest) -> dict:
+    """A .tmark draft from a repository's code: the tools it registers and what the code in each
+    tool's file can do. Repository code is parsed, never executed; nothing is stored."""
+    from .services import tmark
+    if bool(req.reference) == bool(req.files):
+        raise HTTPException(status_code=422, detail="Give either a repository reference or source files.")
+    if req.files:
+        if sum(len(v.encode()) for v in req.files.values()) > 2_000_000:
+            raise HTTPException(status_code=422, detail="Source limit: 2 MB in total.")
+        return tmark.draft_from_source(req.files, name=req.name)
+    try:
+        return await asyncio.wait_for(_draft_from_reference(req.reference, req.name), timeout=90)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="The repository could not be read in time.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def _draft_from_reference(reference: str, name: str) -> dict:
+    import re as _re
+    import tempfile
+    from .services import tmark
+    from .services.agent_resolver import AgentResolver
+    from .services.repo_audit import select_repository
+    resolver = AgentResolver(settings, "testnet")
+    resolution = await resolver.resolve(reference.strip())
+    source = resolution["source"]
+    if not source.get("repository") or not _re.fullmatch(r"[0-9a-f]{40}", source.get("revision") or ""):
+        raise ValueError("No source repository could be pinned for this reference.")
+    with tempfile.TemporaryDirectory(prefix="touchmark-draft-") as tmp:
+        root = await resolver.download(source["repository"], source["revision"], Path(tmp))
+        if source.get("path"):
+            sub = (root / source["path"]).resolve()
+            if not sub.is_dir() or not sub.is_relative_to(root.resolve()):
+                raise ValueError(f"The folder {source['path']} does not exist in the repository.")
+            root = sub
+        files, _ = select_repository(root)
+    if not files:
+        raise ValueError("No supported source files were found in the repository.")
+    out = tmark.draft_from_source(files, name=name or source["repository"].rsplit("/", 1)[-1][:80])
+    out["source"] = {k: source.get(k, "") for k in ("repository", "revision", "path")}
+    return out
 
 
 class DemoCompareRequest(BaseModel):
@@ -888,7 +1072,11 @@ class DemoCompareRequest(BaseModel):
 
 @app.post("/api/v1/demo/compare")
 async def demo_compare(req: DemoCompareRequest) -> dict:
-    """Re-audit: audit two references (for example a commit and its fix) and show what changed."""
+    """Re-audit two references (for example a commit and its fix) and show what changed.
+
+    Both sides run the deterministic rules only, so they are compared like with like. That is
+    not the audit's full review: its scores can differ from a model-reviewed audit, and a
+    model-review finding is never listed as closed here, because neither side looked for it."""
     from .services.agent_resolver import audit_reference
     from .services.report_diff import compare_reports
     try:
@@ -899,7 +1087,13 @@ async def demo_compare(req: DemoCompareRequest) -> dict:
         raise HTTPException(status_code=504, detail="The comparison did not finish within the demo time limit.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"comparison": compare_reports(before["report"], after["report"]),
+    comparison = compare_reports(before["report"], after["report"])
+    # Belt and braces: a rules-only report holds no model findings, and none may read as fixed.
+    comparison["closed"] = [f for f in comparison.get("closed", []) if "-ai-" not in f.get("id", "")]
+    return {"mode": "rules_only", "comparison": comparison,
+            "note": ("Rules-only comparison: both versions were re-checked by the deterministic rules, not the model "
+                     "review. Scores are rules-only scores and can differ from a full audit; findings only the model "
+                     "review reports are not re-checked here and are never shown as closed."),
             "before_sha256": before["report_sha256"], "after_sha256": after["report_sha256"]}
 
 
