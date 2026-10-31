@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The .tmark declaration: what your Stellar agent is allowed to do, checked by Touchmark against its code. Field reference, worked examples and an in-page builder.">
+<title>.tmark — declare your agent · Touchmark</title>
+<link rel="icon" href="/ui/brand/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/fonts/fonts.css">
+<link rel="stylesheet" href="/ui/demo.css">
+<link rel="stylesheet" href="/ui/mascot.css">
+<link rel="stylesheet" href="/ui/guide.css">
+<link rel="stylesheet" href="/ui/tmark-builder.css">
+<script src="/ui/mascot.js" defer></script>
+<script src="/ui/guide.js" defer></script>
+<script src="/ui/tmark-builder.js" defer></script>
+</head>
+<body class="guide guide-tmark">
+<svg width="0" height="0" class="defs" aria-hidden="true">
+  <filter id="ink"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter>
+  <symbol id="mark" viewBox="0 0 64 64">
+    <path d="M14 4h36a10 10 0 0 0 10 10v36a10 10 0 0 0-10 10H14A10 10 0 0 0 4 50V14A10 10 0 0 0 14 4Z" class="mark-plate"/>
+    <path d="M33.6 11.5c1.5 11.4 7.9 17.8 19.3 19.3-11.4 1.5-17.8 7.9-19.3 19.3-1.5-11.4-7.9-17.8-19.3-19.3 11.4-1.5 17.8-7.9 19.3-19.3Z" class="mark-star"/>
+    <path d="M32 13c1.5 11.4 7.9 17.8 19.3 19.3C39.9 33.8 33.5 40.2 32 51.6 30.5 40.2 24.1 33.8 12.7 32.3 24.1 30.8 30.5 24.4 32 13Z" class="mark-line"/>
+  </symbol>
+</svg>
+<a class="g-skip" href="#guide-start">Skip to the guide</a>
+
+<header class="bar">
+  <a class="brand" href="/" aria-label="Touchmark home"><svg class="logo" width="34" height="34"><use href="#mark"/></svg><span class="word">touchmark</span><span class="where">on Stellar</span></a>
+  <nav aria-label="Main"><a href="/#how" class="g-hide-sm">How it works</a><a href="/guide" aria-current="page">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a><a href="/studio">Studio</a></nav>
+</header>
+
+<main class="g-main">
+  <p class="g-crumb"><a href="/guide">Guide</a> <span aria-hidden="true">/</span> <span>.tmark</span></p>
+  <section class="g-hero t-hero">
+    <div class="g-hero-copy">
+      <p class="eyebrow"><span>.tmark v1</span><span>Repository root</span></p>
+      <h1>Say what your agent may do. <em>We check the code agrees.</em></h1>
+      <p class="lede">A <code>.tmark</code> is one small JSON file that states what your Stellar agent is and what it is allowed to do. Touchmark reads it, then checks every claim against the code.</p>
+      <ul class="t-facts">
+        <li><b>One</b> JSON object</li>
+        <li><b>No</b> unknown fields</li>
+        <li><b>Any</b> error and the whole file is ignored</li>
+      </ul>
+      <div class="g-cta"><a class="g-btn" href="#builder">Build yours <span aria-hidden="true">→</span></a><a class="g-btn ghost" href="#fields">Field reference</a></div>
+    </div>
+    <figure class="t-tree-art">
+      <div class="t-tree" aria-label="A repository with .tmark at its root">
+        <p class="t-tree-head">your-agent/</p>
+        <ul>
+          <li class="t-dir">src/</li>
+          <li class="t-dir">tests/</li>
+          <li class="t-file t-hot"><span>.tmark</span><em>← here</em></li>
+          <li class="t-file">package.json</li>
+          <li class="t-file">README.md</li>
+        </ul>
+      </div>
+      <span class="t-tree-mascot" data-tm-mascot="pointing" data-tm-facing="left" data-tm-size="210" data-tm-label="Punch points at the .tmark file at the repository root"></span>
+    </figure>
+  </section>
+
+  <div class="g-layout g-wide" id="guide-start">
+    <aside class="g-rail" aria-label="On this page">
+      <nav class="g-toc">
+        <p class="g-toc-head">On this page</p>
+        <ol>
+          <li><a href="#why"><span>01</span>Why declare</a></li>
+          <li><a href="#where"><span>02</span>Where it lives</a></li>
+          <li><a href="#builder"><span>03</span>Builder</a></li>
+          <li><a href="#fields"><span>04</span>Field reference</a></li>
+          <li><a href="#examples"><span>05</span>Examples</a></li>
+          <li><a href="#mistakes"><span>06</span>Common mistakes</a></li>
+          <li><a href="#verdict"><span>07</span>Effect on the verdict</a></li>
+          <li><a href="#next"><span>08</span>Coming next</a></li>
+        </ol>
+        <div class="g-toc-progress" aria-hidden="true"><i></i></div>
+      </nav>
+    </aside>
+
+    <article class="g-content">
+      <!-- 01 ------------------------------------------------------------ -->
+      <section id="why" class="g-plate" data-mascot="pointing">
+        <header class="g-plate-head"><span class="g-num">01</span><h2>Why declare anything?</h2></header>
+        <p class="g-lead">Without a declaration, Touchmark can only ask whether the code is dangerous in general. With one, it can ask whether the code does <strong>what you said it does</strong>, and that question has sharp answers.</p>
+        <div class="g-cards">
+          <div class="card g-reveal"><span class="num">i.</span><h3>It states the authority</h3><p>The network, whether the agent holds a key and where it comes from, what it signs, how much it may pay and to whom, and who approves it. In one place, in one shape.</p></div>
+          <div class="card g-reveal"><span class="num">ii.</span><h3>The code is held to it</h3><p>Testnet only? Then no mainnet passphrase in the code that ships. An allow-list? Then one must be enforced where the agent pays. A broken claim is reported as a risk.</p></div>
+          <div class="card g-reveal"><span class="num">iii.</span><h3>The badge means something</h3><p>A credential stamped on an honest declaration tells the next person exactly what was promised and checked. It also names the owner who receives the credential.</p></div>
+        </div>
+        <aside class="g-say g-reveal"><span class="g-say-face" data-tm-mascot="idle" data-tm-size="72" data-tm-decorative></span><p><b>Punch says:</b> a declaration never closes a risk by itself. Declaring <code>"recipients": "any"</code> honestly is fine; declaring an allow-list the code does not have is a finding.</p></aside>
+      </section>
+
+      <!-- 02 ------------------------------------------------------------ -->
+      <section id="where" class="g-plate" data-mascot="pointing">
+        <header class="g-plate-head"><span class="g-num">02</span><h2>Where it lives</h2></header>
+        <p class="g-lead">Commit a file named exactly <code>.tmark</code> at the repository root, next to <code>README.md</code>. When a <code>.tmark</code> exists, older <code>touchmark.json</code>, <code>agentveritas.json</code> and <code>veritas.json</code> files are ignored.</p>
+        <div class="t-where">
+          <div class="t-where-card g-reveal">
+            <h3>Start from your code</h3>
+            <pre class="g-code"><code><span class="j-p">$</span> python scripts/tmark.py init path/to/repo
+<span class="j-p"># writes .tmark, pre-filled from what the code can do</span>
+<span class="j-p">$</span> python scripts/tmark.py check path/to/repo
+<span class="j-p"># lists every error; an invalid file is ignored</span></code></pre>
+          </div>
+          <div class="t-where-card g-reveal">
+            <h3>Check it on every push</h3>
+            <pre class="g-code"><code><span class="j-p">- uses:</span> furkan3152/Touchmark_agent@main
+  <span class="j-p">with:</span>
+    fail-on: needs_fixes
+    annotate: medium</code></pre>
+            <p>The GitHub Action validates the <code>.tmark</code>, annotates each error on the file, and reports <code>tmark: valid</code>, <code>invalid</code> or <code>missing</code>.</p>
+          </div>
+          <div class="t-where-card g-reveal">
+            <h3>Validate as you type</h3>
+            <pre class="g-code"><code><span class="j-p">{</span>
+  <span class="j-k">"$schema"</span><span class="j-p">:</span> <span class="j-s">"https://touchmark-stellar.vercel.app/schemas/tmark-v1.json"</span><span class="j-p">,</span>
+  <span class="j-k">"tmark"</span><span class="j-p">:</span> <span class="j-s">"1"</span><span class="j-p">, …</span></code></pre>
+            <p>Editors that read <code>$schema</code> (VS Code, JetBrains) check the file against <a href="/schemas/tmark-v1.json">the schema</a> as you write.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 03 ------------------------------------------------------------ -->
+      <section id="builder" class="g-plate t-builder-plate" data-mascot="scanning">
+        <header class="g-plate-head"><span class="g-num">03</span><h2>Build one here</h2></header>
+        <p class="g-lead">Fill in the form; the file on the right is written as you go and checked against the same rules Touchmark uses. Nothing leaves your browser until you press <span class="g-ui">Check with Touchmark</span>.</p>
+
+        <div class="tb" id="tmark-builder">
+          <div class="tb-toolbar" role="group" aria-label="Start from">
+            <span class="tb-toolbar-label">Start from</span>
+            <button type="button" class="tb-chip" data-load="blank">Blank</button>
+            <button type="button" class="tb-chip" data-load="minimal">Minimal</button>
+            <button type="button" class="tb-chip" data-load="payments">Payments agent</button>
+            <button type="button" class="tb-chip" data-load="mcp">MCP wallet server</button>
+            <button type="button" class="tb-chip" data-load="sdk">SDK / library</button>
+            <details class="tb-paste">
+              <summary class="tb-chip">Paste a .tmark</summary>
+              <div class="tb-paste-body">
+                <label for="tb-paste-text">Paste the contents of an existing .tmark</label>
+                <textarea id="tb-paste-text" rows="7" spellcheck="false"></textarea>
+                <button type="button" class="g-btn small" id="tb-paste-load">Load into the form</button>
+                <p class="tb-paste-msg" id="tb-paste-msg" role="status"></p>
+              </div>
+            </details>
+          </div>
+
+          <div class="tb-grid">
+            <form class="tb-form" id="tb-form" novalidate autocomplete="off">
+              <fieldset class="tb-set" data-path="agent">
+                <legend><span>agent</span> What it is <em>required</em></legend>
+                <div class="tb-field" data-path="agent.name">
+                  <label for="f-name">Name</label>
+                  <input id="f-name" data-bind="agent.name" maxlength="80" placeholder="Treasury agent">
+                </div>
+                <div class="tb-field" data-path="agent.purpose">
+                  <label for="f-purpose">Purpose <small>what it does and for whom, in one or two sentences · 20 to 1000 characters</small></label>
+                  <textarea id="f-purpose" data-bind="agent.purpose" rows="3" maxlength="1000" placeholder="Pays two listed suppliers in XLM on request and reads invoices from one fixed host."></textarea>
+                  <span class="tb-count" data-count="agent.purpose" aria-hidden="true"></span>
+                </div>
+                <div class="tb-row">
+                  <div class="tb-field" data-path="agent.kind">
+                    <label for="f-kind">Kind</label>
+                    <select id="f-kind" data-bind="agent.kind">
+                      <option value="mcp_server">mcp_server</option><option value="autonomous_agent">autonomous_agent</option>
+                      <option value="x402_client">x402_client</option><option value="x402_server">x402_server</option>
+                      <option value="sdk">sdk</option><option value="skill">skill</option><option value="contract">contract</option><option value="other">other</option>
+                    </select>
+                  </div>
+                  <div class="tb-field" data-path="agent.network">
+                    <span class="tb-label" id="l-network">Network</span>
+                    <div class="tb-seg" role="radiogroup" aria-labelledby="l-network">
+                      <label><input type="radio" name="network" value="testnet" data-bind="agent.network"><span>testnet</span></label>
+                      <label><input type="radio" name="network" value="mainnet" data-bind="agent.network"><span>mainnet</span></label>
+                      <label><input type="radio" name="network" value="both" data-bind="agent.network"><span>both</span></label>
+                    </div>
+                  </div>
+                </div>
+                <label class="tb-check" data-path="agent.discloses_ai"><input type="checkbox" data-bind="agent.discloses_ai"> Users are told they are talking to an AI <code>discloses_ai</code></label>
+              </fieldset>
+
+              <fieldset class="tb-set" data-path="authority">
+                <legend><span>authority</span> Keys and signing <em>required</em></legend>
+                <div class="tb-field" data-path="authority.holds_keys">
+                  <span class="tb-label" id="l-holds">Does the agent itself hold a Stellar secret key? <code>holds_keys</code></span>
+                  <div class="tb-seg" role="radiogroup" aria-labelledby="l-holds">
+                    <label><input type="radio" name="holds" value="true" data-bind="authority.holds_keys" data-type="bool"><span>yes</span></label>
+                    <label><input type="radio" name="holds" value="false" data-bind="authority.holds_keys" data-type="bool"><span>no</span></label>
+                  </div>
+                </div>
+                <div class="tb-field" data-path="authority.key_source">
+                  <span class="tb-label" id="l-source">Where the signing key comes from <code>key_source</code></span>
+                  <div class="tb-options" role="radiogroup" aria-labelledby="l-source">
+                    <label><input type="radio" name="source" value="env" data-bind="authority.key_source"><span><b>env</b> a secret in an environment variable or config file</span></label>
+                    <label><input type="radio" name="source" value="kms" data-bind="authority.key_source"><span><b>kms</b> a key management service or HSM signs for it</span></label>
+                    <label><input type="radio" name="source" value="external_signer" data-bind="authority.key_source"><span><b>external_signer</b> another signer or service holds the key</span></label>
+                    <label><input type="radio" name="source" value="wallet_prompt" data-bind="authority.key_source"><span><b>wallet_prompt</b> the user's wallet is asked to sign each time</span></label>
+                    <label><input type="radio" name="source" value="none" data-bind="authority.key_source"><span><b>none</b> nothing is signed</span></label>
+                  </div>
+                </div>
+                <div class="tb-field" data-path="authority.signs">
+                  <span class="tb-label" id="l-signs">What it signs <code>signs</code></span>
+                  <div class="tb-tags" role="group" aria-labelledby="l-signs">
+                    <label><input type="checkbox" value="payments" data-bind="authority.signs" data-type="set"><span>payments</span></label>
+                    <label><input type="checkbox" value="contract_calls" data-bind="authority.signs" data-type="set"><span>contract_calls</span></label>
+                    <label><input type="checkbox" value="account_changes" data-bind="authority.signs" data-type="set"><span>account_changes</span></label>
+                    <label><input type="checkbox" value="trustlines" data-bind="authority.signs" data-type="set"><span>trustlines</span></label>
+                    <label><input type="checkbox" value="foreign_transactions" data-bind="authority.signs" data-type="set"><span>foreign_transactions</span></label>
+                    <label><input type="checkbox" value="messages" data-bind="authority.signs" data-type="set"><span>messages</span></label>
+                  </div>
+                </div>
+                <div class="tb-field" data-path="authority.agent_account">
+                  <label for="f-account">Agent account <small>optional · the G… account or C… contract it acts from, if fixed</small></label>
+                  <input id="f-account" data-bind="authority.agent_account" class="mono" spellcheck="false" placeholder="G… or C…">
+                </div>
+              </fieldset>
+
+              <fieldset class="tb-set" data-path="limits">
+                <legend><span>limits</span> Money <em data-limits-flag>required when it moves funds</em></legend>
+                <label class="tb-check tb-switch"><input type="checkbox" id="f-limits-on"> This agent moves funds, or I want to declare limits</label>
+                <div class="tb-limits" id="tb-limits">
+                  <div class="tb-row">
+                    <div class="tb-field tb-money" data-path="limits.per_payment">
+                      <span class="tb-label">Per payment <small>optional</small></span>
+                      <div class="tb-money-in">
+                        <input aria-label="Per payment amount" data-bind="limits.per_payment.amount" class="mono" inputmode="decimal" placeholder="500" data-path="limits.per_payment.amount">
+                        <input aria-label="Per payment asset" data-bind="limits.per_payment.asset" class="mono" list="tb-assets" placeholder="XLM" data-path="limits.per_payment.asset">
+                      </div>
+                    </div>
+                    <div class="tb-field tb-money" data-path="limits.per_day">
+                      <span class="tb-label">Per day <small>optional</small></span>
+                      <div class="tb-money-in">
+                        <input aria-label="Per day amount" data-bind="limits.per_day.amount" class="mono" inputmode="decimal" placeholder="1000" data-path="limits.per_day.amount">
+                        <input aria-label="Per day asset" data-bind="limits.per_day.asset" class="mono" list="tb-assets" placeholder="XLM" data-path="limits.per_day.asset">
+                      </div>
+                    </div>
+                  </div>
+                  <div class="tb-field" data-path="limits.recipients">
+                    <span class="tb-label" id="l-recip">Who it may pay <code>recipients</code></span>
+                    <div class="tb-options" role="radiogroup" aria-labelledby="l-recip">
+                      <label><input type="radio" name="recip" value="allowlist" data-bind="limits.recipients"><span><b>allowlist</b> only saved payees</span></label>
+                      <label><input type="radio" name="recip" value="any" data-bind="limits.recipients"><span><b>any</b> whatever the request names</span></label>
+                      <label><input type="radio" name="recip" value="none" data-bind="limits.recipients"><span><b>none</b> never pays</span></label>
+                    </div>
+                  </div>
+                  <div class="tb-field" data-path="limits.human_approval">
+                    <span class="tb-label" id="l-approve">When a person approves <code>human_approval</code></span>
+                    <div class="tb-seg" role="radiogroup" aria-labelledby="l-approve">
+                      <label><input type="radio" name="approve" value="always" data-bind="limits.human_approval"><span>always</span></label>
+                      <label><input type="radio" name="approve" value="above_limit" data-bind="limits.human_approval"><span>above_limit</span></label>
+                      <label><input type="radio" name="approve" value="never" data-bind="limits.human_approval"><span>never</span></label>
+                    </div>
+                  </div>
+                </div>
+              </fieldset>
+
+              <fieldset class="tb-set" data-path="tools">
+                <legend><span>tools</span> What it exposes <em>optional · up to 60</em></legend>
+                <ol class="tb-list" id="tb-tools"></ol>
+                <button type="button" class="tb-add" data-add="tools">+ Add a tool</button>
+              </fieldset>
+
+              <fieldset class="tb-set" data-path="forbidden">
+                <legend><span>forbidden</span> What it must refuse <em>optional · up to 30</em></legend>
+                <ol class="tb-list" id="tb-forbidden"></ol>
+                <button type="button" class="tb-add" data-add="forbidden">+ Add a refusal</button>
+              </fieldset>
+
+              <fieldset class="tb-set" data-path="owner">
+                <legend><span>owner</span> Who receives the credential <em>optional</em></legend>
+                <div class="tb-field" data-path="owner.stellar_account">
+                  <label for="f-owner">Owner's Stellar account <small>a G… account you control in Freighter</small></label>
+                  <input id="f-owner" data-bind="owner.stellar_account" class="mono" spellcheck="false" placeholder="G…">
+                </div>
+              </fieldset>
+
+              <details class="tb-set tb-more">
+                <summary><span>entrypoints · contact</span> More, optional</summary>
+                <div class="tb-field" data-path="entrypoints">
+                  <span class="tb-label">Entry points <small>where outside input enters, for the data-flow analysis · up to 10</small></span>
+                  <ol class="tb-list" id="tb-entrypoints"></ol>
+                  <button type="button" class="tb-add" data-add="entrypoints">+ Add an entry point</button>
+                </div>
+                <div class="tb-field" data-path="contact.security">
+                  <label for="f-contact">Security contact <small>email or URL, shown in the report</small></label>
+                  <input id="f-contact" data-bind="contact.security" placeholder="security@example.com">
+                </div>
+              </details>
+              <datalist id="tb-assets">
+                <option value="XLM"></option>
+                <option value="USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5">USDC on testnet (Circle)</option>
+                <option value="USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN">USDC on mainnet (Circle)</option>
+              </datalist>
+            </form>
+
+            <div class="tb-out">
+              <div class="tb-out-head">
+                <span class="tb-file">.tmark</span>
+                <span class="tb-status" id="tb-status" role="status" aria-live="polite">–</span>
+                <span class="tb-mascot" id="tb-mascot" data-tm-mascot="idle" data-tm-size="64" data-tm-decorative></span>
+              </div>
+              <pre class="tb-code" id="tb-code" tabindex="0" aria-label="The generated .tmark file"><code></code></pre>
+              <ul class="tb-errors" id="tb-errors" aria-label="Problems"></ul>
+              <div class="tb-actions">
+                <button type="button" class="g-btn small" id="tb-copy">Copy</button>
+                <button type="button" class="g-btn small ghost" id="tb-download">Download .tmark</button>
+                <button type="button" class="g-btn small ghost" id="tb-check" data-endpoint="/api/v1/tmark/check">Check with Touchmark</button>
+              </div>
+              <p class="tb-server" id="tb-server" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 04 ------------------------------------------------------------ -->
+      <section id="fields" class="g-plate" data-mascot="scanning">
+        <header class="g-plate-head"><span class="g-num">04</span><h2>Field reference</h2></header>
+        <p class="g-lead">Every field the format has, from <a href="/schemas/tmark-v1.json">tmark-v1.json</a>. Strings are trimmed; amounts are decimal strings with at most 7 decimal places; assets are <code>XLM</code> (or <code>native</code>), <code>CODE:G…ISSUER</code>, or a <code>C…</code> token contract, so a look-alike asset cannot satisfy a limit. Every <code>G…</code> and <code>C…</code> address must pass its checksum.</p>
+
+        <div class="t-ref">
+          <h3 class="t-ref-obj"><code>(top level)</code></h3>
+          <dl class="t-ref-list">
+            <div><dt><code>$schema</code><span class="t-opt">optional</span></dt><dd><p>The schema URL, for editors. Any string.</p></dd></div>
+            <div><dt><code>tmark</code><span class="t-req">required</span></dt><dd><p>Exactly the string <code>"1"</code>.</p></dd></div>
+            <div><dt><code>agent</code><span class="t-req">required</span></dt><dd><p>What the agent is. See below.</p></dd></div>
+            <div><dt><code>authority</code><span class="t-req">required</span></dt><dd><p>Keys and signing.</p></dd></div>
+            <div><dt><code>limits</code><span class="t-cond">when it moves funds</span></dt><dd><p>Required when <code>authority.signs</code> has <code>payments</code> or any tool has <code>moves_funds: true</code>.</p></dd></div>
+            <div><dt><code>owner</code> · <code>tools</code> · <code>forbidden</code> · <code>entrypoints</code> · <code>contact</code><span class="t-opt">optional</span></dt><dd><p>See below. Any other top-level field is an error.</p></dd></div>
+          </dl>
+
+          <h3 class="t-ref-obj"><code>agent</code></h3>
+          <dl class="t-ref-list">
+            <div><dt><code>name</code><span class="t-req">required</span></dt><dd><p>2 to 80 characters.</p></dd></div>
+            <div><dt><code>purpose</code><span class="t-req">required</span></dt><dd><p>20 to 1000 characters: what the agent does and for whom. <span class="t-checks">This is the intent the code is judged against.</span></p></dd></div>
+            <div><dt><code>kind</code><span class="t-req">required</span></dt><dd><p><code>mcp_server</code>, <code>autonomous_agent</code>, <code>x402_client</code>, <code>x402_server</code>, <code>sdk</code>, <code>skill</code>, <code>contract</code> or <code>other</code>.</p></dd></div>
+            <div><dt><code>network</code><span class="t-req">required</span></dt><dd><p><code>testnet</code>, <code>mainnet</code> or <code>both</code>. <span class="t-checks"><code>testnet</code> with the public network's passphrase or endpoints in shipped code, or with a tool argument, a paid server's challenge or a fallback able to pick mainnet, is a <b>high</b> network mismatch. <code>mainnet</code> when the code only ever names testnet is a <b>low</b> one.</span></p></dd></div>
+            <div><dt><code>discloses_ai</code><span class="t-opt">optional · default true</span></dt><dd><p>Users are told they are talking to an AI.</p></dd></div>
+          </dl>
+
+          <h3 class="t-ref-obj"><code>authority</code></h3>
+          <dl class="t-ref-list">
+            <div><dt><code>holds_keys</code><span class="t-req">required</span></dt><dd><p>Boolean: the agent itself holds a Stellar secret key. <span class="t-checks"><code>false</code> while the code loads a key or signs is a <b>high</b> authority mismatch.</span></p></dd></div>
+            <div><dt><code>key_source</code><span class="t-req">required</span></dt><dd><p><code>env</code>, <code>kms</code>, <code>external_signer</code>, <code>wallet_prompt</code> or <code>none</code>. Must agree with <code>holds_keys</code>: <code>env</code> and <code>kms</code> need <code>true</code>; <code>none</code> and <code>wallet_prompt</code> need <code>false</code>.</p>
+              <p class="t-soon"><span class="t-soon-tag">Coming in the next format version</span> Values for a secret the caller passes in with each call, and for a key the agent generates and stores itself. Until then, declare a per-call secret as <code>external_signer</code> and a stored generated key as <code>env</code>, and say which in <code>purpose</code>.</p></dd></div>
+            <div><dt><code>signs</code><span class="t-opt">optional · default []</span></dt><dd><p>Up to six, no repeats: <code>payments</code>, <code>contract_calls</code>, <code>account_changes</code>, <code>trustlines</code>, <code>foreign_transactions</code>, <code>messages</code>. <span class="t-checks">Code that can sign payments, contract calls, account changes or foreign transactions not listed here is a <b>high</b> authority mismatch.</span></p></dd></div>
+            <div><dt><code>agent_account</code><span class="t-opt">optional</span></dt><dd><p>The <code>G…</code> account or <code>C…</code> contract the agent acts from, if fixed. <span class="t-checks">Read from the ledger: signers, thresholds, balances, or the contract.</span></p></dd></div>
+          </dl>
+
+          <h3 class="t-ref-obj"><code>limits</code></h3>
+          <dl class="t-ref-list">
+            <div><dt><code>per_payment</code> · <code>per_day</code><span class="t-opt">optional</span></dt><dd><p><code>{"amount": "25", "asset": "XLM"}</code>: a positive amount with at most 7 decimal places, and an asset. <span class="t-checks">No amount cap in the code that pays, or no running total near it, is a <b>high</b> “limit not enforced”.</span></p></dd></div>
+            <div><dt><code>recipients</code><span class="t-req">required</span></dt><dd><p><code>allowlist</code> (only saved payees), <code>any</code> (whatever the request names) or <code>none</code> (never pays; an error if it moves funds). <span class="t-checks"><code>allowlist</code> with no allow-list enforced in code is a <b>high</b> “limit not enforced”.</span></p></dd></div>
+            <div><dt><code>human_approval</code><span class="t-req">required</span></dt><dd><p><code>always</code>, <code>above_limit</code> or <code>never</code>. <span class="t-checks"><code>always</code> or <code>above_limit</code> with no approval gate in the code that pays is a <b>high</b> “limit not enforced”.</span></p></dd></div>
+          </dl>
+
+          <h3 class="t-ref-obj"><code>tools[]</code></h3>
+          <dl class="t-ref-list">
+            <div><dt><code>name</code><span class="t-req">required</span></dt><dd><p>1 to 80 characters of <code>A–Z a–z 0–9 _ . : -</code>. Unique across tools.</p></dd></div>
+            <div><dt><code>description</code><span class="t-req">required</span></dt><dd><p>8 to 400 characters.</p></dd></div>
+            <div><dt><code>moves_funds</code> · <code>signs</code> · <code>network</code><span class="t-req">required</span></dt><dd><p>Booleans. A tool that signs needs a non-empty <code>authority.signs</code>; a tool that moves funds needs <code>limits</code>.</p></dd></div>
+            <div><dt><code>files</code><span class="t-opt">optional · default false</span></dt><dd><p>Reads or writes local files: a spend ledger, a keystore, a cache.</p></dd></div>
+            <div><dt><code>max_amount</code><span class="t-opt">optional</span></dt><dd><p>A money cap for this tool, only when <code>moves_funds</code> is true.</p>
+              <p class="t-soon"><span class="t-soon-tag">Coming in the next format version</span> A capability for tools that run shell commands or execute code, and a way to declare a family of tools generated at run time (one per contract function, say). Until then, say so in the tool's <code>description</code>, set <code>files</code> where it applies, and describe a generated family as one tool.</p></dd></div>
+          </dl>
+
+          <h3 class="t-ref-obj"><code>owner</code> · <code>forbidden[]</code> · <code>entrypoints[]</code> · <code>contact</code></h3>
+          <dl class="t-ref-list">
+            <div><dt><code>owner.stellar_account</code><span class="t-req">required in owner</span></dt><dd><p>A valid <code>G…</code> account. <span class="t-checks">The credential is issued to it after it signs the registration in Freighter.</span></p></dd></div>
+            <div><dt><code>forbidden[]</code><span class="t-opt">up to 30</span></dt><dd><p>Each 8 to 300 characters. <span class="t-checks">Used as goals the agent must refuse.</span></p></dd></div>
+            <div><dt><code>entrypoints[]</code><span class="t-opt">up to 10</span></dt><dd><p><code>{"path": "src/server.ts", "symbol": "handleRequest"}</code>: a relative path inside the repository (no <code>..</code>, no <code>//</code>) and an identifier. <span class="t-checks">Marks where outside input enters, for the data-flow analysis.</span></p></dd></div>
+            <div><dt><code>contact.security</code><span class="t-req">required in contact</span></dt><dd><p>An email or URL, 5 to 200 characters. Shown in the report.</p></dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <!-- 05 ------------------------------------------------------------ -->
+      <section id="examples" class="g-plate" data-mascot="pointing">
+        <header class="g-plate-head"><span class="g-num">05</span><h2>Worked examples</h2></header>
+        <p class="g-lead">Four honest declarations, each valid against the current schema. The last three describe real Stellar code.</p>
+        <div class="t-tabs" id="t-examples">
+          <div class="t-tablist" role="tablist" aria-label="Examples">
+            <button role="tab" id="tab-minimal" aria-controls="ex-minimal" aria-selected="true" data-example="minimal">Minimal</button>
+            <button role="tab" id="tab-payments" aria-controls="ex-payments" aria-selected="false" tabindex="-1" data-example="payments">Payments agent</button>
+            <button role="tab" id="tab-mcp" aria-controls="ex-mcp" aria-selected="false" tabindex="-1" data-example="mcp">MCP wallet server</button>
+            <button role="tab" id="tab-sdk" aria-controls="ex-sdk" aria-selected="false" tabindex="-1" data-example="sdk">SDK / library</button>
+          </div>
+          <div class="t-panel" role="tabpanel" id="ex-minimal" aria-labelledby="tab-minimal">
+            <div class="t-panel-notes"><h3>A read-only agent</h3><p>The smallest valid file: three required objects. It holds no key and signs nothing, so it needs no limits. Touchmark will still check that the code never loads a key or signs.</p><button type="button" class="g-btn small" data-load="minimal">Open in the builder</button></div>
+            <pre class="g-code t-example" data-example="minimal" tabindex="0" aria-label="Minimal .tmark"></pre>
+          </div>
+          <div class="t-panel" role="tabpanel" id="ex-payments" aria-labelledby="tab-payments" hidden>
+            <div class="t-panel-notes"><h3>Treasury agent, with limits</h3><p>The <em>Safe treasury agent</em> example on the home page. It holds a key from the environment, pays only listed suppliers, at most 500 XLM per payment and 1000 per day. Every one of those claims is enforced in its code, which is why it passes.</p><p><a href="/?ref=https://github.com/furkan3152/Touchmark_agent/tree/main/examples/demo/safe-treasury-agent">Audit it now →</a></p><button type="button" class="g-btn small" data-load="payments">Open in the builder</button></div>
+            <pre class="g-code t-example" data-example="payments" tabindex="0" aria-label="Payments agent .tmark"></pre>
+          </div>
+          <div class="t-panel" role="tabpanel" id="ex-mcp" aria-labelledby="tab-mcp" hidden>
+            <div class="t-panel-notes"><h3>An MCP wallet server</h3><p>A stdio MCP server for Soroban on testnet. It signs caller-supplied transactions with a caller-supplied secret, so it declares <code>external_signer</code>, <code>recipients: any</code> and <code>human_approval: never</code>: not reassuring, but true, and the audit can hold it to exactly that.</p><button type="button" class="g-btn small" data-load="mcp">Open in the builder</button></div>
+            <pre class="g-code t-example" data-example="mcp" tabindex="0" aria-label="MCP wallet server .tmark"></pre>
+          </div>
+          <div class="t-panel" role="tabpanel" id="ex-sdk" aria-labelledby="tab-sdk" hidden>
+            <div class="t-panel-notes"><h3>An SDK</h3><p>A payments library is not an agent, but code built on it will hold keys and pay. Declaring the library's client and server roles as tools, with <code>kind: sdk</code> and <code>network: both</code>, tells integrators what each one signs, and the <code>forbidden</code> list states the guarantees it is checked against.</p><button type="button" class="g-btn small" data-load="sdk">Open in the builder</button></div>
+            <pre class="g-code t-example" data-example="sdk" tabindex="0" aria-label="SDK .tmark"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- 06 ------------------------------------------------------------ -->
+      <section id="mistakes" class="g-plate" data-mascot="error">
+        <header class="g-plate-head"><span class="g-num">06</span><h2>Common mistakes, and what the checker says</h2></header>
+        <p class="g-lead">The checker answers by field, in these exact words. Any error and the file is not used at all: a half-read declaration could hide a limit or an authority.</p>
+        <div class="t-mistakes">
+          <div class="t-mistake g-reveal"><h3>A paying agent with no limits</h3><p>Listing <code>payments</code> in <code>signs</code> (or a tool with <code>moves_funds</code>) and leaving <code>limits</code> out.</p><samp>(file): the agent moves funds, so limits is required</samp><p class="t-fix">Add <code>limits</code>. If anyone can be paid without approval, say so: <code>"recipients": "any", "human_approval": "never"</code>.</p></div>
+          <div class="t-mistake g-reveal"><h3>A key that both is and isn't held</h3><p><code>holds_keys: true</code> with <code>key_source: "wallet_prompt"</code>, or <code>false</code> with <code>env</code>.</p><samp>authority: holds_keys is true, so key_source cannot be none or wallet_prompt</samp><samp>authority: key_source env or kms means the agent holds a key; set holds_keys to true</samp></div>
+          <div class="t-mistake g-reveal"><h3>A signing tool, but nothing in signs</h3><p>A tool has <code>signs: true</code> while <code>authority.signs</code> is empty.</p><samp>(file): a tool signs, so authority.signs must list what it signs</samp></div>
+          <div class="t-mistake g-reveal"><h3>Amounts as numbers, assets without issuers</h3><p><code>"amount": 25</code>, <code>"25.00000001"</code>, or <code>"asset": "USDC"</code>.</p><samp>limits.per_payment.amount: must be a positive decimal string with at most 7 decimal places, e.g. "25"</samp><samp>limits.per_payment.asset: must be XLM, CODE:ISSUER (G... issuer) or a C... token contract</samp><p class="t-fix">Quote amounts and name the issuer: <code>"USDC:GBBD47…LFLA5"</code> on testnet.</p></div>
+          <div class="t-mistake g-reveal"><h3>A typo in an address</h3><p>A <code>G…</code> account with one wrong character fails its checksum.</p><samp>owner.stellar_account: must be a valid Stellar G... address (checksum included)</samp><p class="t-fix">Copy the address from Freighter rather than typing it.</p></div>
+          <div class="t-mistake g-reveal"><h3>A field the format doesn't have</h3><p><code>spend_limit</code>, <code>description</code> at the top level, or a field from an older file.</p><samp>spend_limit: unknown field; see the .tmark schema for allowed fields</samp></div>
+          <div class="t-mistake g-reveal"><h3>Smaller slips</h3><p>A purpose under 20 characters, <code>"tmark": 1</code> as a number, a cap on a tool that does not move funds, a value listed twice.</p><samp>agent.purpose: String should have at least 20 characters</samp><samp>tmark: Input should be '1'</samp><samp>tools.0: max_amount is set but moves_funds is false</samp><samp>authority: signs lists a value twice</samp></div>
+        </div>
+      </section>
+
+      <!-- 07 ------------------------------------------------------------ -->
+      <section id="verdict" class="g-plate" data-mascot="warning">
+        <header class="g-plate-head"><span class="g-num">07</span><h2>How a mismatch affects the verdict</h2></header>
+        <p class="g-lead">Each claim is either kept by the code or broken by it. A kept claim is shown as declared. A broken one becomes a finding in the report, with the file and line that break it.</p>
+        <div class="t-flow g-reveal" aria-label="From a claim to a verdict">
+          <div class="t-flow-step"><span class="t-flow-k">Claim</span><p><code>"recipients": "allowlist"</code></p></div>
+          <div class="t-flow-arrow" aria-hidden="true">→</div>
+          <div class="t-flow-step"><span class="t-flow-k">Code</span><p>Is an allow-list enforced where the agent pays?</p></div>
+          <div class="t-flow-arrow" aria-hidden="true">→</div>
+          <div class="t-flow-split">
+            <div class="t-flow-ok"><b>Kept</b> shown as declared</div>
+            <div class="t-flow-bad"><b>Broken</b> a high risk → <span class="g-chip needs_fixes">needs fixes</span></div>
+          </div>
+        </div>
+        <table class="g-table t-findings">
+          <thead><tr><th scope="col">Finding in the report</th><th scope="col">Severity</th><th scope="col">Effect</th></tr></thead>
+          <tbody>
+            <tr><td>Declared testnet only, but the code can use the public network</td><td><span class="g-chip needs_fixes">high</span></td><td>An actionable risk: the decision is needs fixes, and the score is held at 64 or below.</td></tr>
+            <tr><td>The code has more Stellar authority than the .tmark declares</td><td><span class="g-chip needs_fixes">high</span></td><td>Actionable, as above.</td></tr>
+            <tr><td>A limit the .tmark declares is not enforced by the code</td><td><span class="g-chip needs_fixes">high</span></td><td>Actionable, as above. The evidence names each broken limit.</td></tr>
+            <tr><td>The .tmark file is not valid, so nothing in it was used</td><td><span class="g-chip needs_evidence">medium</span></td><td>Costs points; no claim, owner or limit in the file is used.</td></tr>
+            <tr><td>Declared mainnet, but the code only targets testnet</td><td><span class="g-chip pass">low</span></td><td>A small deduction: the declaration does not describe the code.</td></tr>
+            <tr><td>The repository uses an older declaration file</td><td><span class="g-chip pass">low</span></td><td>A nudge to migrate; older files cannot declare checked limits.</td></tr>
+          </tbody>
+        </table>
+        <aside class="g-say g-say-warn g-reveal"><span class="g-say-face" data-tm-mascot="warning" data-tm-size="72" data-tm-decorative></span><p><b>Punch says:</b> declare what the code does, not what you wish it did. An honest <code>"human_approval": "never"</code> costs little; a promised approval gate that isn't there blocks the pass.</p></aside>
+      </section>
+
+      <!-- 08 ------------------------------------------------------------ -->
+      <section id="next" class="g-plate" data-mascot="idle">
+        <header class="g-plate-head"><span class="g-num">08</span><h2>Coming in the next format version</h2></header>
+        <p class="g-lead">Three additions are planned. None of them exists in <code>tmark: "1"</code>; a file that uses them today would be rejected. Here is how to declare these cases honestly until then.</p>
+        <div class="g-cards">
+          <div class="card g-reveal"><span class="num">a.</span><h3>Where the key really comes from</h3><p>New <code>key_source</code> values for a secret the caller passes in each call, and for a key the agent generates and stores. Today: <code>external_signer</code> or <code>env</code>, explained in <code>purpose</code>.</p></div>
+          <div class="card g-reveal"><span class="num">b.</span><h3>Shell and code execution</h3><p>A capability for tools that run commands or execute code. Today: say it in the tool's <code>description</code> and set <code>files: true</code> when it touches the disk.</p></div>
+          <div class="card g-reveal"><span class="num">c.</span><h3>Generated tool families</h3><p>One declaration for tools generated at run time, such as one tool per contract function. Today: a single tool entry that describes the whole family.</p></div>
+        </div>
+      </section>
+
+      <section class="g-end g-reveal">
+        <span data-tm-mascot="success" data-tm-size="150" data-tm-decorative class="g-end-mascot" id="end-mascot"></span>
+        <div>
+          <h2>Commit it, then test it.</h2>
+          <p>Put the file at your repository root and run an audit: the report shows each claim the code keeps, and each one it breaks.</p>
+          <div class="g-cta"><a class="g-btn" href="/">Test an agent <span aria-hidden="true">→</span></a><a class="g-btn ghost" href="/guide">Back to the guide</a></div>
+        </div>
+      </section>
+    </article>
+  </div>
+</main>
+
+<footer class="foot"><svg class="logo" width="20" height="20"><use href="#mark"/></svg><span>Touchmark · testnet demo · A touchmark means no actionable risk was found in the reviewed code. It is not a guarantee of safety.</span></footer>
+</body>
+</html>
