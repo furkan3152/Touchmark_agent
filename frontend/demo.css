@@ -283,8 +283,11 @@ a.ghost{text-decoration:none;display:inline-flex;align-items:center;gap:4px}
   .input-row{flex-direction:column}#run,#run-recheck{min-height:50px}
   .steps{grid-template-columns:1fr 1fr}
   .verdict{flex-direction:column;align-items:flex-start;padding:22px}
-  .desk{grid-template-columns:1fr;gap:6px;padding:16px;box-shadow:5px 5px 0 var(--ink)}
-  .desk-punch{width:100px;height:100px;justify-self:start;margin:-6px 0 -4px -8px}.desk-punch .tm-mascot{width:100px}
+  .desk{grid-template-columns:84px minmax(0,1fr);gap:4px 12px;padding:16px;box-shadow:5px 5px 0 var(--ink)}
+  .desk-body{display:contents}
+  .desk-punch{width:84px;height:84px;margin:-4px 0 0 -6px}.desk-punch .tm-mascot{width:84px}
+  .desk-head{grid-column:2;align-self:center;gap:6px}
+  .desk-ref,.timeline,.desk-wait,.desk-error,#desk-live{grid-column:1/-1}
   .desk-title{font-size:20px}
   .declare-bar{flex-wrap:wrap}
   .declare textarea{font-size:13px}
