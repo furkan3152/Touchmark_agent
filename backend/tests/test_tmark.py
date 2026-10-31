@@ -422,3 +422,13 @@ def test_a_draft_from_source_names_the_tools_and_what_their_file_can_do():
 def test_the_schema_copy_in_schemas_matches_the_published_one():
     assert json.loads((ROOT / "schemas/tmark-v1.schema.json").read_text()) == json.loads(
         (ROOT / "public/schemas/tmark-v1.json").read_text())
+
+
+def test_tmark_init_drafts_from_the_tools_the_code_registers(tmp_path, capsys):
+    from scripts import tmark as cli
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/server.ts").write_text('server.tool("pay", "pay", {}, async () => ({}));\n')
+    assert cli.main(["init", str(tmp_path)]) == 0
+    draft = json.loads((tmp_path / ".tmark").read_text())
+    assert draft["tmark"] == "1.1" and [t["name"] for t in draft["tools"]] == ["pay"]
+    assert cli.main(["check", str(tmp_path)]) == 1  # the empty fields fail until a person fills them
