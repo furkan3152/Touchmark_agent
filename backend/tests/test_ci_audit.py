@@ -50,3 +50,25 @@ def test_an_invalid_tmark_is_annotated_on_the_file(monkeypatch, tmp_path, capsys
     ci_audit.main([str(repo)])
     printed = capsys.readouterr().out
     assert "::error file=.tmark,line=1,title=.tmark is invalid::agent.kind" in printed
+
+
+def test_a_path_with_no_source_exits_cleanly_without_a_traceback(tmp_path, capsys):
+    (tmp_path / "README.md").write_text("# nothing to audit\n")
+    assert ci_audit.main([str(tmp_path), "--out", str(tmp_path / "r.json")]) == 2
+    err = capsys.readouterr().err
+    assert "No supported source files" in err and "Traceback" not in err
+    assert ci_audit.main([str(tmp_path / "missing")]) == 2
+    assert "is not a directory" in capsys.readouterr().err
+
+
+def test_a_supplied_tmark_is_used_as_if_committed(tmp_path, capsys):
+    repo = tmp_path / "agent"
+    shutil.copytree(ROOT / "examples/demo/safe-treasury-agent", repo)
+    supplied = tmp_path / "decl.tmark"
+    shutil.move(repo / ".tmark", supplied)
+    out = tmp_path / "r.json"
+    ci_audit.main([str(repo), "--tmark", str(supplied), "--out", str(out)])
+    report = json.loads(out.read_text())
+    assert report["repository"]["declarations"]["tmark"] == {"status": "valid", "errors": [], "source": "supplied",
+                                                             "repository_status": "missing"}
+    assert '"tmark": "valid"' in capsys.readouterr().out
