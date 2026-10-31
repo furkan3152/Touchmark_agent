@@ -1,5 +1,5 @@
 "use strict";
-/* The .tmark builder on /guide/tmark, and a client-side copy of the .tmark v1 rules.
+/* The .tmark builder on /guide/tmark, and a client-side copy of the .tmark v1 (1.1) rules.
  *
  * TmarkRules.validate(obj) → [{ path, msg }] mirrors backend/app/services/tmark.py: the same
  * fields, limits, cross-field rules and wording ("agent.purpose: String should have at least 20
@@ -7,9 +7,13 @@
  * "Check with Touchmark" button posts the file to POST /api/v1/tmark/check ({ text }).
  *
  * Hooks for other pages:
- *   window.TmarkRules  { validate(obj), check(text), isAccount(value, prefix), EXAMPLES }
+ *   window.TmarkRules  { validate(obj), check(text), minorFeatures(obj), isAccount(value, prefix), EXAMPLES }
  *   window.TmarkBuilder { load(objOrText), get(), text() }  (only on the builder page)
  *   the builder root (#tmark-builder) dispatches "tmark:change" with { text, valid, errors }.
+ *
+ * Hand-offs between pages (sessionStorage, same origin, cleared once read):
+ *   "touchmark.tmark.toBuilder"  text the home page sends to the builder (/guide/tmark#builder)
+ *   "touchmark.tmark.toAudit"    text the builder sends back to the home page audit (/#declare)
  */
 (() => {
   const SCHEMA_URL = "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json";
@@ -48,9 +52,26 @@
   const ASSET = /^(?:XLM|native|[A-Za-z0-9]{1,12}:G[A-Z2-7]{55}|C[A-Z2-7]{55})$/;
   const KINDS = ["mcp_server", "autonomous_agent", "x402_client", "x402_server", "sdk", "skill", "contract", "other"];
   const SIGNS = ["payments", "contract_calls", "account_changes", "trustlines", "foreign_transactions", "messages"];
+  const KEY_SOURCES = ["env", "kms", "external_signer", "wallet_prompt", "none", "caller_supplied", "agent_generated"];
+  const KEY_SOURCES_1_1 = ["caller_supplied", "agent_generated"];
+  const VERSIONS = ["1", "1.1"];
+  const GENERATED_PATTERN = "^[A-Za-z0-9_.:*?\\[\\]{}-]+$";
   const literal = (opts) => "Input should be " + (opts.length === 1 ? `'${opts[0]}'`
     : opts.slice(0, -1).map((o) => `'${o}'`).join(", ") + ` or '${opts[opts.length - 1]}'`);
   const TRUE = new Set(["true", "1", "yes", "y", "on", "t"]), FALSE = new Set(["false", "0", "no", "n", "off", "f"]);
+  const isTrue = (v) => v === true || v === 1 || (typeof v === "string" && TRUE.has(v.trim().toLowerCase()));
+
+  /** The 1.1 fields and values a declaration uses (services/tmark.py Tmark.minor_features). */
+  function minorFeatures(raw) {
+    const used = [];
+    if (!raw || typeof raw !== "object") return used;
+    const src = raw.authority && typeof raw.authority.key_source === "string" ? raw.authority.key_source.trim() : "";
+    if (KEY_SOURCES_1_1.includes(src)) used.push(`authority.key_source ${src}`);
+    const tools = Array.isArray(raw.tools) ? raw.tools : [];
+    tools.forEach((t, i) => { if (t && isTrue(t.executes_code)) used.push(`tools.${i}.executes_code`); });
+    tools.forEach((t, i) => { if (t && t.generated !== undefined && t.generated !== null) used.push(`tools.${i}.generated`); });
+    return used;
+  }
 
   /** Validate a parsed .tmark object. Returns [{ path, msg }], at most 20, like the server. */
   function validate(raw) {
@@ -70,9 +91,11 @@
     function bool(v, path) {
       if (typeof v === "boolean" || v === 0 || v === 1) return true;
       if (typeof v === "string" && (TRUE.has(v.trim().toLowerCase()) || FALSE.has(v.trim().toLowerCase()))) return true;
-      add(path, "Input should be a valid boolean"); return false;
+      // pydantic: a string or number it cannot read says so; other types do not.
+      add(path, typeof v === "string" || typeof v === "number" ? "Input should be a valid boolean, unable to interpret input" : "Input should be a valid boolean");
+      return false;
     }
-    const asBool = (v) => v === true || v === 1 || (typeof v === "string" && TRUE.has(v.trim().toLowerCase()));
+    const asBool = isTrue;
     function lit(v, path, opts) {
       if (typeof v === "string" && opts.includes(v.trim())) return true;
       add(path, literal(opts)); return false;
@@ -83,8 +106,8 @@
       for (const k of required) if (!(k in obj)) { add(path ? `${path}.${k}` : k, "required"); ok = false; }
       return ok;
     }
-    function object(v, path) {
-      if (!isObj(v)) { add(path, "Input should be a valid dictionary or object"); return false; }
+    function object(v, path, model) {
+      if (!isObj(v)) { add(path, `Input should be a valid dictionary or instance of ${model}`); return false; }
       return true;
     }
     function list(v, path, max) {
@@ -101,7 +124,7 @@
     }
     function money(v, path) {
       if (v === null) return true;
-      if (!object(v, path)) return false;
+      if (!object(v, path, "Money")) return false;
       let ok = fields(v, path, ["amount", "asset"], ["amount", "asset"]);
       if ("amount" in v && str(v.amount, `${path}.amount`)) {
         const a = v.amount.trim();
@@ -119,11 +142,12 @@
     if (!isObj(raw)) { add("(file)", "the file must be one JSON object"); return errors; }
     let fileOk = fields(raw, "", ["$schema", "tmark", "agent", "owner", "authority", "limits", "tools", "forbidden", "entrypoints", "contact"], ["tmark", "agent", "authority"]);
     if ("$schema" in raw && !str(raw.$schema, "$schema")) fileOk = false;
-    if ("tmark" in raw && !(raw.tmark === "1" || (typeof raw.tmark === "string" && raw.tmark.trim() === "1"))) { add("tmark", "Input should be '1'"); fileOk = false; }
+    // A literal: matched exactly, not trimmed.
+    if ("tmark" in raw && !VERSIONS.includes(raw.tmark)) { add("tmark", literal(VERSIONS)); fileOk = false; }
 
     // agent
     const ag = raw.agent;
-    if ("agent" in raw && object(ag, "agent")) {
+    if ("agent" in raw && object(ag, "agent", "Agent")) {
       let ok = fields(ag, "agent", ["name", "purpose", "kind", "network", "discloses_ai"], ["name", "purpose", "kind", "network"]);
       if ("name" in ag) ok = str(ag.name, "agent.name", { min: 2, max: 80 }) && ok;
       if ("purpose" in ag) ok = str(ag.purpose, "agent.purpose", { min: 20, max: 1000 }) && ok;
@@ -135,7 +159,7 @@
 
     // owner
     if ("owner" in raw && raw.owner !== null) {
-      if (object(raw.owner, "owner")) {
+      if (object(raw.owner, "owner", "Owner")) {
         let ok = fields(raw.owner, "owner", ["stellar_account"], ["stellar_account"]);
         if ("stellar_account" in raw.owner) ok = account(raw.owner.stellar_account, "owner.stellar_account", "G") && ok;
         fileOk = ok && fileOk;
@@ -145,10 +169,10 @@
     // authority
     const au = raw.authority;
     let signs = [];
-    if ("authority" in raw && object(au, "authority")) {
+    if ("authority" in raw && object(au, "authority", "Authority")) {
       let ok = fields(au, "authority", ["holds_keys", "key_source", "signs", "agent_account"], ["holds_keys", "key_source"]);
       if ("holds_keys" in au) ok = bool(au.holds_keys, "authority.holds_keys") && ok;
-      if ("key_source" in au) ok = lit(au.key_source, "authority.key_source", ["env", "kms", "external_signer", "wallet_prompt", "none"]) && ok;
+      if ("key_source" in au) ok = lit(au.key_source, "authority.key_source", KEY_SOURCES) && ok;
       if ("signs" in au) {
         if (list(au.signs, "authority.signs", 6)) {
           au.signs.forEach((s, i) => { ok = lit(s, `authority.signs.${i}`, SIGNS) && ok; });
@@ -160,6 +184,7 @@
         const holds = asBool(au.holds_keys), src = String(au.key_source).trim();
         if (holds && (src === "none" || src === "wallet_prompt")) { add("authority", "holds_keys is true, so key_source cannot be none or wallet_prompt"); ok = false; }
         else if (!holds && (src === "env" || src === "kms")) { add("authority", "key_source env or kms means the agent holds a key; set holds_keys to true"); ok = false; }
+        else if (!holds && src === "agent_generated") { add("authority", "key_source agent_generated means the agent stores a key; set holds_keys to true"); ok = false; }
         else if (new Set(signs).size !== signs.length) { add("authority", "signs lists a value twice"); ok = false; }
       }
       fileOk = ok && fileOk;
@@ -168,7 +193,7 @@
     // limits
     const li = raw.limits;
     if ("limits" in raw && li !== null) {
-      if (object(li, "limits")) {
+      if (object(li, "limits", "Limits")) {
         let ok = fields(li, "limits", ["per_payment", "per_day", "recipients", "human_approval"], ["recipients", "human_approval"]);
         if ("per_payment" in li) ok = money(li.per_payment, "limits.per_payment") && ok;
         if ("per_day" in li) ok = money(li.per_day, "limits.per_day") && ok;
@@ -185,11 +210,21 @@
         tools = raw.tools;
         tools.forEach((t, i) => {
           const p = `tools.${i}`;
-          if (!object(t, p)) { fileOk = false; return; }
-          let ok = fields(t, p, ["name", "description", "moves_funds", "signs", "network", "files", "max_amount"], ["name", "description", "moves_funds", "signs", "network"]);
+          if (!object(t, p, "Tool")) { fileOk = false; return; }
+          let ok = fields(t, p, ["name", "description", "moves_funds", "signs", "network", "files", "executes_code", "generated", "max_amount"], ["name", "description", "moves_funds", "signs", "network"]);
           if ("name" in t) ok = str(t.name, `${p}.name`, { min: 1, max: 80, pattern: "^[A-Za-z0-9_.:-]+$" }) && ok;
           if ("description" in t) ok = str(t.description, `${p}.description`, { min: 8, max: 400 }) && ok;
-          for (const k of ["moves_funds", "signs", "network", "files"]) if (k in t) ok = bool(t[k], `${p}.${k}`) && ok;
+          for (const k of ["moves_funds", "signs", "network", "files", "executes_code"]) if (k in t) ok = bool(t[k], `${p}.${k}`) && ok;
+          // 1.1: a family of tools the code generates at run time.
+          if ("generated" in t && t.generated !== null) {
+            const g = t.generated, gp = `${p}.generated`;
+            if (object(g, gp, "Generated")) {
+              let gok = fields(g, gp, ["pattern", "source"], ["pattern", "source"]);
+              if ("pattern" in g) gok = str(g.pattern, `${gp}.pattern`, { min: 1, max: 120, pattern: GENERATED_PATTERN }) && gok;
+              if ("source" in g) gok = str(g.source, `${gp}.source`, { min: 8, max: 300 }) && gok;
+              ok = gok && ok;
+            } else ok = false;
+          }
           if ("max_amount" in t) ok = money(t.max_amount, `${p}.max_amount`) && ok;
           if (ok && t.max_amount != null && !asBool(t.moves_funds)) { add(p, "max_amount is set but moves_funds is false"); ok = false; }
           fileOk = ok && fileOk;
@@ -212,7 +247,7 @@
       if (list(raw.entrypoints, "entrypoints", 10)) {
         raw.entrypoints.forEach((e, i) => {
           const p = `entrypoints.${i}`;
-          if (!object(e, p)) { fileOk = false; return; }
+          if (!object(e, p, "Entrypoint")) { fileOk = false; return; }
           let ok = fields(e, p, ["path", "symbol"], ["path", "symbol"]);
           if ("path" in e && str(e.path, `${p}.path`, { min: 1, max: 160, pattern: "^[A-Za-z0-9_][A-Za-z0-9_./-]*$" })) {
             const s = e.path.trim();
@@ -226,7 +261,7 @@
 
     // contact
     if ("contact" in raw && raw.contact !== null) {
-      if (object(raw.contact, "contact")) {
+      if (object(raw.contact, "contact", "Contact")) {
         let ok = fields(raw.contact, "contact", ["security"], ["security"]);
         if ("security" in raw.contact) ok = str(raw.contact.security, "contact.security", { min: 5, max: 200 }) && ok;
         fileOk = ok && fileOk;
@@ -239,10 +274,8 @@
       if (pays && (raw.limits == null)) add("(file)", "the agent moves funds, so limits is required");
       else if (pays && raw.limits.recipients.trim() === "none") add("(file)", "limits.recipients is none but the agent moves funds");
       else if (tools.some((t) => asBool(t.signs)) && !signs.length) add("(file)", "a tool signs, so authority.signs must list what it signs");
-      else {
-        const names = tools.map((t) => t.name.trim());
-        if (new Set(names).size !== names.length) add("(file)", "two tools have the same name");
-      }
+      else if (new Set(tools.map((t) => t.name.trim())).size !== tools.length) add("(file)", "two tools have the same name");
+      else if (raw.tmark === "1" && minorFeatures(raw).length) add("(file)", `uses .tmark 1.1 fields (${minorFeatures(raw).join(", ")}); set "tmark": "1.1"`);
     }
     return errors.slice(0, 20);
   }
@@ -256,7 +289,7 @@
   }
 
   // ---------------------------------------------------------- examples
-  // Valid against tmark v1 (checked with backend/app/services/tmark.py). The payments agent is
+  // Valid against .tmark 1 / 1.1 (checked with backend/app/services/tmark.py). The payments agent is
   // examples/demo/safe-treasury-agent/.tmark; the MCP server and the SDK are honest declarations
   // for public Stellar repositories (stellar-mcp-server by Jose Toscano, @stellar/mpp).
   const EXAMPLES = {
@@ -275,9 +308,9 @@
         { name: "fetch_invoice", description: "Read an invoice by id from the fixed invoice host", moves_funds: false, signs: false, network: true },
       ],
       forbidden: ["pay anyone who is not in the supplier table", "pay more than 500 XLM in one payment", "pay more than 1000 XLM in one day"] },
-    mcp: { $schema: SCHEMA_URL, tmark: "1",
+    mcp: { $schema: SCHEMA_URL, tmark: "1.1",
       agent: { name: "stellar-mcp-server (Jose Toscano)", purpose: "Stdio MCP server for Soroban on Stellar testnet. It creates and funds testnet accounts, reads accounts and history from Horizon, and signs auth entries and envelopes of a caller-supplied Soroban transaction XDR with a caller-supplied secret key (or as a passkey smart-wallet signer) before submitting it through Launchtube.", kind: "mcp_server", network: "testnet", discloses_ai: true },
-      authority: { holds_keys: true, key_source: "external_signer", signs: ["contract_calls", "foreign_transactions"] },
+      authority: { holds_keys: false, key_source: "caller_supplied", signs: ["contract_calls", "foreign_transactions"] },
       limits: { recipients: "any", human_approval: "never" },
       tools: [
         { name: "create-account", description: "Generate a random keypair and return the public and secret key to the caller", moves_funds: false, signs: false, network: false },
@@ -286,6 +319,17 @@
         { name: "sign-and-submit-transaction", description: "Sign the auth entries and envelope of a caller-supplied Soroban XDR with a caller-supplied secret, or as a smart-wallet signer, and submit via Launchtube", moves_funds: true, signs: true, network: true },
         { name: "submit-signed-xdr", description: "Submit an already signed transaction XDR through Launchtube", moves_funds: true, signs: false, network: true },
       ] },
+    contracts: { $schema: SCHEMA_URL, tmark: "1.1",
+      agent: { name: "Contract tools server", purpose: "MCP server that turns each function of a Soroban contract the caller registers into a tool. It simulates every call on testnet, then signs it with a secret the caller passes in with that request; it keeps no key. It can also build a contract from a folder with the stellar CLI.", kind: "mcp_server", network: "testnet", discloses_ai: true },
+      authority: { holds_keys: false, key_source: "caller_supplied", signs: ["contract_calls"] },
+      limits: { recipients: "any", human_approval: "never" },
+      tools: [
+        { name: "register_contract", description: "Read a contract's interface by its C… address and generate one tool per function", moves_funds: false, signs: false, network: true },
+        { name: "invoke_function", description: "Call one function of a registered contract: simulate, then sign with the caller's secret and submit", moves_funds: true, signs: true, network: true,
+          generated: { pattern: "invoke_*", source: "each function of a contract the caller registers" } },
+        { name: "build_contract", description: "Compile a Soroban contract from a folder in the workspace with the stellar CLI", moves_funds: false, signs: false, network: false, files: true, executes_code: true },
+      ],
+      forbidden: ["sign with any secret other than the one passed in with this request", "submit a call whose simulation failed"] },
     sdk: { $schema: SCHEMA_URL, tmark: "1",
       agent: { name: "@stellar/mpp", purpose: "SDK for the Machine Payments Protocol on Stellar. The client side signs a SEP-41 token transfer (or an off-chain channel commitment) to pay a server's 402 challenge, checking that the signed auth tree is exactly that transfer; the server side verifies and broadcasts client payments, optionally sponsoring fees, and closes payment channels.", kind: "sdk", network: "both", discloses_ai: true },
       authority: { holds_keys: true, key_source: "env", signs: ["payments", "contract_calls", "foreign_transactions", "messages"] },
@@ -303,7 +347,8 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const ORDER = ["$schema", "tmark", "agent", "owner", "authority", "limits", "tools", "forbidden", "entrypoints", "contact",
     "name", "purpose", "description", "kind", "network", "discloses_ai", "stellar_account", "holds_keys", "key_source", "signs",
-    "agent_account", "per_payment", "per_day", "recipients", "human_approval", "moves_funds", "files", "max_amount", "amount", "asset", "path", "symbol", "security"];
+    "agent_account", "per_payment", "per_day", "recipients", "human_approval", "moves_funds", "files", "executes_code", "generated",
+    "pattern", "source", "max_amount", "amount", "asset", "path", "symbol", "security"];
   const rank = (k) => { const i = ORDER.indexOf(k); return i < 0 ? 99 : i; };
   function scalar(v) {
     if (typeof v === "string") return `<span class="j-s">${esc(JSON.stringify(v))}</span>`;
@@ -338,7 +383,7 @@
     return { html: ls.map((l) => `<span class="ln" data-path="${esc(l.path)}">${l.html}</span>`).join(""), text: ls.map((l) => l.text).join("\n") + "\n" };
   }
 
-  window.TmarkRules = { validate, check, isAccount, highlight, EXAMPLES, SCHEMA_URL };
+  window.TmarkRules = { validate, check, minorFeatures, isAccount, highlight, EXAMPLES, SCHEMA_URL };
 
   // Worked examples on the page: render each, and wire the tabs.
   document.querySelectorAll("pre.t-example[data-example]").forEach((pre) => {
@@ -405,12 +450,25 @@
         <label><input type="checkbox" data-k="signs"><span>signs</span></label>
         <label><input type="checkbox" data-k="network"><span>network</span></label>
         <label><input type="checkbox" data-k="files"><span>files</span></label>
+        <label><input type="checkbox" data-k="executes_code"><span>runs code <small class="tb-v11">1.1</small></span></label>
+      </div>
+      <div class="tb-field tb-gen" data-rel="generated">
+        <label class="tb-check tb-gen-on"><input type="checkbox" data-k="generated.on"> Stands for a family of tools the code generates at run time <code>generated</code> <small class="tb-v11">1.1</small></label>
+        <div class="tb-gen-fields" hidden>
+          <div class="tb-field" data-rel="generated.pattern"><label for="t${n}-gp">Name pattern <small>a glob every generated name matches</small></label><input id="t${n}-gp" class="mono" data-k="generated.pattern" maxlength="120" spellcheck="false" placeholder="invoke_*"></div>
+          <div class="tb-field" data-rel="generated.source"><label for="t${n}-gs">Generated from <small>8 to 300 characters</small></label><input id="t${n}-gs" data-k="generated.source" maxlength="300" placeholder="each function of a contract the caller registers"></div>
+        </div>
       </div>
       <div class="tb-field tb-money" data-rel="max_amount"><span class="tb-label">Max per call <small>optional, only when it moves funds</small></span>
         <div class="tb-money-in"><input aria-label="Tool cap amount" class="mono" data-k="max_amount.amount" data-rel="max_amount.amount" inputmode="decimal" placeholder="500"><input aria-label="Tool cap asset" class="mono" data-k="max_amount.asset" data-rel="max_amount.asset" list="tb-assets" placeholder="XLM"></div></div>`;
     li.querySelector('[data-k="name"]').value = t.name || "";
     li.querySelector('[data-k="description"]').value = t.description || "";
-    for (const k of ["moves_funds", "signs", "network", "files"]) li.querySelector(`[data-k="${k}"]`).checked = !!t[k];
+    for (const k of ["moves_funds", "signs", "network", "files", "executes_code"]) li.querySelector(`[data-k="${k}"]`).checked = isTrue(t[k]);
+    const gen = t.generated && typeof t.generated === "object" ? t.generated : null;
+    li.querySelector('[data-k="generated.on"]').checked = !!gen;
+    li.querySelector(".tb-gen-fields").hidden = !gen;
+    li.querySelector('[data-k="generated.pattern"]').value = (gen && gen.pattern) || "";
+    li.querySelector('[data-k="generated.source"]').value = (gen && gen.source) || "";
     li.querySelector('[data-k="max_amount.amount"]').value = (t.max_amount && t.max_amount.amount) || "";
     li.querySelector('[data-k="max_amount.asset"]').value = (t.max_amount && t.max_amount.asset) || "";
     return li;
@@ -468,6 +526,10 @@
       const t = { name: li.querySelector('[data-k="name"]').value, description: li.querySelector('[data-k="description"]').value };
       for (const k of ["moves_funds", "signs", "network"]) t[k] = li.querySelector(`[data-k="${k}"]`).checked;
       if (li.querySelector('[data-k="files"]').checked) t.files = true;
+      if (li.querySelector('[data-k="executes_code"]').checked) t.executes_code = true;
+      if (li.querySelector('[data-k="generated.on"]').checked) {
+        t.generated = { pattern: li.querySelector('[data-k="generated.pattern"]').value, source: li.querySelector('[data-k="generated.source"]').value };
+      }
       const amount = li.querySelector('[data-k="max_amount.amount"]').value.trim();
       if (amount) t.max_amount = { amount, asset: li.querySelector('[data-k="max_amount.asset"]').value.trim() || "XLM" };
       return t;
@@ -477,6 +539,8 @@
     if (forbidden.length) o.forbidden = forbidden;
     const entries = [...lists.entrypoints.children].map((li) => ({ path: li.querySelector('[data-k="path"]').value, symbol: li.querySelector('[data-k="symbol"]').value }));
     if (entries.length) o.entrypoints = entries;
+    // "1.1" only when a 1.1 field is used: every other file stays readable as "1".
+    o.tmark = minorFeatures(o).length ? "1.1" : "1";
     return o;
   }
 
@@ -558,7 +622,11 @@
     list.hidden = !errors.length;
     const status = $("tb-status");
     status.className = "tb-status " + (errors.length ? "bad" : "ok");
-    status.textContent = errors.length ? `${errors.length} ${errors.length === 1 ? "problem" : "problems"}` : "valid .tmark v1";
+    status.textContent = errors.length ? `${errors.length} ${errors.length === 1 ? "problem" : "problems"}` : `valid .tmark ${obj.tmark}`;
+    const minor = minorFeatures(obj);
+    $("tb-version").textContent = minor.length
+      ? `"tmark": "1.1", because it uses ${minor.map((f) => f.replace(/^tools\.(\d+)\./, (_, i) => `tool ${Number(i) + 1} `)).join(", ")}.`
+      : `"tmark": "1": no 1.1 field is used, so any Touchmark reader accepts it.`;
     const m = $("tb-mascot");
     if (m && m.tmMascot) {
       const want = errors.length ? "warning" : "success";
@@ -602,7 +670,14 @@
   form.addEventListener("input", (e) => {
     const p = pathOf(e.target);
     if (p) touched.add(p.replace(/\.(amount|asset)$/, "") === p ? p : p);
-    if (e.target.dataset.k !== undefined) { const row = e.target.closest("li[data-path]"); if (row) touched.add(row.dataset.path + (e.target.dataset.k ? "." + e.target.dataset.k : "")); }
+    if (e.target.dataset.k !== undefined) {
+      const row = e.target.closest("li[data-path]");
+      if (row) touched.add(row.dataset.path + (e.target.dataset.k ? "." + e.target.dataset.k.replace(/\.on$/, "") : ""));
+      if (e.target.dataset.k === "generated.on") {
+        row.querySelector(".tb-gen-fields").hidden = !e.target.checked;
+        if (e.target.checked) setTimeout(() => row.querySelector('[data-k="generated.pattern"]').focus(), 0);
+      }
+    }
     update();
     glow(p || (e.target.closest("li[data-path]") || {}).dataset?.path);
     const m = $("tb-mascot");
@@ -709,11 +784,47 @@
     } finally { b.disabled = false; }
   });
 
+  // Back to the home page audit with this file (and the repository it came with, if any).
+  let handoffReference = "";
+  $("tb-audit").addEventListener("click", () => {
+    try { sessionStorage.setItem("touchmark.tmark.toAudit", JSON.stringify({ text: current.text, reference: handoffReference })); } catch { /* storage off: the link still opens */ }
+    location.href = "/#declare";
+  });
+
   window.TmarkBuilder = { load: (x) => load(x), get: () => current.obj, text: () => current.text };
 
-  // ?example=payments preloads an example; otherwise start from the payments agent.
+  // A file handed over from the home page opens prefilled; ?example=payments preloads an
+  // example; otherwise start from the payments agent.
   const start = new URLSearchParams(location.search).get("example");
-  const boot = () => { load(JSON.parse(JSON.stringify(EXAMPLES[start] || EXAMPLES.payments)), { quiet: true });
+  function takeHandoff() {
+    let raw = null;
+    try { raw = sessionStorage.getItem("touchmark.tmark.toBuilder"); sessionStorage.removeItem("touchmark.tmark.toBuilder"); } catch { return false; }
+    if (!raw) return false;
+    let handed;
+    try { handed = JSON.parse(raw); } catch { return false; }
+    if (!handed || typeof handed.text !== "string" || !handed.text.trim()) return false;
+    handoffReference = typeof handed.reference === "string" ? handed.reference.slice(0, 300) : "";
+    const note = $("tb-handoff");
+    const r = check(handed.text);
+    if (!r.obj || typeof r.obj !== "object" || Array.isArray(r.obj)) {
+      load(JSON.parse(JSON.stringify(EXAMPLES.blank)), { quiet: true });
+      $("tb-paste-text").value = handed.text;
+      document.querySelector(".tb-paste").open = true;
+      note.textContent = `The .tmark from your audit is not readable yet (${r.errors[0] ? r.errors[0].msg : "not one JSON object"}). It is in the paste box below: fix it there and load it.`;
+    } else {
+      load(r.obj);
+      const unknown = r.errors.filter((e) => e.msg.startsWith("unknown field")).map((e) => e.path);
+      note.textContent = `Opened the .tmark from your audit${handoffReference ? ` of ${handoffReference.replace("https://github.com/", "")}` : ""}.`
+        + (r.errors.length ? ` As handed over it had ${r.errors.length} ${r.errors.length === 1 ? "problem" : "problems"}, marked below.` : " It is valid as it stands.")
+        + (unknown.length ? ` Unknown fields were left out: ${unknown.join(", ")}.` : "");
+    }
+    note.hidden = false;
+    document.querySelectorAll(".tb-toolbar [data-load]").forEach((x) => x.setAttribute("aria-pressed", "false"));
+    return true;
+  }
+  const boot = () => {
+    if (takeHandoff()) return;
+    load(JSON.parse(JSON.stringify(EXAMPLES[start] || EXAMPLES.payments)), { quiet: true });
     document.querySelectorAll(".tb-toolbar [data-load]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.load === (EXAMPLES[start] ? start : "payments")))); };
   if (window.TouchmarkMascot) boot(); else document.addEventListener("DOMContentLoaded", boot);
 })();

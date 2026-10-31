@@ -35,7 +35,7 @@
   <p class="g-crumb"><a href="/guide">Guide</a> <span aria-hidden="true">/</span> <span>.tmark</span></p>
   <section class="g-hero t-hero">
     <div class="g-hero-copy">
-      <p class="eyebrow"><span>.tmark v1</span><span>Repository root</span></p>
+      <p class="eyebrow"><span>.tmark 1.1</span><span>Repository root</span></p>
       <h1>Say what your agent may do. <em>We check the code agrees.</em></h1>
       <p class="lede">A <code>.tmark</code> is one small JSON file that states what your Stellar agent is and what it is allowed to do. Touchmark reads it, then checks every claim against the code.</p>
       <ul class="t-facts">
@@ -72,7 +72,7 @@
           <li><a href="#examples"><span>05</span>Examples</a></li>
           <li><a href="#mistakes"><span>06</span>Common mistakes</a></li>
           <li><a href="#verdict"><span>07</span>Effect on the verdict</a></li>
-          <li><a href="#next"><span>08</span>Coming next</a></li>
+          <li><a href="#new"><span>08</span>New in 1.1</a></li>
         </ol>
         <div class="g-toc-progress" aria-hidden="true"><i></i></div>
       </nav>
@@ -115,7 +115,7 @@
             <h3>Validate as you type</h3>
             <pre class="g-code"><code><span class="j-p">{</span>
   <span class="j-k">"$schema"</span><span class="j-p">:</span> <span class="j-s">"https://touchmark-stellar.vercel.app/schemas/tmark-v1.json"</span><span class="j-p">,</span>
-  <span class="j-k">"tmark"</span><span class="j-p">:</span> <span class="j-s">"1"</span><span class="j-p">, …</span></code></pre>
+  <span class="j-k">"tmark"</span><span class="j-p">:</span> <span class="j-s">"1.1"</span><span class="j-p">, …</span></code></pre>
             <p>Editors that read <code>$schema</code> (VS Code, JetBrains) check the file against <a href="/schemas/tmark-v1.json">the schema</a> as you write.</p>
           </div>
         </div>
@@ -127,12 +127,14 @@
         <p class="g-lead">Fill in the form; the file on the right is written as you go and checked against the same rules Touchmark uses. Nothing leaves your browser until you press <span class="g-ui">Check with Touchmark</span>.</p>
 
         <div class="tb" id="tmark-builder">
+          <p class="tb-handoff" id="tb-handoff" role="status" hidden></p>
           <div class="tb-toolbar" role="group" aria-label="Start from">
             <span class="tb-toolbar-label">Start from</span>
             <button type="button" class="tb-chip" data-load="blank">Blank</button>
             <button type="button" class="tb-chip" data-load="minimal">Minimal</button>
             <button type="button" class="tb-chip" data-load="payments">Payments agent</button>
             <button type="button" class="tb-chip" data-load="mcp">MCP wallet server</button>
+            <button type="button" class="tb-chip" data-load="contracts">Contract tools <small class="tb-v11">1.1</small></button>
             <button type="button" class="tb-chip" data-load="sdk">SDK / library</button>
             <details class="tb-paste">
               <summary class="tb-chip">Paste a .tmark</summary>
@@ -196,6 +198,8 @@
                     <label><input type="radio" name="source" value="external_signer" data-bind="authority.key_source"><span><b>external_signer</b> another signer or service holds the key</span></label>
                     <label><input type="radio" name="source" value="wallet_prompt" data-bind="authority.key_source"><span><b>wallet_prompt</b> the user's wallet is asked to sign each time</span></label>
                     <label><input type="radio" name="source" value="none" data-bind="authority.key_source"><span><b>none</b> nothing is signed</span></label>
+                    <label><input type="radio" name="source" value="caller_supplied" data-bind="authority.key_source"><span><b>caller_supplied</b> <small class="tb-v11">1.1</small> the caller passes a secret in with each call; the agent keeps none</span></label>
+                    <label><input type="radio" name="source" value="agent_generated" data-bind="authority.key_source"><span><b>agent_generated</b> <small class="tb-v11">1.1</small> the agent creates a key and stores it itself (needs holds_keys: yes)</span></label>
                   </div>
                 </div>
                 <div class="tb-field" data-path="authority.signs">
@@ -300,11 +304,13 @@
                 <span class="tb-mascot" id="tb-mascot" data-tm-mascot="idle" data-tm-size="64" data-tm-decorative></span>
               </div>
               <pre class="tb-code" id="tb-code" tabindex="0" aria-label="The generated .tmark file"><code></code></pre>
+              <p class="tb-version" id="tb-version"></p>
               <ul class="tb-errors" id="tb-errors" aria-label="Problems"></ul>
               <div class="tb-actions">
                 <button type="button" class="g-btn small" id="tb-copy">Copy</button>
                 <button type="button" class="g-btn small ghost" id="tb-download">Download .tmark</button>
                 <button type="button" class="g-btn small ghost" id="tb-check" data-endpoint="/api/v1/tmark/check">Check with Touchmark</button>
+                <button type="button" class="g-btn small ghost" id="tb-audit">Use it in an audit <span aria-hidden="true">→</span></button>
               </div>
               <p class="tb-server" id="tb-server" role="status" aria-live="polite"></p>
             </div>
@@ -321,7 +327,7 @@
           <h3 class="t-ref-obj"><code>(top level)</code></h3>
           <dl class="t-ref-list">
             <div><dt><code>$schema</code><span class="t-opt">optional</span></dt><dd><p>The schema URL, for editors. Any string.</p></dd></div>
-            <div><dt><code>tmark</code><span class="t-req">required</span></dt><dd><p>Exactly the string <code>"1"</code>.</p></dd></div>
+            <div><dt><code>tmark</code><span class="t-req">required</span></dt><dd><p>The string <code>"1"</code> or <code>"1.1"</code>. A file that uses any 1.1 field must say <code>"1.1"</code>; every <code>"1"</code> file stays valid unchanged. The builder writes <code>"1.1"</code> only when you use one.</p></dd></div>
             <div><dt><code>agent</code><span class="t-req">required</span></dt><dd><p>What the agent is. See below.</p></dd></div>
             <div><dt><code>authority</code><span class="t-req">required</span></dt><dd><p>Keys and signing.</p></dd></div>
             <div><dt><code>limits</code><span class="t-cond">when it moves funds</span></dt><dd><p>Required when <code>authority.signs</code> has <code>payments</code> or any tool has <code>moves_funds: true</code>.</p></dd></div>
@@ -340,8 +346,8 @@
           <h3 class="t-ref-obj"><code>authority</code></h3>
           <dl class="t-ref-list">
             <div><dt><code>holds_keys</code><span class="t-req">required</span></dt><dd><p>Boolean: the agent itself holds a Stellar secret key. <span class="t-checks"><code>false</code> while the code loads a key or signs is a <b>high</b> authority mismatch.</span></p></dd></div>
-            <div><dt><code>key_source</code><span class="t-req">required</span></dt><dd><p><code>env</code>, <code>kms</code>, <code>external_signer</code>, <code>wallet_prompt</code> or <code>none</code>. Must agree with <code>holds_keys</code>: <code>env</code> and <code>kms</code> need <code>true</code>; <code>none</code> and <code>wallet_prompt</code> need <code>false</code>.</p>
-              <p class="t-soon"><span class="t-soon-tag">Coming in the next format version</span> Values for a secret the caller passes in with each call, and for a key the agent generates and stores itself. Until then, declare a per-call secret as <code>external_signer</code> and a stored generated key as <code>env</code>, and say which in <code>purpose</code>.</p></dd></div>
+            <div><dt><code>key_source</code><span class="t-req">required</span></dt><dd><p><code>env</code>, <code>kms</code>, <code>external_signer</code>, <code>wallet_prompt</code> or <code>none</code>, and since 1.1 <code>caller_supplied</code> and <code>agent_generated</code>. Must agree with <code>holds_keys</code>: <code>env</code>, <code>kms</code> and <code>agent_generated</code> need <code>true</code>; <code>none</code> and <code>wallet_prompt</code> need <code>false</code>.</p>
+              <p class="t-new"><span class="t-new-tag">1.1</span><code>caller_supplied</code>: the caller passes a secret in with each call and the agent keeps none, so <code>holds_keys: false</code> is honest even though the code loads a key. <code>agent_generated</code>: the agent creates a keypair and stores it itself (a keystore, a file, a database). <span class="t-checks">With <code>caller_supplied</code>, the path the secret takes through the model and the tools is still traced by the data-flow rules.</span></p></dd></div>
             <div><dt><code>signs</code><span class="t-opt">optional · default []</span></dt><dd><p>Up to six, no repeats: <code>payments</code>, <code>contract_calls</code>, <code>account_changes</code>, <code>trustlines</code>, <code>foreign_transactions</code>, <code>messages</code>. <span class="t-checks">Code that can sign payments, contract calls, account changes or foreign transactions not listed here is a <b>high</b> authority mismatch.</span></p></dd></div>
             <div><dt><code>agent_account</code><span class="t-opt">optional</span></dt><dd><p>The <code>G…</code> account or <code>C…</code> contract the agent acts from, if fixed. <span class="t-checks">Read from the ledger: signers, thresholds, balances, or the contract.</span></p></dd></div>
           </dl>
@@ -359,8 +365,9 @@
             <div><dt><code>description</code><span class="t-req">required</span></dt><dd><p>8 to 400 characters.</p></dd></div>
             <div><dt><code>moves_funds</code> · <code>signs</code> · <code>network</code><span class="t-req">required</span></dt><dd><p>Booleans. A tool that signs needs a non-empty <code>authority.signs</code>; a tool that moves funds needs <code>limits</code>.</p></dd></div>
             <div><dt><code>files</code><span class="t-opt">optional · default false</span></dt><dd><p>Reads or writes local files: a spend ledger, a keystore, a cache.</p></dd></div>
-            <div><dt><code>max_amount</code><span class="t-opt">optional</span></dt><dd><p>A money cap for this tool, only when <code>moves_funds</code> is true.</p>
-              <p class="t-soon"><span class="t-soon-tag">Coming in the next format version</span> A capability for tools that run shell commands or execute code, and a way to declare a family of tools generated at run time (one per contract function, say). Until then, say so in the tool's <code>description</code>, set <code>files</code> where it applies, and describe a generated family as one tool.</p></dd></div>
+            <div><dt><code>executes_code</code><span class="t-opt">optional · default false</span><span class="t-new-tag">1.1</span></dt><dd><p>The tool runs a shell command or code: a build, a CLI, an interpreter. <span class="t-checks">Declared execution is disclosed in the report, not excused: every path from input to the command is still assessed.</span></p></dd></div>
+            <div><dt><code>generated</code><span class="t-opt">optional</span><span class="t-new-tag">1.1</span></dt><dd><p>This entry stands for a family of tools the code creates at run time: <code>{"pattern": "invoke_*", "source": "each function of a contract the caller registers"}</code>. <code>pattern</code> is a glob of 1 to 120 characters (<code>A–Z a–z 0–9 _ . : - * ? [ ] { }</code>) that every generated name matches; <code>source</code> (8 to 300 characters) says what they are generated from. <span class="t-checks">A tool the code registers whose name matches the pattern counts as declared, and is held to this entry's flags.</span></p></dd></div>
+            <div><dt><code>max_amount</code><span class="t-opt">optional</span></dt><dd><p>A money cap for this tool, only when <code>moves_funds</code> is true.</p></dd></div>
           </dl>
 
           <h3 class="t-ref-obj"><code>owner</code> · <code>forbidden[]</code> · <code>entrypoints[]</code> · <code>contact</code></h3>
@@ -376,12 +383,13 @@
       <!-- 05 ------------------------------------------------------------ -->
       <section id="examples" class="g-plate" data-mascot="pointing">
         <header class="g-plate-head"><span class="g-num">05</span><h2>Worked examples</h2></header>
-        <p class="g-lead">Four honest declarations, each valid against the current schema. The last three describe real Stellar code.</p>
+        <p class="g-lead">Five honest declarations, each valid against the current schema. The MCP server and the SDK describe real Stellar code; the MCP server and the contract tools use 1.1 fields.</p>
         <div class="t-tabs" id="t-examples">
           <div class="t-tablist" role="tablist" aria-label="Examples">
             <button role="tab" id="tab-minimal" aria-controls="ex-minimal" aria-selected="true" data-example="minimal">Minimal</button>
             <button role="tab" id="tab-payments" aria-controls="ex-payments" aria-selected="false" tabindex="-1" data-example="payments">Payments agent</button>
             <button role="tab" id="tab-mcp" aria-controls="ex-mcp" aria-selected="false" tabindex="-1" data-example="mcp">MCP wallet server</button>
+            <button role="tab" id="tab-contracts" aria-controls="ex-contracts" aria-selected="false" tabindex="-1" data-example="contracts">Contract tools · 1.1</button>
             <button role="tab" id="tab-sdk" aria-controls="ex-sdk" aria-selected="false" tabindex="-1" data-example="sdk">SDK / library</button>
           </div>
           <div class="t-panel" role="tabpanel" id="ex-minimal" aria-labelledby="tab-minimal">
@@ -393,8 +401,12 @@
             <pre class="g-code t-example" data-example="payments" tabindex="0" aria-label="Payments agent .tmark"></pre>
           </div>
           <div class="t-panel" role="tabpanel" id="ex-mcp" aria-labelledby="tab-mcp" hidden>
-            <div class="t-panel-notes"><h3>An MCP wallet server</h3><p>A stdio MCP server for Soroban on testnet. It signs caller-supplied transactions with a caller-supplied secret, so it declares <code>external_signer</code>, <code>recipients: any</code> and <code>human_approval: never</code>: not reassuring, but true, and the audit can hold it to exactly that.</p><button type="button" class="g-btn small" data-load="mcp">Open in the builder</button></div>
+            <div class="t-panel-notes"><h3>An MCP wallet server</h3><p>A stdio MCP server for Soroban on testnet. It signs caller-supplied transactions with a secret the caller passes in, so it declares <code>key_source: caller_supplied</code> with <code>holds_keys: false</code> (1.1), <code>recipients: any</code> and <code>human_approval: never</code>: not reassuring, but true, and the audit can hold it to exactly that.</p><button type="button" class="g-btn small" data-load="mcp">Open in the builder</button></div>
             <pre class="g-code t-example" data-example="mcp" tabindex="0" aria-label="MCP wallet server .tmark"></pre>
+          </div>
+          <div class="t-panel" role="tabpanel" id="ex-contracts" aria-labelledby="tab-contracts" hidden>
+            <div class="t-panel-notes"><h3>Contract tools, with 1.1 fields</h3><p>An MCP server that creates one tool per function of a contract the caller registers. The family is one entry with <code>generated: {"pattern": "invoke_*"}</code>, so every <code>invoke_…</code> tool the code registers counts as declared. Its build tool runs the stellar CLI, so it says <code>executes_code: true</code>; the secret arrives with each call, so <code>caller_supplied</code>.</p><button type="button" class="g-btn small" data-load="contracts">Open in the builder</button></div>
+            <pre class="g-code t-example" data-example="contracts" tabindex="0" aria-label="Contract tools .tmark (1.1)"></pre>
           </div>
           <div class="t-panel" role="tabpanel" id="ex-sdk" aria-labelledby="tab-sdk" hidden>
             <div class="t-panel-notes"><h3>An SDK</h3><p>A payments library is not an agent, but code built on it will hold keys and pay. Declaring the library's client and server roles as tools, with <code>kind: sdk</code> and <code>network: both</code>, tells integrators what each one signs, and the <code>forbidden</code> list states the guarantees it is checked against.</p><button type="button" class="g-btn small" data-load="sdk">Open in the builder</button></div>
@@ -413,8 +425,9 @@
           <div class="t-mistake g-reveal"><h3>A signing tool, but nothing in signs</h3><p>A tool has <code>signs: true</code> while <code>authority.signs</code> is empty.</p><samp>(file): a tool signs, so authority.signs must list what it signs</samp></div>
           <div class="t-mistake g-reveal"><h3>Amounts as numbers, assets without issuers</h3><p><code>"amount": 25</code>, <code>"25.00000001"</code>, or <code>"asset": "USDC"</code>.</p><samp>limits.per_payment.amount: must be a positive decimal string with at most 7 decimal places, e.g. "25"</samp><samp>limits.per_payment.asset: must be XLM, CODE:ISSUER (G... issuer) or a C... token contract</samp><p class="t-fix">Quote amounts and name the issuer: <code>"USDC:GBBD47…LFLA5"</code> on testnet.</p></div>
           <div class="t-mistake g-reveal"><h3>A typo in an address</h3><p>A <code>G…</code> account with one wrong character fails its checksum.</p><samp>owner.stellar_account: must be a valid Stellar G... address (checksum included)</samp><p class="t-fix">Copy the address from Freighter rather than typing it.</p></div>
+          <div class="t-mistake g-reveal"><h3>A 1.1 field in a "1" file</h3><p><code>caller_supplied</code>, <code>executes_code</code> or <code>generated</code> in a file that still says <code>"tmark": "1"</code>.</p><samp>(file): uses .tmark 1.1 fields (tools.0.executes_code); set "tmark": "1.1"</samp><p class="t-fix">Change the version line to <code>"tmark": "1.1"</code>. Nothing else changes.</p></div>
           <div class="t-mistake g-reveal"><h3>A field the format doesn't have</h3><p><code>spend_limit</code>, <code>description</code> at the top level, or a field from an older file.</p><samp>spend_limit: unknown field; see the .tmark schema for allowed fields</samp></div>
-          <div class="t-mistake g-reveal"><h3>Smaller slips</h3><p>A purpose under 20 characters, <code>"tmark": 1</code> as a number, a cap on a tool that does not move funds, a value listed twice.</p><samp>agent.purpose: String should have at least 20 characters</samp><samp>tmark: Input should be '1'</samp><samp>tools.0: max_amount is set but moves_funds is false</samp><samp>authority: signs lists a value twice</samp></div>
+          <div class="t-mistake g-reveal"><h3>Smaller slips</h3><p>A purpose under 20 characters, <code>"tmark": 1</code> as a number, a cap on a tool that does not move funds, a value listed twice.</p><samp>agent.purpose: String should have at least 20 characters</samp><samp>tmark: Input should be '1' or '1.1'</samp><samp>tools.0: max_amount is set but moves_funds is false</samp><samp>authority: signs lists a value twice</samp></div>
         </div>
       </section>
 
@@ -447,14 +460,36 @@
       </section>
 
       <!-- 08 ------------------------------------------------------------ -->
-      <section id="next" class="g-plate" data-mascot="idle">
-        <header class="g-plate-head"><span class="g-num">08</span><h2>Coming in the next format version</h2></header>
-        <p class="g-lead">Three additions are planned. None of them exists in <code>tmark: "1"</code>; a file that uses them today would be rejected. Here is how to declare these cases honestly until then.</p>
-        <div class="g-cards">
-          <div class="card g-reveal"><span class="num">a.</span><h3>Where the key really comes from</h3><p>New <code>key_source</code> values for a secret the caller passes in each call, and for a key the agent generates and stores. Today: <code>external_signer</code> or <code>env</code>, explained in <code>purpose</code>.</p></div>
-          <div class="card g-reveal"><span class="num">b.</span><h3>Shell and code execution</h3><p>A capability for tools that run commands or execute code. Today: say it in the tool's <code>description</code> and set <code>files: true</code> when it touches the disk.</p></div>
-          <div class="card g-reveal"><span class="num">c.</span><h3>Generated tool families</h3><p>One declaration for tools generated at run time, such as one tool per contract function. Today: a single tool entry that describes the whole family.</p></div>
+      <section id="new" class="g-plate" data-mascot="pointing">
+        <header class="g-plate-head"><span class="g-num">08</span><h2>New in 1.1</h2></header>
+        <p class="g-lead">Three additions for agents that 1.0 could only describe in prose. They are optional and backward compatible: a <code>"1"</code> file keeps validating, and a file that uses any of them says <code>"tmark": "1.1"</code>.</p>
+        <div class="t-new-grid">
+          <div class="t-new-card g-reveal"><span class="num">a.</span><h3>Where the key really comes from</h3>
+            <p><code>caller_supplied</code> for a secret passed in with each call; <code>agent_generated</code> for a key the agent creates and keeps.</p>
+            <pre class="g-code"><code><span class="j-k">"authority"</span><span class="j-p">: {</span>
+  <span class="j-k">"holds_keys"</span><span class="j-p">:</span> <span class="j-b">false</span><span class="j-p">,</span>
+  <span class="j-k">"key_source"</span><span class="j-p">:</span> <span class="j-s">"caller_supplied"</span><span class="j-p">,</span>
+  <span class="j-k">"signs"</span><span class="j-p">: [</span><span class="j-s">"contract_calls"</span><span class="j-p">]</span>
+<span class="j-p">}</span></code></pre>
+            <p class="t-new-note">Honest about a key the agent never keeps; the secret's path is still traced.</p></div>
+          <div class="t-new-card g-reveal"><span class="num">b.</span><h3>Shell and code execution</h3>
+            <p><code>executes_code</code> on a tool that runs a command, a build or an interpreter.</p>
+            <pre class="g-code"><code><span class="j-p">{</span> <span class="j-k">"name"</span><span class="j-p">:</span> <span class="j-s">"build_contract"</span><span class="j-p">,</span>
+  <span class="j-k">"description"</span><span class="j-p">:</span> <span class="j-s">"Compile with the stellar CLI"</span><span class="j-p">,</span>
+  <span class="j-k">"moves_funds"</span><span class="j-p">:</span> <span class="j-b">false</span><span class="j-p">,</span> <span class="j-k">"signs"</span><span class="j-p">:</span> <span class="j-b">false</span><span class="j-p">,</span>
+  <span class="j-k">"network"</span><span class="j-p">:</span> <span class="j-b">false</span><span class="j-p">,</span> <span class="j-k">"files"</span><span class="j-p">:</span> <span class="j-b">true</span><span class="j-p">,</span>
+  <span class="j-k">"executes_code"</span><span class="j-p">:</span> <span class="j-b">true</span> <span class="j-p">}</span></code></pre>
+            <p class="t-new-note">Disclosed, not excused: what reaches the command is still assessed.</p></div>
+          <div class="t-new-card g-reveal"><span class="num">c.</span><h3>Generated tool families</h3>
+            <p><code>generated</code> declares every tool the code creates at run time with one entry.</p>
+            <pre class="g-code"><code><span class="j-p">{</span> <span class="j-k">"name"</span><span class="j-p">:</span> <span class="j-s">"invoke_function"</span><span class="j-p">, …,</span>
+  <span class="j-k">"generated"</span><span class="j-p">: {</span>
+    <span class="j-k">"pattern"</span><span class="j-p">:</span> <span class="j-s">"invoke_*"</span><span class="j-p">,</span>
+    <span class="j-k">"source"</span><span class="j-p">:</span> <span class="j-s">"each registered contract function"</span>
+  <span class="j-p">} }</span></code></pre>
+            <p class="t-new-note">Each <code>invoke_…</code> tool in the code counts as declared, with this entry's flags.</p></div>
         </div>
+        <p class="g-fine">Upgrading is one line: change <code>"tmark": "1"</code> to <code>"1.1"</code> when you add the first 1.1 field. <code>python scripts/tmark.py init</code> and the draft on the home page write <code>"1.1"</code> already.</p>
       </section>
 
       <section class="g-end g-reveal">

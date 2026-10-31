@@ -135,6 +135,50 @@ _BROKEN = [
 ]
 
 
+_P = {"name": "Payer", "purpose": "Pays suppliers on request, twenty chars", "kind": "sdk", "network": "testnet"}
+_RUNS = {"name": "build", "description": "runs the build", "moves_funds": False, "signs": False, "network": False}
+_BROKEN += [
+    # .tmark 1.1: new key sources, executes_code and generated tool families.
+    {"tmark": "1", "agent": _P, "authority": {"holds_keys": False, "key_source": "caller_supplied"}},
+    {"tmark": "1", "agent": _P, "authority": {"holds_keys": True, "key_source": "agent_generated"},
+     "tools": [_RUNS | {"executes_code": True}, _RUNS | {"name": "fam", "generated": {"pattern": "fam_*", "source": "each contract function"}}]},
+    {"tmark": "1.1", "agent": _P, "authority": {"holds_keys": False, "key_source": "agent_generated"}},
+    {"tmark": "1.1", "agent": _P, "authority": {"holds_keys": False, "key_source": "bogus"}},
+    {"tmark": "1.1", "agent": _P, "authority": {"holds_keys": False, "key_source": "none"},
+     "tools": [_RUNS | {"executes_code": "maybe", "generated": 5}]},
+    {"tmark": "1.1", "agent": _P, "authority": {"holds_keys": False, "key_source": "none"},
+     "tools": [_RUNS | {"generated": {"pattern": "a b", "source": "short"}}, _RUNS | {"name": "b", "generated": {"pattern": "b_*", "source": "each function", "x": 1}}]},
+    {"tmark": "1.1", "agent": _P, "authority": {"holds_keys": False, "key_source": "none"}, "tools": [_RUNS | {"generated": {}}]},
+    {"tmark": "1", "agent": _P, "authority": {"holds_keys": False, "key_source": "none"},
+     "tools": [_RUNS, _RUNS | {"executes_code": True}]},  # the duplicate name is reported first
+    # Versions are literals, and nested objects and booleans fail as pydantic says.
+    {"tmark": " 1.1 ", "agent": _P, "authority": {"holds_keys": False, "key_source": "none"}},
+    {"tmark": 1.1, "agent": 5, "authority": [], "owner": 5, "limits": "x", "contact": [], "entrypoints": [None]},
+    {"tmark": "1.1", "agent": _P | {"discloses_ai": 5}, "authority": {"holds_keys": None, "key_source": "none"},
+     "tools": [5, _RUNS | {"files": "perhaps", "max_amount": 5}]},
+]
+
+#: Valid in both versions, or only as 1.1: both sides must accept them.
+_VALID = [
+    {"tmark": "1", "agent": _P, "authority": {"holds_keys": False, "key_source": "none"}, "tools": [_RUNS | {"executes_code": False, "generated": None}]},
+    {"tmark": "1.1", "agent": _P, "authority": {"holds_keys": False, "key_source": "caller_supplied", "signs": ["contract_calls"]},
+     "tools": [_RUNS | {"executes_code": True, "files": True},
+               {"name": "invoke_function", "description": "calls one function of a registered contract", "moves_funds": False,
+                "signs": True, "network": True, "generated": {"pattern": "invoke_*", "source": "each function of a contract the caller registers"}}]},
+    {"tmark": "1.1", "agent": _P, "authority": {"holds_keys": True, "key_source": "agent_generated", "signs": ["payments"]},
+     "limits": {"recipients": "allowlist", "human_approval": "always"}},
+]
+
+
+def test_builder_accepts_what_the_server_accepts():
+    script = _RULES + f"const cases = {json.dumps(_VALID)};" + """
+process.stdout.write(JSON.stringify(cases.map((c) => [window.TmarkRules.validate(c), window.TmarkRules.minorFeatures(c)])));"""
+    for case, (local, minor) in zip(_VALID, json.loads(_node(script))):
+        parsed, server = tmark.parse(json.dumps(case))
+        assert server == [] and local == [], json.dumps(case)[:120]
+        assert minor == parsed.minor_features()
+
+
 def test_builder_rules_say_what_the_server_says():
     """The builder validates in the browser with its own copy of the rules; each message
     must match services.tmark.parse word for word, or users fix the wrong thing."""
