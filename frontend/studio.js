@@ -371,9 +371,16 @@
     byId("discovery-results").hidden = true;
     byId("review-result").hidden = true;
     byId("empty-report").hidden = false;
+    punch("idle", "Trust needs a paper trail.");
     byId("dossier-state").textContent = "Awaiting review";
     byId("run-status").textContent = "Review your plan before starting. No automatic transaction or payment.";
     byId("download-note").textContent = "Your report stays in this tab until you leave or run another review.";
+  }
+  // Punch (mascot.js) reads along while a review runs, and says so when it fails.
+  function punch(state, title) {
+    const host = byId("studio-punch");
+    if (host && host.tmMascot) host.tmMascot.set(state);
+    if (title) byId("empty-title").textContent = title;
   }
   function setBusy(value) {
     busy = value;
@@ -781,6 +788,8 @@
       input = sourceInput();
     } catch (failure) { error(failure.message); return; }
     setBusy(true);
+    punch("scanning", "Reading the evidence…");
+    byId("dossier-state").textContent = "Reviewing";
     byId("run-review").textContent = "Building evidence…";
     byId("run-status").textContent = activeTier === "quick" ? "Official reviewers are inspecting the submitted evidence…" : "Preparing your plan, then running the authorized investigation…";
     try {
@@ -811,6 +820,8 @@
     } catch (failure) {
       error(failure.name === "TimeoutError" ? "The review timed out. Retry with a smaller source bundle." : failure.message);
       byId("run-status").textContent = "No completed review. Your inputs are still available to retry.";
+      punch("error", "No review this time.");
+      byId("dossier-state").textContent = "Ready when you are";
     } finally { setBusy(false); updateRunLabel(); byId("audit-runtime-key").value = ""; byId("ai-access-key").value = ""; }
   });
   function download(filename, text, type = "application/json;charset=utf-8") {

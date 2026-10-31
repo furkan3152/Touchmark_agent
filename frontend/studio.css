@@ -1,1 +1,4 @@
 @import url('/ui/workspace.css');
+/* Punch, the Touchmark mascot (mascot.css), in the dossier's empty and working states. */
+.studio-punch{display:block;width:112px;margin:0 auto 14px}
+.studio-punch .tm-mascot{width:112px}

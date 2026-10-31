@@ -5,13 +5,13 @@
 <meta name="description" content="Choose official Touchmark reviewers. Map, challenge and document your AI agent with a version-bound evidence dossier on Stellar.">
 <title>Touchmark — Trust, with evidence.</title>
 <link rel="icon" href="/ui/studio-mark.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/ui/studio.css"><script src="/ui/studio.js" defer></script><script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script><script src="/ui/checkout.js" defer></script><script src="/ui/orders.js" defer></script>
+<link rel="stylesheet" href="/ui/studio.css"><link rel="stylesheet" href="/ui/mascot.css"><script src="/ui/mascot.js" defer></script><script src="/ui/studio.js" defer></script><script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script><script src="/ui/checkout.js" defer></script><script src="/ui/orders.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#workspace">Skip to audit</a>
 <header class="site-header">
   <a class="brand" href="/"><img src="/ui/studio-mark.svg" alt="" width="32" height="32">Touchmark <span>on Stellar</span></a>
-  <nav aria-label="Main navigation"><a href="#coverage">The standard</a><a href="#plans">Pricing</a><a href="#verify">Verify a report</a><a class="nav-cta" href="#workspace">Open workspace <span aria-hidden="true">↗</span></a></nav>
+  <nav aria-label="Main navigation"><a href="#coverage">The standard</a><a href="#plans">Pricing</a><a href="#verify">Verify a report</a><a href="/guide">Guide</a><a class="nav-cta" href="#workspace">Open workspace <span aria-hidden="true">↗</span></a></nav>
 </header>
 <main>
   <section class="hero" aria-labelledby="hero-title">
@@ -153,7 +153,7 @@
         <details class="order-identity"><summary>Order identity & privacy</summary><code id="order-id"></code><code id="order-source-hash"></code><code id="order-plan-hash"></code><p class="help">The receipt grants access to this private order. Store it securely. No wallet private key is included. Sharing an order ID alone does not grant access.</p></details>
       </section>
       <div id="empty-report" class="empty-report">
-        <div class="document-symbol" aria-hidden="true">?</div><h3>Trust needs a paper trail.</h3>
+        <span class="studio-punch" id="studio-punch" data-tm-mascot="idle" data-tm-size="112" data-tm-decorative></span><h3 id="empty-title">Trust needs a paper trail.</h3>
         <p>Add an agent to see concrete findings, what is missing, and what to check next.</p>
         <ol class="review-steps"><li><strong>Find risky permissions</strong><span>Signing, spending, code execution and data access.</span></li><li><strong>Understand the evidence</strong><span>Source locations and actionable checks, not just a score.</span></li><li><strong>Keep your report</strong><span>Download an integrity-checked report. Stellar publication is a separate step.</span></li></ol>
         <div class="boundary-note"><strong>Address ≠ audit</strong><p>A wallet balance cannot tell us how an agent behaves. Source and runtime evidence answer different questions.</p></div>
