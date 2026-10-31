@@ -1018,15 +1018,23 @@ async def _stream(run):
         progress.stop(token)
     yield line({"type": "stage", "stage": "queued"})
     try:
-        while not task.done() or not queue.empty():
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
-                yield line({"type": "stage", **event})
-            except asyncio.TimeoutError:
-                if not task.done():
-                    yield line({"type": "heartbeat", "stage": state["stage"]})
-            if task.done() and queue.empty():
+        # Wake on the next event, the end of the audit, or the heartbeat interval: whichever
+        # comes first. Waiting on the queue alone held the result back by up to one interval.
+        getter = None
+        while True:
+            getter = getter or asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({getter, task}, timeout=HEARTBEAT_SECONDS,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if getter in done:
+                yield line({"type": "stage", **getter.result()})
+                getter = None
+            elif task.done():
+                getter.cancel()
+                while not queue.empty():  # events posted just before the end
+                    yield line({"type": "stage", **queue.get_nowait()})
                 break
+            else:
+                yield line({"type": "heartbeat", "stage": state["stage"]})
         try:
             yield line({"type": "result", "data": task.result()})
         except HTTPException as exc:

@@ -136,3 +136,16 @@ def test_heartbeats_keep_flowing_while_the_audit_blocks(demo, monkeypatch):  # n
     start, rules = kinds.index(("stage", "resolving")), kinds.index(("stage", "rules"))
     assert sum(1 for k in kinds[start:rules] if k[0] == "heartbeat") >= 3, kinds
     assert lines[-1]["type"] == "error" and lines[-1]["status"] == 422
+
+
+def test_the_result_follows_the_last_event_without_waiting_for_a_heartbeat(demo, monkeypatch):  # noqa: F811
+    import json
+    import time
+    monkeypatch.setattr(api, "HEARTBEAT_SECONDS", 5.0)
+    client, _, _ = demo
+    started = time.monotonic()
+    with client.stream("POST", "/api/v1/demo/audit", json={"reference": "https://github.com/o/r"},
+                       headers={"Accept": "application/x-ndjson"}) as response:
+        lines = [json.loads(line) for line in response.iter_lines() if line]
+    assert lines[-1]["type"] == "result" and ("stage", "done") in [(e["type"], e.get("stage")) for e in lines]
+    assert time.monotonic() - started < 4.0
