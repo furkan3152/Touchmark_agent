@@ -133,9 +133,10 @@ class FindingVerifier:
             for n in near:  # the closest single line first, then quotes spanning lines
                 if quote in squashed[n - 1]:
                     return n
-            for n in near:
-                if quote in " ".join(squashed[n - 1:n + 2]):
-                    return n
+            for span in (3, 5, 8):  # a statement split over several lines (a ternary, a call)
+                for n in near:
+                    if quote in " ".join(squashed[n - 1:n - 1 + span]):
+                        return n
         hits = [n for n, text in enumerate(squashed, 1) if quote in text]
         return hits[0] if len(hits) == 1 else 0
 
@@ -197,6 +198,12 @@ class FindingVerifier:
                             verdict = args.get("verdict") if args.get("verdict") in VERDICTS else "unverifiable"
                             result.quote_verified = ok
                             result.verdict = verdict if (ok or verdict == "unverifiable") else "unverifiable"
+                            if not ok and verdict in {"confirmed", "partial"}:
+                                # The verifier read the code and affirmed (part of) the claim, but its
+                                # quote does not match: the claim is partly verified, not unverifiable.
+                                # Without a matching quote this verdict never changes the finding's
+                                # severity (orchestrator._apply_disputes).
+                                result.verdict = "partial"
                             result.reviewed_severity = args.get("reviewed_severity", "")
                             # A real issue at a lower severity than stated is partly true.
                             if result.verdict == "confirmed" and result.reviewed_severity in SEVERITY_RANK \
@@ -206,8 +213,10 @@ class FindingVerifier:
                             result.file, result.line = str(args.get("file", ""))[:300], found or int(args.get("line") or 0)
                             result.quote = redact(" ".join(str(args.get("evidence_quote", "")).split())[:240])
                             result.reason = redact(str(args.get("reason", ""))[:1200])
-                            if not ok and verdict != "unverifiable":
-                                result.note = f"{verdict} rejected: quote not found at the cited line"
+                            if not ok and verdict == "refuted":
+                                result.note = "refuted rejected: quote not found at the cited line"
+                            elif not ok and verdict in {"confirmed", "partial"}:
+                                result.note = f"{verdict} recorded as partial: quote not found at the cited line"
                             return result
                         outputs.append({"type": "tool_result", "tool_use_id": block.id,
                                         "content": self._tool(block.name, args, files)})

@@ -392,6 +392,11 @@ class AuditSwarm:
         # claim true. It never removes a finding, but an unconfirmed rule finding is capped.
         results.update({r["finding_id"]: r for r in verification.get("results", [])
                         if r.get("verdict") == "unverifiable" and r["finding_id"] not in results})
+        # A partial verdict whose quote did not match: recorded, but it changes no severity.
+        unquoted = {r["finding_id"] for r in verification.get("results", [])
+                    if r.get("verdict") == "partial" and not r.get("quote_verified") and r["finding_id"] not in results}
+        results.update({r["finding_id"]: {**r, "reviewed_severity": ""} for r in verification.get("results", [])
+                        if r["finding_id"] in unquoted})
         if not results:
             return verdicts
         out = []
@@ -438,6 +443,15 @@ class AuditSwarm:
                         "detail": f.detail + f" Independent verification did not confirm this at high severity "
                                   f"({r.get('verdict', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.6)})
+                elif (r is not None and r.get("verdict") == "unverifiable" and f.is_risk and not r.get("note")):
+                    # (A note means the check did not finish: timeout, turn limit, provider error.)
+                    # The verifier could not see the code that decides the claim: it stays a risk,
+                    # but an unchecked claim does not count at full weight.
+                    f = f.model_copy(update={
+                        "verified": "unverifiable",
+                        "detail": f.detail + " Independent verification could not check this claim (the code that "
+                                  "decides it was not available to it); it counts at reduced weight.",
+                        "confidence": min(f.confidence, 0.5)})
                 elif refuted:
                     lowered = f.severity.downgrade(1)
                     if lowered.rank > Severity.MEDIUM.rank and not _STRUCTURAL.search(f.id):
