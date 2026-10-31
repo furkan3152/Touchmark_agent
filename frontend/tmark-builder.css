@@ -250,3 +250,5 @@ li.is-bad{border-color:var(--red)}
   .t-panel{padding:14px}
 }
 .g-code .ln{display:block;white-space:pre}
+.tb-field small.tb-v11,.tb-check small.tb-v11,.tb-tags small.tb-v11,.tb-options small.tb-v11,.tb-chip small.tb-v11{font:700 10px/1.4 var(--mono);color:var(--paper);background:var(--green);letter-spacing:1px}
+.tb-gen-on{flex-wrap:nowrap;align-items:baseline}
