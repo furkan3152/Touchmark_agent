@@ -8,8 +8,11 @@
 <link rel="icon" href="/ui/brand/mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/fonts/fonts.css">
 <link rel="stylesheet" href="/ui/demo.css">
+<link rel="stylesheet" href="/ui/mascot.css">
 <script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script>
 <script src="/ui/hero.js" defer></script>
+<script src="/ui/mascot.js" defer></script>
+<script src="/ui/tmark-builder.js" defer></script>
 <script src="/ui/demo.js" defer></script>
 </head>
 <body>
@@ -48,29 +51,72 @@
              placeholder="https://github.com/owner/repo">
       <button id="run" type="submit">Test it <span aria-hidden="true">→</span></button>
     </div>
-    <label class="consent"><input type="checkbox" id="consent"> <span id="consent-text">Also send the source to the model review (Anthropic) and its verifier. Without this, only the deterministic rules run and nothing leaves this server.</span></label>
-    <details class="declare"><summary>Add a .tmark declaration (optional)</summary>
-      <p class="note">Paste your <code>.tmark</code> or choose the file. It is checked, then used as if the repository committed it; nothing is stored. Without one, the repository's own <code>.tmark</code> is used.</p>
-      <textarea id="tmark" rows="7" maxlength="64000" spellcheck="false" aria-label=".tmark declaration" placeholder='{ "tmark": "1.1", "agent": { … } }'></textarea>
-      <div class="declare-actions"><input id="tmark-file" type="file" accept=".tmark,application/json" aria-label="Choose a .tmark file"><button type="button" id="tmark-check" class="ghost">Check it</button><button type="button" id="tmark-draft" class="ghost">Draft one from the repository</button></div>
-      <ul id="tmark-result" class="findings small"></ul>
-    </details>
     <div class="examples" aria-label="Examples">
       <span>Try one:</span>
       <button type="button" data-ref="https://github.com/furkan3152/Touchmark_agent/tree/main/examples/demo/unsafe-treasury-agent">Unsafe treasury agent</button>
       <button type="button" data-ref="https://github.com/furkan3152/Touchmark_agent/tree/main/examples/demo/safe-treasury-agent">Safe treasury agent</button>
     </div>
+
+    <div class="options">
+      <section class="opt consent-opt" id="consent-box" data-state="checking" aria-labelledby="consent-title">
+        <div class="opt-row">
+          <input type="checkbox" id="consent" aria-describedby="consent-detail consent-status">
+          <div>
+            <label for="consent" class="opt-title" id="consent-title">Deep review by a model <span class="opt-tag">optional</span></label>
+            <p class="opt-text" id="consent-detail">Sends the agent's source files to Anthropic's model for the deep review, and to a second model call that verifies its findings. Leave it off and only Touchmark's deterministic rules run; the source stays on this server.</p>
+            <p class="opt-status" id="consent-status" role="status">Checking whether the model review is available…</p>
+          </div>
+        </div>
+      </section>
+
+      <details class="opt declare" id="declare">
+        <summary><span class="opt-title">Add a <code>.tmark</code></span> <span class="opt-tag">optional</span><span class="tmark-chip" id="tmark-chip" data-state="none">none</span></summary>
+        <div class="declare-body">
+          <p class="opt-text">A <code>.tmark</code> says what the agent may do. The audit then holds the code to each claim, so a broken promise becomes a precise finding. <a href="/guide/tmark">What goes in one</a></p>
+          <div class="declare-editor">
+            <div class="declare-bar"><span class="declare-file">.tmark</span><span class="tmark-live" id="tmark-live" role="status" aria-live="polite">Paste a file, upload one, or draft one from the repository.</span></div>
+            <textarea id="tmark" rows="9" maxlength="64000" spellcheck="false" wrap="off" autocapitalize="off" autocomplete="off" aria-label=".tmark declaration" aria-describedby="tmark-live" placeholder='{ "tmark": "1.1", "agent": { … }, "authority": { … } }'></textarea>
+          </div>
+          <ul id="tmark-result" class="tmark-problems" aria-label=".tmark problems"></ul>
+          <div class="declare-actions">
+            <label class="ghost file-btn" for="tmark-file">Upload a file<input id="tmark-file" type="file" accept=".tmark,application/json" class="sr-only"></label>
+            <button type="button" id="tmark-draft" class="ghost">Draft one from this repo</button>
+            <button type="button" id="tmark-check" class="ghost">Check with Touchmark</button>
+            <a id="tmark-builder-link" class="ghost" href="/guide/tmark#builder">Open the builder <span aria-hidden="true">↗</span></a>
+            <button type="button" id="tmark-clear" class="ghost quiet">Clear</button>
+          </div>
+          <p class="opt-fine">Used instead of the repository's own <code>.tmark</code> for this audit only, and never stored. An audit with a pasted file is not credentialed: commit it to the repository to be stamped.</p>
+        </div>
+      </details>
+    </div>
   </form>
 
-  <ol id="steps" class="steps" hidden>
-    <li data-step="resolve"><b>1</b>Pin the source</li>
-    <li data-step="analyse"><b>2</b>Trace requests to keys, payments, network</li>
-    <li data-step="decide"><b>3</b>Decide &amp; seal the report</li>
-    <li data-step="credential"><b>4</b>Stamp on Stellar</li>
-  </ol>
-
-  <p id="progress" class="progress" aria-live="polite" hidden></p>
   <p id="error" class="error" role="alert" hidden></p>
+
+  <section id="desk" class="desk" hidden aria-labelledby="desk-title">
+    <div class="desk-punch" id="desk-punch"></div>
+    <div class="desk-body">
+      <div class="desk-head">
+        <h2 class="desk-title" id="desk-title">Punch is reading the agent</h2>
+        <p class="desk-clock"><span class="pulse" id="desk-pulse" aria-hidden="true"></span><span class="g-vh">Elapsed time </span><span id="desk-elapsed">0:00</span></p>
+      </div>
+      <p class="desk-ref" id="desk-ref"></p>
+      <ol class="timeline" id="timeline">
+        <li data-stage="resolving"><span class="t-dot" aria-hidden="true"></span><div><b>Pin the source</b><span class="t-detail"></span></div></li>
+        <li data-stage="fetching"><span class="t-dot" aria-hidden="true"></span><div><b>Fetch the code</b><span class="t-detail"></span></div></li>
+        <li data-stage="rules"><span class="t-dot" aria-hidden="true"></span><div><b>Run the rules</b><span class="t-detail"></span></div></li>
+        <li data-stage="deep_review"><span class="t-dot" aria-hidden="true"></span><div><b>Model review</b><span class="t-detail"></span><span class="t-bar" aria-hidden="true"><i></i></span></div></li>
+        <li data-stage="verifier"><span class="t-dot" aria-hidden="true"></span><div><b>Verify the findings</b><span class="t-detail"></span><span class="t-bar" aria-hidden="true"><i></i></span></div></li>
+        <li data-stage="done"><span class="t-dot" aria-hidden="true"></span><div><b>Seal the report</b><span class="t-detail"></span></div></li>
+      </ol>
+      <p class="desk-wait" id="desk-wait"></p>
+      <p class="g-vh" id="desk-live" aria-live="polite"></p>
+      <div class="desk-error" id="desk-error" role="alert" hidden>
+        <p id="desk-error-text"></p>
+        <div class="desk-error-actions" id="desk-error-actions"></div>
+      </div>
+    </div>
+  </section>
 
   <section id="result" class="result" hidden aria-live="polite">
     <div class="verdict">
@@ -86,9 +132,14 @@
         <h2 id="headline">–</h2>
         <p id="source" class="source"></p>
         <p id="counts" class="counts"></p>
-        <p id="ai" class="counts"></p>
       </div>
     </div>
+
+    <section class="readout" aria-label="What this audit read">
+      <div class="read-cell" id="read-tmark"><h3>Declaration</h3><div class="read-body"></div></div>
+      <div class="read-cell" id="read-scope"><h3>Scope</h3><div class="read-body"></div></div>
+      <div class="read-cell" id="read-ai"><h3>Model review</h3><div class="read-body"></div></div>
+    </section>
 
     <div class="grid">
       <article class="panel">
@@ -106,6 +157,7 @@
         <div id="cred-idle">
           <p id="cred-note" class="note"></p>
           <button id="issue" type="button" hidden>Stamp it on Stellar testnet</button>
+          <p id="cred-error" class="inline-error" role="alert" hidden></p>
         </div>
         <div id="cred-done" hidden>
           <p class="ok">Stamped, and read back from the ledger</p>
@@ -131,10 +183,12 @@
     <form id="recheck" class="panel recheck" autocomplete="off">
       <h3>Fixed it? Test again</h3>
       <p class="note">Paste the fixed commit or folder. Both versions are tested and compared: what the fix closed, what is still open, and anything new.</p>
+      <p class="rules-only"><span class="badge">Rules only</span><span>The comparison re-checks both versions with the deterministic rules, so it is quick and like for like. Its scores are rules-only scores, and a finding only the model review reported is never shown as closed.</span></p>
       <div class="input-row">
-        <input id="fixed" required minlength="3" maxlength="300" placeholder="https://github.com/owner/repo/tree/<fixed-commit>">
+        <input id="fixed" aria-label="Fixed commit or folder to compare" required minlength="3" maxlength="300" placeholder="https://github.com/owner/repo/tree/<fixed-commit>">
         <button id="run-recheck" type="submit">Compare <span aria-hidden="true">→</span></button>
       </div>
+      <p id="diff-error" class="inline-error" role="alert" hidden></p>
       <div id="diff" hidden>
         <p id="diff-head" class="diff-head"></p>
         <p id="diff-note" class="note"></p>

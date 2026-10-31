@@ -114,7 +114,7 @@
       <!-- 03 ------------------------------------------------------------ -->
       <section id="during" class="g-plate" data-mascot="scanning" data-say="Reading… this is the slow, careful part.">
         <header class="g-plate-head"><span class="g-num">03</span><h2>What happens during an audit</h2></header>
-        <p class="g-lead">Under the ticket, four steps light up: <span class="g-ui">Pin the source</span>, <span class="g-ui">Trace requests to keys, payments, network</span>, <span class="g-ui">Decide &amp; seal the report</span>, and <span class="g-ui">Stamp on Stellar</span>. Behind them, the work runs in four stages.</p>
+        <p class="g-lead">Under the ticket, Punch takes the agent to the desk. A timeline shows each stage as it happens, from <span class="g-ui">Pin the source</span> to <span class="g-ui">Seal the report</span>, with the files read so far, the findings re-checked and a running clock. A pulse beats with every signal from the server, so a long review never looks like a hung page.</p>
         <ol class="g-timeline" id="timeline">
           <li class="g-stage" data-stage="fetch">
             <span class="g-stage-dot" aria-hidden="true"></span>
@@ -138,7 +138,7 @@
               <p class="g-stage-meta"><span>Stage C</span><span>one to a few minutes</span><span class="g-consent">with your consent</span></p>
               <h3>Deep model review</h3>
               <p>A model reads the files that hold the agent's authority and looks for what rules miss: replayable payment proofs, unauthenticated pay endpoints, budgets keyed on an address an attacker can rotate. Every finding must quote a line that exists; a quote that does not match the source is rejected.</p>
-              <p class="g-note">This is the only stage that sends code to a model provider, and it runs only when you allow it. Without it the audit runs on the rules alone, and the report says so. A rules-only audit can never pass.</p>
+              <p class="g-note">This is the only stage that sends code to a model provider, and it runs only when you tick <span class="g-ui">Deep review by a model</span> on the ticket. Each connection has a small hourly allowance, shown next to the box; when it is used up, or the model review is not enabled, the box is greyed out and says why. Without it the audit runs on the rules alone, and the report says so. A rules-only audit can reach <span class="g-chip needs_evidence">needs evidence</span> at best: it cannot pass or be stamped.</p>
             </div>
           </li>
           <li class="g-stage" data-stage="verify">
@@ -180,8 +180,8 @@
               <p class="decision pass">pass <i class="g-pin" data-n="2"></i></p>
               <h3 class="g-headline">No actionable risk found. Eligible for a Stellar credential.</h3>
               <p class="source">Source pinned to <u>furkan3152/Touchmark_agent/examples/demo/safe-treasury-agent @ 9e31161d4b</u> <i class="g-pin" data-n="3"></i></p>
-              <p class="counts">1 file analysed · 4 risks (0 critical, 0 high) · 19 evidence gaps · .tmark declared, checked against the code <i class="g-pin" data-n="4"></i></p>
-              <p class="counts">AI review completed: read 1 of 1 files, added 4 findings. Verifier re-checked 2: 0 confirmed, 2 partly, 0 disputed. <i class="g-pin" data-n="5"></i></p>
+              <p class="counts">1 file analysed · 4 risks (0 critical, 0 high) · 19 evidence gaps <i class="g-pin" data-n="4"></i></p>
+              <p class="counts">Declaration: repository .tmark, checked against the code · Model review: completed, read 1 of 1 files; verifier re-checked 2 <i class="g-pin" data-n="5"></i></p>
             </div>
           </div>
           <div class="g-specimen-row">
@@ -200,8 +200,8 @@
           <li><b>1</b><span><strong>The stamp.</strong> Score out of 100 and the stamp word: <em>Touchmarked</em>, <em>Not yet</em> or <em>Show more</em>.</span></li>
           <li><b>2</b><span><strong>The decision.</strong> One of three verdicts, explained below.</span></li>
           <li><b>3</b><span><strong>Source pinned to</strong> the commit that was read. Click through to see exactly that code.</span></li>
-          <li><b>4</b><span><strong>The count line:</strong> files analysed, risks by severity, evidence gaps, and whether a <code>.tmark</code> was declared and checked.</span></li>
-          <li><b>5</b><span><strong>The AI line:</strong> whether the model review ran, how much it read, and what the verifier made of it.</span></li>
+          <li><b>4</b><span><strong>The count line:</strong> files analysed, risks by severity and evidence gaps.</span></li>
+          <li><b>5</b><span><strong>What the audit read:</strong> under the verdict, three cells. <em>Declaration</em>: which <code>.tmark</code> was used (yours, the repository's, or none) and where a pasted one differs from the committed one. <em>Scope</em>: how many files were read and which folders were left out as tests, examples or builds. <em>Model review</em>: whether it ran, how much it read and what the verifier made of it, or plainly why it did not run.</span></li>
           <li><b>6</b><span><strong>What can go wrong:</strong> risks, worst first, each with the cited code and a fix.</span></li>
           <li><b>7</b><span><strong>Why this score?</strong> Every point lost, finding by finding. Try it below.</span></li>
           <li><b>8</b><span><strong>Evidence not yet provided:</strong> what could not be checked. Not a vulnerability.</span></li>
@@ -242,9 +242,9 @@
       <!-- 05 ------------------------------------------------------------ -->
       <section id="compare" class="g-plate" data-mascot="scanning" data-say="Before and after, side by side.">
         <header class="g-plate-head"><span class="g-num">05</span><h2>Compare two runs</h2></header>
-        <p class="g-lead">Fixed something? Under the report, <span class="g-ui">Fixed it? Test again</span> takes the fixed commit or folder. Both versions are audited and compared finding by finding.</p>
+        <p class="g-lead">Fixed something? Under the report, <span class="g-ui">Fixed it? Test again</span> takes the fixed commit or folder. Both versions are re-checked with the deterministic rules only, so the comparison is quick and like for like, and compared finding by finding. Its scores are rules-only scores, and a finding only the model review reported is never shown as closed.</p>
         <div class="g-compare g-reveal">
-          <p class="g-compare-head"><span class="g-chip needs_fixes">needs_fixes 41.8</span><span class="g-arrow" aria-hidden="true">→</span><span class="g-chip pass">pass 96.1</span><span class="g-delta">(+54.3)</span></p>
+          <p class="g-compare-head"><span class="g-tag">rules only</span><span class="g-chip needs_fixes">needs_fixes 41.8</span><span class="g-arrow" aria-hidden="true">→</span><span class="g-chip pass">pass 96.1</span><span class="g-delta">(+54.3)</span></p>
           <div class="diff-cols">
             <div><h4>Closed</h4><ul class="findings small"><li class="high"><span class="sev">high</span><span class="title">The model chooses the payment destination</span></li><li class="high"><span class="sev">high</span><span class="title">A limit the .tmark declares is not enforced by the code</span></li></ul></div>
             <div><h4>Still open</h4><ul class="findings small"><li class="low"><span class="sev">low</span><span class="title">Autonomous authority over funds</span></li></ul></div>
@@ -294,11 +294,12 @@
         <header class="g-plate-head"><span class="g-num">08</span><h2>What leaves your hands</h2></header>
         <div class="g-ledger g-reveal">
           <div class="g-ledger-row"><h3>The rules</h3><p>Run on Touchmark's server against the public repository at the pinned commit. No model is involved.</p></div>
-          <div class="g-ledger-row g-ledger-consent"><h3>The model review <span class="g-consent">only with consent</span></h3><p>Sends the files that hold the agent's authority, plus its stated purpose and instructions, to the model provider. Strings that look like secrets are replaced with <code>[REDACTED]</code> first, and quotes in the report are masked the same way.</p></div>
+          <div class="g-ledger-row g-ledger-consent"><h3>The model review <span class="g-consent">only with consent</span></h3><p>When you tick <span class="g-ui">Deep review by a model</span>, the agent's source files go to Anthropic's model for the deep review, and the findings it reports go back to a second model call, the verifier, with the code they cite. The files are sent as they are in the repository, so this is for code you are willing to share: on the home page that is a public repository. Secrets the model quotes are masked as <code>[REDACTED]</code> in the report. Leave the box unticked and nothing leaves Touchmark's server.</p></div>
           <div class="g-ledger-row"><h3>The report</h3><p>Comes back to your browser. <span class="g-ui">Download report JSON</span> to keep it; its SHA-256 is printed under it.</p></div>
           <div class="g-ledger-row"><h3>The ledger</h3><p>If you stamp, Stellar testnet records the report hash, the score, the repository and commit, and the owner account. Never the source.</p></div>
           <div class="g-ledger-row"><h3>The Studio</h3><p>An immediate review of uploaded files stays in memory. Official orders store the submitted source only with your explicit consent, and an AI second opinion is a separate consent.</p></div>
-          <div class="g-ledger-row"><h3>A .tmark check</h3><p>Validated and answered. Nothing is stored.</p></div>
+          <div class="g-ledger-row"><h3>A .tmark you paste</h3><p>Checked, used for that one audit instead of the repository's own, and answered. Nothing is stored. An audit with a pasted <code>.tmark</code> is not credentialed: commit the file to be stamped.</p></div>
+          <div class="g-ledger-row"><h3>The allowance</h3><p>To keep the model review within its budget, each audit that uses it claims a slot named with a keyed hash of your connection's address, never the address itself. A slot stops counting when its hour or day ends, and is deleted two days later.</p></div>
         </div>
         <aside class="g-say g-say-warn g-reveal"><span class="g-say-face" data-tm-mascot="warning" data-tm-size="72" data-tm-decorative></span><p><b>Punch says:</b> never put an <code>S…</code> secret key in a repository, an upload or a form. Touchmark only ever needs public <code>G…</code> and <code>C…</code> addresses.</p></aside>
       </section>
@@ -308,11 +309,11 @@
         <header class="g-plate-head"><span class="g-num">09</span><h2>Declare it: the <code>.tmark</code> file</h2></header>
         <div class="g-tmark-teaser g-reveal">
           <div>
-            <p class="g-lead">One JSON file at the repository root states what your agent is and what it may do: the network, the keys, what it signs, its limits and its tools. Touchmark checks the code against every claim. An honest declaration makes the audit sharper and the credential mean something.</p>
+            <p class="g-lead">One JSON file at the repository root states what your agent is and what it may do: the network, the keys, what it signs, its limits and its tools. Touchmark checks the code against every claim. An honest declaration makes the audit sharper and the credential mean something. No file yet? On the home page, <span class="g-ui">Draft one from this repo</span> writes a first version from the code, or paste one to try it for a single audit.</p>
             <a class="g-btn" href="/guide/tmark">Open the .tmark guide and builder <span aria-hidden="true">→</span></a>
           </div>
           <pre class="g-code" aria-label="A short .tmark example"><code><span class="j-p">{</span>
-  <span class="j-k">"tmark"</span><span class="j-p">:</span> <span class="j-s">"1"</span><span class="j-p">,</span>
+  <span class="j-k">"tmark"</span><span class="j-p">:</span> <span class="j-s">"1.1"</span><span class="j-p">,</span>
   <span class="j-k">"agent"</span><span class="j-p">: {</span> <span class="j-k">"network"</span><span class="j-p">:</span> <span class="j-s">"testnet"</span><span class="j-p">, …</span> <span class="j-p">},</span>
   <span class="j-k">"authority"</span><span class="j-p">: {</span> <span class="j-k">"holds_keys"</span><span class="j-p">:</span> <span class="j-b">true</span><span class="j-p">, …</span> <span class="j-p">},</span>
   <span class="j-k">"limits"</span><span class="j-p">: {</span> <span class="j-k">"recipients"</span><span class="j-p">:</span> <span class="j-s">"allowlist"</span><span class="j-p">, …</span> <span class="j-p">}</span>
