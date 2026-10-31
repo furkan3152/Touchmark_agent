@@ -110,3 +110,28 @@ def test_the_self_check_endpoint_is_for_previews_and_the_operator_only(monkeypat
     assert again.status_code == 429
     assert preview.status_code == 200 and preview.json()["environment"] == "preview"
     assert not blob.paths  # the throwaway slot was deleted
+
+
+def test_heartbeats_keep_flowing_while_the_audit_blocks(demo, monkeypatch):  # noqa: F811
+    """Parsing and analysing source is synchronous. The audit runs in a worker thread, so a
+    long stretch of it cannot stop the stream's heartbeats (it did on Vercel before)."""
+    import json
+    import time
+
+    from backend.app.services import demo_flow, progress
+
+    async def blocking(reference, settings, *, network, deep, deadline, tmark_override=None):
+        progress.emit("resolving")
+        time.sleep(0.6)  # what a large repository's analysis does to the event loop
+        progress.emit("rules", files=1)
+        raise ValueError("stop here")
+    monkeypatch.setattr(demo_flow, "audit_reference", blocking)
+    monkeypatch.setattr(api, "HEARTBEAT_SECONDS", 0.1)
+    client, _, _ = demo
+    with client.stream("POST", "/api/v1/demo/audit", json={"reference": "https://github.com/o/r"},
+                       headers={"Accept": "application/x-ndjson"}) as response:
+        lines = [json.loads(line) for line in response.iter_lines() if line]
+    kinds = [(e["type"], e.get("stage")) for e in lines]
+    start, rules = kinds.index(("stage", "resolving")), kinds.index(("stage", "rules"))
+    assert sum(1 for k in kinds[start:rules] if k[0] == "heartbeat") >= 3, kinds
+    assert lines[-1]["type"] == "error" and lines[-1]["status"] == 422

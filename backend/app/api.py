@@ -961,8 +961,11 @@ async def demo_audit(req: "DemoAuditRequestModel", request: Request):
     async def run() -> dict:
         ai, skipped, allowance = await _model_review_allowed(request, req.model_review_consent)
         try:
-            out = await asyncio.wait_for(run_demo_audit(req.reference, settings, ai=ai, tmark_text=req.tmark,
-                                                        skipped=skipped), timeout=DEMO_REQUEST_SECONDS)
+            # The audit parses and analyses source synchronously; in a thread with its own loop it
+            # cannot hold this loop, which must keep sending heartbeats and serving other requests.
+            out = await asyncio.wait_for(asyncio.to_thread(_in_own_loop, run_demo_audit, req.reference, settings, ai=ai,
+                                                           tmark_text=req.tmark, skipped=skipped),
+                                         timeout=DEMO_REQUEST_SECONDS)
             if allowance is not None:
                 out["ai"]["allowance"] = allowance
             return out
@@ -978,6 +981,12 @@ async def demo_audit(req: "DemoAuditRequestModel", request: Request):
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
+def _in_own_loop(fn, *args, **kwargs):
+    """Run a coroutine function to completion on a fresh event loop in the calling (worker)
+    thread. Context variables, such as the progress listener, come along with to_thread."""
+    return asyncio.run(fn(*args, **kwargs))
+
+
 async def _stream(run):
     """NDJSON lines for one audit: stage events as they happen, heartbeats while waiting."""
     import json
@@ -986,9 +995,18 @@ async def _stream(run):
     started = time.monotonic()
     state = {"stage": "queued"}
 
-    def on_event(event: dict) -> None:
+    loop = asyncio.get_running_loop()
+
+    def deliver(event: dict) -> None:
         state["stage"] = event.get("stage", state["stage"])
         queue.put_nowait(event)
+
+    def on_event(event: dict) -> None:
+        # Called from the audit's worker thread: hand the event to this loop safely.
+        try:
+            loop.call_soon_threadsafe(deliver, event)
+        except RuntimeError:
+            pass  # the response already ended
 
     def line(payload: dict) -> bytes:
         return (json.dumps({**payload, "elapsed": round(time.monotonic() - started, 1)}, default=str) + "\n").encode()
