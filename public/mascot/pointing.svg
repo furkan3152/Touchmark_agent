@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" class="tm-mascot" viewBox="0 0 200 200" width="200" height="200" data-state="pointing" data-tone="risk" data-facing="right" role="img" aria-labelledby="tm6-t"><title id="tm6-t">Punch points the way</title><style>.tm-mascot{
+--tm-line:var(--ink,#1d2b4f);
+--tm-plate:var(--ink,#1d2b4f);
+--tm-face:var(--card,#fbf7ee);
+--tm-feature:#1d2b4f;
+--tm-red:var(--red,#e2432a);
+--tm-amber:var(--amber,#b97c0b);
+--tm-green:var(--green,#1f7a5a);
+--tm-glint:#fff;
+--tm-shadow:rgba(29,43,79,.16);
+display:inline-block;width:160px;height:auto;aspect-ratio:1;overflow:visible;vertical-align:middle;
+}
+@media (prefers-color-scheme:dark){.tm-mascot{
+--tm-line:var(--ink,#f2ead9);
+--tm-plate:#28355f;
+--tm-face:#f4eee1;
+--tm-shadow:rgba(0,0,0,.35);
+}}
+[data-theme="dark"] .tm-mascot{--tm-line:#f2ead9;--tm-plate:#28355f;--tm-face:#f4eee1;--tm-shadow:rgba(0,0,0,.35)}
+[data-theme="light"] .tm-mascot{--tm-line:#1d2b4f;--tm-plate:#1d2b4f;--tm-face:#fbf7ee;--tm-shadow:rgba(29,43,79,.16)}
+.tm-mascot *{transform-box:view-box}
+.tm-shadow{fill:var(--tm-shadow)}
+.tm-offset{fill:var(--tm-red);opacity:.92}
+.tm-plate{fill:var(--tm-plate);stroke:var(--tm-line);stroke-width:2.6;stroke-linejoin:round}
+.tm-neck,.tm-collar,.tm-pad{fill:var(--tm-plate);stroke:var(--tm-line);stroke-width:2.2}
+.tm-rubber{fill:var(--tm-red)}
+.tm-knob-cap{fill:var(--tm-red);stroke:var(--tm-line);stroke-width:2.2}
+.tm-knob-shine{fill:none;stroke:var(--tm-glint);stroke-width:2.6;stroke-linecap:round;opacity:.75}
+.tm-face{fill:var(--tm-face)}
+.tm-emblem{fill:var(--tm-red)}
+.tm-cheeks{fill:var(--tm-red);opacity:.8}
+.tm-brow{fill:none;stroke:var(--tm-feature);stroke-width:2.6;stroke-linecap:round;transition:transform .25s cubic-bezier(.2,.8,.2,1)}
+.tm-brow-l{transform-origin:86px 88px}.tm-brow-r{transform-origin:114px 84px}
+.tm-pupil{fill:var(--tm-feature)}
+.tm-glint{fill:var(--tm-glint)}
+.tm-eyes{transform-origin:100px 100px}
+.tm-eyes-happy path,.tm-eyes-dizzy path{fill:none;stroke:var(--tm-feature);stroke-width:2.8;stroke-linecap:round}
+.tm-gaze{transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+.tm-lens{fill:none;stroke:var(--tm-feature);stroke-width:2.6}
+.tm-lens-shine{fill:none;stroke:var(--tm-feature);stroke-width:1.4;stroke-linecap:round;opacity:.45}
+.tm-chain{fill:none;stroke:var(--tm-feature);stroke-width:1.5;stroke-dasharray:1.6 2.4;stroke-linecap:round}
+.tm-loupe{transform-origin:126px 104px;transition:transform .45s cubic-bezier(.3,1.6,.5,1)}
+.tm-mouth{fill:none;stroke:var(--tm-feature);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+.tm-mouth-grin,.tm-mouth-talk,.tm-mouth-o{fill:var(--tm-feature)}
+.tm-mouth-talk{transform-origin:100px 116px}
+.tm-arm path{fill:none;stroke:var(--tm-line);stroke-width:6;stroke-linecap:round}
+.tm-arm circle{fill:var(--tm-line)}
+.tm-arm .tm-finger{stroke-width:4.4}
+.tm-sheet{fill:var(--tm-face);stroke:var(--tm-line);stroke-width:2}
+.tm-line{fill:var(--tm-feature);opacity:.45}
+.tm-line-hit{fill:var(--tm-red);opacity:1}
+.tm-beam{fill:var(--tm-red);opacity:.28}
+.tm-pole{fill:none;stroke:var(--tm-line);stroke-width:3;stroke-linecap:round}
+.tm-flag{fill:var(--tm-red);stroke:var(--tm-line);stroke-width:1.6;stroke-linejoin:round}
+[data-tone="evidence"] .tm-flag{fill:var(--tm-amber)}
+.tm-glyph{fill:#fff}.tm-glyph-q{fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round}
+.tm-glyph-evidence,[data-tone="evidence"] .tm-glyph-risk{display:none}
+[data-tone="evidence"] .tm-glyph-evidence{display:inline}
+.tm-pennant{transform-origin:164px 36px}
+.tm-fx-think circle{fill:var(--tm-line)}
+.tm-fx-burst path,.tm-fx-point path{fill:none;stroke:var(--tm-red);stroke-width:3;stroke-linecap:round}
+.tm-q{fill:none;stroke:var(--tm-red);stroke-width:4.2;stroke-linecap:round;stroke-linejoin:round}
+.tm-q-dot{fill:var(--tm-red)}
+.tm-swirl{fill:none;stroke:var(--tm-line);stroke-width:2;stroke-linecap:round;opacity:.6}
+.tm-imprint-ring{fill:none;stroke:var(--tm-green);stroke-width:3}
+.tm-imprint-inner{fill:none;stroke:var(--tm-green);stroke-width:1.2;stroke-dasharray:2 2.2}
+.tm-imprint-star{fill:var(--tm-red)}
+.tm-rig{transform-origin:100px 162px}
+.tm-fx-imprint{transform-origin:171px 166px}
+.tm-fx-burst{transform-origin:100px 152px}
+.tm-breath{transform-origin:100px 162px}
+.tm-knob{transform-origin:100px 54px}
+.tm-flip{transform-origin:100px 100px}
+[data-facing="left"] .tm-flip{transform:scaleX(-1)}
+.tm-fx,.tm-pose,.tm-eyes,.tm-mouth{opacity:0;visibility:hidden;transition:opacity .18s,visibility 0s .18s}
+.tm-mascot:not([data-state]) .tm-pose-rest,
+[data-state="idle"] :is(.tm-pose-rest,.tm-eyes-open,.tm-mouth-smile),
+[data-state="scanning"] :is(.tm-arm-l .tm-pose-rest,.tm-pose-hold,.tm-fx-scan,.tm-fx-think,.tm-eyes-open,.tm-mouth-flat),
+[data-state="success"] :is(.tm-pose-up,.tm-eyes-happy,.tm-mouth-grin,.tm-fx-imprint,.tm-fx-burst),
+[data-state="warning"] :is(.tm-arm-l .tm-pose-rest,.tm-pose-flag,.tm-fx-warn,.tm-eyes-open,.tm-mouth-o),
+[data-state="error"] :is(.tm-pose-scratch,.tm-arm-r .tm-pose-rest,.tm-eyes-dizzy,.tm-mouth-wobble,.tm-fx-error),
+[data-state="pointing"] :is(.tm-arm-l .tm-pose-rest,.tm-pose-point,.tm-fx-point,.tm-eyes-open,.tm-mouth-talk){
+opacity:1;visibility:visible;transition:opacity .18s,visibility 0s
+}
+[data-state="scanning"] .tm-brow-l{transform:translateY(1.5px) rotate(9deg)}
+[data-state="scanning"] .tm-brow-r{transform:translateY(1.5px) rotate(-9deg)}
+[data-state="scanning"] .tm-gaze{transform:translate(2.5px,2.5px)}
+[data-state="success"] .tm-brow-l,[data-state="success"] .tm-brow-r{transform:translateY(-3px)}
+[data-state="warning"] .tm-brow-l{transform:translateY(-2.5px) rotate(-11deg)}
+[data-state="warning"] .tm-brow-r{transform:translateY(-2.5px) rotate(11deg)}
+[data-state="warning"] .tm-gaze{transform:translate(1.5px,-1px)}
+[data-state="error"] .tm-brow-l{transform:translateY(-3px) rotate(-14deg)}
+[data-state="error"] .tm-brow-r{transform:translateY(1px) rotate(8deg)}
+[data-state="error"] .tm-loupe{transform:translate(3px,8px) rotate(20deg)}
+[data-state="pointing"] .tm-brow-l,[data-state="pointing"] .tm-brow-r{transform:translateY(-2.5px)}
+[data-state="pointing"] .tm-gaze{transform:translate(2.5px,-.5px)}
+@media (prefers-reduced-motion:no-preference){
+.tm-breath{animation:tm-breathe 3.6s ease-in-out infinite}
+.tm-eyes-open{animation:tm-blink 5.2s infinite}
+[data-state="idle"] .tm-knob{animation:tm-nod 7s ease-in-out infinite}
+[data-state="scanning"] .tm-breath{animation-duration:2.4s}
+[data-state="scanning"] .tm-gaze{animation:tm-read 2.8s ease-in-out infinite}
+[data-state="scanning"] .tm-beam{animation:tm-beam 1.9s cubic-bezier(.45,0,.55,1) infinite alternate}
+[data-state="scanning"] .tm-line-hit{animation:tm-hit 3.8s steps(1) infinite}
+[data-state="scanning"] .tm-fx-think circle{animation:tm-dot 1.5s ease-in-out infinite}
+[data-state="scanning"] .tm-fx-think circle:nth-child(2){animation-delay:.2s}
+[data-state="scanning"] .tm-fx-think circle:nth-child(3){animation-delay:.4s}
+[data-state="scanning"] .tm-knob{animation:tm-wiggle 2.8s ease-in-out infinite}
+[data-state="success"] .tm-rig{animation:tm-strike .78s cubic-bezier(.3,.9,.4,1) both}
+[data-state="success"] .tm-fx-imprint{animation:tm-imprint .5s .36s cubic-bezier(.2,1.5,.4,1) both}
+[data-state="success"] .tm-fx-burst{animation:tm-burst .6s .3s ease-out both}
+[data-state="warning"] .tm-rig{animation:tm-recoil .55s cubic-bezier(.3,1.5,.5,1) both}
+[data-state="warning"] .tm-pennant{animation:tm-wave 1.3s ease-in-out infinite}
+[data-state="error"] .tm-rig{animation:tm-wobble 2.6s ease-in-out infinite}
+[data-state="error"] .tm-q{animation:tm-pop .45s cubic-bezier(.3,1.6,.5,1) both}
+[data-state="error"] .tm-pose-scratch{animation:tm-scratch .5s ease-in-out infinite alternate;transform-origin:58px 106px}
+[data-state="pointing"] .tm-mouth-talk{animation:tm-talk .9s ease-in-out infinite}
+[data-state="pointing"] .tm-pose-point{animation:tm-jab 1.8s ease-in-out infinite;transform-origin:142px 109px}
+[data-state="pointing"] .tm-fx-point{animation:tm-flick 1.8s ease-in-out infinite}
+}
+@keyframes tm-breathe{0%,100%{transform:scale(1,1)}50%{transform:scale(1.012,1.028)}}
+@keyframes tm-blink{0%,93%,100%{transform:scaleY(1)}95.5%{transform:scaleY(.08)}}
+@keyframes tm-nod{0%,82%,100%{transform:rotate(0)}86%{transform:rotate(-7deg)}91%{transform:rotate(4deg)}}
+@keyframes tm-read{0%,100%{transform:translate(1px,1px)}35%{transform:translate(4px,3px)}65%{transform:translate(2px,4px)}}
+@keyframes tm-beam{from{transform:translateY(0)}to{transform:translateY(46px)}}
+@keyframes tm-hit{0%,100%{opacity:.45;fill:var(--tm-feature)}50%{opacity:1;fill:var(--tm-red)}}
+@keyframes tm-dot{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}
+@keyframes tm-wiggle{0%,100%{transform:rotate(0)}25%{transform:rotate(-5deg)}75%{transform:rotate(5deg)}}
+@keyframes tm-strike{0%{transform:translateY(0)}28%{transform:translateY(-20px) scale(.97,1.05)}46%{transform:translateY(2px) scale(1.07,.9)}62%{transform:translateY(-3px) scale(.98,1.03)}100%{transform:none}}
+@keyframes tm-imprint{0%{opacity:0;transform:scale(1.6) rotate(10deg)}100%{opacity:1;transform:none}}
+@keyframes tm-burst{0%{opacity:0;transform:scale(.6)}30%{opacity:1}100%{opacity:0;transform:scale(1.15)}}
+@keyframes tm-recoil{0%{transform:none}35%{transform:translateX(-5px) rotate(-4deg)}100%{transform:none}}
+@keyframes tm-wave{0%,100%{transform:skewY(0) scaleX(1)}50%{transform:skewY(-7deg) scaleX(.9)}}
+@keyframes tm-wobble{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}
+@keyframes tm-pop{0%{opacity:0;transform:translateY(8px) scale(.5)}100%{opacity:1;transform:none}}
+@keyframes tm-scratch{from{transform:rotate(-3deg)}to{transform:rotate(4deg)}}
+@keyframes tm-talk{0%,100%{transform:scaleY(.45)}50%{transform:scaleY(1)}}
+@keyframes tm-jab{0%,100%{transform:none}50%{transform:translate(3px,-2px)}}
+@keyframes tm-flick{0%,100%{opacity:.3}50%{opacity:1}}</style><defs><filter id="tm6-ink" x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/><feDisplacementMap in="SourceGraphic" scale="1.8"/></filter></defs><ellipse class="tm-shadow" cx="100" cy="171" rx="46" ry="4.5"/><g class="tm-fx tm-fx-imprint" filter="url(#tm6-ink)"><g transform="translate(171 166) rotate(-12)"><circle r="17" class="tm-imprint-ring"/><circle r="12.6" class="tm-imprint-inner"/><path d="M32 13c1.5 11.4 7.9 17.8 19.3 19.3C39.9 33.8 33.5 40.2 32 51.6 30.5 40.2 24.1 33.8 12.7 32.3 24.1 30.8 30.5 24.4 32 13Z" transform="scale(.42) translate(-32 -32.3)" class="tm-imprint-star"/></g></g><g class="tm-flip"><g class="tm-rig"><g class="tm-breath"><g class="tm-fx tm-fx-scan"><g transform="rotate(5 171 142)"><rect class="tm-sheet" x="150" y="114" width="42" height="56" rx="3"/><rect class="tm-line" x="156" y="122" width="26" height="3" rx="1.5"/><rect class="tm-line" x="156" y="130" width="30" height="3" rx="1.5"/><rect class="tm-line tm-line-hit" x="156" y="138" width="20" height="3" rx="1.5"/><rect class="tm-line" x="156" y="146" width="28" height="3" rx="1.5"/><rect class="tm-line" x="156" y="154" width="24" height="3" rx="1.5"/><rect class="tm-line" x="156" y="162" width="14" height="3" rx="1.5"/><rect class="tm-beam" x="151" y="115" width="40" height="7" rx="2"/></g></g><g class="tm-fx tm-fx-warn"><path class="tm-pole" d="M163 108V24"/><g class="tm-pennant"><path class="tm-flag" d="M164.5 25L195 36 164.5 48Z"/><g class="tm-glyph-risk"><rect class="tm-glyph" x="172.6" y="29.5" width="3.2" height="9.5" rx="1.4"/><circle class="tm-glyph" cx="174.2" cy="42.8" r="1.8"/></g><g class="tm-glyph-evidence"><path class="tm-glyph-q" d="M170.4 32.4q3.8-4.2 7.6-.4q2.2 3-1.8 5q-1.9 1-1.9 3.4"/><circle class="tm-glyph" cx="174.3" cy="44" r="1.6"/></g></g></g><g class="tm-body"><path class="tm-offset" d="M70 66H130A14 14 0 0 0 144 80V136A14 14 0 0 0 130 150H70A14 14 0 0 0 56 136V80A14 14 0 0 0 70 66Z" transform="translate(4 4)"/><rect class="tm-neck" x="93" y="50" width="14" height="18"/><rect class="tm-collar" x="87" y="61" width="26" height="7" rx="2.5"/><g class="tm-knob"><ellipse class="tm-knob-cap" cx="100" cy="41" rx="18" ry="13.5"/><path class="tm-knob-shine" d="M89.5 36.5q4-5 12-5.2"/></g><path class="tm-plate" d="M70 66H130A14 14 0 0 0 144 80V136A14 14 0 0 0 130 150H70A14 14 0 0 0 56 136V80A14 14 0 0 0 70 66Z"/><rect class="tm-pad" x="51" y="147" width="98" height="10.5" rx="3"/><rect class="tm-rubber" x="55" y="156" width="90" height="5" rx="1.6"/><rect class="tm-face" x="66" y="78" width="68" height="52" rx="13"/><path class="tm-emblem" d="M32 13c1.5 11.4 7.9 17.8 19.3 19.3C39.9 33.8 33.5 40.2 32 51.6 30.5 40.2 24.1 33.8 12.7 32.3 24.1 30.8 30.5 24.4 32 13Z" transform="translate(100 140) scale(.25) translate(-32 -32.3)"/><g class="tm-cheeks"><circle cx="76" cy="115" r="1.5"/><circle cx="80" cy="117.5" r="1.5"/><circle cx="76" cy="120" r="1.5"/><circle cx="124" cy="115" r="1.5"/><circle cx="120" cy="117.5" r="1.5"/><circle cx="124" cy="120" r="1.5"/></g><path class="tm-brow tm-brow-l" d="M81 89Q86 86.5 91 89"/><path class="tm-brow tm-brow-r" d="M108 84.6Q114 82 120 84.6"/><g class="tm-eyes tm-eyes-open"><g class="tm-gaze"><ellipse class="tm-pupil" cx="86" cy="100" rx="4.4" ry="5.8"/><ellipse class="tm-pupil" cx="114" cy="100" rx="5.4" ry="7"/><circle class="tm-glint" cx="87.7" cy="97.6" r="1.3"/><circle class="tm-glint" cx="116" cy="97.2" r="1.6"/></g></g><g class="tm-eyes tm-eyes-happy"><path d="M81 102.5Q86 95 91 102.5"/><path d="M108.5 102.5Q114 94.5 119.5 102.5"/></g><g class="tm-eyes tm-eyes-dizzy"><path d="M86 100m-4.2 0a4.2 4.2 0 1 1 4.2 4.2a2.6 2.6 0 1 1-2.6-2.6"/><path d="M114 100m4.2 0a4.2 4.2 0 1 0-4.2 4.2a2.6 2.6 0 1 0 2.6-2.6"/></g><g class="tm-loupe"><path class="tm-chain" d="M124 104.5Q132.5 116 128.5 128"/><circle class="tm-lens" cx="114" cy="100" r="10.6"/><path class="tm-lens-shine" d="M106.8 94.6a8 8 0 0 1 5.6-3.4"/></g><path class="tm-mouth tm-mouth-smile" d="M93 116.5Q100 122.5 107 116.5"/><path class="tm-mouth tm-mouth-grin" d="M91 114.5Q100 127 109 114.5Z"/><path class="tm-mouth tm-mouth-flat" d="M94.5 118.6Q100 119.4 105.5 117.6"/><ellipse class="tm-mouth tm-mouth-o" cx="100" cy="119" rx="3.6" ry="4.6"/><path class="tm-mouth tm-mouth-wobble" d="M90.5 119.5q2.4-3 4.8 0t4.8 0t4.8 0t4.8 0"/><path class="tm-mouth tm-mouth-talk" d="M93.5 115.5Q100 125 106.5 115.5Z"/></g><g class="tm-arm tm-arm-l"><g class="tm-pose tm-pose-rest"><path d="M58 112C48 118 44 128 46 137"/><circle cx="46" cy="140" r="6"/></g><g class="tm-pose tm-pose-up"><path d="M58 104C46 96 41 84 41 73"/><circle cx="41" cy="69" r="6"/></g><g class="tm-pose tm-pose-scratch"><path d="M58 106C44 98 48 72 68 61"/><circle cx="71" cy="59" r="6"/></g></g><g class="tm-arm tm-arm-r"><g class="tm-pose tm-pose-rest"><path d="M142 112C152 118 156 128 154 137"/><circle cx="154" cy="140" r="6"/></g><g class="tm-pose tm-pose-up"><path d="M142 104C154 96 159 84 159 73"/><circle cx="159" cy="69" r="6"/></g><g class="tm-pose tm-pose-point"><path d="M142 109C156 105 166 97 173 87"/><circle cx="175.5" cy="83.5" r="6"/><path class="tm-finger" d="M179 79.5L187.5 70"/></g><g class="tm-pose tm-pose-hold"><path d="M142 116C150 121 155 127 158 133"/><circle cx="159.5" cy="136" r="6"/></g><g class="tm-pose tm-pose-flag"><path d="M142 110C151 104 157 94 160 86"/><circle cx="162.5" cy="83" r="6"/></g></g><g class="tm-fx tm-fx-think"><circle cx="129" cy="29" r="2.6"/><circle cx="138" cy="20.5" r="3.3"/><circle cx="149" cy="11" r="4"/></g><g class="tm-fx tm-fx-burst"><path d="M44 158l-12-3M47 149l-10-8M156 158l12-3M153 149l10-8"/></g><g class="tm-fx tm-fx-error"><path class="tm-q" d="M140 33q8-10 16-2.5q5 7-4 11q-4 2-4 8"/><circle class="tm-q-dot" cx="148" cy="58" r="2.6"/><path class="tm-swirl" d="M70 28q-7-3-3-10M62 38q-7 1-8-6"/></g><g class="tm-fx tm-fx-point"><path d="M191.5 66.5l5-5.5M193 75l6 .6M185.5 60.5l2-6"/></g></g></g></g></svg>

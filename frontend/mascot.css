@@ -1,0 +1,154 @@
+/* Punch, the Touchmark mascot (markup: mascot.js). Riso inks: the body prints in the page ink,
+   the knob, cheeks and the off-register plate print in the second ink.
+   States: [data-state] idle | scanning | success | warning | error | pointing.
+   [data-tone] evidence turns the warning flag amber with a question mark. */
+.tm-mascot{
+  --tm-line:var(--ink,#1d2b4f);        /* arms, outlines, poles */
+  --tm-plate:var(--ink,#1d2b4f);       /* the body */
+  --tm-face:var(--card,#fbf7ee);       /* the face window and the sheet */
+  --tm-feature:#1d2b4f;                /* eyes, brows, mouth: always on the light face */
+  --tm-red:var(--red,#e2432a);
+  --tm-amber:var(--amber,#b97c0b);
+  --tm-green:var(--green,#1f7a5a);
+  --tm-glint:#fff;
+  --tm-shadow:rgba(29,43,79,.16);
+  display:inline-block;width:160px;height:auto;aspect-ratio:1;overflow:visible;vertical-align:middle;
+}
+@media (prefers-color-scheme:dark){.tm-mascot{
+  --tm-line:var(--ink,#f2ead9);
+  --tm-plate:#28355f;
+  --tm-face:#f4eee1;
+  --tm-shadow:rgba(0,0,0,.35);
+}}
+/* Pages with an explicit theme switch can force it. */
+[data-theme="dark"] .tm-mascot{--tm-line:#f2ead9;--tm-plate:#28355f;--tm-face:#f4eee1;--tm-shadow:rgba(0,0,0,.35)}
+[data-theme="light"] .tm-mascot{--tm-line:#1d2b4f;--tm-plate:#1d2b4f;--tm-face:#fbf7ee;--tm-shadow:rgba(29,43,79,.16)}
+
+.tm-mascot *{transform-box:view-box}
+.tm-shadow{fill:var(--tm-shadow)}
+.tm-offset{fill:var(--tm-red);opacity:.92}
+.tm-plate{fill:var(--tm-plate);stroke:var(--tm-line);stroke-width:2.6;stroke-linejoin:round}
+.tm-neck,.tm-collar,.tm-pad{fill:var(--tm-plate);stroke:var(--tm-line);stroke-width:2.2}
+.tm-rubber{fill:var(--tm-red)}
+.tm-knob-cap{fill:var(--tm-red);stroke:var(--tm-line);stroke-width:2.2}
+.tm-knob-shine{fill:none;stroke:var(--tm-glint);stroke-width:2.6;stroke-linecap:round;opacity:.75}
+.tm-face{fill:var(--tm-face)}
+.tm-emblem{fill:var(--tm-red)}
+.tm-cheeks{fill:var(--tm-red);opacity:.8}
+.tm-brow{fill:none;stroke:var(--tm-feature);stroke-width:2.6;stroke-linecap:round;transition:transform .25s cubic-bezier(.2,.8,.2,1)}
+.tm-brow-l{transform-origin:86px 88px}.tm-brow-r{transform-origin:114px 84px}
+.tm-pupil{fill:var(--tm-feature)}
+.tm-glint{fill:var(--tm-glint)}
+.tm-eyes{transform-origin:100px 100px}
+.tm-eyes-happy path,.tm-eyes-dizzy path{fill:none;stroke:var(--tm-feature);stroke-width:2.8;stroke-linecap:round}
+.tm-gaze{transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+.tm-lens{fill:none;stroke:var(--tm-feature);stroke-width:2.6}
+.tm-lens-shine{fill:none;stroke:var(--tm-feature);stroke-width:1.4;stroke-linecap:round;opacity:.45}
+.tm-chain{fill:none;stroke:var(--tm-feature);stroke-width:1.5;stroke-dasharray:1.6 2.4;stroke-linecap:round}
+.tm-loupe{transform-origin:126px 104px;transition:transform .45s cubic-bezier(.3,1.6,.5,1)}
+.tm-mouth{fill:none;stroke:var(--tm-feature);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+.tm-mouth-grin,.tm-mouth-talk,.tm-mouth-o{fill:var(--tm-feature)}
+.tm-mouth-talk{transform-origin:100px 116px}
+.tm-arm path{fill:none;stroke:var(--tm-line);stroke-width:6;stroke-linecap:round}
+.tm-arm circle{fill:var(--tm-line)}
+.tm-arm .tm-finger{stroke-width:4.4}
+.tm-sheet{fill:var(--tm-face);stroke:var(--tm-line);stroke-width:2}
+.tm-line{fill:var(--tm-feature);opacity:.45}
+.tm-line-hit{fill:var(--tm-red);opacity:1}
+.tm-beam{fill:var(--tm-red);opacity:.28}
+.tm-pole{fill:none;stroke:var(--tm-line);stroke-width:3;stroke-linecap:round}
+.tm-flag{fill:var(--tm-red);stroke:var(--tm-line);stroke-width:1.6;stroke-linejoin:round}
+[data-tone="evidence"] .tm-flag{fill:var(--tm-amber)}
+.tm-glyph{fill:#fff}.tm-glyph-q{fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round}
+.tm-glyph-evidence,[data-tone="evidence"] .tm-glyph-risk{display:none}
+[data-tone="evidence"] .tm-glyph-evidence{display:inline}
+.tm-pennant{transform-origin:164px 36px}
+.tm-fx-think circle{fill:var(--tm-line)}
+.tm-fx-burst path,.tm-fx-point path{fill:none;stroke:var(--tm-red);stroke-width:3;stroke-linecap:round}
+.tm-q{fill:none;stroke:var(--tm-red);stroke-width:4.2;stroke-linecap:round;stroke-linejoin:round}
+.tm-q-dot{fill:var(--tm-red)}
+.tm-swirl{fill:none;stroke:var(--tm-line);stroke-width:2;stroke-linecap:round;opacity:.6}
+.tm-imprint-ring{fill:none;stroke:var(--tm-green);stroke-width:3}
+.tm-imprint-inner{fill:none;stroke:var(--tm-green);stroke-width:1.2;stroke-dasharray:2 2.2}
+.tm-imprint-star{fill:var(--tm-red)}
+.tm-rig{transform-origin:100px 162px}
+.tm-fx-imprint{transform-origin:171px 166px}
+.tm-fx-burst{transform-origin:100px 152px}
+.tm-breath{transform-origin:100px 162px}
+.tm-knob{transform-origin:100px 54px}
+.tm-flip{transform-origin:100px 100px}
+[data-facing="left"] .tm-flip{transform:scaleX(-1)}
+
+/* ---------- what each state shows ---------- */
+.tm-fx,.tm-pose,.tm-eyes,.tm-mouth{opacity:0;visibility:hidden;transition:opacity .18s,visibility 0s .18s}
+.tm-mascot:not([data-state]) .tm-pose-rest,
+[data-state="idle"] :is(.tm-pose-rest,.tm-eyes-open,.tm-mouth-smile),
+[data-state="scanning"] :is(.tm-arm-l .tm-pose-rest,.tm-pose-hold,.tm-fx-scan,.tm-fx-think,.tm-eyes-open,.tm-mouth-flat),
+[data-state="success"] :is(.tm-pose-up,.tm-eyes-happy,.tm-mouth-grin,.tm-fx-imprint,.tm-fx-burst),
+[data-state="warning"] :is(.tm-arm-l .tm-pose-rest,.tm-pose-flag,.tm-fx-warn,.tm-eyes-open,.tm-mouth-o),
+[data-state="error"] :is(.tm-pose-scratch,.tm-arm-r .tm-pose-rest,.tm-eyes-dizzy,.tm-mouth-wobble,.tm-fx-error),
+[data-state="pointing"] :is(.tm-arm-l .tm-pose-rest,.tm-pose-point,.tm-fx-point,.tm-eyes-open,.tm-mouth-talk){
+  opacity:1;visibility:visible;transition:opacity .18s,visibility 0s
+}
+[data-state="scanning"] .tm-brow-l{transform:translateY(1.5px) rotate(9deg)}
+[data-state="scanning"] .tm-brow-r{transform:translateY(1.5px) rotate(-9deg)}
+[data-state="scanning"] .tm-gaze{transform:translate(2.5px,2.5px)}
+[data-state="success"] .tm-brow-l,[data-state="success"] .tm-brow-r{transform:translateY(-3px)}
+[data-state="warning"] .tm-brow-l{transform:translateY(-2.5px) rotate(-11deg)}
+[data-state="warning"] .tm-brow-r{transform:translateY(-2.5px) rotate(11deg)}
+[data-state="warning"] .tm-gaze{transform:translate(1.5px,-1px)}
+[data-state="error"] .tm-brow-l{transform:translateY(-3px) rotate(-14deg)}
+[data-state="error"] .tm-brow-r{transform:translateY(1px) rotate(8deg)}
+[data-state="error"] .tm-loupe{transform:translate(3px,8px) rotate(20deg)}
+[data-state="pointing"] .tm-brow-l,[data-state="pointing"] .tm-brow-r{transform:translateY(-2.5px)}
+[data-state="pointing"] .tm-gaze{transform:translate(2.5px,-.5px)}
+
+/* ---------- motion ---------- */
+@media (prefers-reduced-motion:no-preference){
+  .tm-breath{animation:tm-breathe 3.6s ease-in-out infinite}
+  .tm-eyes-open{animation:tm-blink 5.2s infinite}
+  [data-state="idle"] .tm-knob{animation:tm-nod 7s ease-in-out infinite}
+
+  [data-state="scanning"] .tm-breath{animation-duration:2.4s}
+  [data-state="scanning"] .tm-gaze{animation:tm-read 2.8s ease-in-out infinite}
+  [data-state="scanning"] .tm-beam{animation:tm-beam 1.9s cubic-bezier(.45,0,.55,1) infinite alternate}
+  [data-state="scanning"] .tm-line-hit{animation:tm-hit 3.8s steps(1) infinite}
+  [data-state="scanning"] .tm-fx-think circle{animation:tm-dot 1.5s ease-in-out infinite}
+  [data-state="scanning"] .tm-fx-think circle:nth-child(2){animation-delay:.2s}
+  [data-state="scanning"] .tm-fx-think circle:nth-child(3){animation-delay:.4s}
+  [data-state="scanning"] .tm-knob{animation:tm-wiggle 2.8s ease-in-out infinite}
+
+  [data-state="success"] .tm-rig{animation:tm-strike .78s cubic-bezier(.3,.9,.4,1) both}
+  [data-state="success"] .tm-fx-imprint{animation:tm-imprint .5s .36s cubic-bezier(.2,1.5,.4,1) both}
+  [data-state="success"] .tm-fx-burst{animation:tm-burst .6s .3s ease-out both}
+
+  [data-state="warning"] .tm-rig{animation:tm-recoil .55s cubic-bezier(.3,1.5,.5,1) both}
+  [data-state="warning"] .tm-pennant{animation:tm-wave 1.3s ease-in-out infinite}
+
+  [data-state="error"] .tm-rig{animation:tm-wobble 2.6s ease-in-out infinite}
+  [data-state="error"] .tm-q{animation:tm-pop .45s cubic-bezier(.3,1.6,.5,1) both}
+  [data-state="error"] .tm-pose-scratch{animation:tm-scratch .5s ease-in-out infinite alternate;transform-origin:58px 106px}
+
+  [data-state="pointing"] .tm-mouth-talk{animation:tm-talk .9s ease-in-out infinite}
+  [data-state="pointing"] .tm-pose-point{animation:tm-jab 1.8s ease-in-out infinite;transform-origin:142px 109px}
+  [data-state="pointing"] .tm-fx-point{animation:tm-flick 1.8s ease-in-out infinite}
+}
+@keyframes tm-breathe{0%,100%{transform:scale(1,1)}50%{transform:scale(1.012,1.028)}}
+@keyframes tm-blink{0%,93%,100%{transform:scaleY(1)}95.5%{transform:scaleY(.08)}}
+@keyframes tm-nod{0%,82%,100%{transform:rotate(0)}86%{transform:rotate(-7deg)}91%{transform:rotate(4deg)}}
+@keyframes tm-read{0%,100%{transform:translate(1px,1px)}35%{transform:translate(4px,3px)}65%{transform:translate(2px,4px)}}
+@keyframes tm-beam{from{transform:translateY(0)}to{transform:translateY(46px)}}
+@keyframes tm-hit{0%,100%{opacity:.45;fill:var(--tm-feature)}50%{opacity:1;fill:var(--tm-red)}}
+@keyframes tm-dot{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}
+@keyframes tm-wiggle{0%,100%{transform:rotate(0)}25%{transform:rotate(-5deg)}75%{transform:rotate(5deg)}}
+@keyframes tm-strike{0%{transform:translateY(0)}28%{transform:translateY(-20px) scale(.97,1.05)}46%{transform:translateY(2px) scale(1.07,.9)}62%{transform:translateY(-3px) scale(.98,1.03)}100%{transform:none}}
+@keyframes tm-imprint{0%{opacity:0;transform:scale(1.6) rotate(10deg)}100%{opacity:1;transform:none}}
+@keyframes tm-burst{0%{opacity:0;transform:scale(.6)}30%{opacity:1}100%{opacity:0;transform:scale(1.15)}}
+@keyframes tm-recoil{0%{transform:none}35%{transform:translateX(-5px) rotate(-4deg)}100%{transform:none}}
+@keyframes tm-wave{0%,100%{transform:skewY(0) scaleX(1)}50%{transform:skewY(-7deg) scaleX(.9)}}
+@keyframes tm-wobble{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}
+@keyframes tm-pop{0%{opacity:0;transform:translateY(8px) scale(.5)}100%{opacity:1;transform:none}}
+@keyframes tm-scratch{from{transform:rotate(-3deg)}to{transform:rotate(4deg)}}
+@keyframes tm-talk{0%,100%{transform:scaleY(.45)}50%{transform:scaleY(1)}}
+@keyframes tm-jab{0%,100%{transform:none}50%{transform:translate(3px,-2px)}}
+@keyframes tm-flick{0%,100%{opacity:.3}50%{opacity:1}}
