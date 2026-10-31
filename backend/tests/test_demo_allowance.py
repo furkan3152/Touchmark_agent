@@ -80,6 +80,7 @@ def test_the_self_check_claims_once_and_refuses_the_duplicate(store):
     out = asyncio.run(self_check(store))
     assert out["ok"] is True and out["first_claim"] is True and out["second_claim"] is False
     assert out["listed"] == 1 and out["listed_after_delete"] == 0 and "errors" not in out
+    assert out["race_winners"] == 1
 
 
 def test_the_self_check_reports_a_store_that_cannot_answer_by_class_only():

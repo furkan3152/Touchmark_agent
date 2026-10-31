@@ -256,6 +256,13 @@ class DeepReviewLimiter:
                 return
 
 
+async def _winners(claims) -> int:
+    results = await claims
+    if any(isinstance(r, BaseException) for r in results):
+        raise next(r for r in results if isinstance(r, BaseException))
+    return sum(1 for r in results if r is True)
+
+
 async def self_check(store: CounterStore, *, prefix: str = f"{PREFIX.rsplit('/', 1)[0]}/self-check/") -> dict:
     """Exercise the store the way the limiter does, on a throwaway path: a create-only claim, the
     same claim again (it must be refused as already existing), a listing, then a delete. Returns
@@ -274,8 +281,13 @@ async def self_check(store: CounterStore, *, prefix: str = f"{PREFIX.rsplit('/',
     await step("listed", store.count(path))
     await step("deleted", store.delete([path]))
     await step("listed_after_delete", store.count(path))
+    # Three claims of one fresh slot at once: exactly one may win, or the ceiling could be overspent.
+    race = f"{path}-race"
+    await step("race_winners", _winners(asyncio.gather(*(store.claim(race) for _ in range(3)), return_exceptions=True)))
+    await step("race_cleanup", store.delete([race]))
     out["ok"] = (out.get("first_claim") is True and out.get("second_claim") is False
-                 and out.get("listed") == 1 and out.get("listed_after_delete") == 0)
+                 and out.get("listed") == 1 and out.get("listed_after_delete") == 0 and out.get("race_winners") == 1)
+    out.pop("race_cleanup", None)
     out.pop("deleted", None)
     return out
 
