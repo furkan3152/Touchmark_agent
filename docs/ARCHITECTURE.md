@@ -251,6 +251,5 @@ Records keep the name they were written with: `docs/evidence/`, `research/`,
 and the `furkan3152/agentveritas-stellar` source URL registered on-chain). The demo agent
 sources in `examples/demo/` and their test copy are audited byte for byte, so their
 comments are left as they were. `scripts/verify_independence.sh` still looks for the
-sibling project by its name, `agentveritas-arc`, and `SECURITY.md` keeps the
-`security@agentveritas.dev` contact until a Touchmark mailbox is confirmed.
+sibling project by its name, `agentveritas-arc`.
 

@@ -11,7 +11,7 @@ Only the current major version receives security fixes.
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a security problem. Email **security@agentveritas.dev** instead.
+Please do not open a public issue for a security problem. Report it privately through GitHub instead: open the repository's **Security** tab and choose **Report a vulnerability**.
 
 We acknowledge reports within 48 hours and keep you updated while we verify and fix the issue. Once it is resolved we publish an advisory and credit you, unless you would rather stay anonymous.
 
