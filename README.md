@@ -193,7 +193,7 @@ ENABLE_DEEP_REVIEW=1 ENABLE_FINDING_VERIFICATION=1 \
   .venv/bin/python scripts/audit_agent.py <ref> --compare <fixed-ref>            # deep review + verifier + re-audit
 .venv/bin/uvicorn app:app --port 8000                                            # demo at /, Studio at /studio
 .venv/bin/python scripts/evaluate.py                                             # reproduce the corpus evaluation
-.venv/bin/python -m pytest -q && cargo test --workspace                          # 1608 Python and 57 contract tests
+.venv/bin/python -m pytest -q && cargo test --workspace                          # Python and 57 contract tests
 ```
 
 Copy `.env.example` to `.env`. Everything is optional for a local run: with no keys the analysis is rules-only and
@@ -201,6 +201,8 @@ nothing is signed on-chain. The main settings are:
 - `STELLAR_NETWORK`: `testnet`, `offline` or `mainnet`.
 - `ALLOW_MAINNET`: required for mainnet, off by default.
 - `ANTHROPIC_API_KEY` with `ENABLE_DEEP_REVIEW` and `ENABLE_FINDING_VERIFICATION`: the deep review and the verifier.
+- `BLOB_READ_WRITE_TOKEN` and `DEEP_REVIEW_DAILY_LIMIT` (with `DEEP_REVIEW_HOURLY_LIMIT`, `DEEP_REVIEW_CLIENT_HOURLY_LIMIT`):
+  the public demo's durable model-review allowance. On serverless without a store the model review is off.
 - `ENABLE_ONCHAIN_VERIFICATION`.
 - The contract ids written by `scripts/deploy_demo_testnet.py`.
 

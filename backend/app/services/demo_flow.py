@@ -1,7 +1,9 @@
 """The public demo: one reference in, a committed report out, and, for a passing report,
 an AuditCredential issued on Stellar TESTNET.
 
-The audit runs the deterministic analysers only (no paid model call). Issuance is
+The deterministic analysers always run. The model review and its verifier (Anthropic) run
+only with the visitor's consent and within a durable allowance (services/rate_limit.py);
+otherwise the audit is rules-only and says why. Issuance is
 stateless: the audit returns a ticket the server signs over the report hash, score and
 source binding, so a browser cannot raise a score or swap a report before minting. The
 contracts enforce the rest: only the approved validator can complete a validation, and
@@ -37,6 +39,12 @@ NO_ENDPOINT = hashlib.sha256(b"agentveritas.demo.no-endpoint").digest()
 class DemoAuditRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reference: str = Field(min_length=3, max_length=300)
+    #: A .tmark declaration (pasted text or an uploaded file's contents), used as if the
+    #: repository committed it. Without one, the repository's own .tmark is used.
+    tmark: str | None = Field(default=None, max_length=64_000)
+    #: Consent to send the source to the model review (Anthropic) and the verifier. Without
+    #: it the audit runs on the deterministic rules only and says so.
+    model_review_consent: bool = False
 
 
 class DemoCredentialRequest(BaseModel):
@@ -99,13 +107,17 @@ def _summary(finding: dict) -> dict:
     return out
 
 
-def _ai_summary(report: dict, ai: bool, settings: Settings) -> dict:
-    """What the model review and the verifier did, so a reader knows which checks ran."""
+def _ai_summary(report: dict, ai: bool, settings: Settings, skipped: dict | None = None) -> dict:
+    """What the model review and the verifier did, so a reader knows which checks ran.
+    ``skipped`` ({"reason", "note"}) says why the model review was not run when it was not."""
     review = report.get("deep_review") or {}
     if not review:
         if not report.get("repository"):
             return {"review": "no_source"}
         configured = bool(settings.enable_deep_review and settings.anthropic_api_key)
+        if skipped and configured:
+            # no_consent | rate_limited | store_unavailable | not_configured
+            return {"review": skipped["reason"], "note": skipped.get("note", "")}
         return {"review": "rate_limited" if configured and not ai else "off"}
     verification = report.get("verification") or {}
     coverage = review.get("coverage") or {}
@@ -116,11 +128,16 @@ def _ai_summary(report: dict, ai: bool, settings: Settings) -> dict:
                                                          "unverifiable", "agreement") if k in verification}}
 
 
-async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True) -> dict:
+async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True, tmark_text: str | None = None,
+                         skipped: dict | None = None) -> dict:
     """``ai`` allows the model review and verification when they are configured; the
-    deterministic analysis always runs. Both stop by DEMO_DEADLINE_SECONDS."""
+    deterministic analysis always runs. Both stop by DEMO_DEADLINE_SECONDS. ``tmark_text`` is a
+    supplied declaration (already validated by the caller)."""
+    from .progress import emit
     deadline = time.monotonic() + DEMO_DEADLINE_SECONDS
-    result = await audit_reference(reference.strip(), settings, network="testnet", deep=ai, deadline=deadline)
+    result = await audit_reference(reference.strip(), settings, network="testnet", deep=ai, deadline=deadline,
+                                   tmark_override={"text": tmark_text} if tmark_text is not None else None)
+    emit("done")
     report = result["report"]
     findings = report.get("findings", [])
     risks = [f for f in findings if f.get("kind", "risk") == "risk"]
@@ -148,12 +165,22 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True)
                    **{sev: sum(1 for f in risks if f["severity"] == sev) for sev in rank}},
         "files": (report.get("repository") or {}).get("source_files_selected", 0),
         "ownership": (report.get("repository") or {}).get("ownership_claim") or {},
-        "tmark": ((report.get("repository") or {}).get("declarations") or {}).get("tmark") or {"status": "missing"},
+        "tmark": _tmark_summary(report, tmark_text),
+        # What the analysis read and what it left out (tests, examples, docs, builds).
+        "scope": {"files": (report.get("repository") or {}).get("source_files_selected", 0),
+                  "excluded": (report.get("repository") or {}).get("excluded_scope") or {},
+                  "complete": (report.get("repository") or {}).get("complete")},
         # A credential says Touchmark found the agent sound, so it needs the full review: the
         # rules alone missed business-logic bypasses on agents a person judged unsafe.
         "issuance": {"enabled": issuance_enabled(), "eligible": result["decision"] == "pass" and reviewed},
-        "ai": _ai_summary(report, ai, settings),
+        "ai": _ai_summary(report, ai, settings, skipped),
     }
+    if out["tmark"].get("source") == "supplied":
+        # A credential vouches for what the repository says about itself; a declaration supplied
+        # with the request is not part of the repository at that commit.
+        out["issuance"]["eligible"] = False
+        out["issuance"]["reason"] = ("This audit used a declaration supplied with the request. Commit the .tmark to "
+                                     "the repository and audit again to be credentialed.")
     repository = source.get("repository") or ""
     if repository and source.get("path"):
         repository = f"{repository}/tree/{source.get('revision', '')}/{source['path']}"
@@ -163,6 +190,8 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True)
         out["issuance"]["ticket"] = _sign({
             "report_sha256": result["report_sha256"], "score": chain_score, "repository": repository,
             "revision": source.get("revision", ""), "owner": owner, "expires_at": int(time.time()) + TICKET_TTL})
+    elif out["tmark"].get("source") == "supplied":
+        pass  # the reason is set above
     elif out["issuance"]["eligible"] and not repository:
         out["issuance"]["reason"] = "Only audits of a bound source repository can be credentialed."
     elif result["decision"] == "pass" and not reviewed:
@@ -172,6 +201,18 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True)
     elif not out["issuance"]["eligible"]:
         out["issuance"]["reason"] = "Only a passing audit can be credentialed; the contract enforces score >= 65."
     return out
+
+
+def _tmark_summary(report: dict, supplied: str | None) -> dict:
+    """Which declaration the audit used, whether it was valid, and where it differs from the
+    repository's own; with a plain summary of what it declares."""
+    record = ((report.get("repository") or {}).get("declarations") or {}).get("tmark")
+    if not record:
+        if supplied is not None and not report.get("repository"):
+            return {"status": "not_used", "source": "supplied",
+                    "note": "No source code is bound to this reference, so the declaration could not be checked."}
+        return {"status": "missing", "source": "missing"}
+    return dict(record)
 
 
 class _Chain:

@@ -302,6 +302,15 @@ def tmark_findings(artifact: AgentArtifact, auditor: str) -> list[Finding]:
         return []
 
     out: list[Finding] = []
+    if info.get("source") == "supplied" and info.get("mismatches"):
+        out.append(_finding(
+            "intent-tmark-supplied-differs", Severity.LOW,
+            "The declaration supplied for this audit differs from the repository's .tmark",
+            "This audit used the declaration supplied with the request, not the .tmark committed in the repository. "
+            "They disagree where listed; a reader of the repository sees the committed one.",
+            "; ".join(info["mismatches"][:10]),
+            "Commit the declaration that describes the agent, so the repository and the audit say the same thing.",
+            auditor, confidence=0.95))
     profile = artifact.code_profile or {}
     # The declaration describes the agent as it runs; authority used only by tests, setup
     # scripts or demos is not the agent's (capabilities.NOT_SHIPPED).
@@ -329,7 +338,7 @@ def tmark_findings(artifact: AgentArtifact, auditor: str) -> list[Finding]:
                 "the limits that apply there.", auditor))
     # The reverse: declared mainnet, but every network the code names is testnet.
     if declared["agent"]["network"] == "mainnet":
-        code = {n: t for n, t in artifact.code_files.items() if n.endswith(_CODE)}
+        code = {n: t for n, t in artifact.code_files.items() if n.endswith(_CODE) and shipped(n)}
         hits = network_hits(code, _TESTNET)
         if hits and not any(_MAINNET.search(t) or _CHOOSES_NETWORK.search(t) for t in code.values()):
             out.append(_finding(
@@ -342,6 +351,11 @@ def tmark_findings(artifact: AgentArtifact, auditor: str) -> list[Finding]:
 
     # Authority: what the code can sign, against what is declared.
     holds = any(c in caps for c in ("key_custody", "stellar_signing", "tx_submission"))
+    # 1.1 caller_supplied: the caller hands a secret in with each call. The code then loads a key
+    # it does not keep, so holding none is consistent with what it does (the secret's path
+    # through the model is still judged by the data-flow rules).
+    if authority.get("key_source") == "caller_supplied":
+        holds = False
     missing = sorted({sign for cap, sign in _SIGNS_FOR.items() if cap in caps} - set(authority["signs"]))
     if (holds and not authority["holds_keys"]) or missing:
         where = "; ".join(loc for cap in ("key_custody", "stellar_signing", *_SIGNS_FOR) for loc in caps.get(cap, [])[:1])

@@ -69,7 +69,10 @@ def test_a_valid_tmark_on_safe_code_passes_with_owner_and_purpose(tmp_path):
     assert out["decision"] == "pass"
     assert not [f for f in found if f.startswith("intent-tmark")]
     repo = out["report"]["repository"]
-    assert repo["declarations"]["tmark"] == {"status": "valid", "errors": []}
+    record = repo["declarations"]["tmark"]
+    assert {k: record[k] for k in ("status", "errors", "source", "version")} == {
+        "status": "valid", "errors": [], "source": "repository", "version": "1"}
+    assert record["summary"][0].startswith("Treasury agent")
     assert repo["ownership_claim"] == {"path": ".tmark", "stellar_owner": OWNER}
     assert out["report"]["subject"]["purpose"] == doc["agent"]["purpose"]
 
@@ -324,3 +327,108 @@ def test_one_python_guard_with_thousands_of_markers_is_read_once():
         started = time.perf_counter()
         assert network_hits({"a.py": text}, _MAINNET) == expected
         assert time.perf_counter() - started < 1.0
+
+
+# ------------------------------------------------------------------------- .tmark 1.1
+DECLARATIONS = Path(__file__).parent / "fixtures/declarations"
+
+
+def test_every_evaluated_declaration_still_validates_and_the_1_1_upgrades_do_too():
+    files = sorted(DECLARATIONS.glob("*.tmark"))
+    assert len(files) == 8
+    for file in files:
+        parsed, errors = tmark.parse(file.read_text())
+        assert errors == [], (file.name, errors)
+        assert parsed.tmark == ("1.1" if ".v1_1." in file.name else "1")
+
+
+def test_1_1_fields_need_the_1_1_version_and_old_files_are_unchanged():
+    doc = json.loads((DECLARATIONS / "syronlabs-stellar-mcp.v1_1.tmark").read_text())
+    assert tmark.parse(json.dumps(doc))[0].authority.key_source == "caller_supplied"
+    doc["tmark"] = "1"
+    parsed, errors = tmark.check(json.dumps(doc, indent=2))
+    assert parsed is None and errors[0]["field"] == "(file)" and errors[0]["line"] == 3
+    assert 'set "tmark": "1.1"' in errors[0]["message"] and "executes_code" in errors[0]["message"]
+    doc = example_tmark()
+    doc["authority"] = {"holds_keys": False, "key_source": "agent_generated", "signs": []}
+    doc["tmark"] = "1.1"
+    assert any("agent_generated means the agent stores a key" in e for e in tmark.parse(json.dumps(doc))[1])
+
+
+def test_check_locates_each_error_by_field_and_line():
+    text = '{\n  "tmark": "1",\n  "agent": {\n    "name": "x",\n    "kind": "robot"\n  },\n  "bogus": 1\n}\n'
+    parsed, errors = tmark.check(text)
+    by_field = {e["field"]: e for e in errors}
+    assert parsed is None
+    assert by_field["agent.kind"]["line"] == 5 and by_field["bogus"]["line"] == 7
+    assert by_field["agent.purpose"]["line"] == 3 and by_field["agent.purpose"]["message"] == "required"
+    assert by_field["authority"]["line"] == 1  # missing at the top level: the object starts on line 1
+    assert tmark.check('{"tmark": "1",}')[1][0]["line"] == 1
+
+
+def test_summary_normalized_and_differences_describe_the_declaration():
+    supplied = tmark.parse((DECLARATIONS / "syronlabs-stellar-mcp.v1_1.tmark").read_text())[0]
+    committed = tmark.parse((DECLARATIONS / "syronlabs-stellar-mcp.v1.tmark").read_text())[0]
+    lines = tmark.summary(supplied)
+    assert lines[0].startswith("stellar-mcp (Syron Labs): an mcp server on testnet and mainnet")
+    assert "from the caller, with each call" in lines[1]
+    assert any(line.startswith("Runs shell commands or code: soroban_build_and_optimize") for line in lines)
+    assert tmark.normalized(supplied)["tools"][0]["executes_code"] is False
+    diff = tmark.differences(supplied, committed)
+    assert "authority.key_source: supplied 'caller_supplied', committed 'external_signer'" in diff
+    assert any(d.startswith("tool soroban_deploy.executes_code") for d in diff)
+
+
+def test_declared_execution_is_disclosed_but_still_assessed(tmp_path):
+    from backend.tests.test_honest_declarations import HONEST, run
+    found = {f["id"]: f for f in run(HONEST / "syronlabs")["findings"]}
+    assert "security-undeclared-capability" not in found  # declared: executes_code
+    assert "security-path-untrusted-to-command" in found  # what runs is still judged
+
+
+def test_a_generated_tool_family_covers_the_names_the_code_registers(tmp_path):
+    root = tmp_path / "agent"
+    (root / "src").mkdir(parents=True)
+    (root / "src/index.ts").write_text('server.tool("token_transfer", "t", {}, async () => ({}));\n'
+                                       'server.tool("admin_reset", "r", {}, async () => ({}));\n')
+    doc = {"$schema": tmark.SCHEMA_URL, "tmark": "1.1",
+           "agent": {"name": "gen", "purpose": "One tool per function of the token contract on testnet.",
+                     "kind": "mcp_server", "network": "testnet"},
+           "authority": {"holds_keys": False, "key_source": "none", "signs": []},
+           "tools": [{"name": "token_functions", "description": "One tool per token contract function",
+                      "moves_funds": False, "signs": False, "network": True,
+                      "generated": {"pattern": "token_*", "source": "each function of the token contract"}}]}
+    (root / ".tmark").write_text(json.dumps(doc))
+    tools = asyncio.run(audit_repository(root, name="a", purpose="", settings=Settings(_env_file=None),
+                                         deep=False))["report"]["agent"]["tools"]
+    names = {t["name"] for t in tools}
+    assert "token_transfer" not in names and "admin_reset" in names  # outside the family: still listed
+    assert tmark.parse(json.dumps(doc))[0].tools[0].covers("token_mint")
+
+
+def test_a_draft_from_source_names_the_tools_and_what_their_file_can_do():
+    from backend.tests.test_honest_declarations import HONEST
+    files = {str(p.relative_to(HONEST / "syronlabs")): p.read_text() for p in (HONEST / "syronlabs").rglob("*.ts")}
+    files["src/tools.ts"] = 'server.tool("stellar_payment", "pay", {}, async () => ({}));\n'
+    out = tmark.draft_from_source(files, name="stellar-mcp")
+    draft = out["draft"]
+    assert draft["tmark"] == "1.1" and draft["agent"]["name"] == "stellar-mcp" and draft["agent"]["network"] == "both"
+    assert draft["authority"]["holds_keys"] is True and "payments" in draft["authority"]["signs"]
+    assert [t["name"] for t in draft["tools"]] == ["stellar_payment"] and "limits" in draft
+    assert out["tools"][0]["where"] == "src/tools.ts:1"
+    assert tmark.parse(json.dumps(draft))[0] is None  # empty fields fail until a person fills them
+
+
+def test_the_schema_copy_in_schemas_matches_the_published_one():
+    assert json.loads((ROOT / "schemas/tmark-v1.schema.json").read_text()) == json.loads(
+        (ROOT / "public/schemas/tmark-v1.json").read_text())
+
+
+def test_tmark_init_drafts_from_the_tools_the_code_registers(tmp_path, capsys):
+    from scripts import tmark as cli
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/server.ts").write_text('server.tool("pay", "pay", {}, async () => ({}));\n')
+    assert cli.main(["init", str(tmp_path)]) == 0
+    draft = json.loads((tmp_path / ".tmark").read_text())
+    assert draft["tmark"] == "1.1" and [t["name"] for t in draft["tools"]] == ["pay"]
+    assert cli.main(["check", str(tmp_path)]) == 1  # the empty fields fail until a person fills them

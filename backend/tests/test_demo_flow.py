@@ -96,13 +96,20 @@ def test_the_result_says_which_ai_checks_ran(monkeypatch):
     assert out["risks"][0]["source"] == "ai_review" and out["risks"][0]["verification"]["verdict"] == "confirmed"
 
 
-def test_model_reviews_are_limited_per_client(monkeypatch):
-    from collections import defaultdict, deque
-    from backend.app import api
-    monkeypatch.setattr(api, "_demo_ai", defaultdict(deque))
-    monkeypatch.setattr(api, "_demo_ai_all", deque())
-    assert [api._demo_ai_allowed("a") for _ in range(6)] == [True] * 5 + [False]
-    assert api._demo_ai_allowed("b")
+def test_model_reviews_are_limited_per_client():
+    # The allowance is durable (services/rate_limit.py); a process-memory store is used off serverless.
+    from backend.app.services.rate_limit import DeepReviewLimiter, MemoryStore
+    store = MemoryStore()
+    allowed = [asyncio.run(DeepReviewLimiter(store, salt=b"k").acquire("a")).allowed for _ in range(6)]
+    assert allowed == [True] * 5 + [False]
+    assert asyncio.run(DeepReviewLimiter(store, salt=b"k").acquire("b")).allowed
+
+
+def test_why_the_model_review_did_not_run_is_reported():
+    keyed = Settings(_env_file=None, enable_deep_review=True, anthropic_ai_key="k")
+    repo = {"repository": {"source_files_selected": 1}}
+    assert demo_flow._ai_summary(repo, False, keyed, {"reason": "no_consent", "note": "n"}) == {"review": "no_consent", "note": "n"}
+    assert demo_flow._ai_summary(repo, False, keyed, {"reason": "store_unavailable", "note": "x"})["review"] == "store_unavailable"
 
 
 def test_a_pass_from_the_rules_alone_is_not_credentialed(monkeypatch):

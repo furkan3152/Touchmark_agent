@@ -23,10 +23,10 @@ def _init(repo: Path) -> int:
         print(f"{target} already exists; edit it, then run: python scripts/tmark.py check {repo}")
         return 1
     from backend.app.services.repo_audit import select_repository
-    from backend.app.swarm.codeflow import analyse_code
     files, _ = select_repository(repo)
-    caps = set(analyse_code(files).capabilities) if files else set()
-    target.write_text(json.dumps(tmark.template(caps), indent=2) + "\n")
+    # The tools the code registers, each marked with what the code in its file can do.
+    draft = tmark.draft_from_source(files, name=repo.resolve().name[:80])["draft"] if files else tmark.template()
+    target.write_text(json.dumps(draft, indent=2) + "\n")
     print(f"Wrote {target}. Fill every empty field, then run: python scripts/tmark.py check {repo}")
     return 0
 

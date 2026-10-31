@@ -397,11 +397,13 @@ class AgentResolver:
 
 async def audit_reference(reference: str, settings: Settings, *, network: str = "testnet", deep: bool = True,
                           purpose: str = "", transport: httpx.AsyncBaseTransport | None = None,
-                          deadline: float | None = None) -> dict:
+                          deadline: float | None = None, tmark_override: dict | None = None) -> dict:
     """Resolve, then audit the source if any is bound; otherwise audit the on-chain evidence."""
     from .repo_audit import audit_repository, audit_onchain
 
+    from .progress import emit
     resolver = AgentResolver(settings, network, transport=transport)
+    emit("resolving")
     resolution = await resolver.resolve(reference)
     card = resolution.get("card") or {}
     name = card.get("name") or resolution["reference"][:60]
@@ -417,6 +419,7 @@ async def audit_reference(reference: str, settings: Settings, *, network: str = 
                                     "evidence": "the bound source could not be pinned to a commit; only on-chain evidence was reviewed"})
     if source["repository"] and _SHA.match(source.get("revision") or ""):
         with tempfile.TemporaryDirectory(prefix="touchmark-src-") as tmp:
+            emit("fetching", repository=source["repository"], revision=source["revision"][:12])
             try:
                 root = await resolver.download(source["repository"], source["revision"], Path(tmp))
             except ValueError as exc:
@@ -439,7 +442,7 @@ async def audit_reference(reference: str, settings: Settings, *, network: str = 
                                                 source_reference=source["repository"], revision=source["revision"],
                                                 contract_facts=resolution.get("contract"),
                                                 source_binding={**source, "onchain": onchain_identity},
-                                                deadline=deadline)
+                                                deadline=deadline, tmark_override=tmark_override)
                 return await _finish(resolution, result)
     result = await audit_onchain(resolution, name=name, purpose=purpose, settings=settings, network=network,
                                  stellar_address=stellar_address, deep=deep)

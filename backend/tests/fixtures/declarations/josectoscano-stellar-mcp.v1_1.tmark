@@ -1,0 +1,67 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1.1",
+  "agent": {
+    "name": "stellar-mcp-server (Jose Toscano)",
+    "purpose": "Stdio MCP server for Soroban on Stellar testnet. It creates and funds testnet accounts, reads accounts and history from Horizon, exposes an agent keypair file and usage guides as MCP resources, and signs auth entries and envelopes of a caller-supplied Soroban transaction XDR with a caller-supplied secret key (or as a passkey smart-wallet signer) before submitting it through Launchtube.",
+    "kind": "mcp_server",
+    "network": "testnet",
+    "discloses_ai": true
+  },
+  "authority": {
+    "holds_keys": true,
+    "key_source": "caller_supplied",
+    "signs": [
+      "contract_calls",
+      "foreign_transactions"
+    ]
+  },
+  "limits": {
+    "recipients": "any",
+    "human_approval": "never"
+  },
+  "tools": [
+    {
+      "name": "create-account",
+      "description": "Generate a random keypair and return the public and secret key to the caller",
+      "moves_funds": false,
+      "signs": false,
+      "network": false
+    },
+    {
+      "name": "fund-account",
+      "description": "Fund an address with testnet lumens from Friendbot",
+      "moves_funds": false,
+      "signs": false,
+      "network": true
+    },
+    {
+      "name": "get-account",
+      "description": "Read balances and signers of an account from testnet Horizon",
+      "moves_funds": false,
+      "signs": false,
+      "network": true
+    },
+    {
+      "name": "get-transactions",
+      "description": "Read the transactions of an account from testnet Horizon",
+      "moves_funds": false,
+      "signs": false,
+      "network": true
+    },
+    {
+      "name": "sign-and-submit-transaction",
+      "description": "Sign the auth entries and envelope of a caller-supplied Soroban XDR with a caller-supplied secret, or as a smart-wallet signer, and submit via Launchtube",
+      "moves_funds": true,
+      "signs": true,
+      "network": true
+    },
+    {
+      "name": "submit-signed-xdr",
+      "description": "Submit an already signed transaction XDR through Launchtube",
+      "moves_funds": true,
+      "signs": false,
+      "network": true
+    }
+  ]
+}

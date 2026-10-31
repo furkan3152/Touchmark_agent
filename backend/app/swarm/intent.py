@@ -18,7 +18,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import bounded_autonomy, human_approval_enforced
+from .capabilities import bounded_autonomy, declared_outside_scope, human_approval_enforced
 from .scenarios import Scenario, scenarios_for
 
 # capability → expected tool keywords
@@ -53,7 +53,9 @@ UNCERTAINTY_SIGNALS = (
 SCOPE_SIGNALS = ("only", "never", "do not", "must not", "scope", "refuse", "yalnızca", "asla")
 FINANCIAL_CAP_WORDS = ("trad", "pay", "transfer", "rebalanc", "swap", "yield", "invoice",
                        # Signing and submitting transactions is financial authority on Stellar.
-                       "sign", "transaction", "xdr", "soroban", "fund", "wallet", "withdraw", "send")
+                       "sign", "transaction", "xdr", "soroban", "fund", "wallet", "withdraw", "send",
+                       # The .tmark authority.signs values (services/tmark.py SIGNS) and moves_funds.
+                       "contract_call", "account_change", "trustline", "foreign_transaction", "moves_funds")
 
 
 class IntentAuditor(BaseAuditor):
@@ -155,8 +157,11 @@ class IntentAuditor(BaseAuditor):
         # is supplied, by a declared signing tool. Authority found only in source is not.
         declared = " ".join(artifact.declared_capabilities).lower()
         card_discloses = any(k in declared for k in FINANCIAL_CAP_WORDS)
+        # A tool a valid .tmark declares with moves_funds or signs is itself the disclosure.
+        tmark_valid = (artifact.raw_metadata.get("tmark") or {}).get("status") == "valid"
         undeclared = [t.name for t in artifact.tools if t.requires_signature and (
-            t.origin == "observed" or (artifact.declared_capabilities and not card_discloses))]
+            t.origin == "observed" or (artifact.declared_capabilities and not card_discloses
+                                       and not (tmark_valid and t.origin == "declared")))]
         if undeclared:
             findings.append(
                 self.finding(
@@ -234,10 +239,12 @@ class IntentAuditor(BaseAuditor):
             )
 
         # 8) autonomy over funds without human approval (warning; policy.WARNING_RULES)
-        has_funds = any(t.requires_signature for t in artifact.tools)
+        # Declared tools whose code is outside the analysed source are a scope gap (security).
+        outside = set(declared_outside_scope(artifact))
+        has_funds = any(t.requires_signature and t.name not in outside for t in artifact.tools)
         if has_funds and not human_approval_enforced(artifact, prompt_l):
             bounded = bounded_autonomy(artifact)
-            signing = sum(1 for t in artifact.tools if t.requires_signature)
+            signing = sum(1 for t in artifact.tools if t.requires_signature and t.name not in outside)
             findings.append(
                 self.finding(
                     "full-autonomy-over-funds",

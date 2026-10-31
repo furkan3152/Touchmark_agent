@@ -1,0 +1,30 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1",
+  "agent": {
+    "name": "@stellar/mpp",
+    "purpose": "SDK for the Machine Payments Protocol on Stellar. The client side signs a SEP-41 token transfer (or an off-chain channel commitment) to pay a server's 402 challenge, checking that the signed auth tree is exactly that transfer; the server side verifies and broadcasts client payments, optionally sponsoring fees with its own envelope and fee-bump keys, and closes payment channels.",
+    "kind": "sdk",
+    "network": "both",
+    "discloses_ai": true
+  },
+  "authority": {
+    "holds_keys": true,
+    "key_source": "env",
+    "signs": ["payments", "contract_calls", "foreign_transactions", "messages"]
+  },
+  "limits": {
+    "recipients": "any",
+    "human_approval": "never"
+  },
+  "tools": [
+    {"name": "charge_client", "description": "Pay a 402 charge challenge: build, check and sign a SEP-41 transfer of the challenge amount to the challenge recipient, pull or push mode", "moves_funds": true, "signs": true, "network": true},
+    {"name": "charge_server", "description": "Issue charge challenges, verify the client transfer, optionally rebuild it with the fee payer as source, fee-bump, sign and broadcast it, and keep a replay store", "moves_funds": true, "signs": true, "network": true},
+    {"name": "channel_client", "description": "Sign cumulative off-chain commitments for a one-way payment channel", "moves_funds": true, "signs": true, "network": true},
+    {"name": "channel_server", "description": "Verify channel commitments against on-chain channel state and close the channel to settle", "moves_funds": true, "signs": true, "network": true}
+  ],
+  "forbidden": [
+    "sign an authorization tree that is anything other than the requested SEP-41 transfer",
+    "accept the same payment credential twice"
+  ]
+}

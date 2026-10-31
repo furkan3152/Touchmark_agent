@@ -6,7 +6,10 @@
 In GitHub Actions it writes annotations on the cited lines, a job summary and the outputs
 decision, score, tmark and report. Elsewhere it prints the same summary. It exits 1 when
 the decision is needs_fixes and --fail-on is needs_fixes. Repository code is parsed, never
-imported or executed, and no model or network call is made.
+imported or executed, and no model or network call is made. It exits 2 when there is
+nothing to audit (the path is not a directory or holds no supported source files).
+
+    --tmark FILE   audit with this declaration, as if it were committed at the root.
 """
 
 from __future__ import annotations
@@ -49,8 +52,8 @@ def _location(evidence: str, root: Path) -> tuple[str, str]:
     return "", ""
 
 
-def _tmark_state(root: Path) -> tuple[str, list[str], tmark.Tmark | None]:
-    file = root / tmark.FILE_NAME
+def _tmark_state(root: Path, supplied: Path | None = None) -> tuple[str, list[str], tmark.Tmark | None]:
+    file = supplied or root / tmark.FILE_NAME
     if not file.is_file():
         return "missing", [], None
     parsed, errors = tmark.parse(file.read_text(errors="replace"))
@@ -98,16 +101,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fail-on", choices=["needs_fixes", "never"], default="needs_fixes")
     parser.add_argument("--annotate", choices=SEVERITIES[1:], default="medium")
     parser.add_argument("--out", default="")
+    parser.add_argument("--tmark", default="", help="use this .tmark instead of (or in the absence of) the repository's own")
     args = parser.parse_args(argv)
     root = Path(args.path).resolve()
+    if not root.is_dir():
+        print(f"touchmark: {args.path} is not a directory", file=sys.stderr)
+        return 2
     workspace = Path(os.environ.get("GITHUB_WORKSPACE") or root).resolve()
     prefix = f"{root.relative_to(workspace).as_posix()}/" if root != workspace and root.is_relative_to(workspace) else ""
 
-    state, errors, parsed = _tmark_state(root)
+    state, errors, parsed = _tmark_state(root, Path(args.tmark) if args.tmark else None)
     name = parsed.agent.name if parsed else root.name
     purpose = parsed.agent.purpose if parsed else ""
     # The audited repository's own .env is never read: Settings come from this process only.
-    result = asyncio.run(audit_repository(root, name=name, purpose=purpose, settings=Settings(_env_file=None), deep=False))
+    supplied = {"path": args.tmark, "text": Path(args.tmark).read_text(errors="replace")} if args.tmark else None
+    try:
+        result = asyncio.run(audit_repository(root, name=name, purpose=purpose, settings=Settings(_env_file=None),
+                                              deep=False, tmark_override=supplied))
+    except ValueError as exc:
+        # Nothing to audit (no supported source files): a clear message, not a traceback.
+        print(f"touchmark: {exc} ({args.path})", file=sys.stderr)
+        return 2
     report = result["report"]
 
     floor = SEVERITIES.index(args.annotate)

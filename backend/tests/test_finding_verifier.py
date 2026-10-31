@@ -103,3 +103,59 @@ def test_a_passed_deadline_leaves_findings_unverified_without_calling_the_model(
     verifier.deadline = time.monotonic() - 1
     result = asyncio.run(verifier.verify([finding()], FILES))
     assert result.results[0].note == "timeout" and not client.requests
+
+
+# ------------------------------------------------------- partial claims and unchecked weight
+TERNARY = {"src/classic.ts": ("export class Classic {\n  constructor(serverUrl) {\n"
+                              "    const network = serverUrl.includes('testnet')\n      ? 'testnet'\n"
+                              "      : serverUrl.includes('futurenet')\n        ? 'futurenet'\n        : 'public';\n"
+                              "    this.config = CONFIG[network];\n  }\n}\n")}
+
+
+def network_finding():
+    return finding(id="security-network-fallback-mainnet-b49a9b3a", severity=Severity.MEDIUM,
+                   title="An unrecognised network value signs for mainnet",
+                   evidence="src/classic.ts:3 `const network = serverUrl.includes('testnet')`")
+
+
+def test_a_quote_of_a_statement_spread_over_several_lines_is_found():
+    client = Scripted([reply(call("submit_verdict", verdict="partial", reviewed_severity="low", file="src/classic.ts",
+                                  line=3, evidence_quote="const network = serverUrl.includes('testnet') ? 'testnet' : "
+                                                         "serverUrl.includes('futurenet') ? 'futurenet' : 'public';",
+                                  reason="right for classic.ts, wrong for core.ts"))])
+    result = asyncio.run(FindingVerifier(client, model="m", fallbacks=False).verify([network_finding()], TERNARY))
+    v = result.results[0]
+    assert v.verdict == "partial" and v.quote_verified and v.line == 3
+
+
+def test_reasoning_that_confirms_part_of_a_claim_is_partial_even_when_the_quote_is_off():
+    client = Scripted([reply(call("submit_verdict", verdict="partial", reviewed_severity="low", file="src/classic.ts",
+                                  line=3, evidence_quote="const net = pickNetwork(serverUrl)",
+                                  reason="The claim is right for classic.ts but wrong for core.ts."))])
+    result = asyncio.run(FindingVerifier(client, model="m", fallbacks=False).verify([network_finding()], TERNARY))
+    v = result.results[0]
+    assert v.verdict == "partial" and not v.quote_verified and "recorded as partial" in v.note
+
+
+def _scored(verdict: dict):
+    from backend.app.models import AuditorVerdict
+    from backend.app.swarm.orchestrator import AuditSwarm
+    f = network_finding()
+    base = AuditorVerdict(auditor="security", dimension=Dimension.SECURITY, score=50.0, findings=[f])
+    out = AuditSwarm._apply_disputes([base], {"results": [{"finding_id": f.id, **verdict}]})[0].findings[0]
+    return f, out
+
+
+def test_an_unquoted_partial_is_recorded_but_changes_no_severity():
+    before, after = _scored({"verdict": "partial", "quote_verified": False, "reviewed_severity": "low",
+                             "quote": "x", "reason": "partly"})
+    assert after.verified == "partial" and after.severity is before.severity and after.penalty == before.penalty
+
+
+def test_an_unverifiable_claim_does_not_count_at_full_weight():
+    before, after = _scored({"verdict": "unverifiable", "quote_verified": False, "reviewed_severity": "",
+                             "note": "", "reason": "the file is not in the bundle"})
+    assert after.verified == "unverifiable" and after.is_risk and after.penalty < before.penalty
+    # A check that did not finish (timeout, provider error) is not a verdict: full weight.
+    _, timed_out = _scored({"verdict": "unverifiable", "quote_verified": False, "note": "timeout"})
+    assert timed_out.penalty == before.penalty

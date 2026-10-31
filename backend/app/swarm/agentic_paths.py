@@ -1114,7 +1114,10 @@ def analyse_agentic_paths(artifact: AgentArtifact, auditor: str) -> list[Finding
                 remediation=rule[4], references=rule[5], auditor=auditor, confidence=0.6))
 
     executable = {name for name in artifact.code_files if name.lower().endswith(_IMPLEMENTATION_SUFFIXES)}
-    signing = any(tool.requires_signature or set(tool.scopes) & _SIGNING_SCOPES for tool in artifact.tools) or any(
+    from .capabilities import declared_outside_scope
+    outside = set(declared_outside_scope(artifact))  # their code was not analysed: a scope gap instead
+    signing = any((tool.requires_signature or set(tool.scopes) & _SIGNING_SCOPES) and tool.name not in outside
+                  for tool in artifact.tools) or any(
         profile.has(cap) for cap in ("stellar_signing", "tx_submission", "foreign_tx_signing", "contract_invocation"))
     enforced = bool(amount_caps or inspected) or any(profile.controls.get(kind) for kind in ("allowlist", "approval", "transaction_inspection"))
     if signing and executable and not enforced:

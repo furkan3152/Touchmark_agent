@@ -48,6 +48,13 @@
              placeholder="https://github.com/owner/repo">
       <button id="run" type="submit">Test it <span aria-hidden="true">→</span></button>
     </div>
+    <label class="consent"><input type="checkbox" id="consent"> <span id="consent-text">Also send the source to the model review (Anthropic) and its verifier. Without this, only the deterministic rules run and nothing leaves this server.</span></label>
+    <details class="declare"><summary>Add a .tmark declaration (optional)</summary>
+      <p class="note">Paste your <code>.tmark</code> or choose the file. It is checked, then used as if the repository committed it; nothing is stored. Without one, the repository's own <code>.tmark</code> is used.</p>
+      <textarea id="tmark" rows="7" maxlength="64000" spellcheck="false" aria-label=".tmark declaration" placeholder='{ "tmark": "1.1", "agent": { … } }'></textarea>
+      <div class="declare-actions"><input id="tmark-file" type="file" accept=".tmark,application/json" aria-label="Choose a .tmark file"><button type="button" id="tmark-check" class="ghost">Check it</button><button type="button" id="tmark-draft" class="ghost">Draft one from the repository</button></div>
+      <ul id="tmark-result" class="findings small"></ul>
+    </details>
     <div class="examples" aria-label="Examples">
       <span>Try one:</span>
       <button type="button" data-ref="https://github.com/furkan3152/Touchmark_agent/tree/main/examples/demo/unsafe-treasury-agent">Unsafe treasury agent</button>
@@ -62,6 +69,7 @@
     <li data-step="credential"><b>4</b>Stamp on Stellar</li>
   </ol>
 
+  <p id="progress" class="progress" aria-live="polite" hidden></p>
   <p id="error" class="error" role="alert" hidden></p>
 
   <section id="result" class="result" hidden aria-live="polite">
@@ -129,6 +137,7 @@
       </div>
       <div id="diff" hidden>
         <p id="diff-head" class="diff-head"></p>
+        <p id="diff-note" class="note"></p>
         <div class="diff-cols">
           <div><h4>Closed</h4><ul id="diff-closed" class="findings small"></ul></div>
           <div><h4>Still open</h4><ul id="diff-remaining" class="findings small"></ul></div>

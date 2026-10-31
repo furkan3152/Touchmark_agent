@@ -1,0 +1,81 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1.1",
+  "agent": {
+    "name": "Stellar MCP Server Demo (smart wallet)",
+    "purpose": "Remote MCP server on Cloudflare Workers for Stellar testnet. It links a caller (identified by IP) to a passkey smart wallet, keeps a generated session signer key per caller, turns every function of contracts the caller registers into an MCP tool, signs non-read calls with the session key as a policy signer and submits them through Launchtube, and deploys capped fungible tokens owned by the caller's wallet.",
+    "kind": "mcp_server",
+    "network": "testnet",
+    "discloses_ai": true
+  },
+  "authority": {
+    "holds_keys": true,
+    "key_source": "agent_generated",
+    "signs": [
+      "contract_calls"
+    ]
+  },
+  "limits": {
+    "recipients": "any",
+    "human_approval": "never"
+  },
+  "tools": [
+    {
+      "name": "contract_function_tools",
+      "description": "One generated tool per function of each registered contract; read calls are simulated, writes are signed with the caller's session key and submitted",
+      "moves_funds": true,
+      "signs": true,
+      "network": true,
+      "generated": {
+        "pattern": "*",
+        "source": "each function of every contract the caller registers"
+      }
+    },
+    {
+      "name": "setContractAddress",
+      "description": "Register a contract for the caller and return a link to add a policy signer limited to it",
+      "moves_funds": false,
+      "signs": false,
+      "network": false
+    },
+    {
+      "name": "getContractAddresses",
+      "description": "List the contracts registered for the caller",
+      "moves_funds": false,
+      "signs": false,
+      "network": false
+    },
+    {
+      "name": "removeContractAddress",
+      "description": "Remove a registered contract for the caller",
+      "moves_funds": false,
+      "signs": false,
+      "network": false
+    },
+    {
+      "name": "setWallet",
+      "description": "Store the caller's smart wallet address and generate a session signer key for it",
+      "moves_funds": false,
+      "signs": false,
+      "network": false
+    },
+    {
+      "name": "getWallet",
+      "description": "Return the caller's stored smart wallet address",
+      "moves_funds": false,
+      "signs": false,
+      "network": false
+    },
+    {
+      "name": "deployToken",
+      "description": "Deploy a fungible pausable token owned by the caller's wallet, signing the deploy auth with the server deployer key",
+      "moves_funds": false,
+      "signs": true,
+      "network": true
+    }
+  ],
+  "forbidden": [
+    "sign for a contract the caller has not registered",
+    "act for a wallet that belongs to another caller"
+  ]
+}

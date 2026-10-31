@@ -85,6 +85,16 @@ class Settings(BaseSettings):
     # Independent re-check of each finding by a second model (services/finding_verifier.py).
     # On by default (it still needs an API key): a medium payment bypass that no verifier
     # checked holds back a pass, so without it a model-reviewed agent can never pass.
+    # The model review costs money per audit. On the public demo it is limited per client per
+    # hour, overall per hour and overall per day, in a durable store (services/rate_limit.py):
+    # Vercel Blob when BLOB_READ_WRITE_TOKEN is set; process memory only off serverless.
+    # auto | blob | memory | none. Without a durable store on serverless the model review is off.
+    deep_review_limit_store: str = Field(default="auto", pattern="^(auto|blob|memory|none)$")
+    deep_review_client_hourly_limit: int = Field(default=5, ge=0, le=1000)
+    deep_review_hourly_limit: int = Field(default=60, ge=0, le=10_000)
+    deep_review_daily_limit: int = Field(default=200, ge=0, le=100_000)
+    #: Key for hashing client addresses in the allowance store; derived from the Blob token when empty.
+    deep_review_rate_salt: str = Field(default="", repr=False, exclude=True)
     enable_finding_verification: bool = True
     verifier_model: str = "claude-sonnet-5-5"
     verifier_effort: str = Field(default="medium", pattern="^(low|medium|high|xhigh|max)$")

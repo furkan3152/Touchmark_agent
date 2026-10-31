@@ -106,6 +106,10 @@ class _DeclaredTool(BaseModel):
     network_access: bool = False
     spend_limit_usdc: float | None = Field(default=None, ge=0)
     spend_limit: dict[str, str] | None = None
+    #: .tmark: the tool moves funds; and (1.1) it runs code, or names a family of generated tools.
+    moves_funds: bool = False
+    executes_code: bool = False
+    pattern: str = Field(default="", max_length=120)
 
     @field_validator("spend_limit", mode="before")
     @classmethod
@@ -137,6 +141,9 @@ class _Declaration(BaseModel):
     discloses_ai: bool = False
     agent_wallet: str = Field(default="", max_length=56)
     agent_contract_id: str = Field(default="", max_length=56)
+    #: .tmark limits and key source, kept for the report (the checks read the parsed .tmark).
+    limits: dict | None = None
+    key_source: str = Field(default="", max_length=40)
 
 
 def declarations(selection: dict) -> dict:
@@ -281,6 +288,8 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     """Choose the agent-defining source within a budget. Returns (files, manifest)."""
     root = root.resolve()
     candidates, instructions, manifests, skipped, oversized = [], {}, {}, 0, []
+    #: Source left out as tests, examples, docs or builds, by folder: the scope of the analysis.
+    excluded: dict[str, int] = {}
     ownership: dict = {}
     blueprint: dict = {}
     tmark_record: dict = {}
@@ -319,6 +328,9 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
             continue
         if _skipped(rel):
             skipped += 1
+            folder = next((part for part in rel.parts[:-1] if part.lower() in SKIP_DIRS or part.startswith(".")), "")
+            label = (folder + "/") if folder else "test and build files"
+            excluded[label] = excluded.get(label, 0) + 1
             continue
         size = path.stat().st_size
         if size > max_file_bytes:
@@ -350,6 +362,7 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     manifest = {"source_files_selected": source_count, "manifest_files": sorted(manifests), "source_bytes_selected": used,
                 "source_files_not_selected": left_out[:500], "files_skipped_as_tests_or_builds": skipped,
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
+                "excluded_scope": dict(sorted(excluded.items(), key=lambda kv: (-kv[1], kv[0]))[:20]),
                 "complete": not left_out and not oversized,
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
     seed_keys: dict[str, list[str]] = {}
@@ -421,16 +434,26 @@ GENERIC_PURPOSE = "Agent resolved from"
 
 def _tools(decl: "_Declaration", files: dict[str, str]) -> list[ToolSpec]:
     """Declared tools, then tools the source registers that the declaration leaves out."""
+    from fnmatch import fnmatchcase
     tools = [ToolSpec(**t.model_dump(), origin="declared") for t in decl.tools]
     named = {t.name for t in tools}
-    return tools + [t for t in registered_tools(files) if t.name not in named]
+    families = [t.pattern for t in decl.tools if t.pattern]
+    # A registered tool a declared family covers (.tmark 1.1 tools[].generated) is declared.
+    return tools + [t for t in registered_tools(files)
+                    if t.name not in named and not any(fnmatchcase(t.name, p) for p in families)]
 
 
 def _declaration_record(declared: dict, root: Path) -> dict:
     """For the report: which declarations were read, and blueprint components that do not exist."""
     record: dict = {"files": declared["files"], "errors": declared["errors"]}
     if "tmark" in declared:
-        record["tmark"] = {"status": declared["tmark"]["status"], "errors": declared["tmark"]["errors"]}
+        info = declared["tmark"]
+        record["tmark"] = {"status": info["status"], "errors": info["errors"],
+                           **{k: info[k] for k in ("source", "repository_status", "mismatches") if k in info}}
+        if info.get("parsed") is not None:
+            from .tmark import summary
+            record["tmark"]["version"] = info["parsed"].tmark
+            record["tmark"]["summary"] = summary(info["parsed"])
     decl = declared.get("declaration")
     if decl is not None:
         record["tools_declared"] = [t.name for t in decl.tools]
@@ -448,7 +471,8 @@ def _tmark_metadata(declared: dict, selection: dict) -> dict:
     if info is None:
         legacy = [p for p in ((selection.get("ownership") or {}).get("path"), (selection.get("blueprint") or {}).get("path")) if p]
         return {"status": "legacy" if legacy else "missing", "files": legacy}
-    out = {"status": info["status"], "errors": info["errors"]}
+    out = {"status": info["status"], "errors": info["errors"],
+           **{k: info[k] for k in ("source", "repository_status", "mismatches") if k in info}}
     if info.get("parsed") is not None:
         out["declared"] = info["parsed"].model_dump(by_alias=False, exclude={"schema_url"})
         out["entrypoints"] = out["declared"]["entrypoints"]
@@ -460,9 +484,17 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
                            stellar_address: str = "", agent_signing_key: str = "",
                            deep: bool = True, source_reference: str = "", revision: str = "",
                            contract_facts: dict | None = None, source_binding: dict | None = None,
-                           deadline: float | None = None) -> dict:
+                           deadline: float | None = None, tmark_override: dict | None = None,
+                           progress=None) -> dict:
     """``deadline`` (a ``time.monotonic()`` value) bounds the model review and verification,
-    for callers with a request time limit; the deterministic analysis always runs in full."""
+    for callers with a request time limit; the deterministic analysis always runs in full.
+
+    ``tmark_override`` ({"text": ...}) is a .tmark supplied with the request (the demo, CI's
+    --tmark). It is used exactly as a committed .tmark would be, except that it never names the
+    owner: only a file committed in the repository can say who receives a credential. When the
+    repository has its own .tmark too, the report says which was used and where they differ.
+
+    ``progress`` is an optional callable receiving stage events (see deep_review)."""
     from .deep_review import reviewer_from_settings
 
     root = Path(root)
@@ -470,7 +502,24 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     if not files:
         raise ValueError("No supported source files were found in the repository.")
     instructions = "\n\n".join(f"[{path}]\n{text}" for path, text in selection["instructions"].items())
+    committed_tmark = selection.get("tmark") or {}
+    if tmark_override is not None:
+        selection = {**selection, "tmark": {"path": "(supplied)", "text": tmark_override["text"]}}
     declared = declarations(selection)
+    committed_parsed = None
+    if declared.get("tmark") is not None:
+        from . import tmark as tmark_format
+        info = declared["tmark"]
+        info["source"] = "supplied" if tmark_override is not None else "repository"
+        if tmark_override is not None and committed_tmark:
+            committed_parsed, committed_errors = tmark_format.parse(committed_tmark["text"])
+            info["repository_status"] = "valid" if committed_parsed else "invalid"
+            if committed_parsed is not None and info.get("parsed") is not None:
+                info["mismatches"] = tmark_format.differences(info["parsed"], committed_parsed)
+        elif tmark_override is not None:
+            info["repository_status"] = "missing"
+        else:
+            committed_parsed = info.get("parsed")
     decl: _Declaration = declared.get("declaration") or _Declaration()
     blueprint = declared.get("blueprint")
     # The repository's own statement of purpose replaces a generic one from the caller.
@@ -489,8 +538,11 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     if contract_facts:
         chain["contract"] = contract_facts
     tm = (declared.get("tmark") or {}).get("parsed")
-    owner = (tm.owner.stellar_account if tm is not None and tm.owner else
-             "" if declared.get("tmark") else ownership_claim(selection.get("ownership") or {}).get("stellar_owner", ""))
+    # The owner comes from what the repository commits, never from a supplied declaration.
+    owner_tm = committed_parsed
+    has_committed_tmark = bool(committed_tmark)
+    owner = (owner_tm.owner.stellar_account if owner_tm is not None and owner_tm.owner else
+             "" if has_committed_tmark else ownership_claim(selection.get("ownership") or {}).get("stellar_owner", ""))
     exposure = await _seed_exposure(
         settings, seed_public_keys({**files, "<system prompt>": instructions[:12_000]}, selection.get("committed_seed_keys") or {}),
         {"agent": {stellar_address, agent_signing_key}, "owner": {owner}}, deadline)
@@ -507,6 +559,9 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         raw_metadata={"source_not_selected": (selection["manifest"]["source_files_not_selected"]
                                               + selection["manifest"]["files_too_large"]),
                       "committed_seeds": selection.get("committed_seeds", []),
+                      "excluded_scope": selection["manifest"].get("excluded_scope", {}),
+                      # A README describes the project to people; it is not the agent's prompt.
+                      "agent_instructions": any(p.lower() not in README_NAMES for p in selection["instructions"]),
                       "deployment_markers": selection.get("deployment_markers", []),
                       "committed_credentials": selection.get("committed_credentials", []),
                       "tmark": _tmark_metadata(declared, selection),
@@ -520,9 +575,9 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     if reviewer is not None:
         reviewer.max_turns = max(reviewer.max_turns, 40)
         reviewer.timeout_seconds = max(reviewer.timeout_seconds, 900.0)
-    if (declared.get("tmark") or {}).get("status"):
-        claim = ({"path": TMARK_FILE, "stellar_owner": tm.owner.stellar_account} if tm is not None and tm.owner
-                 else {"path": TMARK_FILE, "error": "the .tmark is invalid" if tm is None else "the .tmark names no owner"})
+    if has_committed_tmark:
+        claim = ({"path": TMARK_FILE, "stellar_owner": owner_tm.owner.stellar_account} if owner_tm is not None and owner_tm.owner
+                 else {"path": TMARK_FILE, "error": "the .tmark is invalid" if owner_tm is None else "the .tmark names no owner"})
     else:
         claim = ownership_claim(selection.get("ownership") or {})
     payload_extra = {"repository": {"reference": source_reference, "revision": revision,
@@ -645,9 +700,11 @@ async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer
     from ..swarm.orchestrator import AuditSwarm
     from ..reporting.english import english_report
     from ..swarm.policy import actionable_risks, finding_set_commitment
+    from .progress import emit
     isolated = settings.model_copy(update={
         "stellar_network": "offline", "llm_provider": "", "llm_api_key": "", "pinata_jwt": "",
         "enable_active_agent_probes": False, "enable_audit_escrow": False, "enable_ofac_screening": False})
+    emit("rules", files=len(artifact.code_files))
     report = await AuditSwarm(isolated).run(artifact, uuid4().hex, AuditTier.DEEP, deep_reviewer=reviewer,
                                              finding_verifier=verifier)
     english_report(report)

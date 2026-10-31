@@ -197,8 +197,9 @@ def _seed_severity(exposure: dict | None, places: list[str]) -> tuple[Severity, 
 
     A seed whose key is a declared agent or owner key, or that controls an account on mainnet
     (its own or one it signs for), is critical wherever it sits. One found only on testnet, or
-    nowhere, is medium, or low in test paths. Without a ledger answer for mainnet a seed keeps
-    the path-based severity: critical outside test paths, medium inside them.
+    nowhere, is medium, or informational in test paths. Without a ledger answer for mainnet a
+    seed keeps the path-based severity: critical outside test paths, low inside them (test
+    data is reported so it is rotated, not scored as the agent's key).
 
     Several seeds can share a place (two on one line of a .env copy or minified JSON): each
     key found there is judged, so the worst one decides."""
@@ -220,11 +221,13 @@ def _seed_severity(exposure: dict | None, places: list[str]) -> tuple[Severity, 
                                                      + (f" ({held})" if held else "")
                                                      + (f", signer on {main['signs_for']} other account(s)" if main.get("signs_for") else ""))
             else:
-                severity = Severity.LOW if test else Severity.MEDIUM
+                severity = Severity.INFO if test else Severity.MEDIUM
                 note = (f"{place}: {key} exists on testnet only" if testnet.get("status") == "found"
                         else f"{place}: {key} has no account on mainnet or testnet (testnet resets erase accounts)")
         else:
-            severity, note = (Severity.MEDIUM if test else Severity.CRITICAL), ""
+            # A seed only in test code or fixtures is test data until the ledger says otherwise:
+            # it is reported so it is rotated, but it is not the agent's key.
+            severity, note = (Severity.LOW if test else Severity.CRITICAL), ""
             if exposure and exposure.get("status") in {"checked", "unavailable"}:
                 note = f"{place}: ledger lookup unavailable; severity from the file path"
         worst = max(worst, severity, key=lambda s: s.rank)

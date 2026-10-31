@@ -64,12 +64,15 @@
           "type": "boolean"
         },
         "key_source": {
+          "description": "Where the signing key comes from. 1.1: caller_supplied (the caller passes a secret with each call, the agent keeps none) and agent_generated (the agent creates and stores the key itself).",
           "enum": [
             "env",
             "kms",
             "external_signer",
             "wallet_prompt",
-            "none"
+            "none",
+            "caller_supplied",
+            "agent_generated"
           ],
           "title": "Key Source",
           "type": "string"
@@ -142,6 +145,33 @@
         "symbol"
       ],
       "title": "Entrypoint",
+      "type": "object"
+    },
+    "Generated": {
+      "additionalProperties": false,
+      "description": "A family of tools the code creates at run time (one per contract function, per route).",
+      "properties": {
+        "pattern": {
+          "description": "Glob that every generated tool name matches, e.g. \"*_*\" or \"contract_*\".",
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:*?\\[\\]{}-]+$",
+          "title": "Pattern",
+          "type": "string"
+        },
+        "source": {
+          "description": "What the tools are generated from, e.g. \"each function of a contract the caller registers\".",
+          "maxLength": 300,
+          "minLength": 8,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern",
+        "source"
+      ],
+      "title": "Generated",
       "type": "object"
     },
     "Limits": {
@@ -265,6 +295,24 @@
           "title": "Files",
           "type": "boolean"
         },
+        "executes_code": {
+          "default": false,
+          "description": "1.1: the tool runs a shell command or code.",
+          "title": "Executes Code",
+          "type": "boolean"
+        },
+        "generated": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Generated"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "1.1: a family of tools generated at run time."
+        },
         "max_amount": {
           "anyOf": [
             {
@@ -296,7 +344,10 @@
       "type": "string"
     },
     "tmark": {
-      "const": "1",
+      "enum": [
+        "1",
+        "1.1"
+      ],
       "title": "Tmark",
       "type": "string"
     },
@@ -369,7 +420,7 @@
     "agent",
     "authority"
   ],
-  "title": ".tmark v1",
+  "title": ".tmark v1 (1.1)",
   "type": "object",
   "$id": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
   "description": "What a repository declares about its Stellar agent. Checked against the code by Touchmark."

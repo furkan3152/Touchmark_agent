@@ -312,17 +312,21 @@ class AuditSwarm:
         from .capabilities import unverifiable_control_files
         from .policy import ABSENCE_OF_CONTROL_RULES, DECLARATION_RULES
         unverifiable = unverifiable_control_files(artifact)
-        declared_any = any(t.origin == "declared" for t in artifact.tools)
+        declared_any = (any(t.origin == "declared" for t in artifact.tools) or bool(artifact.declared_capabilities)
+                        or (artifact.raw_metadata.get("tmark") or {}).get("status") == "valid")
         updated = []
         for verdict in verdicts:
             changed = False
             findings = []
             for finding in verdict.findings:
-                if ((unverifiable and finding.id in ABSENCE_OF_CONTROL_RULES)
-                        or (not declared_any and finding.id in DECLARATION_RULES)):
+                if not declared_any and finding.id in DECLARATION_RULES:
+                    # A rule that compares the code with a declaration has nothing to compare
+                    # when there is none: the missing declaration is reported once, elsewhere.
+                    changed = True
+                    continue
+                if unverifiable and finding.id in ABSENCE_OF_CONTROL_RULES:
                     reason = ("Controls in " + ", ".join(unverifiable[:5]) + " are not visible to data-flow analysis; "
-                              "the deep review judges them." if finding.id in ABSENCE_OF_CONTROL_RULES
-                              else "No tool declaration was supplied, so there is nothing to contradict.")
+                              "the deep review judges them.")
                     finding = finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP,
                                                          "detail": finding.detail + " " + reason})
                     changed = True
@@ -388,6 +392,11 @@ class AuditSwarm:
         # claim true. It never removes a finding, but an unconfirmed rule finding is capped.
         results.update({r["finding_id"]: r for r in verification.get("results", [])
                         if r.get("verdict") == "unverifiable" and r["finding_id"] not in results})
+        # A partial verdict whose quote did not match: recorded, but it changes no severity.
+        unquoted = {r["finding_id"] for r in verification.get("results", [])
+                    if r.get("verdict") == "partial" and not r.get("quote_verified") and r["finding_id"] not in results}
+        results.update({r["finding_id"]: {**r, "reviewed_severity": ""} for r in verification.get("results", [])
+                        if r["finding_id"] in unquoted})
         if not results:
             return verdicts
         out = []
@@ -434,6 +443,15 @@ class AuditSwarm:
                         "detail": f.detail + f" Independent verification did not confirm this at high severity "
                                   f"({r.get('verdict', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.6)})
+                elif (r is not None and r.get("verdict") == "unverifiable" and f.is_risk and not r.get("note")):
+                    # (A note means the check did not finish: timeout, turn limit, provider error.)
+                    # The verifier could not see the code that decides the claim: it stays a risk,
+                    # but an unchecked claim does not count at full weight.
+                    f = f.model_copy(update={
+                        "verified": "unverifiable",
+                        "detail": f.detail + " Independent verification could not check this claim (the code that "
+                                  "decides it was not available to it); it counts at reduced weight.",
+                        "confidence": min(f.confidence, 0.5)})
                 elif refuted:
                     lowered = f.severity.downgrade(1)
                     if lowered.rank > Severity.MEDIUM.rank and not _STRUCTURAL.search(f.id):

@@ -1,6 +1,7 @@
 """Public, fixed-destination read-only intake. Never accepts signing credentials."""
 from typing import Literal
 import json
+from pathlib import PurePosixPath
 import re
 
 import httpx
@@ -39,6 +40,46 @@ async def _github_json(client, endpoint: str, *, limit: int = 1_000_000, missing
     return json.loads(raw)
 
 
+#: Paths that hold an agent's authority: signing, keys, payments, transactions, the Stellar
+#: and Soroban clients, policy and auth. They are imported first (the bundle holds 12 files).
+_AUTHORITY_PATH = re.compile(r"(?:^|[/_.-])(?:sign\w*|signer|wallet|keys?|keypair|secrets?|pay\w*|transfer|"
+                             r"transactions?|tx|stellar|soroban|horizon|classic|core|contracts?|accounts?|"
+                             r"auth\w*|polic(?:y|ies)|limits?|x402|mpp|channel)(?:[/_.-]|$)", re.I)
+#: Where an agent's tools and entry points are registered.
+_ENTRY_PATH = re.compile(r"(?:^|[/_.-])(?:index|main|server|app|agent|mcp|tools?|handlers?|routes?)(?:[/_.-]|$)", re.I)
+_CODE_SUFFIXES = {".py", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx", ".rs", ".go"}
+
+
+def import_rank(item: dict) -> tuple:
+    """Import order for a bounded bundle: the declaration, the manifest, then code holding
+    authority, then entry points, then other code, then everything else. Tests, examples,
+    docs, configuration and generated files come last (as repo_audit skips them). Within a
+    tier, shorter paths first. Depth used to dominate: a repository's root configuration
+    files filled the bundle before src/stellar/classic/classic.ts, where it signs."""
+    from .repo_audit import _skipped
+    path = item["path"]
+    pure = PurePosixPath(path)
+    name, suffix = pure.name.lower(), pure.suffix.lower()
+    if path == "veritas.json":
+        tier = 0
+    elif path in {"package.json", "pyproject.toml", "requirements.txt", "Cargo.toml"}:
+        tier = 1
+    elif _skipped(pure) or name.endswith((".config.js", ".config.ts", ".config.mjs", ".config.cjs")) \
+            or "interfaces" in pure.parts or "types" in pure.parts:
+        tier = 7 if suffix in _CODE_SUFFIXES else 8
+    elif suffix in _CODE_SUFFIXES and _AUTHORITY_PATH.search(path) and not name.startswith(("schema", "messages")):
+        tier = 2
+    elif suffix in _CODE_SUFFIXES and _ENTRY_PATH.search(path):
+        tier = 3
+    elif suffix in _CODE_SUFFIXES:
+        tier = 4
+    elif name in {"package.json", "pyproject.toml", "requirements.txt", "cargo.toml"}:
+        tier = 5
+    else:
+        tier = 6
+    return (tier, path.count("/"), path)
+
+
 async def import_github_bundle(request: GitHubRequest) -> dict:
     """Resolve one commit, inspect its tree and fetch bounded blobs. No clone or execution."""
     import asyncio
@@ -61,10 +102,7 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
             raise ValueError('veritas.json must be a regular source file. Symbolic links are not followed.')
         candidates = [x for x in entries if x.get("type") == "blob" and x.get("mode") in {"100644", "100755"}
                       and safe_source_path(x.get("path", ""))]
-        def rank(item):
-            name = PurePosixPath(item["path"]).name
-            priority = -1 if item['path'] == 'veritas.json' else 0 if name in {"package.json", "pyproject.toml", "requirements.txt"} else 1 if PurePosixPath(name).suffix in {".py", ".ts", ".js", ".mjs"} else 2
-            return (priority, item["path"].count("/"), item["path"])
+        rank = import_rank
         files, omitted, omitted_reasons, total = {}, [], [], 0
         declared_paths = None
         for item in sorted(candidates, key=rank):
@@ -113,6 +151,16 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
                     declared_paths = set()
         if any(x['path'] == 'veritas.json' for x in candidates) and 'veritas.json' not in files:
             raise ValueError('Repository Blueprint could not be imported within the source limits. Upload a smaller, valid veritas.json; automatic fallback is disabled.')
+        # The repository's .tmark is the declaration, not source: it travels in bundle.tmark.
+        tmark_text = ""
+        mark = next((x for x in entries if x.get("path") == ".tmark" and x.get("type") == "blob"
+                     and x.get("mode") in {"100644", "100755"}), None)
+        if mark and 0 < mark.get("size", 0) <= 64_000 and re.fullmatch(r"[a-f0-9]{40}", mark.get("sha", "")):
+            blob = await _github_json(client, f"repos/{path}/git/blobs/{mark['sha']}", limit=100_000)
+            raw = base64.b64decode(re.sub(r"\s+", "", blob.get("content", "")), validate=True) \
+                if blob.get("encoding") == "base64" else b""
+            if raw and sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest() == mark["sha"]:
+                tmark_text = raw.decode("utf-8", errors="replace")
     if not files:
         raise ValueError("No supported source files were found. Upload a focused source folder.")
     discovery = discover_project(files)
@@ -120,7 +168,7 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
     bundle = ReviewRequest(name=manifest.get('name', path.split('/')[-1][:100]),
         purpose=manifest.get('purpose', "Review this project's actual agent behavior and security boundaries."),
         files=files, dependencies=discovery['dependencies'], source_reference=request.repository,
-        source_revision=revision).model_dump(mode="json")
+        source_revision=revision, tmark=tmark_text).model_dump(mode="json")
     return {"bundle": bundle, "source": request.repository, "revision": revision,
             "discovery": discovery, "executed": False,
             "import_scope": {"complete": not omitted and not tree.get('truncated') and len(files) == len(entries),

@@ -42,7 +42,9 @@ def audit(tmp_path, example, declaration=None, blueprint=None):
 def test_a_declaration_closes_declaration_gaps_without_changing_the_decision(tmp_path):
     before, before_ids = audit(tmp_path / "a", "safe-treasury-agent")
     after, after_ids = audit(tmp_path / "b", "safe-treasury-agent", DECLARATION)
-    assert {"intent-undeclared-financial-capability", "compliance-no-ai-disclosure"} <= before_ids - after_ids
+    assert "compliance-no-ai-disclosure" in before_ids - after_ids
+    # Rules that compare code with a declaration say nothing when there is none (no noise gaps).
+    assert "intent-undeclared-financial-capability" not in before_ids | after_ids
     assert after["decision"] == before["decision"] == "pass"
     record = after["report"]["repository"]["declarations"]
     assert record["files"] == ["agentveritas.json"] and record["tools_declared"] == ["send_payment", "fetch_invoice"]

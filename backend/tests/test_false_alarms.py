@@ -164,7 +164,7 @@ def test_a_valid_seed_committed_in_example_tests_is_reported(tmp_path):
     found = audit(tmp_path, {"server.py": PY_MCP, "examples/rust-x402/tests/integration.rs":
                              f'#[test]\nfn pays() {{ let s = "{seed}"; }}\n'})
     finding = found["stellar_native-stellar-secret-seed"]
-    assert finding["severity"] == "medium" and "examples/rust-x402/tests/integration.rs:2" in finding["evidence"]
+    assert finding["severity"] == "low" and "examples/rust-x402/tests/integration.rs:2" in finding["evidence"]
     assert seed not in finding["evidence"]
 
 

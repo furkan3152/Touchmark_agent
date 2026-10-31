@@ -72,6 +72,11 @@ h1 em{font-style:italic;font-weight:600;color:var(--red);position:relative}
 #run:hover,#issue:hover,#run-recheck:hover{transform:translate(-1px,-1px);box-shadow:5px 5px 0 var(--red)}
 #run:active,#issue:active,#run-recheck:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--red)}
 #run:disabled,#issue:disabled,#run-recheck:disabled{opacity:.55;cursor:wait;transform:none}
+.consent{display:flex;gap:10px;align-items:flex-start;margin-top:14px;font:13.5px var(--body);color:var(--ink-soft);line-height:1.45}
+.consent input{margin-top:3px;accent-color:var(--ink)}
+.declare textarea{width:100%;box-sizing:border-box;margin-top:8px;border:1.5px solid var(--ink);border-radius:3px;background:var(--paper);color:var(--ink);font:12.5px/1.5 var(--mono);padding:10px}
+.declare-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;font:13px var(--mono)}
+.progress{margin:16px 0 0;font:13px var(--mono);color:var(--ink-soft)}
 .examples{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:14px;font:13px var(--mono);color:var(--ink-soft)}
 .examples button{border:1.5px dashed var(--ink);background:transparent;color:var(--ink);border-radius:3px;padding:7px 12px;cursor:pointer;font:500 13px var(--body)}
 .examples button:hover{border-style:solid;background:var(--paper-2)}
