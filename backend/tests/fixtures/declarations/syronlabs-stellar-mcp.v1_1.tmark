@@ -1,0 +1,116 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1.1",
+  "agent": {
+    "name": "stellar-mcp (Syron Labs)",
+    "purpose": "Stdio MCP server that lets an AI client create keypairs, read balances and history, send payments, issue assets, change trustlines, create and claim claimable balances on Horizon, and build, optimize and deploy Soroban contracts through the stellar CLI. The secret key for every write is passed by the caller as a tool argument.",
+    "kind": "mcp_server",
+    "network": "both",
+    "discloses_ai": true
+  },
+  "authority": {
+    "holds_keys": true,
+    "key_source": "caller_supplied",
+    "signs": [
+      "payments",
+      "trustlines",
+      "account_changes",
+      "contract_calls"
+    ]
+  },
+  "limits": {
+    "recipients": "any",
+    "human_approval": "never"
+  },
+  "tools": [
+    {
+      "name": "stellar_create_account",
+      "description": "Generate a random keypair and return the public and secret key to the caller",
+      "moves_funds": false,
+      "signs": false,
+      "network": false
+    },
+    {
+      "name": "stellar_balance",
+      "description": "Read the balances of any account from Horizon",
+      "moves_funds": false,
+      "signs": false,
+      "network": true
+    },
+    {
+      "name": "stellar_payment",
+      "description": "Sign with the caller-supplied secret and submit a payment of any asset and amount to any destination",
+      "moves_funds": true,
+      "signs": true,
+      "network": true
+    },
+    {
+      "name": "stellar_transactions",
+      "description": "Read the transaction history of any account from Horizon",
+      "moves_funds": false,
+      "signs": false,
+      "network": true
+    },
+    {
+      "name": "stellar_create_asset",
+      "description": "Sign with issuer and distributor secrets: add a trustline and pay the full supply to the distributor",
+      "moves_funds": true,
+      "signs": true,
+      "network": true
+    },
+    {
+      "name": "stellar_change_trust",
+      "description": "Sign with the caller-supplied secret and add or change a trustline",
+      "moves_funds": false,
+      "signs": true,
+      "network": true
+    },
+    {
+      "name": "stellar_fund_account",
+      "description": "Ask Friendbot on the configured Horizon to fund an account (testnet or futurenet only)",
+      "moves_funds": false,
+      "signs": false,
+      "network": true
+    },
+    {
+      "name": "stellar_create_claimable_balance",
+      "description": "Sign with the caller-supplied secret and lock funds in a claimable balance for any claimants",
+      "moves_funds": true,
+      "signs": true,
+      "network": true
+    },
+    {
+      "name": "stellar_claim_claimable_balance",
+      "description": "Sign with the caller-supplied secret and claim a claimable balance by id",
+      "moves_funds": true,
+      "signs": true,
+      "network": true
+    },
+    {
+      "name": "soroban_build_and_optimize",
+      "description": "Run stellar contract build and optimize in a caller-supplied local directory via a shell",
+      "moves_funds": false,
+      "signs": false,
+      "network": false,
+      "files": true,
+      "executes_code": true
+    },
+    {
+      "name": "soroban_deploy",
+      "description": "Deploy a local WASM with the stellar CLI, passing the caller-supplied secret on the shell command line",
+      "moves_funds": false,
+      "signs": true,
+      "network": true,
+      "files": true,
+      "executes_code": true
+    },
+    {
+      "name": "soroban_retrieve_contract_methods",
+      "description": "Read a deployed contract's interface with the stellar CLI",
+      "moves_funds": false,
+      "signs": false,
+      "network": true,
+      "executes_code": true
+    }
+  ]
+}

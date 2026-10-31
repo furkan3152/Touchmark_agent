@@ -28,9 +28,13 @@ OVERSIGHT_WORDS = ("human", "confirm", "approval", "escalate", "operator", "onay
 #: and demos, setup and maintenance scripts, docs and repository tooling. On held-out agents,
 #: declaration checks that counted these reported the operator's own deploy or setup script
 #: as an undeclared capability of the agent.
+#: Project templates and code generators are not the agent as it runs either: they are what a
+#: generator writes into someone else's project (templates/smart-wallet/, stellar-mcp-generator/,
+#: lib.rs.hbs). Their own rules still review them; they do not describe this agent's authority.
 NOT_SHIPPED = re.compile(
     r"(?:^|/)(?:tests?|spec|__tests__|e2e[^/]*|[^/]*-e2e|fixtures?|examples?|demos?|sandbox[^/]*|scripts?|docs?|"
-    r"benchmarks?|\.github|\.husky)/|\.(?:test|spec)\.|(?:^|/)(?:setup\.py|conftest\.py)$", re.I)
+    r"benchmarks?|\.github|\.husky|templates?|generators?|[^/]*-generator|codegen|scaffolds?)/|\.(?:test|spec)\.|"
+    r"(?:^|/)(?:setup\.py|conftest\.py)$|\.(?:hbs|handlebars|j2|jinja2?|tmpl|mustache|ejs)$", re.I)
 
 
 def shipped(location: str) -> bool:
@@ -119,7 +123,11 @@ def effective_artifact(artifact: AgentArtifact) -> AgentArtifact:
             scopes.append("account:admin")
         added.append(ToolSpec(name="observed:stellar_signing", origin="observed", requires_signature=True,
                               scopes=scopes, description="Observed in source: " + _where(profile, *shipped_financial)))
-    if _shipped_has(profile, "code_execution") and not any(_executes(t) for t in declared):
+    # Declared execution is disclosed: a tool flagged executes_code (.tmark 1.1), or a declared
+    # tool whose own description says it runs a shell or command. What runs is still judged by
+    # the data-flow rules (security-path-untrusted-to-command).
+    if _shipped_has(profile, "code_execution") and not any(_executes(t) or executes_code(t.description)
+                                                           for t in declared):
         added.append(ToolSpec(name="observed:code_execution", origin="observed", scopes=["exec:process"],
                               description="Observed in source: " + _where(profile, "code_execution")))
     if _shipped_has(profile, "network_fetch") and not any(t.network_access for t in declared):
@@ -160,6 +168,26 @@ def authority_only_declared(artifact: AgentArtifact) -> bool:
         return False
     caps = artifact.code_profile.get("capabilities", {})
     return not any(caps.get(cap) for cap in FINANCIAL_CAPABILITIES + ("payment", "account_control"))
+
+
+#: Authority the agent itself exercises with a key it holds (not a wallet prompt or a relay).
+_HELD_AUTHORITY = ("key_custody", "stellar_signing", "tx_submission")
+
+
+def declared_outside_scope(artifact: AgentArtifact) -> list[str]:
+    """Declared signing or spending tools whose code is not in the analysed source.
+
+    The analysed code exercises no key the agent holds, while the repository has source the
+    selection left out (examples, tests, docs: repo_audit SKIP_DIRS). A declaration of such a
+    tool is then about code the rules never read: what it lacks is evidence, not a defect
+    found in it. Returns [] when everything was in scope or the code itself signs."""
+    excluded = artifact.raw_metadata.get("excluded_scope") or {}
+    if not excluded or not has_source(artifact):
+        return []
+    caps = artifact.code_profile.get("capabilities", {})
+    if any(shipped(loc) for cap in _HELD_AUTHORITY for loc in caps.get(cap, [])):
+        return []
+    return [t.name for t in artifact.tools if t.origin == "declared" and _signing(t)]
 
 
 def code_enforced_spend_limit(artifact: AgentArtifact) -> bool:

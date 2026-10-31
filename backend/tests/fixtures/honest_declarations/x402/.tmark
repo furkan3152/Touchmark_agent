@@ -1,0 +1,10 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1",
+  "agent": {"name": "x402 tools (snippet)", "purpose": "Reference x402 tooling: a CLI client that pays a configured server's 402 challenge from an env key, and shared helpers.", "kind": "other", "network": "both"},
+  "authority": {"holds_keys": true, "key_source": "env", "signs": ["payments"]},
+  "limits": {"recipients": "any", "human_approval": "never"},
+  "tools": [
+    {"name": "client-cli", "description": "Pay the first accepted 402 requirement of the configured server with the env key", "moves_funds": true, "signs": true, "network": true}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1",
+  "agent": {
+    "name": "x402 Stellar tools and examples",
+    "purpose": "Reference x402 tooling on Stellar: a CLI client that pays a configured server's 402 challenge from an env key, a facilitator service that verifies payments and settles them by sponsoring fees with its own and channel-account keys, a paywall server, and a browser paywall that asks the user's wallet to sign. Payments are SEP-41 token transfers (USDC by default).",
+    "kind": "other",
+    "network": "both",
+    "discloses_ai": true
+  },
+  "authority": {
+    "holds_keys": true,
+    "key_source": "env",
+    "signs": ["payments", "contract_calls", "foreign_transactions", "account_changes"]
+  },
+  "limits": {
+    "recipients": "any",
+    "human_approval": "never"
+  },
+  "tools": [
+    {"name": "client-cli", "description": "Fetch the weather endpoint of the configured server and pay the first accepted 402 requirement with the env key", "moves_funds": true, "signs": true, "network": true},
+    {"name": "facilitator_verify", "description": "Verify a client payment payload against the payment requirements by simulation", "moves_funds": false, "signs": false, "network": true},
+    {"name": "facilitator_settle", "description": "Sign the client's payment as fee source with the facilitator or a channel account, fee-bump it and submit it", "moves_funds": true, "signs": true, "network": true},
+    {"name": "simple-paywall", "description": "Express server that requires an x402 payment to its own address before serving content", "moves_funds": false, "signs": false, "network": true},
+    {"name": "browser-paywall", "description": "Browser page that asks the user's Stellar wallet to sign the x402 payment", "moves_funds": true, "signs": false, "network": true}
+  ]
+}

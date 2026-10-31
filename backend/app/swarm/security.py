@@ -18,6 +18,7 @@ from ..models import (
     Dimension,
     EvidenceGrade,
     Finding,
+    FindingKind,
     ScenarioResult,
     Severity,
 )
@@ -33,7 +34,7 @@ from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
 from .hardening import analyse_hardening
 from .network_rules import network_findings
-from .capabilities import authority_only_declared, code_enforced_spend_limit, executes_code
+from .capabilities import authority_only_declared, code_enforced_spend_limit, declared_outside_scope, executes_code
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
 ISOLATION_SIGNALS = ("sandbox", "docker", "firecracker", "isolat", "tee", "enclave")
@@ -209,8 +210,16 @@ class SecurityAuditor(BaseAuditor):
                 None,
             )
 
-        # No defence evidence. The impact scales with the authority the agent actually has.
-        severity = self._scaled_severity(attack, artifact)
+        # No defence evidence. The impact scales with the authority the agent actually has,
+        # but the input was never executed: a missing sentence in a prompt is uncertainty, not
+        # an observed weakness, so the gap is at most medium. An agent with no prompt of its
+        # own (an MCP server, an SDK) does not decide what the host model is told: low.
+        severity = min(self._scaled_severity(attack, artifact), Severity.MEDIUM, key=lambda s: s.rank)
+        detail, note = attack.detail, ""
+        if not (artifact.system_prompt or "").strip() or artifact.raw_metadata.get("agent_instructions") is False:
+            severity = min(severity, Severity.LOW, key=lambda s: s.rank)
+            note = (" · no system prompt or agent instructions in this code: the host application's prompt "
+                    "decides this, so the check is informational here")
         return (
             ScenarioResult(
                 scenario_id=attack.id, name=attack.name, passed=False, reason="no defence evidence"
@@ -219,8 +228,8 @@ class SecurityAuditor(BaseAuditor):
                 attack.id.lower(),
                 severity,
                 attack.name,
-                attack.detail,
-                evidence=f"Unexecuted test input: {attack.payload}",
+                detail,
+                evidence=f"Unexecuted test input: {attack.payload}{note}",
                 remediation=attack.remediation,
                 references=[attack.owasp],
                 # A missing defence sentence is not evidence of exploitation.
@@ -356,7 +365,7 @@ class SecurityAuditor(BaseAuditor):
             # undeclared execution less so, an undeclared fetch or file read is a note.
             severity = (Severity.HIGH if any(t.requires_signature for t in observed)
                         else Severity.MEDIUM if any("exec" in t.name for t in observed) else Severity.LOW)
-            out.append(self.finding(
+            finding = self.finding(
                 "undeclared-capability",
                 severity,
                 "Source exercises capabilities the declaration does not grant",
@@ -368,7 +377,11 @@ class SecurityAuditor(BaseAuditor):
                 references=["OWASP LLM06 Excessive Agency"],
                 grade=EvidenceGrade.CONFIRMED,
                 confidence=0.95,
-            ))
+            )
+            # An undeclared fetch or file read is a note about the declaration, not a defect in
+            # the code: it is kept visible as an evidence gap and does not lower the score.
+            out.append(finding if severity is not Severity.LOW
+                       else finding.model_copy(update={"kind": FindingKind.EVIDENCE_GAP}))
         profile = artifact.code_profile
         not_selected = list(artifact.raw_metadata.get("source_not_selected") or [])
         incomplete = profile.get("unparsed_files") or profile.get("error") or not_selected
@@ -418,6 +431,25 @@ class SecurityAuditor(BaseAuditor):
         unlimited = [t.name for t in signing_tools if t.spend_limit_usdc is None and t.spend_limit is None]
         if unlimited and code_enforced_spend_limit(artifact):
             unlimited = []  # the source caps every untrusted payment; see capabilities.py
+        outside = [name for name in declared_outside_scope(artifact) if name in unlimited]
+        if outside:
+            # The code of these tools was not analysed (it sits in examples/, tests/ ...): the
+            # missing limit cannot be judged, so it is a scope gap, not a critical risk.
+            unlimited = [name for name in unlimited if name not in outside]
+            scope = artifact.raw_metadata.get("excluded_scope") or {}
+            out.append(self.finding(
+                "declared-tools-outside-scope",
+                Severity.MEDIUM,
+                "Declared spending tools are implemented outside the analysed source",
+                "The declaration lists tools that sign or move funds, but the analysed source never uses a key the "
+                "agent holds. Their code is in folders the analysis leaves out, so their limits, recipients and "
+                "approvals were not checked: " + ", ".join(outside) + ".",
+                evidence="not analysed: " + ", ".join(f"{folder} ({n} source files)" for folder, n in list(scope.items())[:8]),
+                remediation="Audit the folder that holds these tools directly (link to it), or move the agent's "
+                            "code out of examples/ and tests/ so it is in scope.",
+                grade=EvidenceGrade.CONFIRMED,
+                confidence=0.9,
+            ))
         if unlimited:
             latent = authority_only_declared(artifact)
             out.append(

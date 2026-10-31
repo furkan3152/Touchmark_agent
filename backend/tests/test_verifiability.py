@@ -94,18 +94,19 @@ def test_partial_reading_keeps_the_gap():
     assert report.decision == "needs_evidence"
 
 
-def test_missing_declaration_is_a_gap_but_an_understated_one_is_a_risk():
+def test_missing_declaration_is_not_reported_but_an_understated_one_is_a_risk():
+    # Without any declaration there is nothing to contradict: no declaration-based gap at all.
     undeclared = {f.id: f for f in run(artifact()).findings}
-    assert undeclared["security-undeclared-capability"].kind.value == "evidence_gap"
+    assert "security-undeclared-capability" not in undeclared
     understated = {f.id: f for f in run(artifact(tools=[ToolSpec(name="read", scopes=["read:chain"])])).findings}
     assert understated["security-undeclared-capability"].kind.value == "risk"
 
 
-def test_placeholder_seeds_are_ignored_and_test_seeds_are_medium():
+def test_placeholder_seeds_are_ignored_and_test_seeds_are_low():
     placeholder = "S" + "A" * 55
     real = Keypair.random().secret
     findings = {f.id: f for f in run(artifact({"src/pay.ts": f'const k = "{placeholder}";\n'})).findings}
     assert "stellar_native-stellar-secret-seed" not in findings
     findings = {f.id: f for f in run(artifact({"scripts/smoke-test.ts": f'const k = "{real}";\n'})).findings}
-    assert findings["stellar_native-stellar-secret-seed"].severity.value == "medium"
+    assert findings["stellar_native-stellar-secret-seed"].severity.value == "low"
     assert real not in findings["stellar_native-stellar-secret-seed"].evidence

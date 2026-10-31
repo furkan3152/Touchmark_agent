@@ -208,8 +208,9 @@ def _exposure(place, mainnet="not_found", testnet="not_found", declared="", stat
 
 @pytest.mark.parametrize("place,ledger,expected", [
     ("tests/fixtures/keys.ts:3", dict(mainnet="found", balances=("500.0000000",)), Severity.CRITICAL),
-    ("tests/fixtures/keys.ts:3", {}, Severity.LOW),
-    ("tests/fixtures/keys.ts:3", dict(testnet="found"), Severity.LOW),
+    # A test seed the ledger shows controls nothing on mainnet is informational: it is test data.
+    ("tests/fixtures/keys.ts:3", {}, Severity.INFO),
+    ("tests/fixtures/keys.ts:3", dict(testnet="found"), Severity.INFO),
     ("keys/agent-wallet.key:2", {}, Severity.MEDIUM),
     ("src/agent.ts:9", dict(testnet="found"), Severity.MEDIUM),
     ("src/test.ts:23", dict(declared="owner", status="not_checked"), Severity.CRITICAL),
@@ -225,7 +226,7 @@ def test_seed_severity_falls_back_to_the_path_when_the_ledger_was_not_read():
         assert _seed_severity(exposure, ["src/agent.ts:9"])[0] is Severity.CRITICAL
         assert bool(_seed_severity(exposure, ["src/agent.ts:9"])[1]) is note
         exposure = _exposure("tests/keys.ts:1", mainnet="unavailable", status=status)
-        assert _seed_severity(exposure, ["tests/keys.ts:1"])[0] is Severity.MEDIUM
+        assert _seed_severity(exposure, ["tests/keys.ts:1"])[0] is Severity.LOW
     assert _seed_severity(None, ["tests/keys.ts:1", "src/agent.ts:9"]) == (Severity.CRITICAL, [])
 
 
@@ -302,7 +303,7 @@ def test_a_committed_seed_path_with_a_space_keeps_its_test_severity(settings, ru
         name="a", source_kind=SourceKind.REPO, source_ref="r", code_files={"src/a.py": "x = 1\n"},
         raw_metadata={"committed_seeds": ["my tests/keys.txt:2 (SABC…redacted)"]}), deep=False))
     finding = next(f for f in verdict.findings if f.id == "stellar_native-stellar-secret-seed")
-    assert finding.severity is Severity.MEDIUM
+    assert finding.severity is Severity.LOW
 
 
 def test_a_fixture_seed_funded_on_mainnet_is_critical(tmp_path, monkeypatch):
@@ -325,7 +326,7 @@ def test_a_fixture_seed_funded_on_mainnet_is_critical(tmp_path, monkeypatch):
         out = asyncio.run(audit_repository(root, name="a", purpose="", deep=False,
                                            settings=Settings(_env_file=None, **settings)))
         return next(f for f in out["report"]["findings"] if f["id"] == "stellar_native-stellar-secret-seed")
-    assert seed_finding()["severity"] == "medium" and sent == []  # reads off: today's path-based severity
+    assert seed_finding()["severity"] == "low" and sent == []  # reads off: today's path-based severity
     finding = seed_finding(enable_onchain_verification=True)
     assert finding["severity"] == "critical" and "controls mainnet funds" in finding["evidence"]
     assert sent == [[seed.public_key]] and seed.secret not in json.dumps(finding)

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1.1",
+  "agent": {"name": "Smart wallet MCP (snippet)", "purpose": "Remote MCP server that turns every function of a registered contract into a tool and signs writes with a session key it generates per caller.", "kind": "mcp_server", "network": "testnet"},
+  "authority": {"holds_keys": true, "key_source": "agent_generated", "signs": ["contract_calls"]},
+  "limits": {"recipients": "any", "human_approval": "never"},
+  "tools": [
+    {"name": "contract_function_tools", "description": "One generated tool per function of each registered contract", "moves_funds": true, "signs": true, "network": true,
+     "generated": {"pattern": "*", "source": "each function of every contract the caller registers"}}
+  ]
+}

@@ -123,7 +123,8 @@ EVIDENCE_GAP_RULES = frozenset({
     "stellar_native-onchain-account-missing", "stellar_native-onchain-agent-key-undeclared",
     "stellar_native-onchain-identity-unbound", "stellar_native-onchain-source-unbound",
     "stellar_native-onchain-contract-code-unavailable", "stellar_native-onchain-contract-code-unresolved",
-    "stellar_native-dep-advisory-table-stale",
+    "stellar_native-dep-advisory-table-stale", "security-declared-tools-outside-scope",
+    "intent-tmark-supplied-differs",
 })
 #: Autonomy without a human approval step. Operators may run agents unattended on
 #: purpose, so these are warnings: a small score penalty, never a failing decision.
@@ -131,6 +132,7 @@ EVIDENCE_GAP_RULES = frozenset({
 WARNING_RULES = frozenset({"compliance-no-human-oversight", "intent-full-autonomy-over-funds"})
 #: Gaps that make a pass impossible: the reviewed scope itself is incomplete.
 BLOCKING_GAPS = frozenset({"security-source-analysis-incomplete", "security-no-auditable-surface",
+                           "security-declared-tools-outside-scope",
                            "security-deep-review-incomplete",
                            "security-controls-unverifiable", "stellar_native-onchain-source-unbound",
                            "stellar_native-onchain-contract-code-unresolved",

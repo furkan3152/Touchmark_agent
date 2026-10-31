@@ -15,7 +15,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import oversight_enforced
+from .capabilities import declared_outside_scope, oversight_enforced
 from .llm import LlmClient
 
 
@@ -49,7 +49,8 @@ class ComplianceAuditor(BaseAuditor):
 
         # ---- 1) high-risk classification
         high_risk = HIGH_RISK_DOMAINS.get(artifact.domain)
-        moves_funds = any(t.requires_signature for t in artifact.tools)
+        outside = set(declared_outside_scope(artifact))  # code not analysed: a scope gap (security)
+        moves_funds = any(t.requires_signature and t.name not in outside for t in artifact.tools)
         if not high_risk and moves_funds:
             high_risk = "Autonomous transaction authority over user funds"
 

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "tmark": "1.1",
+  "agent": {"name": "stellar-mcp (snippet)", "purpose": "Stdio MCP server that sends payments and builds Soroban contracts; the caller passes the secret key with each call.", "kind": "mcp_server", "network": "both"},
+  "authority": {"holds_keys": true, "key_source": "caller_supplied", "signs": ["payments"]},
+  "limits": {"recipients": "any", "human_approval": "never"},
+  "tools": [
+    {"name": "stellar_payment", "description": "Sign with the caller-supplied secret and submit a payment", "moves_funds": true, "signs": true, "network": true},
+    {"name": "stellar_create_asset", "description": "Sign with issuer and distributor secrets: add a trustline and pay the full supply to the distributor", "moves_funds": true, "signs": true, "network": true},
+    {"name": "soroban_build_and_optimize", "description": "Run stellar contract build and optimize in a caller-supplied local directory", "moves_funds": false, "signs": false, "network": false, "files": true, "executes_code": true}
+  ]
+}

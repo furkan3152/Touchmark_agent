@@ -2715,6 +2715,11 @@ class _JsInterp:
             return set()
         if short == "TransactionBuilder" and is_new:
             return every | {"tx_built"}
+        if short in {"buildWithOp", "build"} and "AssembledTransaction" in label:
+            # AssembledTransaction.buildWithOp(op, options): the transaction is built here from
+            # the operation this code made (a contract spec and arguments), not parsed from an
+            # envelope someone supplied. Untrusted arguments stay visible in the operation's tags.
+            return every | {"tx_built"}
         if _FOREIGN_TX.search(label) and (label.endswith("fromXDR") or is_new):
             out = every | receiver
             if every & UNTRUSTED:
@@ -2761,6 +2766,10 @@ class _JsInterp:
                         and "tx_built" not in subject and not self.approved:
                     self._cap("foreign_tx_signing", node)
                     self._flow("foreign_signing", node, subject, "an externally supplied transaction is signed")
+                elif "tx_built" in subject and "signer" not in subject:
+                    # A locally built transaction: what it does is checked as built (contract
+                    # arguments, destinations and amounts from input), not as a foreign envelope.
+                    self._check_signed(node, subject)
             return receiver
         if _AUTHORIZE.search(label):
             self._cap("stellar_signing", node)

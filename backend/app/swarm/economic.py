@@ -20,7 +20,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import authority_only_declared, code_enforced_spend_limit, has_source
+from .capabilities import authority_only_declared, code_enforced_spend_limit, declared_outside_scope, has_source
 from .textscan import find_signals, scan
 
 
@@ -68,10 +68,16 @@ SWAP_SIGNALS = (
     "quote",
     "rebalance",
     "arbitrage",
-    "supply",
     "borrow",
-    "stake",
+    "path payment",
+    "order book",
 )
+#: Lending and yield words that are also everyday words: "pay the full supply to the
+#: distributor" issues an asset, and "stake" can mean a bond. They show price exposure only
+#: next to a pool, market or rate (LENDING_CONTEXT).
+LENDING_WORDS = ("supply", "stake", "staking", "deposit")
+LENDING_CONTEXT = ("pool", "lending", "market", "yield", "apy", "apr", "collateral", "vault", "interest",
+                   "blend", "liquidity", "rate")
 #: Domains with price risk; MEV is in scope even without code or a prompt.
 PRICE_EXPOSED_DOMAINS = ("defi_trading", "defi_yield", "defi_lending", "trading")
 
@@ -119,7 +125,10 @@ class EconomicAuditor(BaseAuditor):
         fingerprint = self._fingerprint(act) if has_chain_data else {}
 
         # ---------------------------------------------------------- spend policy
-        has_funds = any(t.requires_signature for t in artifact.tools)
+        # Declared tools whose code was not analysed are a scope gap (security auditor), not a
+        # missing policy in code that was read.
+        outside = set(declared_outside_scope(artifact))
+        has_funds = any(t.requires_signature and t.name not in outside for t in artifact.tools)
         if has_funds:
             tool_limits = [t for t in artifact.tools if t.spend_limit_usdc or t.spend_limit]
             policy = scan(prompt_l, POLICY_SIGNALS)
@@ -375,6 +384,8 @@ class EconomicAuditor(BaseAuditor):
             # `routes/…`); only its capability name says what it does.
             text = (tool.name if tool.origin == "observed" else f"{tool.name} {tool.description}").lower()
             hits = find_signals(text, SWAP_SIGNALS)
+            if find_signals(text, LENDING_CONTEXT):
+                hits += find_signals(text, LENDING_WORDS)
             if hits:
                 return True, f"tool '{tool.name}' → {', '.join(hits)}"
         return False, ""
