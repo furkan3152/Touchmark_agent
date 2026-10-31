@@ -132,6 +132,8 @@ class Decision:
     #: "allowed", "client_hour", "hour", "day", "store_unavailable", "not_configured"
     reason: str
     limits: dict = field(default_factory=dict)
+    #: Slots still free after this claim, per allowance (known only when one was claimed).
+    left: dict = field(default_factory=dict)
 
     @property
     def message(self) -> str:
@@ -198,20 +200,44 @@ class DeepReviewLimiter:
         if self.store is None:
             return Decision(False, "not_configured", self.limits)
         claimed: list[str] = []
+        left: dict[str, int] = {}
         try:
             for name, prefix, limit in self._paths(client):
                 path = await self._claim_one(prefix, limit)
                 if path is None:
                     await self._refund(claimed)
-                    return Decision(False, name, self.limits)
+                    return Decision(False, name, self.limits, left={**left, name: 0})
                 claimed.append(path)
+                # Slot n taken means at least n + 1 are used (a refund can leave a hole below).
+                left[name] = max(0, limit - int(path.rsplit("/", 1)[1]) - 1)
             if not claimed[-1].rsplit("/", 1)[1].strip("0"):
                 await self._cleanup()  # the first review of a day clears days long past
-            return Decision(True, "allowed", self.limits)
+            return Decision(True, "allowed", self.limits, left=left)
         except StoreUnavailable as exc:
             logger.warning("deep-review allowance store unavailable: %s", exc)
             await self._refund(claimed)
             return Decision(False, "store_unavailable", self.limits)
+
+    async def remaining(self, client: str) -> dict[str, int]:
+        """Free slots per allowance for this client, without claiming any (three listings).
+        Raises StoreUnavailable when the store cannot answer."""
+        if self.store is None:
+            raise StoreUnavailable("not_configured")
+        names, prefixes, limits = zip(*self._paths(client))
+        counts = await self._bounded(asyncio.gather(*(self.store.count(p) for p in prefixes)))
+        return {name: max(0, limit - count) for name, limit, count in zip(names, limits, counts)}
+
+    def describe(self, left: dict[str, int]) -> dict:
+        """What a visitor can be told about the allowance: reviews left this hour and today,
+        whether it is used up, by which ceiling, and when that ceiling resets (UTC)."""
+        now = self.clock()
+        next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)).isoformat()
+        next_day = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).isoformat()
+        hourly = [left[k] for k in ("client_hour", "hour") if k in left]
+        reason = next((k for k in ("client_hour", "hour", "day") if left.get(k) == 0), "")
+        return {"left_this_hour": min(hourly) if hourly else None, "left_today": left.get("day"),
+                "used_up": bool(reason), "reason": reason,
+                "resets_at": next_day if reason == "day" else next_hour if reason else ""}
 
     async def _refund(self, claimed: list[str]) -> None:
         """Give back slots claimed before a later allowance refused (best effort)."""
@@ -228,6 +254,30 @@ class DeepReviewLimiter:
                 await self._bounded(self.store.delete_prefix(f"{PREFIX}/{(now - timedelta(days=days)).strftime('%Y%m%d')}/"))
             except StoreUnavailable:
                 return
+
+
+async def self_check(store: CounterStore, *, prefix: str = f"{PREFIX.rsplit('/', 1)[0]}/self-check/") -> dict:
+    """Exercise the store the way the limiter does, on a throwaway path: a create-only claim, the
+    same claim again (it must be refused as already existing), a listing, then a delete. Returns
+    booleans and exception class names only, never a token, URL or stored value."""
+    path = f"{prefix}{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(4)}"
+    out: dict = {"path_prefix": prefix}
+
+    async def step(name: str, awaitable):
+        try:
+            out[name] = await asyncio.wait_for(awaitable, timeout=STORE_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - reported by class, the check never raises
+            out[name] = None
+            out.setdefault("errors", {})[name] = type(exc).__name__
+    await step("first_claim", store.claim(path))
+    await step("second_claim", store.claim(path))
+    await step("listed", store.count(path))
+    await step("deleted", store.delete([path]))
+    await step("listed_after_delete", store.count(path))
+    out["ok"] = (out.get("first_claim") is True and out.get("second_claim") is False
+                 and out.get("listed") == 1 and out.get("listed_after_delete") == 0)
+    out.pop("deleted", None)
+    return out
 
 
 _memory = MemoryStore()

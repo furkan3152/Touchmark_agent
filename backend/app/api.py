@@ -857,15 +857,42 @@ def _demo_issuance_allowed(client: str) -> bool:
 
 
 @app.get("/api/v1/demo/config")
-async def demo_config() -> dict:
+async def demo_config(request: Request) -> dict:
     from .services.demo_flow import issuance_enabled, manifest
     data = manifest()
+    review = _model_review_status()
     return {"issuance_enabled": issuance_enabled(), "network": "testnet",
             "contracts": {k: v.get("id") for k, v in data.get("contracts", {}).items()},
             "operator": data.get("operator", ""),
             # The home page asks for consent before any source goes to a model.
-            "model_review": _model_review_status(),
+            "model_review": review,
+            # How many model reviews this visitor has left (null when it cannot be told).
+            "allowance": await _allowance_for(request) if review["available"] else None,
             "streaming": True}
+
+
+#: {hashed client: (monotonic time, allowance)}: page loads within this many seconds share one look.
+_allowance_cache: dict[str, tuple[float, dict]] = {}
+ALLOWANCE_CACHE_SECONDS = 20.0
+
+
+async def _allowance_for(request: Request) -> dict | None:
+    """The visitor's model-review allowance, read without claiming (cached briefly, because each
+    look lists the store). None when the store cannot answer: the audit still decides."""
+    from .services.rate_limit import StoreUnavailable, limiter_from_settings
+    limiter = limiter_from_settings(settings)
+    key = limiter.client_key(_demo_client(request))
+    hit = _allowance_cache.get(key)
+    if hit and time.monotonic() - hit[0] < ALLOWANCE_CACHE_SECONDS:
+        return hit[1]
+    try:
+        out = limiter.describe(await limiter.remaining(_demo_client(request)))
+    except StoreUnavailable:
+        return None
+    if len(_allowance_cache) > 2000:
+        _allowance_cache.clear()
+    _allowance_cache[key] = (time.monotonic(), out)
+    return out
 
 
 def _model_review_status() -> dict:
@@ -882,25 +909,29 @@ def _model_review_status() -> dict:
                        "per_hour": settings.deep_review_hourly_limit, "per_day": settings.deep_review_daily_limit}}
 
 
-async def _model_review_allowed(request: Request, consent: bool) -> tuple[bool, dict | None]:
-    """(run the model review?, why not). Fails closed: no consent, no allowance or an
-    unreachable allowance store all mean rules only, never a failed audit."""
+async def _model_review_allowed(request: Request, consent: bool) -> tuple[bool, dict | None, dict | None]:
+    """(run the model review?, why not, the allowance left). Fails closed: no consent, no
+    allowance or an unreachable allowance store all mean rules only, never a failed audit."""
     if not (settings.enable_deep_review and settings.anthropic_api_key):
-        return False, None
+        return False, None, None
     if not consent:
         return False, {"reason": "no_consent", "note": "Rules only: the source was not sent to the model review "
-                                                       "because consent was not given."}
+                                                       "because consent was not given."}, None
     from .services.rate_limit import limiter_from_settings
+    limiter = limiter_from_settings(settings)
     try:
-        decision = await limiter_from_settings(settings).acquire(_demo_client(request))
+        decision = await limiter.acquire(_demo_client(request))
     except Exception as exc:  # noqa: BLE001 - the allowance must never fail the audit
         logger.warning("model-review allowance failed: %s", type(exc).__name__)
         return False, {"reason": "store_unavailable", "note": "The model-review allowance could not be checked; "
-                                                              "this audit used the rules only."}
+                                                              "this audit used the rules only."}, None
+    _allowance_cache.pop(limiter.client_key(_demo_client(request)), None)
+    allowance = limiter.describe(decision.left) if decision.left else None
     if decision.allowed:
-        return True, None
+        return True, None, allowance
     reason = "rate_limited" if decision.reason in {"client_hour", "hour", "day"} else decision.reason
-    return False, {"reason": reason, "note": decision.message + " This audit used the rules only.", "limit": decision.reason}
+    return False, {"reason": reason, "note": decision.message + " This audit used the rules only.",
+                   "limit": decision.reason}, allowance
 
 
 def _tmark_errors_detail(errors: list[dict]) -> dict:
@@ -928,10 +959,13 @@ async def demo_audit(req: "DemoAuditRequestModel", request: Request):
         if parsed is None:
             raise HTTPException(status_code=422, detail=_tmark_errors_detail(errors))
     async def run() -> dict:
-        ai, skipped = await _model_review_allowed(request, req.model_review_consent)
+        ai, skipped, allowance = await _model_review_allowed(request, req.model_review_consent)
         try:
-            return await asyncio.wait_for(run_demo_audit(req.reference, settings, ai=ai, tmark_text=req.tmark,
-                                                         skipped=skipped), timeout=DEMO_REQUEST_SECONDS)
+            out = await asyncio.wait_for(run_demo_audit(req.reference, settings, ai=ai, tmark_text=req.tmark,
+                                                        skipped=skipped), timeout=DEMO_REQUEST_SECONDS)
+            if allowance is not None:
+                out["ai"]["allowance"] = allowance
+            return out
         except asyncio.TimeoutError as exc:
             raise HTTPException(status_code=504, detail="The audit did not finish within the demo time limit. "
                                                         "Large repositories can be audited with scripts/audit_agent.py.") from exc
@@ -985,6 +1019,36 @@ async def _stream(run):
     finally:
         if not task.done():
             task.cancel()  # the client went away
+
+
+_self_check_last = [0.0]
+
+
+@app.post("/api/v1/ops/allowance-check")
+async def allowance_self_check(request: Request, authorization: str | None = Header(default=None)) -> dict:
+    """Operator self-check of the model-review allowance store: a create-only claim on a
+    throwaway path, the same claim again (it must be refused), a listing and a delete, against
+    the store this deployment really uses. Answers booleans and exception class names only.
+
+    Open on Vercel preview deployments (behind the team's deployment protection) and to the
+    operator key anywhere else; one run per 10 seconds per instance."""
+    from .services.rate_limit import BlobStore, limiter_from_settings, self_check, store_kind
+    keyed = bool(settings.admin_api_key) and secrets.compare_digest(
+        (authorization or "").partition(" ")[2].encode(), settings.admin_api_key.encode())
+    if not (os.environ.get("VERCEL_ENV") == "preview" or keyed):
+        raise HTTPException(status_code=404, detail="Not Found")
+    if time.monotonic() - _self_check_last[0] < 10:
+        raise HTTPException(status_code=429, detail="One self-check per 10 seconds.")
+    _self_check_last[0] = time.monotonic()
+    store = limiter_from_settings(settings).store
+    out = {"allowance_store": store_kind(settings), "environment": os.environ.get("VERCEL_ENV", "")}
+    if store is None:
+        return {**out, "ok": False, "note": "No allowance store is configured; the model review is refused."}
+    result = await self_check(store)
+    if isinstance(store, BlobStore):
+        result["note"] = ("Vercel Blob refused the second create-only write as already existing."
+                          if result["ok"] else "The Blob store did not behave as the limiter needs; see the fields.")
+    return {**out, **result}
 
 
 class TmarkCheckRequest(BaseModel):
