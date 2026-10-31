@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="How to use Touchmark: run an audit from a GitHub URL, read the report, compare runs, stamp a Stellar testnet credential, and declare your agent with .tmark.">
+<title>Guide — Touchmark</title>
+<link rel="icon" href="/ui/brand/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/fonts/fonts.css">
+<link rel="stylesheet" href="/ui/demo.css">
+<link rel="stylesheet" href="/ui/mascot.css">
+<link rel="stylesheet" href="/ui/guide.css">
+<script src="/ui/mascot.js" defer></script>
+<script src="/ui/guide.js" defer></script>
+</head>
+<body class="guide">
+<svg width="0" height="0" class="defs" aria-hidden="true">
+  <filter id="ink"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter>
+  <symbol id="mark" viewBox="0 0 64 64">
+    <path d="M14 4h36a10 10 0 0 0 10 10v36a10 10 0 0 0-10 10H14A10 10 0 0 0 4 50V14A10 10 0 0 0 14 4Z" class="mark-plate"/>
+    <path d="M33.6 11.5c1.5 11.4 7.9 17.8 19.3 19.3-11.4 1.5-17.8 7.9-19.3 19.3-1.5-11.4-7.9-17.8-19.3-19.3 11.4-1.5 17.8-7.9 19.3-19.3Z" class="mark-star"/>
+    <path d="M32 13c1.5 11.4 7.9 17.8 19.3 19.3C39.9 33.8 33.5 40.2 32 51.6 30.5 40.2 24.1 33.8 12.7 32.3 24.1 30.8 30.5 24.4 32 13Z" class="mark-line"/>
+  </symbol>
+</svg>
+<a class="g-skip" href="#guide-start">Skip to the guide</a>
+
+<header class="bar">
+  <a class="brand" href="/" aria-label="Touchmark home"><svg class="logo" width="34" height="34"><use href="#mark"/></svg><span class="word">touchmark</span><span class="where">on Stellar</span></a>
+  <nav aria-label="Main"><a href="/#how" class="g-hide-sm">How it works</a><a href="/guide" aria-current="page">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a><a href="/studio">Studio</a></nav>
+</header>
+
+<main class="g-main">
+  <section class="g-hero">
+    <div class="g-hero-copy">
+      <p class="eyebrow"><span>Field guide</span><span>Nine short plates</span></p>
+      <h1>Read the agent <em>before it holds the keys.</em></h1>
+      <p class="lede">Everything you need to test an AI agent that can sign on Stellar: what Touchmark checks, how an audit runs, how to read the verdict, and how to turn a pass into a credential anyone can verify.</p>
+      <div class="g-cta">
+        <a class="g-btn" href="/">Test an agent <span aria-hidden="true">→</span></a>
+        <a class="g-btn ghost" href="/guide/tmark">Write a .tmark</a>
+      </div>
+    </div>
+    <figure class="g-hero-art">
+      <div class="g-bubble" id="hero-bubble"><b>I'm Punch.</b> I strike the touchmark, but only after I have read every line that can touch a key.</div>
+      <span class="g-hero-mascot" data-tm-mascot="pointing" data-tm-size="300" data-tm-label="Punch, the Touchmark mascot, introduces the guide"></span>
+      <figcaption>Punch · assay office, desk 1</figcaption>
+    </figure>
+  </section>
+
+  <div class="g-layout" id="guide-start">
+    <aside class="g-rail" aria-label="Guide contents">
+      <nav class="g-toc">
+        <p class="g-toc-head">Plates</p>
+        <ol>
+          <li><a href="#checks"><span>01</span>What it checks</a></li>
+          <li><a href="#audit"><span>02</span>Run an audit</a></li>
+          <li><a href="#during"><span>03</span>During the audit</a></li>
+          <li><a href="#report"><span>04</span>Read the report</a></li>
+          <li><a href="#compare"><span>05</span>Compare runs</a></li>
+          <li><a href="#stamp"><span>06</span>Stamp a credential</a></li>
+          <li><a href="#studio"><span>07</span>Private code: Studio</a></li>
+          <li><a href="#privacy"><span>08</span>Privacy</a></li>
+          <li><a href="#tmark"><span>09</span>Declare: .tmark</a></li>
+        </ol>
+        <div class="g-toc-progress" aria-hidden="true"><i id="toc-progress"></i></div>
+      </nav>
+      <div class="g-rail-guide" aria-hidden="true">
+        <span id="rail-mascot" data-tm-mascot="idle" data-tm-size="132" data-tm-decorative></span>
+        <p id="rail-say" class="g-rail-say">Scroll on. I'll keep up.</p>
+      </div>
+    </aside>
+
+    <article class="g-content">
+      <!-- 01 ------------------------------------------------------------ -->
+      <section id="checks" class="g-plate" data-mascot="scanning" data-say="I read code, not promises.">
+        <header class="g-plate-head"><span class="g-num">01</span><h2>What Touchmark checks, and why</h2></header>
+        <p class="g-lead">An agent that holds a Stellar key will do whatever its code lets a request make it do. Touchmark reads that code and asks one question: <strong>can something a user, a web page or another server says reach the key, the payment or the network in a way nobody intended?</strong></p>
+        <div class="g-cards">
+          <div class="card g-reveal"><span class="num">i.</span><h3>Keys and signing</h3><p>Where the secret comes from, and what the agent signs with it: payments, contract calls, account changes, trustlines, transactions built by someone else, messages. Envelopes and Soroban auth entries signed without being read.</p></div>
+          <div class="card g-reveal"><span class="num">ii.</span><h3>Money and limits</h3><p>Who picks the destination, amount, asset and memo. Whether caps, daily totals, allow-lists and approvals are enforced in the code that pays, not just written in a prompt. Retries that can pay twice.</p></div>
+          <div class="card g-reveal"><span class="num">iii.</span><h3>Network and input</h3><p>Whether a tool argument or a paid server's challenge can switch testnet to mainnet. Hosts chosen by input. Reworded, split, role-played and planted requests that steer a tool.</p></div>
+        </div>
+        <aside class="g-say g-reveal"><span class="g-say-face" data-tm-mascot="pointing" data-tm-size="72" data-tm-decorative></span><p><b>Punch says:</b> if only the prompt stops it, it is not stopped. A rule in a system prompt is a request; a check in the signing code is a control.</p></aside>
+        <p class="g-fine">A touchmark means no actionable risk was found in the reviewed code. It is not a guarantee of safety, and it is bound to the exact commit that was read.</p>
+      </section>
+
+      <!-- 02 ------------------------------------------------------------ -->
+      <section id="audit" class="g-plate" data-mascot="pointing" data-say="Paste a link. Press the button.">
+        <header class="g-plate-head"><span class="g-num">02</span><h2>Run an audit from a GitHub URL</h2></header>
+        <ol class="g-steps">
+          <li class="g-reveal"><b>1</b><div><h3>Open the ticket</h3><p>On the <a href="/">home page</a>, the input card is labelled <span class="g-ui">Nº 01 · Agent to test</span>.</p></div></li>
+          <li class="g-reveal"><b>2</b><div><h3>Paste a reference</h3><p>Public GitHub repositories work best, because the code is what gets read.</p>
+            <table class="g-table">
+              <thead><tr><th scope="col">You paste</th><th scope="col">Touchmark reads</th></tr></thead>
+              <tbody>
+                <tr><td><code>https://github.com/owner/repo</code></td><td>The default branch, pinned to its latest commit.</td></tr>
+                <tr><td><code>…/tree/&lt;commit&gt;/&lt;folder&gt;</code></td><td>Exactly that commit and folder. Use this for results you can reproduce and compare.</td></tr>
+                <tr><td>agent id · <code>C…</code> contract · <code>G…</code> account</td><td>What the ledger says. With no source linked there is nothing to score: the stamp shows a dash and the decision is <span class="g-chip needs_evidence">needs evidence</span>.</td></tr>
+              </tbody>
+            </table></div></li>
+          <li class="g-reveal"><b>3</b><div><h3>Press <span class="g-ui">Test it →</span></h3><p>Or pick one of the two examples under <span class="g-ui">Try one:</span>, an <em>Unsafe treasury agent</em> and a <em>Safe treasury agent</em>. They make a good first pair to compare.</p></div></li>
+        </ol>
+
+        <form class="ticket g-ticket g-reveal" action="/" method="get" autocomplete="off">
+          <div class="ticket-head"><label for="g-ref">Nº 01 · Try it from here</label><span>opens the home page and starts the audit</span></div>
+          <div class="input-row">
+            <input id="g-ref" name="ref" required minlength="3" maxlength="300" placeholder="https://github.com/owner/repo" value="https://github.com/furkan3152/Touchmark_agent/tree/main/examples/demo/safe-treasury-agent">
+            <button class="g-btn" type="submit">Test it <span aria-hidden="true">→</span></button>
+          </div>
+        </form>
+        <aside class="g-say g-reveal"><span class="g-say-face" data-tm-mascot="idle" data-tm-size="72" data-tm-decorative></span><p><b>Punch says:</b> link to a commit, not a branch. The report is bound to the commit it read, and so is any credential stamped from it. A branch keeps moving.</p></aside>
+      </section>
+
+      <!-- 03 ------------------------------------------------------------ -->
+      <section id="during" class="g-plate" data-mascot="scanning" data-say="Reading… this is the slow, careful part.">
+        <header class="g-plate-head"><span class="g-num">03</span><h2>What happens during an audit</h2></header>
+        <p class="g-lead">Under the ticket, four steps light up: <span class="g-ui">Pin the source</span>, <span class="g-ui">Trace requests to keys, payments, network</span>, <span class="g-ui">Decide &amp; seal the report</span>, and <span class="g-ui">Stamp on Stellar</span>. Behind them, the work runs in four stages.</p>
+        <ol class="g-timeline" id="timeline">
+          <li class="g-stage" data-stage="fetch">
+            <span class="g-stage-dot" aria-hidden="true"></span>
+            <div class="g-stage-body">
+              <p class="g-stage-meta"><span>Stage A</span><span>seconds</span></p>
+              <h3>Fetch and pin</h3>
+              <p>The reference is resolved and the source is pinned to one commit. Touchmark selects the files that make up the agent: tests, examples, demos and docs are not the agent and are not held against it. A <code>.tmark</code> at the repository root is read here.</p>
+            </div>
+          </li>
+          <li class="g-stage" data-stage="rules">
+            <span class="g-stage-dot" aria-hidden="true"></span>
+            <div class="g-stage-body">
+              <p class="g-stage-meta"><span>Stage B</span><span>seconds</span></p>
+              <h3>Rules and data flow</h3>
+              <p>Deterministic analysers for Python, JavaScript, TypeScript, Rust/Soroban and WASM trace each path from untrusted input to what the agent signs, pays or fetches, and check every claim in the <code>.tmark</code> against the code. Rules propose; evidence decides.</p>
+            </div>
+          </li>
+          <li class="g-stage" data-stage="review">
+            <span class="g-stage-dot" aria-hidden="true"></span>
+            <div class="g-stage-body">
+              <p class="g-stage-meta"><span>Stage C</span><span>one to a few minutes</span><span class="g-consent">with your consent</span></p>
+              <h3>Deep model review</h3>
+              <p>A model reads the files that hold the agent's authority and looks for what rules miss: replayable payment proofs, unauthenticated pay endpoints, budgets keyed on an address an attacker can rotate. Every finding must quote a line that exists; a quote that does not match the source is rejected.</p>
+              <p class="g-note">This is the only stage that sends code to a model provider, and it runs only when you allow it. Without it the audit runs on the rules alone, and the report says so. A rules-only audit can never pass.</p>
+            </div>
+          </li>
+          <li class="g-stage" data-stage="verify">
+            <span class="g-stage-dot" aria-hidden="true"></span>
+            <div class="g-stage-body">
+              <p class="g-stage-meta"><span>Stage D</span><span>under a minute</span></p>
+              <h3>Independent verification</h3>
+              <p>A second model re-checks each finding at the cited line and labels it: <span class="g-tag ok">Verified</span> <span class="g-tag">Partly verified</span> <span class="g-tag bad">Disputed</span> <span class="g-tag">Not verified</span>. A high pattern-rule finding blocks a pass only once it is verified.</p>
+            </div>
+          </li>
+          <li class="g-stage g-stage-seal" data-stage="seal">
+            <span class="g-stage-dot" aria-hidden="true"></span>
+            <div class="g-stage-body">
+              <p class="g-stage-meta"><span>Then</span></p>
+              <h3>Decide and seal</h3>
+              <p>One decision rule turns the evidence into a verdict, and the report is sealed with its SHA-256. That hash is what a credential points to.</p>
+            </div>
+          </li>
+        </ol>
+        <div class="g-clock g-reveal">
+          <div><strong>≈ 1 min</strong><span>a small repository, model review included, on the live demo</span></div>
+          <div><strong>250 s</strong><span>the demo's limit. A review cut off by it keeps the findings so far and says so</span></div>
+          <div><strong>seconds</strong><span>rules only, when the model review is off or its hourly allowance is used</span></div>
+        </div>
+      </section>
+
+      <!-- 04 ------------------------------------------------------------ -->
+      <section id="report" class="g-plate" data-mascot="warning" data-say="Risks first. Then what's missing.">
+        <header class="g-plate-head"><span class="g-num">04</span><h2>Read the report</h2></header>
+        <p class="g-lead">A report has one verdict, one score, and two kinds of finding. Here is a real result from the <em>Safe treasury agent</em> example, with the parts named.</p>
+
+        <div class="g-specimen g-reveal" aria-label="An annotated example report">
+          <div class="verdict">
+            <div class="stamp-wrap"><div class="stamp pass g-stamp-static" aria-hidden="true">
+              <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="track"/><circle cx="60" cy="60" r="52" class="ring" style="stroke-dashoffset:8.8"/></svg>
+              <span class="g-score">97.3</span><small>/ 100</small><span class="stamp-word">Touchmarked</span>
+            </div><i class="g-pin" data-n="1"></i></div>
+            <div class="verdict-copy">
+              <p class="decision pass">pass <i class="g-pin" data-n="2"></i></p>
+              <h3 class="g-headline">No actionable risk found. Eligible for a Stellar credential.</h3>
+              <p class="source">Source pinned to <u>furkan3152/Touchmark_agent/examples/demo/safe-treasury-agent @ 9e31161d4b</u> <i class="g-pin" data-n="3"></i></p>
+              <p class="counts">1 file analysed · 4 risks (0 critical, 0 high) · 19 evidence gaps · .tmark declared, checked against the code <i class="g-pin" data-n="4"></i></p>
+              <p class="counts">AI review completed: read 1 of 1 files, added 4 findings. Verifier re-checked 2: 0 confirmed, 2 partly, 0 disputed. <i class="g-pin" data-n="5"></i></p>
+            </div>
+          </div>
+          <div class="g-specimen-row">
+            <div class="panel">
+              <h4>What can go wrong <i class="g-pin" data-n="6"></i></h4>
+              <ul class="findings small">
+                <li class="low"><span class="sev">low</span><span class="title">Idempotency key is chosen by the model and not bound to supplier, amount or invoice</span><span class="tag">AI review</span><span class="tag">Partly verified</span></li>
+                <li class="low"><span class="sev">low</span><span class="title">Retry of a payment that never reached the network is reported as "already paid"</span><span class="tag">AI review</span></li>
+              </ul>
+              <p class="g-fold">▸ Why this score? (2.8 risk points → 97.3) <i class="g-pin" data-n="7"></i></p>
+              <p class="g-fold">▸ Evidence not yet provided (19) <i class="g-pin" data-n="8"></i></p>
+            </div>
+          </div>
+        </div>
+        <ol class="g-legend">
+          <li><b>1</b><span><strong>The stamp.</strong> Score out of 100 and the stamp word: <em>Touchmarked</em>, <em>Not yet</em> or <em>Show more</em>.</span></li>
+          <li><b>2</b><span><strong>The decision.</strong> One of three verdicts, explained below.</span></li>
+          <li><b>3</b><span><strong>Source pinned to</strong> the commit that was read. Click through to see exactly that code.</span></li>
+          <li><b>4</b><span><strong>The count line:</strong> files analysed, risks by severity, evidence gaps, and whether a <code>.tmark</code> was declared and checked.</span></li>
+          <li><b>5</b><span><strong>The AI line:</strong> whether the model review ran, how much it read, and what the verifier made of it.</span></li>
+          <li><b>6</b><span><strong>What can go wrong:</strong> risks, worst first, each with the cited code and a fix.</span></li>
+          <li><b>7</b><span><strong>Why this score?</strong> Every point lost, finding by finding. Try it below.</span></li>
+          <li><b>8</b><span><strong>Evidence not yet provided:</strong> what could not be checked. Not a vulnerability.</span></li>
+        </ol>
+
+        <h3 class="g-sub">Three verdicts</h3>
+        <div class="g-verdicts">
+          <div class="g-verdict pass g-reveal"><span class="g-mini-stamp">Touchmarked</span><p class="decision pass">pass</p><p>No actionable risk, the full core surface reviewed, and the deep review complete. Eligible for a credential.</p></div>
+          <div class="g-verdict needs_fixes g-reveal"><span class="g-mini-stamp">Not yet</span><p class="decision needs_fixes">needs fixes</p><p>An actionable risk: a critical or high finding backed by evidence, a verified bypass of a payment control, or enough smaller risks to pull the score under 65. <em>Do not give this agent the keys yet.</em></p></div>
+          <div class="g-verdict needs_evidence g-reveal"><span class="g-mini-stamp">Show more</span><p class="decision needs_evidence">needs evidence</p><p>No actionable risk, but part of the agent could not be reviewed: the deep review did not read every file that holds authority, or a payment bypass was never verified.</p></div>
+        </div>
+
+        <div class="g-two g-reveal">
+          <div><h3>Risks</h3><p>Something in the code can go wrong. Risks cost points and can block a pass. Each comes with its evidence grade (confirmed or inferred), the places it was found, and a fix.</p></div>
+          <div><h3>Evidence gaps</h3><p>Something Touchmark could not establish: an owner not verified, an agent wallet not supplied, an attack class with no code to test it against. Gaps cost nothing; they only limit how far the verdict can go.</p></div>
+        </div>
+
+        <div class="g-explorer g-reveal" id="explorer">
+          <div class="g-explorer-head">
+            <h3>Why this score? Try it.</h3>
+            <p>Toggle the fixes on this sample report. The arithmetic is the one the audit uses.</p>
+          </div>
+          <div class="g-explorer-grid">
+            <fieldset>
+              <legend class="g-vh">Sample findings</legend>
+              <ul class="g-ex-list" id="ex-list"></ul>
+            </fieldset>
+            <div class="g-ex-out" aria-live="polite">
+              <div class="g-ex-stamp" id="ex-stamp"><span id="ex-score">–</span><small>/ 100</small></div>
+              <p class="decision" id="ex-decision">–</p>
+              <p class="g-ex-sum" id="ex-sum"></p>
+            </div>
+          </div>
+          <p class="g-fine">Each finding costs severity (critical 30, high 14, medium 6, low 2) × evidence (confirmed 1, inferred 0.6) × confidence × spread (more affected places, up to ×1.75). Further findings of one severity count a little less, and a restated root cause counts 30%. Score = 100 × e<sup>−risk points / 100</sup>. An actionable risk caps the score at 64; a confirmed critical at 39.</p>
+        </div>
+      </section>
+
+      <!-- 05 ------------------------------------------------------------ -->
+      <section id="compare" class="g-plate" data-mascot="scanning" data-say="Before and after, side by side.">
+        <header class="g-plate-head"><span class="g-num">05</span><h2>Compare two runs</h2></header>
+        <p class="g-lead">Fixed something? Under the report, <span class="g-ui">Fixed it? Test again</span> takes the fixed commit or folder. Both versions are audited and compared finding by finding.</p>
+        <div class="g-compare g-reveal">
+          <p class="g-compare-head"><span class="g-chip needs_fixes">needs_fixes 41.8</span><span class="g-arrow" aria-hidden="true">→</span><span class="g-chip pass">pass 96.1</span><span class="g-delta">(+54.3)</span></p>
+          <div class="diff-cols">
+            <div><h4>Closed</h4><ul class="findings small"><li class="high"><span class="sev">high</span><span class="title">The model chooses the payment destination</span></li><li class="high"><span class="sev">high</span><span class="title">A limit the .tmark declares is not enforced by the code</span></li></ul></div>
+            <div><h4>Still open</h4><ul class="findings small"><li class="low"><span class="sev">low</span><span class="title">Autonomous authority over funds</span></li></ul></div>
+            <div><h4>New</h4><ul class="findings small"><li class="low"><span class="sev">low</span><span class="title">None</span></li></ul></div>
+          </div>
+        </div>
+        <p class="g-fine">Illustrative numbers. Paste a <code>/tree/&lt;commit&gt;</code> link for each version so the comparison is exact: <em>Closed</em> is what the fix removed, <em>Still open</em> what it did not touch, and <em>New</em> anything the fix introduced.</p>
+      </section>
+
+      <!-- 06 ------------------------------------------------------------ -->
+      <section id="stamp" class="g-plate" data-mascot="success" data-say="Now I strike the mark.">
+        <header class="g-plate-head"><span class="g-num">06</span><h2>Stamp a testnet credential</h2></header>
+        <p class="g-lead">A passing report can be written to Stellar testnet. The validator records the report's hash and score in the Touchmark registry, and the credential contract issues a non-transferable token bound to it: the touchmark.</p>
+        <div class="g-stamp-grid">
+          <div class="g-check g-reveal">
+            <h3>Eligible when</h3>
+            <ul>
+              <li>the decision is <span class="g-chip pass">pass</span>;</li>
+              <li>the full review ran: model review and independent verification;</li>
+              <li>the audit is bound to a source repository at a commit;</li>
+              <li>the score is 65 or more. The contract enforces it.</li>
+            </ul>
+          </div>
+          <ol class="g-steps g-steps-tight">
+            <li class="g-reveal"><b>1</b><div><h3>Name the owner</h3><p>Put your <code>G…</code> account in <code>owner.stellar_account</code> in the repository's <a href="/guide/tmark">.tmark</a>. Without it, the credential goes to the demo operator and says <em>ownership not verified</em>.</p></div></li>
+            <li class="g-reveal"><b>2</b><div><h3>Sign in Freighter</h3><p>Press <span class="g-ui">Sign with Freighter and issue to my account</span>. Freighter must be on <strong>Testnet</strong> and on the account the repository names. You sign the registration; you never share a key.</p></div></li>
+            <li class="g-reveal"><b>3</b><div><h3>Read it back</h3><p><em>Stamped, and read back from the ledger</em>: token, owner, score on chain, report hash match, <em>Valid until</em>, the contract and each transaction. Download the card (SVG) and the token metadata.</p></div></li>
+          </ol>
+        </div>
+        <aside class="g-say g-reveal"><span class="g-say-face" data-tm-mascot="success" data-tm-size="72" data-tm-decorative></span><p><b>Punch says:</b> the credential points at one report hash, one score, one commit. Change the code and it no longer describes it. Audit again and stamp again.</p></aside>
+      </section>
+
+      <!-- 07 ------------------------------------------------------------ -->
+      <section id="studio" class="g-plate" data-mascot="pointing" data-say="Private code? Bring it to the Studio.">
+        <header class="g-plate-head"><span class="g-num">07</span><h2>Private code and uploads: the Studio</h2></header>
+        <p class="g-lead">The home page reads public repositories. The <a href="/studio">Studio</a> is the workspace for everything else: private files, a project folder, a capsule you keep, and the official review.</p>
+        <div class="g-cards g-cards-4">
+          <div class="card g-reveal"><span class="num">a.</span><h3>Agent intake</h3><p>Three ways in: <span class="g-ui">Stellar address</span>, <span class="g-ui">GitHub</span> or <span class="g-ui">Upload files</span>: up to 12 files, 32 KB each, 64 KB of source in total. A <code>.tmcapsule</code> brings source, intent and limits together.</p></div>
+          <div class="card g-reveal"><span class="num">b.</span><h3>Intended behavior</h3><p>Name the agent, say what it is allowed to do, and tick what it can actually do. A declared permission is not proof that a limit is enforced.</p></div>
+          <div class="card g-reveal"><span class="num">c.</span><h3>Design your audit</h3><p>Choose the depth and the reviewers, then <span class="g-ui">Run Preview review</span>. No wallet connection, no payment, no transaction.</p></div>
+          <div class="card g-reveal"><span class="num">d.</span><h3>Go further, by consent</h3><p><span class="g-ui">Add an AI second opinion</span>, run isolated runtime probes in a disposable microVM, or order an official Testnet review funded with test XLM.</p></div>
+        </div>
+      </section>
+
+      <!-- 08 ------------------------------------------------------------ -->
+      <section id="privacy" class="g-plate" data-mascot="idle" data-say="Nothing goes to a model without a yes.">
+        <header class="g-plate-head"><span class="g-num">08</span><h2>What leaves your hands</h2></header>
+        <div class="g-ledger g-reveal">
+          <div class="g-ledger-row"><h3>The rules</h3><p>Run on Touchmark's server against the public repository at the pinned commit. No model is involved.</p></div>
+          <div class="g-ledger-row g-ledger-consent"><h3>The model review <span class="g-consent">only with consent</span></h3><p>Sends the files that hold the agent's authority, plus its stated purpose and instructions, to the model provider. Strings that look like secrets are replaced with <code>[REDACTED]</code> first, and quotes in the report are masked the same way.</p></div>
+          <div class="g-ledger-row"><h3>The report</h3><p>Comes back to your browser. <span class="g-ui">Download report JSON</span> to keep it; its SHA-256 is printed under it.</p></div>
+          <div class="g-ledger-row"><h3>The ledger</h3><p>If you stamp, Stellar testnet records the report hash, the score, the repository and commit, and the owner account. Never the source.</p></div>
+          <div class="g-ledger-row"><h3>The Studio</h3><p>An immediate review of uploaded files stays in memory. Official orders store the submitted source only with your explicit consent, and an AI second opinion is a separate consent.</p></div>
+          <div class="g-ledger-row"><h3>A .tmark check</h3><p>Validated and answered. Nothing is stored.</p></div>
+        </div>
+        <aside class="g-say g-say-warn g-reveal"><span class="g-say-face" data-tm-mascot="warning" data-tm-size="72" data-tm-decorative></span><p><b>Punch says:</b> never put an <code>S…</code> secret key in a repository, an upload or a form. Touchmark only ever needs public <code>G…</code> and <code>C…</code> addresses.</p></aside>
+      </section>
+
+      <!-- 09 ------------------------------------------------------------ -->
+      <section id="tmark" class="g-plate" data-mascot="pointing" data-say="Tell me what it may do. I'll check.">
+        <header class="g-plate-head"><span class="g-num">09</span><h2>Declare it: the <code>.tmark</code> file</h2></header>
+        <div class="g-tmark-teaser g-reveal">
+          <div>
+            <p class="g-lead">One JSON file at the repository root states what your agent is and what it may do: the network, the keys, what it signs, its limits and its tools. Touchmark checks the code against every claim. An honest declaration makes the audit sharper and the credential mean something.</p>
+            <a class="g-btn" href="/guide/tmark">Open the .tmark guide and builder <span aria-hidden="true">→</span></a>
+          </div>
+          <pre class="g-code" aria-label="A short .tmark example"><code><span class="j-p">{</span>
+  <span class="j-k">"tmark"</span><span class="j-p">:</span> <span class="j-s">"1"</span><span class="j-p">,</span>
+  <span class="j-k">"agent"</span><span class="j-p">: {</span> <span class="j-k">"network"</span><span class="j-p">:</span> <span class="j-s">"testnet"</span><span class="j-p">, …</span> <span class="j-p">},</span>
+  <span class="j-k">"authority"</span><span class="j-p">: {</span> <span class="j-k">"holds_keys"</span><span class="j-p">:</span> <span class="j-b">true</span><span class="j-p">, …</span> <span class="j-p">},</span>
+  <span class="j-k">"limits"</span><span class="j-p">: {</span> <span class="j-k">"recipients"</span><span class="j-p">:</span> <span class="j-s">"allowlist"</span><span class="j-p">, …</span> <span class="j-p">}</span>
+<span class="j-p">}</span></code></pre>
+        </div>
+      </section>
+
+      <section class="g-end g-reveal">
+        <span data-tm-mascot="success" data-tm-size="150" data-tm-decorative class="g-end-mascot" id="end-mascot"></span>
+        <div>
+          <h2>Ready when your agent is.</h2>
+          <p>Paste a repository, read what comes back, fix what it finds, and stamp the version that passes.</p>
+          <div class="g-cta"><a class="g-btn" href="/">Test an agent <span aria-hidden="true">→</span></a><a class="g-btn ghost" href="/studio">Open the Studio</a></div>
+        </div>
+      </section>
+    </article>
+  </div>
+</main>
+
+<footer class="foot"><svg class="logo" width="20" height="20"><use href="#mark"/></svg><span>Touchmark · testnet demo · A touchmark means no actionable risk was found in the reviewed code. It is not a guarantee of safety.</span></footer>
+</body>
+</html>

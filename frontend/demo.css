@@ -167,7 +167,7 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px;margi
   .grid,.how-grid{grid-template-columns:1fr}.diff-cols{grid-template-columns:1fr}
 }
 @media (max-width:640px){
-  .bar{padding:16px}.bar nav{gap:14px;font-size:12px}.bar nav a[href="#how"],.brand .where{display:none}
+  .bar{padding:16px}.bar nav{gap:14px;font-size:12px}.bar nav a[href="#how"],.bar nav a[href="#video"],.brand .where{display:none}
   main{padding:0 16px 40px}
   .input-row{flex-direction:column}#run,#run-recheck{min-height:50px}
   .steps{grid-template-columns:1fr 1fr}

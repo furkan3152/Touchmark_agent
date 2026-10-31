@@ -1486,6 +1486,14 @@ if FRONTEND_DIR.exists():
     async def studio_page() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "studio.html")
 
+    @app.get("/guide")
+    async def guide_page() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "guide.html")
+
+    @app.get("/guide/tmark")
+    async def guide_tmark_page() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "guide-tmark.html")
+
     @app.get("/operator")
     async def operator_console() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "index.html")
@@ -1498,3 +1506,6 @@ if FRONTEND_DIR.exists():
     SCHEMA_DIR = FRONTEND_DIR.parent / "public" / "schemas"
     if SCHEMA_DIR.is_dir():
         app.mount("/schemas", StaticFiles(directory=str(SCHEMA_DIR)), name="schemas")
+    MASCOT_DIR = FRONTEND_DIR.parent / "public" / "mascot"
+    if MASCOT_DIR.is_dir():
+        app.mount("/mascot", StaticFiles(directory=str(MASCOT_DIR)), name="mascot")
