@@ -10,6 +10,9 @@
   let busy = false;
   let sourceReference = "";
   let sourceRevision = "";
+  // The declaration (.tmark) and the agent's public signing key travel beside the source.
+  let tmarkText = "";
+  let agentSigningKey = "";
   let runtimeResult = null;
   let catalogue = null;
   let auditPlan = null;
@@ -29,7 +32,7 @@
     const tools = JSON.parse(byId("tool-manifest").value);
     if (!Array.isArray(tools)) throw new Error("Tool permissions must be a JSON array.");
     if (!Object.keys(files).length && !byId("agent-prompt").value.trim() && !byId("stellar-address").value.trim()) throw new Error("Add a public Stellar address, source files or system instructions first.");
-    return {name:byId("agent-name").value, purpose:byId("agent-purpose").value, system_prompt:byId("agent-prompt").value, files:{...files}, tools, dependencies, stellar_address:byId("stellar-address").value.trim(), network:byId("stellar-network").value, source_reference:sourceReference, source_revision:sourceRevision, architecture:JSON.parse(byId("architecture-manifest").value), ai_assistance:byId("ai-consent").checked, external_processing_consent:byId("ai-consent").checked};
+    return {name:byId("agent-name").value, purpose:byId("agent-purpose").value, system_prompt:byId("agent-prompt").value, files:{...files}, tools, dependencies, stellar_address:byId("stellar-address").value.trim(), network:byId("stellar-network").value, source_reference:sourceReference, source_revision:sourceRevision, tmark:tmarkText, agent_signing_key:agentSigningKey, architecture:JSON.parse(byId("architecture-manifest").value), ai_assistance:byId("ai-consent").checked, external_processing_consent:byId("ai-consent").checked};
   }
   function applyCapsuleLock() {
     const locked = Boolean(capsule);
@@ -392,6 +395,16 @@
       row.append(remove);
       list.append(row);
     });
+    if (tmarkText) {
+      const row = node("div", undefined, "file-row");
+      row.append(node("span", `.tmark (declaration) · ${new TextEncoder().encode(tmarkText).length.toLocaleString("en-US")} bytes`));
+      const remove = node("button", "Remove");
+      remove.type = "button";
+      remove.setAttribute("aria-label", "Remove .tmark");
+      remove.addEventListener("click", () => { tmarkText = ""; invalidate(); renderFiles(); });
+      row.append(remove);
+      list.append(row);
+    }
     if (!Object.keys(files).length) list.append(node("p", "No source files added."));
   }
   function updateToolCount() {
@@ -407,14 +420,19 @@
   function loadBundle(bundle) {
     capsule = null; byId("audit-entrypoint").value = "";
     if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) throw new Error("An audit bundle must be a JSON object.");
-    const allowed = new Set(["name", "purpose", "system_prompt", "files", "tools", "dependencies", "stellar_address", "network", "source_reference", "source_revision", "architecture", "ai_assistance", "external_processing_consent"]);
+    // Every ReviewRequest field (backend/app/services/studio.py); test_studio_bundle_contract checks they match.
+    const allowed = new Set(["name", "purpose", "system_prompt", "files", "tools", "dependencies", "stellar_address", "agent_signing_key", "network", "source_reference", "source_revision", "tmark", "architecture", "ai_assistance", "external_processing_consent"]);
     if (Object.keys(bundle).some((key) => !allowed.has(key))) throw new Error("Unknown bundle fields. Use an exported agent-audit.json as the template.");
     if (bundle.files && (Array.isArray(bundle.files) || typeof bundle.files !== "object" || Object.values(bundle.files).some((value) => typeof value !== "string"))) throw new Error("Bundle files must map filenames to source text.");
     if (bundle.tools && !Array.isArray(bundle.tools)) throw new Error("Bundle tools must be an array.");
+    if (bundle.tmark !== undefined && typeof bundle.tmark !== "string") throw new Error("Bundle tmark must be the .tmark file text.");
     byId("agent-name").value = bundle.name || "";
     byId("agent-purpose").value = bundle.purpose || "";
     byId("agent-prompt").value = bundle.system_prompt || "";
     files = { ...(bundle.files || {}) };
+    tmarkText = bundle.tmark || files[".tmark"] || "";
+    delete files[".tmark"];
+    agentSigningKey = bundle.agent_signing_key || "";
     dependencies = bundle.dependencies || [];
     byId("architecture-manifest").value = JSON.stringify(bundle.architecture || {}, null, 2);
     byId("ai-consent").checked = false; byId("ai-access-settings").hidden = true; byId("ai-access-key").value = "";
@@ -460,7 +478,11 @@
         loadBundle(JSON.parse(await selected[0].text()));
       } else {
         const pending = { ...files };
-        for (const file of selected) {
+        for (const file of selected.filter((item) => item.name === ".tmark")) {
+          if (file.size > 64000) throw new Error(".tmark exceeds 64 KB.");
+          tmarkText = await file.text();
+        }
+        for (const file of selected.filter((item) => item.name !== ".tmark")) {
           if (Object.keys(pending).some((name) => name.toLowerCase() === file.name.toLowerCase())) throw new Error(`${file.name} already exists. Remove it before adding a replacement.`);
           if (file.size > 32000) throw new Error(`${file.name} exceeds 32 KB.`);
           pending[file.name] = await file.text();
@@ -602,6 +624,9 @@
       const all = [...event.target.files];
       const eligible = all.map((file) => ({file,path:file.webkitRelativePath.split("/").slice(1).join("/")}))
         .filter(({file,path}) => file.size <= 32000 && path.length <= 160 && !path.split("/").some((part) => part.startsWith(".") || ["node_modules","vendor","target","dist","build","venv","__pycache__"].includes(part)) && /\.(py|js|ts|tsx|jsx|mjs|cjs|rs|go|json|md|txt|toml|ya?ml)$/.test(path) && !/(^|\/)(credentials|secrets?|id_rsa|service.account)([._-]|$)/i.test(path));
+      // The declaration is a dotfile: hidden files are skipped as source, but .tmark is read as the declaration.
+      const mark = all.find((file) => file.webkitRelativePath.split("/").slice(1).join("/") === ".tmark");
+      tmarkText = mark && mark.size <= 64000 ? await mark.text() : "";
       const declaration = all.find((file) => file.webkitRelativePath.split("/").slice(1).join("/") === "veritas.json");
       if (declaration && !eligible.some((item) => item.path === "veritas.json")) throw new Error("veritas.json exceeds the upload limit. Automatic fallback is disabled.");
       let declaredPaths = null;
@@ -622,7 +647,7 @@
         next[path] = await file.text(); bytes += file.size;
       }
       files = next; sourceReference = ""; sourceRevision = ""; invalidate(); renderFiles();
-      byId("folder-status").textContent = `${Object.keys(files).length} source files selected; ${all.length - Object.keys(files).length} files excluded or over the review limit. Review the list before auditing.`;
+      byId("folder-status").textContent = `${Object.keys(files).length} source files selected${tmarkText ? " and the .tmark declaration" : ""}; ${all.length - Object.keys(files).length - (tmarkText ? 1 : 0)} files excluded or over the review limit. Review the list before auditing.`;
       if (!byId("agent-name").value) byId("agent-name").value = all[0]?.webkitRelativePath.split("/")[0] || "Uploaded project";
     } catch (failure) { error(failure.message); } finally { setBusy(false); event.target.value = ""; }
   });
@@ -779,7 +804,9 @@
       result = value; submitted = input;
       byId("download-bundle").hidden = false; byId("run-runtime").disabled = false;
       renderReport(value); renderEngagement(value.report); renderCredential(value);
-      byId("run-status").textContent = "Review complete. Download your evidence before leaving.";
+      const mark = value.report?.declarations?.tmark;
+      const markNote = !mark || mark.status === "missing" ? "" : mark.status === "valid" ? " The .tmark declaration was checked against the code." : ` The .tmark is invalid and was not used: ${(mark.errors || []).slice(0, 3).join("; ")}`;
+      byId("run-status").textContent = "Review complete. Download your evidence before leaving." + markNote;
       if (window.innerWidth <= 720) byId("dossier-title").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
     } catch (failure) {
       error(failure.name === "TimeoutError" ? "The review timed out. Retry with a smaller source bundle." : failure.message);
@@ -804,7 +831,10 @@
   fetch("/api/v1/studio/capabilities").then((r) => { if (!r.ok) throw new Error(); return r.json(); }).then((value) => {
     byId("ai-consent").disabled = !value.ai_available;
     byId("ai-consent").dataset.available = String(value.ai_available);
-    byId("ai-availability").textContent = value.ai_available ? `I consent to send redacted source to ${value.ai_provider}. Never include secrets; automatic redaction is best effort.` : "Not enabled on this deployment. Static review is available.";
+    const aiName = value.ai_mode === "deep_review" ? `${value.ai_provider} for the deep review and its verifier` : value.ai_provider;
+    byId("ai-availability").textContent = value.ai_available ? `I consent to send redacted source to ${aiName}. Requires a pilot access key. Never include secrets; automatic redaction is best effort.`
+      : value.deep_review?.configured ? "The deep review is configured, but no pilot access key is set on this deployment. Static review is available."
+      : "Not enabled on this deployment. Static review is available.";
     value.controls.forEach((control) => {
       const item = node("article"); item.append(node("strong", control.name), node("p", control.evidence_needed));
       byId("control-catalogue").append(item);

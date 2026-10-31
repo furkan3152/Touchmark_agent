@@ -61,6 +61,21 @@ class ReviewRequest(BaseModel):
     network: Literal["testnet", "mainnet"] = "testnet"
     source_revision: str = Field(default="", pattern=r"^(?:[a-f0-9]{40})?$")
     source_reference: str = Field(default="", max_length=240)
+    #: The agent's .tmark declaration, used as if the project committed it (services/tmark.py).
+    tmark: str = Field(default="", max_length=64_000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def declaration_file(cls, data):
+        """A folder upload or bundle may carry the declaration as files[".tmark"]: it is the
+        declaration, not source, so it moves to ``tmark`` (other hidden files stay refused)."""
+        if isinstance(data, dict) and isinstance(data.get("files"), dict) and ".tmark" in data["files"]:
+            files = dict(data["files"])
+            text = files.pop(".tmark")
+            data = {**data, "files": files}
+            if not data.get("tmark") and isinstance(text, str):
+                data["tmark"] = text
+        return data
 
     @model_validator(mode="after")
     def bound_source(self) -> "ReviewRequest":
@@ -108,6 +123,28 @@ class ReviewRequest(BaseModel):
         return self
 
 
+def _studio_declaration(request: ReviewRequest) -> dict | None:
+    """The submitted .tmark, read exactly as a repository's own (repo_audit.declarations): an
+    invalid one is reported and nothing in it is used. Declared tools come first; tools the
+    request lists that the declaration does not name are kept."""
+    if not request.tmark.strip():
+        return None
+    from .repo_audit import _Declaration, _tmark_metadata, declarations
+    declared = declarations({"tmark": {"path": ".tmark", "text": request.tmark}})
+    declared["tmark"]["source"] = "supplied"
+    info = declared["tmark"]
+    record = {"status": info["status"], "errors": info["errors"], "source": "supplied"}
+    decl: _Declaration = declared.get("declaration") or _Declaration()
+    tools = [ToolSpec(**t.model_dump(), origin="declared") for t in decl.tools]
+    named = {t.name for t in tools}
+    tools += [t for t in request.tools if t.name not in named]
+    if info.get("parsed") is not None:
+        from .tmark import summary
+        record.update(version=info["parsed"].tmark, summary=summary(info["parsed"]))
+    return {"metadata": _tmark_metadata(declared, {}), "record": record, "tools": tools[:60],
+            "capabilities": decl.capabilities, "human_oversight": decl.human_oversight, "discloses_ai": decl.discloses_ai}
+
+
 async def review_source(request: ReviewRequest, settings: Settings) -> dict:
     from .deep_review import reviewer_from_settings
     deep_reviewer = None
@@ -137,14 +174,19 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
                 account, agent_key=request.agent_signing_key, code_files=request.files)
         except Exception:  # ledger reads must never fail the source review
             chain_facts = {"network": request.network, "source": "horizon", "status": "unavailable"}
+    declaration = _studio_declaration(request)
     artifact = AgentArtifact(
         chain_authority=chain_facts,
+        raw_metadata={"tmark": declaration["metadata"]} if declaration else {},
+        declared_capabilities=declaration["capabilities"] if declaration else [],
+        human_oversight=bool(declaration and declaration["human_oversight"]),
+        discloses_ai=bool(declaration and declaration["discloses_ai"]),
         source_kind=SourceKind.UPLOAD if request.files or request.system_prompt else SourceKind.ONCHAIN_ADDRESS,
         source_ref=f"studio:{request.network}:{request.source_reference or request.stellar_address or 'submitted-bundle'}:{request.source_revision}",
         name=request.name, description=request.purpose,
         architecture=request.architecture.model_dump(),
         system_prompt=candidate_prompt, code_files=request.files,
-        tools=request.tools, dependencies=request.dependencies,
+        tools=declaration["tools"] if declaration else request.tools, dependencies=request.dependencies,
         agent_wallet=request.stellar_address if request.stellar_address.startswith("G") else "",
         agent_contract_id=request.stellar_address if request.stellar_address.startswith("C") else "",
         owner_verification_note="Not checked during source review.",
@@ -161,6 +203,7 @@ async def review_source(request: ReviewRequest, settings: Settings) -> dict:
         "Use priority findings, explicit limitations and the control inventory to plan further validation.",
     ]
     payload['instruction_evidence'] = embedded_instructions
+    payload["declarations"] = {"tmark": declaration["record"]} if declaration else {"tmark": {"status": "missing"}}
     if embedded_instructions:
         payload['judge_notes'].append('Literal model instructions were located in source. Their use and the complete runtime hierarchy remain unverified.')
     from ..reporting.english import ATTACK_LABELS
