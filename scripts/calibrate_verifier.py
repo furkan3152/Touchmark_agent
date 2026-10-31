@@ -68,7 +68,7 @@ def metrics(rows: list[dict]) -> dict:
 async def main_async(args) -> None:
     settings = Settings()
     if not settings.anthropic_api_key:
-        raise SystemExit("ANTHROPIC_AI_KEY is not set.")
+        raise SystemExit("ANTHROPIC_API_KEY is not set.")
     from anthropic import AsyncAnthropic
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=120.0, max_retries=3)
     verifier = FindingVerifier(client, model=settings.verifier_model, effort=settings.verifier_effort,
