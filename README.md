@@ -6,8 +6,8 @@
 
 <p align="center">
   <strong>Test the agent. Stamp the proof.</strong><br>
-  Before an AI agent gets your Stellar keys, Touchmark reads its code, has a second model check every finding,
-  and stamps the result on Stellar, where anyone can verify it.
+  Before an AI agent gets Stellar keys, Touchmark reads every line of its code, checks it against a fixed list of
+  Stellar-specific questions, has a second model re-check every finding, and stamps the result on Stellar.
 </p>
 
 <p align="center">
@@ -19,264 +19,171 @@
 </p>
 
 <p align="center">
-  <a href="public/media/touchmark-how-to.mp4"><img src="frontend/brand/video-poster.jpg" width="640" alt="Watch: how to use Touchmark, start to stamp"></a><br>
+  <a href="public/media/touchmark-how-to.mp4"><img src="frontend/brand/video-poster.jpg" width="640" alt="Watch: how to use Touchmark"></a><br>
   <sub>▶ <a href="public/media/touchmark-how-to.mp4">How to use Touchmark</a>: paste an agent, read the verdict, fix and re-test, stamp it on Stellar.</sub>
 </p>
 
-> A **touchmark** is the maker's mark struck into tested metal: a promise that someone checked it and stands behind it.
-> Touchmark does the same for AI agents that hold Stellar keys.
+> A **touchmark** is the maker's mark struck into tested metal: a promise that someone checked it and stands
+> behind it. Touchmark does the same for AI agents, MCP servers and payment services that hold Stellar authority.
 
----
+[Try it](#try-it) · [How an audit works](#how-an-audit-works) · [What it checks on Stellar](#what-it-checks-on-stellar) ·
+[Measured accuracy](#measured-accuracy) · [`.tmark`](#declare-your-agent-tmark) · [The credential](#the-credential-on-stellar) ·
+[Run it](#run-it) · [Limits](#security-and-limits)
 
-## Contents
+## Try it
 
-[The demo](#the-demo) · [Declare your agent: `.tmark`](#declare-your-agent-tmark) · [How a verdict is reached](#how-a-verdict-is-reached) ·
-[What it checks on Stellar](#what-it-checks-on-stellar) · [Why the credential lives on Stellar](#why-the-credential-lives-on-stellar) ·
-[Evidence](#evidence-and-what-is-not-yet-proven) · [Run it](#run-it) · [In CI](#in-ci) · [Security and limits](#security-and-limits)
+**[touchmark-stellar.vercel.app](https://touchmark-stellar.vercel.app)**
 
-## The demo
-
-**[touchmark-stellar.vercel.app](https://touchmark-stellar.vercel.app)**: one box, one button.
-
-1. Paste a GitHub repository or folder, an AgentRegistry agent id, a `C…` contract or a `G…` account.
-2. Read the verdict. Touchmark pins the exact commit and traces the code from model input to keys, payments and
-   the network. A model reviews the code and an independent second model re-checks each finding against the source.
-   The report is committed with its SHA-256 hash, and "Why this score?" shows every point deducted.
-3. Fix and re-audit. Paste the fixed commit; the page lists the risks that closed, the ones that remain and any new ones.
-4. Stamp it. A passing report is written to the registry on Stellar testnet, and a Soroban contract issues a
-   non-transferable credential bound to its hash and score. The page reads it back from the ledger and shows the
-   credential card (SVG) with its token metadata.
+1. Paste a GitHub repository or folder (pinned to a commit), a `C…` contract, a `G…` account or a registry agent id.
+2. Tick the model review. Touchmark reads the code and streams its progress; large repositories continue over
+   several requests until every file is read. Only a spend cap can stop it early, and it says so.
+3. Read the verdict: every finding with the line it cites and whether a second model confirmed it, plus a
+   **check ledger** that shows, question by question, what the code protects and what it does not.
+4. Fix, re-audit, and stamp a passing report on Stellar testnet as a non-transferable credential.
 
 | An unsafe agent: not yet | The same agent, fixed: touchmarked on Stellar |
 |---|---|
-| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: not yet" width="420"> | <img src="docs/media/demo-credential.png" alt="Safe treasury agent: touchmarked, credential stamped on testnet" width="420"> |
+| <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: not yet" width="420"> | <img src="docs/media/demo-credential.png" alt="Fixed treasury agent: credential on testnet" width="420"> |
 
-Both are the same MCP treasury agent, in [`examples/demo`](examples/demo).
-- Unsafe version: the model picks the recipient, the amount and the URL to fetch.
-- Safe version:
-  - recipients come from a fixed table;
-  - each payment is capped and a daily budget is kept on disk;
-  - every request id is paid at most once;
-  - invoices come from one host.
+Both are the MCP treasury agent in [`examples/demo`](examples/demo). The fixed one takes recipients from a fixed
+table, caps each payment, keeps a daily budget on disk, pays each request id once and fetches invoices from one host.
 
-## Declare your agent: `.tmark`
-
-A `.tmark` file at the repository root states what the agent is and what it may do. It covers:
-- its purpose and network;
-- the keys it holds and what it signs;
-- its spending limits, recipients and approval rule;
-- its tools and the actions it must refuse.
-
-Touchmark then checks the code against every claim:
-- A claim the code keeps is shown as declared.
-- A claim the code breaks is reported as a risk.
-- A declaration never closes a risk on its own.
-
-```bash
-python scripts/tmark.py init path/to/repo    # writes .tmark, pre-filled from what the code can do
-python scripts/tmark.py check path/to/repo   # lists every error; an invalid file is ignored, not half-used
-```
-
-The format is strict: one JSON object, no unknown fields, decimal amounts at Stellar precision, and assets as `XLM`,
-`CODE:G…` or a `C…` token contract. The reference is [docs/TMARK.md](docs/TMARK.md) and the schema is
-[tmark-v1.json](https://touchmark-stellar.vercel.app/schemas/tmark-v1.json).
-
-To have the credential issued to your account, put your `G…` account in `owner.stellar_account`. You then sign the
-registration in Freighter, and the credential goes to that account.
-
-## How a verdict is reached
+## How an audit works
 
 ```mermaid
 flowchart LR
-    R["Reference"] --> RES["Resolver<br/>pin commit · read ledger"]
-    RES --> RULES["Rules + data flow<br/>Python · JS/TS · Rust/Soroban · WASM"]
-    RES --> AI["Deep review<br/>a model reads the authority code"]
-    RULES --> VER["Independent verifier<br/>re-checks each finding at the cited line"]
-    AI --> VER
-    VER --> DEC["Decision<br/>pass · needs_fixes · needs_evidence"]
-    DEC -->|"needs_fixes"| FIX["Owner fixes"] -->|"re-audit"| RES
-    DEC -->|"pass"| SIGN["Owner signs in Freighter"] --> CHAIN["AgentRegistry → AuditCredential"]
+    R["Reference"] --> P["Pin the commit<br/>read the ledger"]
+    P --> RULES["Rules + data flow"]
+    P --> MAP["Map every file<br/>any language"]
+    MAP --> INV["Investigate"] --> LEDGER["Check ledger<br/>fixed Stellar questions"]
+    LEDGER --> CH["Challenge every<br/>'holds' answer"] --> UNIT["Focused review<br/>of each authority file"]
+    RULES --> VER["Independent verifier"]
+    UNIT --> VER
+    VER --> DEC["pass · needs_fixes ·<br/>needs_evidence"]
+    DEC -->|pass| CHAIN["Owner signs in Freighter<br/>credential on Stellar"]
 ```
 
-**Pattern rules propose; evidence decides.** Rules are tuned on agents someone has seen, so on new code they are
-treated as leads, not verdicts:
-
-- Structural facts decide on their own:
-  - a secret seed committed to the repository;
-  - a dependency advisory matched to the installed version;
-  - contract bytecode read from the ledger.
-- **A high or critical pattern-rule finding blocks a pass only if the verifier confirms it** at the cited line.
-  - If the verifier only partly confirms it, cannot verify it, or refutes it, the finding stays in the report as a
-    medium risk. It is shown and scored, but cannot block a pass on its own.
-  - Heuristic "candidate" rules are checked first. A candidate the verifier refutes becomes a zero-weight note that
-    stays visible.
-- Model findings must quote a line that exists. A claim whose quote does not match the source is rejected.
-  Comments and strings in the audited code cannot talk the audit out of a risk.
-- Declaration checks judge only the code that ships. Tests, e2e, sandbox, example, demo, script and docs paths
-  are not the agent.
-
-One decision rule is shared by the demo, the Studio, official audits and credential issuance:
+1. **Rules and data flow** trace untrusted input (tool arguments, model output, HTTP requests, memos, fetched
+   content) to signing, payments, contract calls, process execution and the network.
+2. **File map.** Every file, in any language, is read by the model and recorded as a card: what it does, where it
+   signs, pays, holds secrets or verifies signatures, and which controls it enforces. Each item quotes its line;
+   a quote that is not in the source is dropped.
+3. **Check ledger.** The same Stellar-specific questions are asked of every agent with the same capabilities
+   (28 checks in four groups: value movement; signing, network and submission; access and secrets; model
+   behaviour). Each is answered *holds*, *fails*, *not applicable* or *cannot determine*, and *holds* and *fails*
+   must quote the deciding line. Each pass carries the written Stellar criteria for its checks.
+4. **Challenge.** Every fund, signing or access check answered *holds* is re-examined by a pass whose only job is
+   to find one path where it does not hold. A wrong *holds* is how a defect is missed.
+5. **Focused file review.** Each file that signs, pays, holds keys or verifies signed input gets its own review:
+   the model states the security invariants each function must enforce and checks them one by one.
+6. **Verification and decision.** A second model re-checks each finding at the cited line without seeing why it
+   was raised. Severity is computed from stated facts (what is at risk, who can trigger it, network, whether the
+   code ships), not chosen by the model. Comments in the audited code never count as controls.
 
 | Decision | When |
 |---|---|
-| `needs_fixes` | Any of these: an actionable risk (critical or high, backed by evidence as above); a payment or security-control bypass the verifier confirmed, even at medium; accumulated risks pulling the score below 65 |
-| `needs_evidence` | No actionable risk, but any of these: the deep review did not read every file holding the agent's authority; the code could not be fully analysed; a medium payment bypass was never verified |
-| `pass` | No actionable risk, the full core surface reviewed, and the deep review complete |
+| `needs_fixes` | A confirmed critical or high risk, a confirmed payment or control bypass, or a score below 65 |
+| `needs_evidence` | No actionable risk, but a file holding authority was not reviewed, or a key claim could not be verified |
+| `pass` | No actionable risk and every file holding authority reviewed. Rules alone never give a pass |
 
-Rules alone never give a pass. On agents no rule author had seen, pattern rules missed application-logic defects:
-- replayable payment proofs;
-- unauthenticated pay endpoints;
-- budgets keyed on an address an attacker can rotate.
-
-Rules alone once passed an agent that had three of them. A pass therefore needs the deep review to have read the code.
-
-The components, the score formula, the contract state machine and the trust boundaries are described in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Details, score formula and trust boundaries: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## What it checks on Stellar
 
-| Area | Checks |
+| Area | Examples |
 |---|---|
-| Signing and payments | <ul><li>A model or a counterparty choosing the destination, amount, asset or memo.</li><li>Foreign transaction envelopes signed without inspection.</li><li>`authorizeEntry` and Soroban auth trees signed unread, and auth expiry windows.</li><li>Fee-bump and fee-sponsor paths.</li><li>Retries that can pay twice.</li></ul> |
-| x402 and MPP | <ul><li>Payer side: spend controls and the requirements the payer accepts.</li><li>Seller side: verify-without-settle and unchecked settlement.</li><li>Payment hashes not bound to the request.</li><li>MPP replay stores, unsigned hash pushes and channel state.</li></ul> |
-| Network and assets | <ul><li>Mainnet reachable from a testnet agent, and a network chosen by input or a counterparty.</li><li>The passphrase and the RPC endpoint configured apart.</li><li>Canonical USDC/XLM Stellar Asset Contract ids per network.</li><li>Asset code checked without its issuer, and a fallback to XLM.</li><li>StrKey checksums.</li></ul> |
-| RPC and SDK | <ul><li>`PENDING` treated as final, and outcome statuses not checked.</li><li>Response fields misread.</li><li>Symbols removed from the SDKs, and transaction-meta versions.</li></ul> |
-| Web authentication | SEP-10 and SEP-45 challenges signed without checking the server, home domain and operations |
-| Soroban contracts (source) | <ul><li>`require_auth` coverage and auth arguments.</li><li>`__check_auth` and policy contracts.</li><li>Upgrade and initialisation authority.</li><li>Token moves bound to the right address.</li><li>Persistent-entry TTL.</li><li>Unchecked overflow.</li></ul> |
-| Contracts on the ledger | <ul><li>WASM read and its hash recomputed; spec (SEP-48) and metadata (SEP-46).</li><li>A per-function call graph that finds unguarded upgrades and hidden functions.</li><li>CAP-85 external executable references, bound to the credential.</li></ul> |
-| Accounts | Signers, thresholds and balances from the ledger; SEP-53 signed-message ownership proofs |
-| Supply chain | <ul><li>Installed versions per package root (npm, pnpm, yarn, bun, Cargo, poetry, uv, Pipfile).</li><li>Stellar GHSA advisories and known-vulnerable wallet WASM hashes, matched on version and code condition.</li></ul> |
+| Payments | Destination, amount or asset chosen by the model, a request or a memo; amount bounds and cumulative budgets that survive restarts; assets matched by code without issuer; stroop and decimal confusion |
+| Signing | Foreign XDR, fee bumps and Soroban auth entries signed without inspecting operations; raw bytes signed (an oracle for any transaction); missing timebounds |
+| Network | Passphrase or Horizon/RPC URL chosen by the requester; a testnet agent that can reach mainnet |
+| Submission | `PENDING` treated as final, unchecked result codes, retries that pay twice, failure paths that leave a channel or order stuck |
+| Incoming payments and x402/MPP | Proofs not bound to payer, amount and request; verify without settle; replayable hashes; fee sponsorship without a budget |
+| Web authentication | SEP-10/45 challenges signed unchecked, and verification that accepts a challenge with no client signature or counts the server's own |
+| Soroban | `require_auth` coverage, `__check_auth` and delegated signers (implicit invoker authorization), upgrade authority, TTL, contract bytecode read from the ledger |
+| Accounts | Signers and thresholds read from Horizon: an agent key that cannot pay alone is credited as an enforced control; SEP-29 memo-required destinations; SEP-1 identity |
+| Agent surface | Prompt injection reaching a privileged call, secrets returned to the model, tools loaded at run time, cross-user state, unauthenticated routes and webhooks |
 
-## Why the credential lives on Stellar
+**Languages.** Data-flow rules for Python and JavaScript/TypeScript; pattern rules for Rust, Go and Solidity. The
+model review reads every language, including Java, Kotlin, C#, Swift, PHP, Ruby and Dart, and the report says which
+analyses covered each language.
 
-The credential is not a minted NFT with a label on it. The contracts decide whether it may exist and whether it is
-still valid:
+## Measured accuracy
 
-- Owner, requester, validator and revoker each need `require_auth`.
-- When a repository names its owner, the owner's own wallet signs the registration and the credential is issued to
-  that account. Neither the demo server nor anyone else can register the agent in the owner's name.
-- Only a validator the registry approved can complete a validation, and only the one pinned when the request was made.
-  Removing a validator invalidates every credential it issued.
-- A validation records the agent's version, metadata hash and endpoint hash with the report hash. If the agent
-  changes, `is_current` fails.
-- The credential contract refuses scores below 65.
-- The owner or issuer can revoke, and the first reason is permanent. Validity is at most 90 days. Credentials cannot
-  be transferred.
-- A custom account (`__check_auth`) gives an agent session keys limited by recipient, asset, per-call maximum and
-  cumulative budget. The owner can revoke them or shut the account down.
-- No contract can be upgraded, not even by its admin.
+Measured on real defects, not on agents we wrote. Each case is a security defect that was **fixed upstream** in a
+public Stellar repository; the audit runs on the vulnerable commit and must cite the defective lines.
 
-## Evidence, and what is not yet proven
+| Set | Cases | Detected |
+|---|---|---|
+| Development set (used to find and fix weaknesses): stellar-mpp-sdk, x402-stellar, asgcard, passkey-kit, OpenZeppelin stellar-contracts, one-way-channel, stellar-agent-wallet, stellar-disbursement-platform, django-polaris | 16 | 9 before the focused file review and the authentication check, **11** after |
+| Held-out test set (never used to tune): disbursement platform, stellar/go, anchor platform, Blend, Soroswap, soroban-examples, Reflector, js-stellar-sdk, typescript-wallet-sdk and more | 22 | being measured; reported in [the benchmark](research/benchmark/real/README.md) |
 
-Every number below can be reproduced or is labelled self-verified. The full claims ledger and method are in
-[docs/EVIDENCE.md](docs/EVIDENCE.md).
+On three public Stellar MCP servers, an independent re-read of every medium-or-higher finding judged 20 of 21 real.
+On six small agents in six languages with planted defects and decoys, the audit found the planted defects and
+flagged no decoy as a defect. Earlier hand-audit studies are in [docs/EVIDENCE.md](docs/EVIDENCE.md). The numbers
+are self-measured; there is no external audit yet.
 
-| Claim | Status |
-|---|---|
-| Blind hand audits of 23 Stellar agents (13 seen during development, 10 never seen), two rounds: decisions match on 23 of 23. Of 281 hand-found issues Touchmark reports 246, and 93% of its own findings are real | Self-verified, with AI-assisted auditors and adjudicator. Aggregates only; the rows hold unpublished vulnerabilities |
-| 22 agents never seen while building the rules were submitted through the demo API like users' repositories, each with an author-written `.tmark`. They were labelled blind. Model-review findings were 99% real. High rule and declaration findings that were not high fell from 45 of 52 to 1 of 5 after the fixes. Decisions matched on 14 of 22, and no agent judged unsafe passed | Self-verified. The remaining disagreements are mostly agents Touchmark held back that the labellers would pass, and deep reviews cut off by the demo's 250 s limit |
-| A third held-out set of 10 agents: rules plus verifier matched the blind decision on 8 of 10 (rules alone: 6) | Self-verified. The rules missed 18 high application-logic defects, which is why a pass requires the deep review |
-| The verifier agrees with hand labels: refutes 3 of 5 false findings and wrongly refutes 0 of 42 true ones (κ 0.65) | `scripts/calibrate_verifier.py`; self-verified |
-| 46 labelled corpus agents (Python and TypeScript): 28 TP, 18 TN, 0 FP, 0 FN | `scripts/evaluate.py`. Written by the maintainers and used in development, so a regression measure |
-| Contract rules enforced | 57 contract tests plus testnet transactions in [`deployments/`](deployments). **Not externally audited, not on mainnet** |
-| Adoption | None yet: no outside users, no external audit, and private reports to maintainers not yet sent |
+A **testnet execution probe** is prototyped in [`research/testnet-probe`](research/testnet-probe): the agent runs in a
+disposable microVM that can reach only testnet, its tools are called directly with fresh friendbot-funded accounts,
+and the outcome is read from Horizon. It reproduced an unbounded payment and a leaked seed on a public MCP server.
+Only fund and key defects are reproduced; code-execution defects are reported, never triggered.
+
+## Declare your agent: `.tmark`
+
+A `.tmark` at the repository root states what the agent is and may do: purpose and network, keys and what it signs,
+spending limits, recipients and approval, tools, and the account it acts from. Touchmark checks the code against
+every claim; a declaration never closes a risk on its own, and an honest "no limit" is not penalised.
+
+```bash
+python scripts/tmark.py init path/to/repo    # a valid draft from what the code can do
+python scripts/tmark.py check path/to/repo   # lists every error
+```
+
+Reference: [docs/TMARK.md](docs/TMARK.md) · schema: [tmark-v1.json](https://touchmark-stellar.vercel.app/schemas/tmark-v1.json).
+Name `authority.agent_account` and Touchmark reads its signers and thresholds; put your account in
+`owner.stellar_account` to receive the credential.
+
+## The credential on Stellar
+
+The Soroban contracts, not the server, decide whether a credential may exist and whether it is still valid:
+owner, requester, validator and revoker each need `require_auth`; the owner signs the registration in their own
+wallet; only an approved validator, pinned at request time, can complete a validation; the validation binds the
+report hash and the agent's version, metadata and endpoint, so a changed agent is no longer current; scores below
+65 are refused; credentials last at most 90 days, cannot be transferred and can be revoked; no contract can be
+upgraded. Contracts: `agent-registry`, `audit-credential`, `audit-escrow`, and `agent-account`, a custom account
+that gives an agent session keys limited by recipient, asset, per-call maximum and budget.
 
 ## Run it
 
-Prerequisites: Python 3.12, and for the contracts Rust 1.91 with the `wasm32v1-none` target (pinned in
-`rust-toolchain.toml`).
+Python 3.12; Rust 1.91 with `wasm32v1-none` for the contracts.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python scripts/audit_agent.py https://github.com/owner/repo --no-deep   # rules only, no API key (never a pass)
-ENABLE_DEEP_REVIEW=1 ENABLE_FINDING_VERIFICATION=1 \
-  .venv/bin/python scripts/audit_agent.py <ref> --compare <fixed-ref>            # deep review + verifier + re-audit
-.venv/bin/uvicorn app:app --port 8000                                            # demo at /, Studio at /studio
-.venv/bin/python scripts/evaluate.py                                             # reproduce the corpus evaluation
-.venv/bin/python -m pytest -q && cargo test --workspace                          # Python and 57 contract tests
+.venv/bin/python scripts/audit_agent.py https://github.com/owner/repo --no-deep      # rules only, no key
+ENABLE_DEEP_REVIEW=1 ENABLE_FINDING_VERIFICATION=1 ANTHROPIC_API_KEY=... \
+  .venv/bin/python scripts/audit_agent.py <ref>                                       # full review
+.venv/bin/uvicorn app:app --port 8000                                               # demo at /, Studio at /studio
+.venv/bin/python -m pytest -q && cargo test --workspace
 ```
 
-Copy `.env.example` to `.env`. Everything is optional for a local run: with no keys the analysis is rules-only and
-nothing is signed on-chain. The main settings are:
-- `STELLAR_NETWORK`: `testnet`, `offline` or `mainnet`.
-- `ALLOW_MAINNET`: required for mainnet, off by default.
-- `ANTHROPIC_API_KEY` with `ENABLE_DEEP_REVIEW` and `ENABLE_FINDING_VERIFICATION`: the deep review and the verifier.
-- `BLOB_READ_WRITE_TOKEN` and `DEEP_REVIEW_DAILY_LIMIT` (with `DEEP_REVIEW_HOURLY_LIMIT`, `DEEP_REVIEW_CLIENT_HOURLY_LIMIT`):
-  the public demo's durable model-review allowance. On serverless without a store the model review is off.
-- `ENABLE_ONCHAIN_VERIFICATION`.
-- The contract ids written by `scripts/deploy_demo_testnet.py`.
-
-Never commit `.env` files or Stellar secret seeds.
-
-| Layer | Technology |
-|---|---|
-| Analysis | Python 3.12, tree-sitter data flow (Python, JavaScript, TypeScript), Rust/Soroban source rules, a WASM profiler, lockfile resolution, seven auditors |
-| Model review | Anthropic Claude: a deep review that must quote the code, and an independent verifier |
-| API and UI | FastAPI, SQLAlchemy, a static HTML/CSS/JS front end (demo at `/`, Studio at `/studio`) |
-| On-chain | Rust Soroban contracts (soroban-sdk 25.3.0) on Stellar testnet: `agent-registry`, `audit-credential`, `audit-escrow`, `agent-account`; `stellar-sdk` for Python, Freighter for owner signatures |
-| Delivery | Vercel, Docker and Compose, a composite GitHub Action (`action.yml`) |
-
-| Path | Contents |
-|---|---|
-| `backend/app/` | Resolver, auditors (`swarm/`), deep review and verifier (`services/`), Stellar clients, reporting, API |
-| `backend/tests/` | Pytest suite |
-| `contracts/` | Soroban contracts: registry, credential, escrow, spend-limited agent account |
-| `frontend/` | Demo page and Studio |
-| `scripts/` | Audit CLI, CI audit, `.tmark` tooling, evaluation and calibration, testnet deployment and verification |
-| `examples/` | Safe and unsafe demo agents and the labelled evaluation corpus |
-| `docs/` | [Architecture](docs/ARCHITECTURE.md), [Evidence](docs/EVIDENCE.md), [`.tmark` format](docs/TMARK.md) |
-| `deployments/`, `research/` | Testnet deployment records and trial results |
-
-## In CI
-
-Add Touchmark to an agent's repository so every push and pull request is checked. The action:
-- validates the `.tmark`;
-- runs the deterministic analysis (no API key, no network, and the code is never run);
-- annotates the cited lines and writes a job summary.
+Settings are in `.env.example` (never commit `.env` or secret seeds). In CI, the composite action
+([`action.yml`](action.yml)) runs the deterministic analysis on every push, validates the `.tmark` and annotates
+the cited lines:
 
 ```yaml
-# .github/workflows/touchmark.yml
-on: [push, pull_request]
-permissions:
-  contents: read
-jobs:
-  touchmark:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4
-      - uses: furkan3152/Touchmark_agent@main   # pin a commit SHA in production
-        with:
-          fail-on: needs_fixes   # or never, to only report
-          annotate: medium       # lowest severity shown on the code
+- uses: furkan3152/Touchmark_agent@main   # pin a commit SHA in production
+  with: { fail-on: needs_fixes, annotate: medium }
 ```
-
-Outputs:
-- `decision`: `needs_fixes`, or `needs_evidence` when the rules find no actionable risk. A pass needs the full review.
-- `score`.
-- `tmark`: `valid`, `invalid` or `missing`.
-- `report`: the full JSON.
-
-The same check runs locally with `python scripts/ci_audit.py path/to/repo`.
 
 ## Security and limits
 
-- The analysis never executes the audited code. The optional runtime sandbox is off by default.
-- Credentials are non-custodial: when a repository names its owner, the owner signs the registration in their own
-  wallet.
-- Mainnet is opt-in (`ALLOW_MAINNET=false` by default). The demo runs on testnet only, where one operator is both
-  admin and validator.
-- The contracts have a self-assessed security review in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and **have not been
-  externally audited**. Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
-- Coverage depends on the deep review. It reads every source file and no clock stops it: on the demo a large
-  repository runs over several requests. Only a spend cap (`DEEP_REVIEW_MAX_TOKENS_PER_AUDIT`,
-  `DEEP_REVIEW_MAX_COST_USD_PER_AUDIT`, `DEEP_REVIEW_MAX_FILES_PER_AUDIT`, the deployment's daily cost cap
-  `DEEP_REVIEW_DAILY_COST_USD` and its daily token budget `DEEP_REVIEW_DAILY_TOKEN_BUDGET`) can end it early; the report then lists each unread file with the cap, and the result is `needs_evidence`, not a pass. With
-  `scripts/audit_agent.py` a local time limit still applies (`DEEP_REVIEW_TIMEOUT_SECONDS`, up to 900), with
-  `DEEP_REVIEW_MAX_TURNS` and `DEEP_REVIEW_PASSES`.
-- Ownership means control of the repository and the named key, not legal identity.
-- A pass is not a certificate of safety. It means that no actionable risk was found in the reviewed code.
+- The audit never executes the code it reviews; the testnet probe is a separate, opt-in prototype.
+- Testnet only by default; mainnet needs `ALLOW_MAINNET`. The demo's operator is also its validator.
+- Model reviews on the demo need consent and are limited per client, per hour and by a daily cost cap. Cost is
+  never shown publicly.
+- The contracts have a self-assessed review in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and **no external audit**.
+  Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+- A pass is not a certificate of safety: it means no actionable risk was found in the reviewed code.
 
-[Architecture](docs/ARCHITECTURE.md) · [Evidence](docs/EVIDENCE.md) · [`.tmark`](docs/TMARK.md) · [Deployments](deployments/README.md) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Apache 2.0](LICENSE)
+[Architecture](docs/ARCHITECTURE.md) · [Evidence](docs/EVIDENCE.md) · [`.tmark`](docs/TMARK.md) · [Benchmarks](research/benchmark/real/README.md) · [Deployments](deployments/README.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Apache 2.0](LICENSE)
 
 ---
 
