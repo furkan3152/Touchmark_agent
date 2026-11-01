@@ -958,6 +958,8 @@ class DeepReviewer:
             shown.append(f"{n}: {line}")
         rest = (f"\n(lines {len(shown) + 1}-{len(lines)} not shown: read them with read_source)"
                 if len(shown) < len(lines) else "")
+        from ..stellar.lessons import prompt_block
+        guide = prompt_block(card)
         return (f"Focused review of ONE file: {path} ({len(lines)} lines). Its file-map card: "
                 + json.dumps({k: card.get(k) for k in ("role", "summary", "capabilities", "untrusted_inputs",
                                                        "controls", "exposes")}, ensure_ascii=False)[:3000]
@@ -972,7 +974,8 @@ class DeepReviewer:
                 "state or funds change; a delegated or policy signer must check who invokes it; a signed URI or "
                 "message must not accept parameters outside what was signed; amounts are bounded and in the right "
                 "unit; assets carry their issuer; submission results are checked; failure paths do not leave state "
-                "stuck or paid twice. Use stellar_reference for the relevant topic.\n"
+                "stuck or paid twice. The Stellar criteria and lessons for this file are below the file; check "
+                "each that applies.\n"
                 "3. Check each invariant against the code. Follow callers and callees into other files with "
                 "search_source and read_source; an invariant enforced elsewhere on every path holds.\n"
                 "4. Call check_invariant once per invariant (holds / violated / unclear) with the deciding line "
@@ -980,7 +983,8 @@ class DeepReviewer:
                 "record_finding (state the severity facts), unless one of the earlier findings below already "
                 "describes the same defect at the same place.\n"
                 "5. Call finish with one line.\n"
-                f"Earlier findings:\n{prior}\n\n=== {path} ===\n" + "\n".join(shown) + rest)
+                f"Earlier findings:\n{prior}\n\n=== {path} ===\n" + "\n".join(shown) + rest
+                + (f"\n\n=== Stellar criteria and lessons for this file ===\n{guide}" if guide else ""))
 
     async def _run_units(self, artifact, flows, pack: str, result: DeepReviewResult, cur: _Cursor, budget, leg) -> str:
         """Review each target file in its own short conversation, a few at a time. Each conversation

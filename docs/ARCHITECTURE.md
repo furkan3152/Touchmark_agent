@@ -184,7 +184,11 @@ the rules cannot. With consent, the review (`DEEP_REVIEW_MODE=ledger`) runs in f
    evidence pack). The model lists the functions that matter, states the security invariants
    each must enforce, checks each against the code (following callers and callees), records
    each with `check_invariant` (holds / violated / unclear, quoted), and files every violated one
-   as a finding. The report keeps the invariants per file (`deep_review.units`). The map's
+   as a finding. The report keeps the invariants per file (`deep_review.units`). Each file's
+   prompt carries the Stellar reference topics and the lessons (`stellar/lessons.py`) that match
+   its capabilities: lessons are general Stellar behaviour learned from defects the audit missed
+   (fee-bump re-wrapping, SEP-10 client signatures, implicit invoker authorization, sponsored
+   contract authorizers, unknown submission outcomes), so a new miss becomes one entry there. The map's
    `test_or_example` role is honoured only for paths that look like tests or examples.
 7. **Coverage.** Authority files no pass has opened, and files the map could not read, are
    opened in batches. Files the map read that hold no authority are not reopened.

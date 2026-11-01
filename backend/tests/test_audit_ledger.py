@@ -435,3 +435,21 @@ def test_haiku_requests_carry_no_refusal_fallback():
     assert not FileMapper(None, model="claude-haiku-5-5").fallbacks
     assert not FindingVerifier(None, model="claude-haiku-5-5").fallbacks
     assert DeepReviewer(None, model="claude-sonnet-5-5").fallbacks
+
+
+def test_each_focused_file_review_carries_the_lessons_and_criteria_for_what_the_file_does():
+    from backend.app.stellar import lessons
+    submit = {"capabilities": [{"kind": "submits_transactions"}]}
+    verify = {"capabilities": [{"kind": "authenticates_callers"}]}
+    topics, found = lessons.for_card(submit)
+    assert "transaction_lifecycle" in topics and "feebump-rewrap" in {x.id for x in found}
+    assert "sep10-client-signature" in {x.id for x in lessons.for_card(verify)[1]}
+    assert "SEP-10 / SEP-45 web authentication" in lessons.prompt_block(verify)
+    assert lessons.prompt_block({"capabilities": [{"kind": "calls_llm"}]}) == ""
+    reviewer = DeepReviewer(None, model="m", mode="ledger")
+    text = reviewer._unit_instruction(artifact(), "src/main/kotlin/PayoutService.kt",
+                                      {"capabilities": [{"kind": "submits_transactions"}]}, "- none")
+    assert "A fee-bumped payment can land under another hash" in text
+    # Every lesson names capability kinds the file map can produce.
+    from backend.app.services.file_map import CAPABILITY_KINDS
+    assert all(lesson.kinds <= set(CAPABILITY_KINDS) for lesson in lessons.LESSONS)
