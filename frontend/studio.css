@@ -371,6 +371,7 @@ details[open]>summary~*{animation:fade .3s ease both}
 .s-stamp .track{fill:none;stroke:var(--line);stroke-width:7;stroke-dasharray:2 4}
 .s-stamp .ring{fill:none;stroke:var(--c);stroke-width:7;stroke-dasharray:327;stroke-dashoffset:327;transition:stroke-dashoffset 1s .35s var(--studio-rise)}
 #result-score{font:700 32px/1 var(--display);letter-spacing:-1px;margin-top:-10px}
+#result-score.long{font-size:25px;letter-spacing:-.8px}
 .s-stamp small{position:absolute;top:82px;font:600 10px var(--mono);letter-spacing:1px;opacity:.75}
 .s-stamp-word{position:absolute;bottom:-12px;background:var(--card);border:3px solid var(--c);padding:3px 8px;font:700 11px var(--mono);text-transform:uppercase;letter-spacing:1.6px;white-space:nowrap}
 .s-stamp.slam{animation:slam .5s cubic-bezier(.2,1.6,.4,1) both}
@@ -380,7 +381,7 @@ details[open]>summary~*{animation:fade .3s ease both}
 .s-decision.pass{color:var(--green-ink);background:var(--soft-green)}.s-decision.needs_fixes{color:var(--red-ink);background:var(--soft-red)}.s-decision.needs_evidence{color:var(--amber-ink);background:var(--soft-amber)}
 .s-verdict-copy h3{margin:0 0 6px;font:650 26px/1.12 var(--display);letter-spacing:-.5px;word-break:break-word}
 .s-verdict-copy p{margin:4px 0;font-size:14px;color:var(--ink-soft);line-height:1.5}
-.s-verdict-copy .s-fine{font-size:12px;word-break:break-all}
+.s-verdict-copy .s-fine{font-size:12px;overflow-wrap:anywhere}
 .evidence-counts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:18px 0 0;border:2px solid var(--ink);border-radius:5px;background:var(--paper)}
 .evidence-counts div{padding:10px 12px;min-width:0}
 .evidence-counts div+div{border-left:1.5px dashed var(--line)}

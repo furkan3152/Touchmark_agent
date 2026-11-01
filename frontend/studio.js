@@ -23,7 +23,7 @@
 
   function requestError(value, status) {
     const detail = value.detail;
-    if (Array.isArray(detail)) return detail.map((item) => `${item.loc?.slice(-1).join("") || "Input"}: ${item.msg}`).join("; ");
+    if (Array.isArray(detail)) return detail.map((item) => `${item.loc?.slice(-1).join("") || "Input"}: ${String(item.msg).replace(/^Value error, /, "")}`).join("; ");
     if (typeof detail === "string") return detail;
     if (detail && typeof detail === "object") return detail.message || detail.reason || (detail.blockers || []).join(" ") || `Request needs attention (HTTP ${status}).`;
     return `Request could not be completed (HTTP ${status}).`;
@@ -583,10 +583,10 @@
       const value = await post("import", {repository:byId("github-repository").value.trim()});
       loadBundle({...value.bundle, source_reference:value.source});
       renderDiscovery(value.discovery);
-      byId("import-status").textContent = `Imported ${Object.keys(files).length} files at ${value.revision.slice(0,8)}. ${value.import_scope.eligible_files_omitted} eligible files outside scope or limits. Selection: ${value.import_scope.selection || "provisional discovery"}.`;
+      byId("import-status").textContent = `Imported ${Object.keys(files).length} files at ${value.revision.slice(0,8)}. ${value.import_scope.eligible_files_omitted} eligible files outside scope or limits. Selection: ${(value.import_scope.selection || "provisional discovery").replaceAll("_", " ")}.`;
       punch("success", `${Object.keys(files).length} files on the bench, pinned to ${value.revision.slice(0,8)}.`);
       setTimeout(() => { if (!busy && !result) punch(greeting()); }, 1800);
-    } catch (failure) { error(failure.message); byId("import-status").textContent = "Nothing imported. You can upload files instead."; punch("error", "That repository did not come through."); }
+    } catch (failure) { error(failure.message); byId("import-status").textContent = `${failure.message.replace(/^repository: /, "").replace(/\.?\s*$/, ".")} Nothing imported; you can upload files instead.`; punch("error", "That repository did not come through."); benchReact("error"); }
     finally { setBusy(false); }
   });
   byId("download-template").addEventListener("click", async () => {
@@ -962,6 +962,7 @@
     const stamp = byId("result-stamp");
     stamp.className = `s-stamp ${decision}`;
     byId("result-score").textContent = unscored ? "—" : raw.toFixed(1);
+    byId("result-score").classList.toggle("long", !unscored && raw >= 99.95);
     byId("result-stamp-word").textContent = STAMP_WORDS[decision];
     byId("result-decision").className = `s-decision ${decision}`;
     const ring = byId("result-ring"); ring.style.strokeDashoffset = "327";
