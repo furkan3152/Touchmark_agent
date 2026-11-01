@@ -31,7 +31,16 @@ TOPICS: dict[str, str] = {
 - Contract functions that change state must call require_auth for the address whose state changes.
 - Authorization entries carry a nonce and signature_expiration_ledger. Signing entries supplied by someone else, or with far-future expiry, lets them be replayed or used for a different invocation.
 - Inspect the full invocation tree before signing an auth entry: a sub-invocation can transfer tokens to a different recipient than the top-level call suggests.
-- Persistent storage needs TTL extension; archived entries make contract state disappear until restored.""",
+- Persistent storage needs TTL extension; archived entries make contract state disappear until restored.
+- address.require_auth() / require_auth_for_args() succeeds WITHOUT any signature when that address is the
+  direct invoker of the current call (a contract calling another contract is authorized implicitly). A custom
+  account or smart-account check (__check_auth) that accepts a "delegated" or contract signer by calling
+  require_auth on it can therefore be satisfied by that contract simply invoking: self-delegation, two
+  accounts delegating to each other, or a delegate contract that calls the account all authorize without a key.
+  The check must reject a delegated signer that is the invoker or the contract of an authorized context.
+- In __check_auth, verify every signature against the exact signature payload, count each signer once, and
+  bind the authorized contexts (contract, function, arguments) the rule allows; never trust the auth_contexts
+  list to be limited to what the user meant.""",
     "web_auth": """SEP-10 / SEP-45 web authentication
 - Verify the challenge transaction: server signing key from the anchor's stellar.toml, the home domain operation, timebounds, and that the only operations are manage_data.
 - Never sign an arbitrary challenge with a funded account key; a challenge that contains payment operations is an attack.
