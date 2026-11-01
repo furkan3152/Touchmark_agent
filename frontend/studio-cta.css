@@ -1,0 +1,65 @@
+/* The home page's ways into the Studio: the slip after a result, and "the counter, or the back room?".
+   Sits on press.css and demo.css; kept apart from demo.css so the audit desk can change on its own. */
+
+.studio-slip,.cos{--red-ink:#b3301c}
+@media (prefers-color-scheme:dark){.studio-slip,.cos{--red-ink:var(--red)}}
+
+/* After a result: a slip torn from the ticket, with Punch pointing at the way to the back room. */
+.studio-slip{position:relative;display:grid;grid-template-columns:104px minmax(0,1fr) auto;gap:20px;align-items:center;margin-top:22px;padding:16px 26px 16px 18px;
+  background:var(--card);border:2px solid var(--ink);border-radius:6px;box-shadow:7px 7px 0 var(--red);
+  background-image:radial-gradient(var(--dot) 1px,transparent 1.4px);background-size:9px 9px;background-position:right -4px top -4px;background-repeat:no-repeat}
+.studio-slip::before{content:"";position:absolute;left:132px;top:12px;bottom:12px;border-left:2px dashed var(--line)}
+.studio-slip-punch{width:104px;height:104px;display:grid;place-items:center}
+.studio-slip-punch .tm-mascot{width:104px}
+.studio-slip-body{padding-left:14px}
+.studio-slip-kicker{margin:0;font:600 11px var(--mono);letter-spacing:1.4px;text-transform:uppercase;color:var(--red-ink)}
+.studio-slip h3{margin:4px 0 6px;font:650 24px/1.15 var(--display);letter-spacing:-.4px}
+.studio-slip p:not(.studio-slip-kicker){margin:0;color:var(--ink-soft);font-size:14.5px;line-height:1.55}
+.studio-slip code{font:12.5px var(--mono);background:var(--paper-2);padding:1px 5px;border-radius:3px;color:var(--ink);word-break:break-all}
+.studio-slip-go,.cos-btn{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;background:var(--ink);color:var(--paper);border:2px solid var(--ink);border-radius:4px;padding:0 22px;min-height:52px;
+  font:650 15.5px var(--body);text-decoration:none;box-shadow:4px 4px 0 var(--red);transition:transform .08s,box-shadow .08s}
+.studio-slip-go:hover,.cos-btn:hover{transform:translate(-1px,-1px);box-shadow:5px 5px 0 var(--red)}
+.studio-slip-go:active,.cos-btn:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--red)}
+.studio-slip-go span,.cos-btn span{transition:transform .2s}
+.studio-slip-go:hover span,.cos-studio .cos-btn:hover span{transform:translateX(3px)}
+.cos-btn.ghost{background:transparent;color:var(--ink);box-shadow:4px 4px 0 var(--line)}
+.cos-btn.ghost:hover{background:var(--paper-2);box-shadow:5px 5px 0 var(--line)}
+#result:not([hidden]) .studio-slip{animation:slip-in .7s cubic-bezier(.2,.8,.2,1) both .6s}
+@keyframes slip-in{from{opacity:0;transform:translateY(14px) rotate(-1.2deg)}to{opacity:1;transform:none}}
+
+/* The counter, or the back room? Two tickets, Punch between them pointing at the Studio. */
+.cos{margin-top:64px}
+.cos-lede{margin:-6px 0 22px;max-width:680px;color:var(--ink-soft);font-size:16.5px;line-height:1.55}
+.cos-grid{display:grid;grid-template-columns:minmax(0,1fr) 132px minmax(0,1fr);gap:18px;align-items:center}
+.cos-ticket{position:relative;display:flex;flex-direction:column;height:100%;padding:20px 22px 22px;background:var(--card);border:2px solid var(--ink);border-radius:6px}
+.cos-ticket::before,.cos-ticket::after{content:"";position:absolute;top:44px;width:20px;height:20px;border-radius:50%;background:var(--paper);border:2px solid var(--ink);transform:translateY(-50%)}
+.cos-ticket::before{left:-12px;clip-path:inset(0 0 0 50%)}.cos-ticket::after{right:-12px;clip-path:inset(0 50% 0 0)}
+.cos-studio{box-shadow:7px 7px 0 var(--red)}
+.cos-no{display:flex;justify-content:space-between;gap:10px;margin:0;padding-bottom:12px;border-bottom:1.5px dashed var(--line);font:600 12px var(--mono);letter-spacing:1.4px;text-transform:uppercase}
+.cos-no span{color:var(--ink-soft);font-weight:500;letter-spacing:1px}
+.cos-ticket h3{margin:14px 0 10px;font:650 24px/1.15 var(--display);letter-spacing:-.4px}
+.cos-ticket ul{list-style:none;margin:0 0 20px;padding:0;display:grid;gap:9px;flex:1}
+.cos-ticket li{position:relative;padding-left:22px;font-size:14.5px;line-height:1.5;color:var(--ink-soft)}
+.cos-ticket li::before{content:"✦";position:absolute;left:0;top:0;color:var(--ink-soft);font-size:12px}
+.cos-studio li::before{color:var(--red)}
+.cos-ticket code{font:12.5px var(--mono);background:var(--paper-2);padding:1px 5px;border-radius:3px;color:var(--ink)}
+.cos-ticket .cos-btn{align-self:flex-start}
+.cos-punch{width:132px;height:132px;display:grid;place-items:center}
+.cos-punch .tm-mascot{width:132px}
+
+@media (max-width:860px){
+  .studio-slip{grid-template-columns:84px minmax(0,1fr);padding:16px}
+  .studio-slip::before{display:none}
+  .studio-slip-punch,.studio-slip-punch .tm-mascot{width:84px;height:84px}
+  .studio-slip-body{padding-left:0}
+  .studio-slip-go{grid-column:1/-1;justify-content:center}
+  .cos-grid{grid-template-columns:1fr;gap:6px}
+  .cos-punch{justify-self:center;margin:2px 0 -6px;width:96px;height:96px}
+  .cos-punch .tm-mascot{width:96px}
+}
+@media (max-width:640px){
+  .studio-slip h3{font-size:21px}
+  .cos-ticket::before,.cos-ticket::after{display:none}
+  .cos-btn{width:100%;justify-content:center}
+  .cos-ticket .cos-btn{align-self:stretch}
+}

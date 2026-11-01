@@ -7,13 +7,16 @@
 <title>Touchmark — test the agent, stamp the proof</title>
 <link rel="icon" href="/ui/brand/mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/fonts/fonts.css">
+<link rel="stylesheet" href="/ui/press.css">
 <link rel="stylesheet" href="/ui/demo.css">
 <link rel="stylesheet" href="/ui/mascot.css">
+<link rel="stylesheet" href="/ui/studio-cta.css">
 <script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script>
 <script src="/ui/hero.js" defer></script>
 <script src="/ui/mascot.js" defer></script>
 <script src="/ui/tmark-builder.js" defer></script>
 <script src="/ui/demo.js" defer></script>
+<script src="/ui/studio-cta.js" defer></script>
 </head>
 <body>
 <svg width="0" height="0" class="defs" aria-hidden="true">
@@ -184,6 +187,16 @@
       </article>
     </div>
 
+    <aside class="studio-slip" id="studio-slip" aria-labelledby="studio-slip-title">
+      <span class="studio-slip-punch" data-tm-mascot="pointing" data-tm-size="104" data-tm-decorative></span>
+      <div class="studio-slip-body">
+        <p class="studio-slip-kicker">Desk 2 is open</p>
+        <h3 id="studio-slip-title">Want the whole dossier?</h3>
+        <p>Take <code id="studio-slip-ref">this agent</code> to the Studio: choose the reviewers, add or draft a <code>.tmark</code>, map the project, and leave with a designed report and evidence you keep.</p>
+      </div>
+      <a class="studio-slip-go" id="studio-slip-link" href="/studio#workspace">Open it in the Studio <span aria-hidden="true">→</span></a>
+    </aside>
+
     <form id="recheck" class="panel recheck" autocomplete="off">
       <h3>Fixed it? Test again</h3>
       <p class="note">Paste the fixed commit or folder. Both versions are tested and compared: what the fix closed, what is still open, and anything new.</p>
@@ -211,6 +224,34 @@
       <div class="card"><span class="num">i.</span><h3>Reads the code, not the claims</h3><p>Python, JavaScript and TypeScript are traced from what a request says to what the agent signs, pays or fetches. A declared limit the code does not enforce is reported, never credited.</p></div>
       <div class="card"><span class="num">ii.</span><h3>Asks it the wrong way</h3><p>Reworded, split, role-played and planted requests; approval flags the model fills in; a server the requester picks. If only the prompt stops it, it is not stopped.</p></div>
       <div class="card"><span class="num">iii.</span><h3>Stamps what passed</h3><p>A Soroban contract issues the credential only for a validated report: bound to its hash, its score of 65 or more, and the version that was tested.</p></div>
+    </div>
+  </section>
+
+  <section id="counter-or-studio" class="cos" aria-labelledby="cos-title">
+    <h2 class="section-title" id="cos-title">The counter, or the back room?</h2>
+    <p class="cos-lede">The quick test answers one question fast. The Studio is for the agent you cannot hand over as a public link, and for the review you want to keep.</p>
+    <div class="cos-grid">
+      <article class="cos-ticket">
+        <p class="cos-no">Nº 01 · The counter <span>this page</span></p>
+        <h3>The quick test</h3>
+        <ul>
+          <li>A public GitHub repository or folder, an agent id, a contract or an account</li>
+          <li>One verdict in a minute or two, with an optional model review</li>
+          <li>A testnet stamp on Stellar when it passes</li>
+        </ul>
+        <a class="cos-btn ghost" href="#audit-form">Test one above <span aria-hidden="true">↑</span></a>
+      </article>
+      <span class="cos-punch" data-tm-mascot="pointing" data-tm-size="132" data-tm-decorative></span>
+      <article class="cos-ticket cos-studio">
+        <p class="cos-no">Nº 02 · The back room <span>Studio</span></p>
+        <h3>The Studio</h3>
+        <ul>
+          <li>Private files or a whole project folder, kept in memory</li>
+          <li>A GitHub repository pinned to one commit, and a <code>.tmark</code> you are still drafting</li>
+          <li>Reviewers you choose, a capsule, and a designed dossier to keep</li>
+        </ul>
+        <a class="cos-btn" id="cos-studio-link" href="/studio#workspace">Open the Studio <span aria-hidden="true">→</span></a>
+      </article>
     </div>
   </section>
 
