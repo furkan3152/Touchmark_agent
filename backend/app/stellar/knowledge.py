@@ -54,6 +54,13 @@ TOPICS: dict[str, str] = {
 - Sequence numbers serialize an account. Parallel agents sharing one source account collide; use channel accounts or a sequence lock.
 - A submit timeout or 504 does not mean failure. Re-check by hash before re-signing, or the agent pays twice.
 - Fee bumps let another account pay fees for an inner transaction; signing the inner transaction still authorizes its operations.
+- A fee-bumped transaction's outer hash is not its identity: anyone holding the signed inner transaction can wrap it in a
+  NEW fee bump (CAP-15) and it lands under a different outer hash. A 404 for the hash the agent submitted therefore does
+  not mean the payment did not land. Reconcile by the inner transaction hash or by whether the source account's sequence
+  number was consumed before rebuilding, re-signing or paying again; otherwise the receiver is paid twice.
+- Sponsoring someone else's Soroban invocation (fee payer, channel or distribution account as source): check every auth
+  entry's credential type, including CONTRACT addresses, not only accounts. A contract authorizer runs its own
+  __check_auth under the sponsor's fees. Bound the resource fee and refuse simulation data the sponsor did not compute.
 - Signing an envelope received from outside authorizes every operation in it. Decode and allowlist operations, source accounts, destinations and amounts first.
 - Horizon facts that are easy to get wrong:
   - a synchronous POST /transactions returns the full transaction resource (id, successful, created_at, source_account, fee_charged, operation_count ...), the same shape as GET /transactions/{hash}; SDK typings for the submit response are narrower than the real body;
