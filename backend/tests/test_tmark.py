@@ -113,7 +113,8 @@ def test_older_files_still_work_and_ask_to_migrate(tmp_path):
 def test_template_is_prefilled_from_what_the_code_can_do():
     t = tmark.template({"payment", "stellar_signing"})
     assert t["authority"] == {"holds_keys": True, "key_source": "env", "signs": ["payments"]}
-    assert t["limits"]["recipients"] == "allowlist"
+    # The pessimistic statement: a draft never claims a control the author has not confirmed.
+    assert t["limits"] == {"recipients": "any", "human_approval": "never"}
     assert "limits" not in tmark.template(set())
 
 
@@ -416,7 +417,10 @@ def test_a_draft_from_source_names_the_tools_and_what_their_file_can_do():
     assert draft["authority"]["holds_keys"] is True and "payments" in draft["authority"]["signs"]
     assert [t["name"] for t in draft["tools"]] == ["stellar_payment"] and "limits" in draft
     assert out["tools"][0]["where"] == "src/tools.ts:1"
-    assert tmark.parse(json.dumps(draft))[0] is None  # empty fields fail until a person fills them
+    # The draft passes the check as drafted (live users ran it straight away and got "not valid,
+    # nothing was audited"); its purpose and descriptions are marked placeholders to replace.
+    assert tmark.parse(json.dumps(draft))[0] is not None
+    assert draft["agent"]["purpose"].startswith("Drafted by Touchmark")
 
 
 def test_the_schema_copy_in_schemas_matches_the_published_one():
@@ -431,4 +435,4 @@ def test_tmark_init_drafts_from_the_tools_the_code_registers(tmp_path, capsys):
     assert cli.main(["init", str(tmp_path)]) == 0
     draft = json.loads((tmp_path / ".tmark").read_text())
     assert draft["tmark"] == "1.1" and [t["name"] for t in draft["tools"]] == ["pay"]
-    assert cli.main(["check", str(tmp_path)]) == 1  # the empty fields fail until a person fills them
+    assert cli.main(["check", str(tmp_path)]) == 0  # valid as drafted; placeholders say what to replace

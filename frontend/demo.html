@@ -108,6 +108,7 @@
         <li data-stage="resolving"><span class="t-dot" aria-hidden="true"></span><div><b>Pin the source</b><span class="t-detail"></span></div></li>
         <li data-stage="fetching"><span class="t-dot" aria-hidden="true"></span><div><b>Fetch the code</b><span class="t-detail"></span></div></li>
         <li data-stage="rules"><span class="t-dot" aria-hidden="true"></span><div><b>Run the rules</b><span class="t-detail"></span></div></li>
+        <li data-stage="file_map"><span class="t-dot" aria-hidden="true"></span><div><b>Map every file</b><span class="t-detail"></span><span class="t-bar" aria-hidden="true"><i></i></span></div></li>
         <li data-stage="deep_review"><span class="t-dot" aria-hidden="true"></span><div><b>Model review</b><span class="t-detail"></span><span class="t-bar" aria-hidden="true"><i></i></span></div></li>
         <li data-stage="verifier"><span class="t-dot" aria-hidden="true"></span><div><b>Verify the findings</b><span class="t-detail"></span><span class="t-bar" aria-hidden="true"><i></i></span></div></li>
         <li data-stage="done"><span class="t-dot" aria-hidden="true"></span><div><b>Seal the report</b><span class="t-detail"></span></div></li>
@@ -146,6 +147,15 @@
       <div class="read-cell" id="read-tmark"><h3>Declaration</h3><div class="read-body"></div></div>
       <div class="read-cell" id="read-scope"><h3>Scope</h3><div class="read-body"></div></div>
       <div class="read-cell" id="read-ai"><h3>Model review</h3><div class="read-body"></div></div>
+    </section>
+
+    <section class="ledger" id="ledger" aria-labelledby="ledger-title" hidden>
+      <header class="ledger-head">
+        <h3 id="ledger-title">Check ledger</h3>
+        <p class="ledger-lead" id="ledger-lead"></p>
+      </header>
+      <p class="ledger-langs" id="ledger-langs"></p>
+      <div class="ledger-groups" id="ledger-groups"></div>
     </section>
 
     <div class="grid">
@@ -236,7 +246,7 @@
         <h3>The quick test</h3>
         <ul>
           <li>A public GitHub repository or folder, an agent id, a contract or an account</li>
-          <li>One verdict in a minute or two, with an optional model review</li>
+          <li>A rules verdict in about a minute; the optional model review reads every file, from a few minutes to most of an hour for a large repository</li>
           <li>A testnet stamp on Stellar when it passes</li>
         </ul>
         <a class="cos-btn ghost" href="#audit-form">Test one above <span aria-hidden="true">↑</span></a>
@@ -256,7 +266,7 @@
   </section>
 
   <section id="video" class="video">
-    <h2 class="section-title">Ninety seconds, start to stamp</h2>
+    <h2 class="section-title">From a link to a stamp</h2>
     <video controls preload="none" playsinline poster="/ui/brand/video-poster.jpg" width="1280" height="720">
       <source src="/media/touchmark-how-to.mp4" type='video/mp4; codecs="avc1.64001F"'>
       <source src="/media/touchmark-how-to.webm" type='video/webm; codecs="vp9"'>

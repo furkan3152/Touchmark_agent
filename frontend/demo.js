@@ -121,7 +121,7 @@
   }
 
   // ------------------------------------------------------------------ the desk (progress)
-  const STAGES = ["resolving", "fetching", "rules", "deep_review", "verifier", "done"];
+  const STAGES = ["resolving", "fetching", "rules", "file_map", "deep_review", "verifier", "done"];
   const desk = { started: 0, last: 0, timer: null, stage: "", streamed: true, leg: 1, furthest: 0, waiting: "" };
   //: What a later leg is doing before the review resumes where it stopped.
   const REPLAY = { resolving: "pinning the same commit again", fetching: "fetching that commit again",
@@ -247,6 +247,12 @@
       mark(s, "active", event.files ? `Tracing ${plural(event.files, "file")} from input to keys, payments and network` : "Tracing input to keys, payments and network");
       announce("Running the rules.");
     }
+    if (s === "file_map") {
+      const total = event.files_total || 0;
+      mark(s, "active", total ? `Mapped ${event.files_mapped || 0} of ${plural(total, "file")}: role, keys, payments, inputs, controls` : "Mapping every file, in any language");
+      bar(s, event.files_mapped, total);
+      if (!event.files_mapped) announce("The model is mapping every file.");
+    }
     if (s === "deep_review") {
       const total = event.files_total || 0;
       mark(s, "active", total ? `Read ${event.files_read || 0} of ${plural(total, "file")}` : "Reading the files that hold authority");
@@ -285,8 +291,11 @@
     const deep = stageItem("deep_review");
     if (deep.dataset.state !== "done" || state !== "done" || note) mark("deep_review", state, note || undefined);
     if ((ai.review === "completed" || ai.review === "capped") && ai.files_total) { mark("deep_review", "done", `Read ${ai.files_read} of ${plural(ai.files_total, "file")}, added ${plural(ai.findings_added || 0, "finding")}`); bar("deep_review", ai.files_read, ai.files_total); }
+    if (stageItem("file_map").dataset.state !== "done") {
+      mark("file_map", state === "done" ? "passed" : "skipped", state === "done" ? "Not part of this review" : "Runs only with the model review");
+    }
     const v = ai.verification || {};
-    if (v.checked) { mark("verifier", "done", `${v.confirmed || 0} confirmed, ${v.partial || 0} partly, ${v.refuted || 0} disputed of ${v.checked}`); bar("verifier", v.checked, v.checked); }
+    if (v.checked) { mark("verifier", "done", `${v.confirmed || 0} confirmed, ${v.partial || 0} partly, ${v.refuted || 0} disputed${v.unverifiable ? `, ${v.unverifiable} not checked` : ""} of ${v.checked}`); bar("verifier", v.checked, v.checked); }
     else if (state !== "done") mark("verifier", "skipped", "Runs only after a model review");
     else if (stageItem("verifier").dataset.state !== "done") mark("verifier", "passed", "Nothing to re-check");
     if (!data.source || !data.source.repository) { mark("fetching", "skipped", "No source repository is linked"); mark("rules", "passed", "Read the ledger record only"); }
@@ -599,7 +608,7 @@
     const rest = [];
     if (ai.review === "completed" || ai.files_total) {
       rest.push(el("p", { class: "read-fine", text: `Read ${ai.files_read || 0} of ${plural(ai.files_total || 0, "file")}; added ${plural(ai.findings_added || 0, "finding")}.` }));
-      if (v.checked) rest.push(el("p", { class: "read-fine", text: `Verifier re-checked ${v.checked}: ${v.confirmed || 0} confirmed, ${v.partial || 0} partly, ${v.refuted || 0} disputed.` }));
+      if (v.checked) rest.push(el("p", { class: "read-fine", text: `Verifier re-checked ${v.checked}: ${v.confirmed || 0} confirmed, ${v.partial || 0} partly, ${v.refuted || 0} disputed${v.unverifiable ? `, ${v.unverifiable} could not be checked` : ""}.` }));
     }
     const unread = ai.not_reviewed || [];
     if (unread.length) {
@@ -619,6 +628,39 @@
     }
     const [badge, tone, lead] = REVIEW_COPY[ai.review] || [ai.review || "Unknown", "muted", ai.note || ""];
     cell("read-ai", badge, tone, lead, ...rest);
+  }
+
+  const LEDGER_MARK = { holds: "Holds", fails: "Fails", not_applicable: "N/A", cannot_determine: "Unknown",
+    unanswered: "Unanswered", not_run: "Not run" };
+  const LEDGER_GROUPS = { value: "Value movement", signing: "Signing, network, submission",
+    access: "Access, secrets, entry points", model: "Model behaviour and intent" };
+  const RULES_WORDS = { data_flow: "rules + data flow", patterns: "pattern rules", none: "model only" };
+
+  function renderLedger(ai) {
+    const box = $("ledger");
+    const ledger = ai.ledger;
+    if (ai.mode !== "ledger" || !ledger || !ledger.checks || !ledger.checks.length) { box.hidden = true; return; }
+    box.hidden = false;
+    const n = ledger.counts || {};
+    $("ledger-lead").textContent = `${ledger.answered} of ${plural(ledger.applicable, "check")} answered from the code: `
+      + `${n.holds || 0} hold, ${n.fails || 0} fail, ${n.not_applicable || 0} not applicable, ${(n.cannot_determine || 0) + (n.unanswered || 0) + (n.not_run || 0)} open.`;
+    const langs = (ai.languages || []).map((l) => `${l.language} ${l.files} (${RULES_WORDS[l.rules] || l.rules})`).join(" · ");
+    $("ledger-langs").textContent = `The model mapped ${plural(ai.files_mapped || 0, "file")} line by line and examined ${ai.files_examined || 0} in depth, `
+      + `including every one of the ${plural(ai.authority_files || 0, "file")} that holds keys, payments or signing.${langs ? " Languages: " + langs + "." : ""}`;
+    const groups = $("ledger-groups"); groups.textContent = "";
+    for (const [key, title] of Object.entries(LEDGER_GROUPS)) {
+      const rows = ledger.checks.filter((c) => c.group === key);
+      if (!rows.length) continue;
+      groups.append(el("div", { class: "ledger-group" }, el("h4", { text: title }),
+        el("ul", {}, ...rows.map((c) => {
+          const where = c.file ? `${c.file}:${c.line}` : "";
+          const why = [c.reason, where && `at ${where}`, c.finding_id && `finding ${c.finding_id}`].filter(Boolean).join(" · ");
+          const label = `${c.id} ${c.title}`;
+          return el("li", { class: "ledger-row" },
+            el("span", { class: "ledger-mark " + c.verdict, text: LEDGER_MARK[c.verdict] || c.verdict }),
+            why ? el("details", {}, el("summary", { text: label }), el("p", { class: "why", text: why })) : el("span", { text: label }));
+        }))));
+    }
   }
 
   function render(data) {
@@ -657,6 +699,7 @@
     renderTmark(data.tmark || {});
     renderScope(data);
     renderReview(data.ai || {}, data.decision);
+    renderLedger(data.ai || {});
 
     const risks = $("risks"); risks.textContent = "";
     if (!data.risks.length) risks.append(el("li", { class: "low" }, el("span", { class: "title", text: "No exploitable path from untrusted input to keys, payments, commands or network was found." })));
@@ -915,6 +958,7 @@
   }
   const preset = new URLSearchParams(location.search).get("ref");
   const unfinished = loadJob();
-  if (preset) { input.value = preset; audit(preset); }
+  // A shared link fills the form; the visitor starts the audit (a crawled link runs nothing).
+  if (preset) { input.value = preset; requestAnimationFrame(() => { scrollTo(input, "center"); input.focus({ preventScroll: true }); }); }
   else if (unfinished && unfinished.job_id) resume(unfinished);
 })();

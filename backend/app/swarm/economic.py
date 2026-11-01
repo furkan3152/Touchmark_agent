@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 from ..models import (
+    FindingKind,
     AgentArtifact,
     Dimension,
     EvidenceGrade,
@@ -20,7 +21,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import authority_only_declared, code_enforced_spend_limit, declared_outside_scope, has_source
+from .capabilities import judged_by_code, authority_only_declared, code_enforced_spend_limit, declared_outside_scope, has_source
 from .textscan import find_signals, scan
 
 
@@ -185,6 +186,9 @@ class EconomicAuditor(BaseAuditor):
                         confidence=0.95 if denied else 0.9,
                     )
                 )
+                if judged_by_code(artifact):
+                    # An honest .tmark about code the data flow reads: that code decides (security.py).
+                    findings[-1] = findings[-1].model_copy(update={"kind": FindingKind.EVIDENCE_GAP})
 
         # ------------------------------------------------------------ MEV/slippage
         # MEV scope needs price exposure. A signing tool (`has_funds`) alone is not enough:

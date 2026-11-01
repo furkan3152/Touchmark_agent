@@ -34,7 +34,7 @@ from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
 from .hardening import analyse_hardening
 from .network_rules import network_findings
-from .capabilities import authority_only_declared, code_enforced_spend_limit, declared_outside_scope, executes_code
+from .capabilities import judged_by_code, authority_only_declared, code_enforced_spend_limit, declared_outside_scope, executes_code, has_source
 
 SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
 ISOLATION_SIGNALS = ("sandbox", "docker", "firecracker", "isolat", "tee", "enclave")
@@ -452,8 +452,12 @@ class SecurityAuditor(BaseAuditor):
             ))
         if unlimited:
             latent = authority_only_declared(artifact)
+            # A .tmark that honestly says "no limit" about code the data flow reads is judged by that
+            # code (the path rules report a payment that is really unbounded); the declaration alone
+            # is an evidence gap, so declaring never scores worse than saying nothing.
+            honest = judged_by_code(artifact)
             out.append(
-                self.finding(
+                (lambda f: f.model_copy(update={"kind": FindingKind.EVIDENCE_GAP}) if honest else f)(self.finding(
                     "unbounded-spend",
                     Severity.MEDIUM if latent else Severity.CRITICAL if len(unlimited) > 1 else Severity.HIGH,
                     "Spending tools have no declared limit",
@@ -465,7 +469,7 @@ class SecurityAuditor(BaseAuditor):
                     references=["AAI-03 Excessive Agency"],
                     grade=EvidenceGrade.CONFIRMED,
                     confidence=0.9,
-                )
+                ))
             )
 
         # Name-based exposure applies to tools the agent offers. Code-observed execution is

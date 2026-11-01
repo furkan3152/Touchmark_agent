@@ -459,7 +459,9 @@ def template(capabilities: set[str] | None = None, tools: list[dict] | None = No
 
     ``tools`` are the tools the code registers, each ``{"name", "where", "moves_funds", "signs",
     "network", "files", "executes_code"}`` as far as the analysis could attribute them; the draft
-    still has to be read and completed by a person (empty fields fail the check on purpose)."""
+    passes the check as drafted, but its purpose and tool descriptions are placeholders a person
+    replaces, and its limits are the pessimistic ones ("any" recipient, no approval): the draft
+    never claims a control the author has not confirmed."""
     caps = capabilities or set()
     signs = [s for s, cap in (("payments", "payment"), ("contract_calls", "contract_invocation"),
                               ("account_changes", "account_control"), ("trustlines", "trustline"),
@@ -468,7 +470,8 @@ def template(capabilities: set[str] | None = None, tools: list[dict] | None = No
     holds = bool(caps & {"key_custody", "stellar_signing", "tx_submission"})
     drafted = []
     for tool in (tools or [])[:60]:
-        entry = {"name": tool["name"], "description": "",
+        where = tool.get("where") or "the source"
+        entry = {"name": tool["name"], "description": f"Registered at {where}. Describe what it does."[:400],
                  "moves_funds": bool(tool.get("moves_funds")), "signs": bool(tool.get("signs")),
                  "network": bool(tool.get("network"))}
         if tool.get("files"):
@@ -480,14 +483,16 @@ def template(capabilities: set[str] | None = None, tools: list[dict] | None = No
         signs = ["contract_calls"]
     out: dict = {
         "$schema": SCHEMA_URL, "tmark": VERSION,
-        "agent": {"name": name, "purpose": "", "kind": "mcp_server", "network": network, "discloses_ai": True},
-        "owner": {"stellar_account": ""},
+        "agent": {"name": (name or "my-agent")[:80].ljust(2, "-"),
+                  "purpose": "Drafted by Touchmark from the code. Replace this with what the agent is for and who uses it.",
+                  "kind": "mcp_server", "network": network, "discloses_ai": True},
         "authority": {"holds_keys": holds, "key_source": "env" if holds else "none", "signs": signs},
-        "tools": drafted, "forbidden": [], "contact": {"security": ""},
+        "tools": drafted, "forbidden": [],
     }
     if "payments" in signs or any(t["moves_funds"] for t in drafted):
-        out["limits"] = {"per_payment": {"amount": "", "asset": "XLM"}, "per_day": {"amount": "", "asset": "XLM"},
-                         "recipients": "allowlist", "human_approval": "above_limit"}
+        # The pessimistic statement until the author confirms a limit, an allowlist or an approval
+        # step the code enforces; add per_payment / per_day amounts then.
+        out["limits"] = {"recipients": "any", "human_approval": "never"}
     return out
 
 
@@ -518,5 +523,6 @@ def draft_from_source(files: dict[str, str], *, name: str = "") -> dict:
     draft = template(caps, tools, name=name, network="both" if mainnet and testnet else "mainnet" if mainnet else "testnet")
     return {"draft": draft, "capabilities": sorted(caps),
             "tools": [{"name": t["name"], "where": t["where"]} for t in tools],
-            "note": ("A draft from what the code shows. Write each purpose and description, check every flag, "
-                     "and fill or remove the empty fields; the check fails until you do.")}
+            "note": ("A draft from what the code shows. It passes the check as it stands, but replace the purpose "
+                     "and each tool description, check every flag, and tighten the limits only to what the code "
+                     "enforces. Add owner and contact to be eligible for a credential.")}

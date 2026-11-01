@@ -1167,7 +1167,10 @@ async def _stream(run):
             pass  # the response already ended
 
     def line(payload: dict) -> bytes:
-        return (json.dumps({**payload, "elapsed": round(time.monotonic() - started, 1)}, default=str) + "\n").encode()
+        # A job event carries the whole audit's elapsed time (every leg); keep it, so a reloaded page
+        # resumes the real clock. Other lines say how long this request has run.
+        leg = round(time.monotonic() - started, 1)
+        return (json.dumps({"elapsed": leg, **payload, "leg_elapsed": leg}, default=str) + "\n").encode()
 
     token = progress.listen(on_event)
     try:

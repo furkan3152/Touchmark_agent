@@ -10,6 +10,7 @@ recognised; they are detection patterns.
 from __future__ import annotations
 
 from ..models import (
+    FindingKind,
     AgentArtifact,
     Dimension,
     EvidenceGrade,
@@ -18,7 +19,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import bounded_autonomy, declared_outside_scope, human_approval_enforced
+from .capabilities import judged_by_code, bounded_autonomy, declared_outside_scope, human_approval_enforced
 from .scenarios import Scenario, scenarios_for
 
 # capability → expected tool keywords
@@ -263,6 +264,8 @@ class IntentAuditor(BaseAuditor):
                     confidence=0.85,
                 )
             )
+            if judged_by_code(artifact):
+                findings[-1] = findings[-1].model_copy(update={"kind": FindingKind.EVIDENCE_GAP})
 
         # 9) scenario suite
         scenarios = [

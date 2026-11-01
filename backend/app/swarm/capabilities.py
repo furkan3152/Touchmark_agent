@@ -66,6 +66,13 @@ def has_source(artifact: AgentArtifact) -> bool:
     return any(name.lower().endswith(_IMPLEMENTATION) for name in artifact.code_files)
 
 
+def judged_by_code(artifact: AgentArtifact) -> bool:
+    """A valid .tmark over source the data flow reads. Notes that only restate what the
+    declaration honestly admits ("no limit", "no approval") are then evidence gaps: the code
+    rules judge the real paths, so declaring never scores worse than saying nothing."""
+    return (artifact.raw_metadata.get("tmark") or {}).get("status") == "valid" and has_source(artifact)
+
+
 def declared_entrypoints(artifact: AgentArtifact) -> dict[str, set[str]]:
     """Entry functions the repository names, in .tmark or a legacy veritas.json Blueprint."""
     entrypoints: dict[str, set[str]] = {}

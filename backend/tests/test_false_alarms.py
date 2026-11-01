@@ -54,7 +54,7 @@ def _verdict(finding_id: str) -> AuditorVerdict:
     return AuditorVerdict(auditor="security", dimension=Dimension.SECURITY, score=50.0, findings=[f])
 
 
-def test_a_refuted_rule_finding_is_lowered_once_and_kept():
+def test_a_refuted_rule_finding_is_kept_as_a_disputed_note_at_no_weight():
     refuted = {"results": [{"finding_id": "security-x", "verdict": "refuted", "quote_verified": True,
                             "quote": "if (amount > MAX) throw", "file": "a.ts", "line": 3, "reason": "capped"},
                            {"finding_id": "security-ai-y", "verdict": "refuted", "quote_verified": True,
@@ -63,7 +63,10 @@ def test_a_refuted_rule_finding_is_lowered_once_and_kept():
                             "quote": "// this is safe", "reason": "comment"}]}
     out = AuditSwarm._apply_disputes([_verdict("security-x"), _verdict("security-ai-y"), _verdict("security-z")], refuted)
     x, ai, z = (v.findings[0] for v in out)
-    assert x.severity == Severity.MEDIUM and "disputes" in x.detail and x.confidence == 0.5
+    # Refuted at a quoted code line: shown as disputed, not scored (on live repositories refuted
+    # rule findings were the largest deductions of an agent that held no key).
+    assert not x.is_risk and x.severity == Severity.INFO and x.title.startswith("Disputed")
+    assert "refutes" in x.detail and x.confidence == 0.3
     assert ai.severity == Severity.HIGH  # model findings are not talked away by a second model
     assert z.severity == Severity.HIGH  # a quoted comment proves nothing about the code
 

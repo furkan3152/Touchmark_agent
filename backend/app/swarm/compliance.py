@@ -7,6 +7,7 @@ import httpx
 from ..compliance.ofac import OfacSanctionsList
 from ..config import Settings
 from ..models import (
+    FindingKind,
     AgentArtifact,
     Dimension,
     EvidenceGrade,
@@ -15,7 +16,7 @@ from ..models import (
     Severity,
 )
 from .base import BaseAuditor
-from .capabilities import declared_outside_scope, oversight_enforced
+from .capabilities import judged_by_code, declared_outside_scope, oversight_enforced
 from .llm import LlmClient
 
 
@@ -88,6 +89,8 @@ class ComplianceAuditor(BaseAuditor):
                         confidence=0.85,
                     )
                 )
+                if judged_by_code(artifact):
+                    findings[-1] = findings[-1].model_copy(update={"kind": FindingKind.EVIDENCE_GAP})
 
 
         # ---- 2) transparency
