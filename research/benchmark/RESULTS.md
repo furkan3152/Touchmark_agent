@@ -36,3 +36,24 @@ Notes from reading every miss and false positive:
   one run only because the file map recorded an outbound call in one run and not the other.
 - Every file of every agent was mapped (5-7 files each), every applicable check was answered, and
   each audit cost about 0.5 USD.
+
+## Second round: Stellar criteria in the ledger (same day)
+
+Each ledger pass now carries the Stellar reference text of its checks, and asset identity (V5),
+network pinning (S3) and tenant isolation (A3) state when they hold, fail or do not apply. The two
+agents whose answers had changed were audited twice more:
+
+| agent | check answers identical, before | after | V5 / S3 / A3 identical after | matched defects identical |
+| --- | --- | --- | --- | --- |
+| swap-desk (Kotlin) | 18/21 | 21/21 | 3/3 | yes (was 2/3 vs 3/3) |
+| treasury-mcp (TypeScript) | 19/21 | 18/21 | 3/3 | yes |
+
+All four runs found every planted defect (with the evidence fix) and hit no decoy. The three
+answers that still changed on treasury-mcp were generic checks (V8 and M3: not applicable or not;
+A4); not-applicable is now reserved for capabilities absent from the submitted code.
+
+On-chain controls: with a .tmark naming a testnet account whose payments need two of two signers
+(master weight 0), the account was read from Horizon (`onchain_authority.account`: found,
+`multisig_required_for_payments: true`). The review did not credit the co-signer requirement on
+invoice-settler, because that code signs with one key from the environment, which is the
+intended behaviour: the fact counts only for code that signs from that account.
