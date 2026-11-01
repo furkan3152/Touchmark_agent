@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 
 from .ai_review import redact
@@ -98,6 +99,18 @@ For EVERY file segment in the request, return exactly one card through submit_fi
 Every item needs the 1-based line number shown in the segment and a verbatim quote of that line (4-200 characters, copied exactly). Record each kind at most 6 times per file, the most important places first. A file with none of these gets empty lists. Write summaries in English."""
 
 
+#: Paths that look like tests, examples or tooling. The model's "test_or_example" role is honoured
+#: only for these: on soneso/stellar-agent-wallet the SEP-7 parser (src/parse.rs) was labelled
+#: test_or_example and dropped from every check that should have read it.
+_TEST_LIKE = re.compile(r"(?:^|/)(?:tests?|__tests__|spec|fixtures?|e2e|examples?|demos?|samples?|benches|"
+                        r"scripts?|tools?)/|\.(?:test|spec)\.\w+$|(?:^|/)test_[^/]*$|_test\.\w+$|(?:^|/)tests?\.rs$",
+                        re.I)
+
+
+def is_test(path: str, card: dict) -> bool:
+    return card.get("role") == "test_or_example" and bool(_TEST_LIKE.search(path))
+
+
 @dataclass
 class FileMap:
     cards: dict = field(default_factory=dict)        # path -> merged card
@@ -119,14 +132,14 @@ class FileMap:
 
     # -------------------------------------------------------------- derived views
     def authority_files(self) -> set[str]:
-        return {path for path, card in self.cards.items() if card.get("role") != "test_or_example"
+        return {path for path, card in self.cards.items() if not is_test(path, card)
                 and any(c["kind"] in AUTHORITY_KINDS for c in card.get("capabilities", []))}
 
     def capability_index(self) -> dict[str, list[str]]:
         """kind -> ["path:line", ...] over shipped (non-test) files."""
         out: dict[str, list[str]] = {}
         for path, card in sorted(self.cards.items()):
-            if card.get("role") == "test_or_example":
+            if is_test(path, card):
                 continue
             for item in card.get("capabilities", []):
                 out.setdefault(item["kind"], []).append(f"{path}:{item['line']}")
@@ -136,17 +149,17 @@ class FileMap:
         return set(self.capability_index())
 
     def control_kinds(self) -> set[str]:
-        return {c["kind"] for card in self.cards.values() if card.get("role") != "test_or_example"
+        return {c["kind"] for path, card in self.cards.items() if not is_test(path, card)
                 for c in card.get("controls", [])}
 
     def files_with(self, kinds: set[str]) -> list[str]:
-        return sorted(path for path, card in self.cards.items() if card.get("role") != "test_or_example"
+        return sorted(path for path, card in self.cards.items() if not is_test(path, card)
                       and any(c["kind"] in kinds for c in card.get("capabilities", [])))
 
     def pack(self, limit: int = 400) -> dict:
         """The compact form the review's evidence pack carries."""
         rows = {}
-        for path, card in sorted(self.cards.items(), key=lambda kv: (kv[1].get("role") == "test_or_example", kv[0])):
+        for path, card in sorted(self.cards.items(), key=lambda kv: (is_test(kv[0], kv[1]), kv[0])):
             if len(rows) >= limit:
                 break
             rows[path] = {"role": card.get("role"), "summary": card.get("summary", "")[:200],

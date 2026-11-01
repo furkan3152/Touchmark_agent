@@ -213,6 +213,7 @@ def test_authority_file_the_review_never_opened_gets_a_coverage_pass():
     client = RoutingClient([reply(operating), reply(call("finish", summary="done"))])
     reviewer = DeepReviewer(client, model="claude-sonnet-5-5", mode="ledger",
                             mapper=FileMapper(client, model="claude-sonnet-5-5"))
+    reviewer.max_units = 0  # without the focused file review, a coverage pass opens it
     result = run(reviewer, art)
     coverage = [p for p in result.passes if p["kind"] == "coverage"]
     assert coverage, result.passes
@@ -222,6 +223,65 @@ def test_authority_file_the_review_never_opened_gets_a_coverage_pass():
     # Files the map read and that hold no authority are not reopened, and are not "not reviewed".
     assert "README.md" not in asked[0]["messages"][0]["content"][1]["text"]
     assert not any(n["path"] == "README.md" for n in result.not_reviewed)
+
+
+def test_each_authority_file_gets_a_focused_review_that_states_and_checks_invariants():
+    art = artifact()
+    operating = call("describe_operating_model", purpose="p", triggers="t", example_run="e",
+                     trust_boundaries=[], assets_at_risk=[])
+    holds = call("check_invariant", function="pay", invariant="amount is bounded before signing", verdict="violated",
+                 file="src/main/kotlin/PayoutService.kt", line=7,
+                 evidence_quote="fun pay(destination: String, amount: String): String {", reason="no cap")
+    unclear = call("check_invariant", function="pay", invariant="destination is allowlisted", verdict="unclear",
+                   file="", line=0, evidence_quote="", reason="config not submitted")
+    bad = call("check_invariant", function="pay", invariant="x", verdict="holds",
+               file="src/main/kotlin/PayoutService.kt", line=7, evidence_quote="require(amount < cap)", reason="r")
+    finding = call("record_finding", category="unauthorized_payment", asset="funds", trigger="anyone",
+                   network="mainnet_or_configurable", location="shipped", title="Unbounded payout",
+                   file="src/main/kotlin/PayoutService.kt", line=7,
+                   evidence_quote="fun pay(destination: String, amount: String): String {",
+                   attack_scenario="Any amount.", stellar_impact="Drains XLM.", remediation="Cap it.")
+
+    class UnitClient(RoutingClient):
+        async def create(self, **kwargs):
+            text = kwargs["messages"][0]["content"][1]["text"] if kwargs["tools"][0]["name"] != "submit_file_cards" else ""
+            if text.startswith("Focused review of ONE file: src/main/kotlin/PayoutService.kt") and len(kwargs["messages"]) == 1:
+                self.requests.append(kwargs)
+                return reply(holds, unclear, bad, finding)
+            if text.startswith("Focused review of ONE file") and len(kwargs["messages"]) > 1:
+                self.requests.append(kwargs)
+                return reply(call("finish", summary="done"))
+            return await super().create(**kwargs)
+
+    client = UnitClient([reply(operating), reply(call("finish", summary="done"))])
+    reviewer = DeepReviewer(client, model="claude-sonnet-5-5", mode="ledger",
+                            mapper=FileMapper(client, model="claude-sonnet-5-5"))
+    result = run(reviewer, art)
+    assert [p["kind"] for p in result.passes if p["kind"] == "units"] == ["units"]
+    unit = result.units["src/main/kotlin/PayoutService.kt"]
+    assert unit["status"] == "completed"
+    # The unquoted "holds" is refused; the violated and the unclear invariants are kept.
+    assert [i["verdict"] for i in unit["invariants"]] == ["violated", "unclear"]
+    assert len(unit["findings"]) == 1
+    f = next(x for x in result.findings if x.id == unit["findings"][0])
+    assert f.severity.value == "critical"
+    # The focused review shares the cached evidence pack and shows the file's numbered lines.
+    asked = [r for r in client.requests if r["tools"][0]["name"] != "submit_file_cards"
+             and r["messages"][0]["content"][1]["text"].startswith("Focused review of ONE file")]
+    assert asked and asked[0]["messages"][0]["content"][0].get("cache_control")
+    assert "8:         val signer = KeyPair.fromSecretSeed(seed)" in asked[0]["messages"][0]["content"][1]["text"]
+    report = result.report()
+    assert report["units"]["files"] >= 1 and report["units"]["violated"] == 1
+    # Routes.kt holds no authority: it gets no focused review.
+    assert "src/main/kotlin/Routes.kt" not in result.units
+
+
+def test_a_source_file_labelled_test_by_the_map_is_still_analysed():
+    from backend.app.services.file_map import is_test
+    assert not is_test("src/parse.rs", {"role": "test_or_example"})
+    assert is_test("tests/parse.rs", {"role": "test_or_example"})
+    assert is_test("examples/client.ts", {"role": "test_or_example"})
+    assert not is_test("examples/client.ts", {"role": "payment"})
 
 
 def test_file_map_state_round_trips():

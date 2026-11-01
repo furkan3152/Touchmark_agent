@@ -167,6 +167,16 @@ _FINDING_FIELDS = {"category": {"type": "string", "enum": sorted(CATEGORIES)},
 _LEDGER_RECORD = _strict("record_finding", "Record one verified defect with the facts its severity follows from.",
                          _FINDING_FIELDS, list(_FINDING_FIELDS))
 
+#: The focused per-file review (the "units" stage) states each security invariant a function must
+#: enforce and checks it against the code; violations are recorded as findings.
+_CHECK_INVARIANT = _strict(
+    "check_invariant", "Record one security invariant of a function in the file under review and whether the "
+    "code enforces it.",
+    {"function": _STR, "invariant": _STR,
+     "verdict": {"type": "string", "enum": ["holds", "violated", "unclear"]},
+     "file": _STR, "line": {"type": "integer"}, "evidence_quote": _STR, "reason": _STR},
+    ["function", "invariant", "verdict", "file", "line", "evidence_quote", "reason"])
+
 LEDGER_TOOLS = [*[t if t["name"] != "record_finding" else _LEDGER_RECORD for t in TOOLS[:-1]], _strict(
     "answer_check", "Answer one check of the check ledger after reading the code that decides it.",
     {"check_id": {"type": "string", "enum": [c.id for c in ledger.CATALOG]},
@@ -175,7 +185,7 @@ LEDGER_TOOLS = [*[t if t["name"] != "record_finding" else _LEDGER_RECORD for t i
      **severity_table.FACTOR_SCHEMA,
      "title": _STR, "attack_scenario": _STR, "remediation": _STR, "existing_finding_id": _STR},
     ["check_id", "verdict", "file", "line", "evidence_quote", "reason", *severity_table.FACTOR_SCHEMA, "title",
-     "attack_scenario", "remediation", "existing_finding_id"]), TOOLS[-1]]
+     "attack_scenario", "remediation", "existing_finding_id"]), _CHECK_INVARIANT, TOOLS[-1]]
 
 
 _RISK_NAME = re.compile(r"polic|approv|sign|pay|wallet|key|secret|limit|budget|auth|x402|mpp|settle|escrow|transfer|"
@@ -216,9 +226,9 @@ def _priority(artifact) -> list[str]:
         path = entry.split(":", 1)[0]
         hits[path] = hits.get(path, 0) + 3
     # The file map (services/file_map.py) sees capabilities in every language the rules miss.
-    from .file_map import AUTHORITY_KINDS
+    from .file_map import AUTHORITY_KINDS, is_test
     for path, card in ((artifact.raw_metadata or {}).get("file_map_cards") or {}).items():
-        if card.get("role") == "test_or_example":
+        if is_test(path, card):
             continue
         kinds = {c.get("kind") for c in card.get("capabilities", [])}
         hits[path] = hits.get(path, 0) + 8 * len(kinds & AUTHORITY_KINDS) + 2 * len(kinds - AUTHORITY_KINDS) \
@@ -299,6 +309,10 @@ class DeepReviewResult:
     kinds: list = field(default_factory=list)
     #: Checks answered "holds" that the challenge pass re-examined (audit_ledger.CHALLENGED).
     challenged: list = field(default_factory=list)
+    challenge_done: bool = False
+    #: The focused per-file review: path -> {"status", "invariants": [...], "findings": [ids]}.
+    units: dict = field(default_factory=dict)
+    units_done: bool = False
     mode: str = "classic"
 
     def mapped(self) -> set[str]:
@@ -340,7 +354,14 @@ class DeepReviewResult:
         return {"mode": "ledger",
                 "file_map": fmap.report(self.reviewable),
                 "ledger": ledger.report(self.ledger, set(self.kinds), self.ledger_groups),
-                "languages": languages.coverage(sorted(self.reviewable), self.mapped(), examined)}
+                "languages": languages.coverage(sorted(self.reviewable), self.mapped(), examined),
+                "units": {"files": len(self.units),
+                          "invariants": sum(len(u.get("invariants") or []) for u in self.units.values()),
+                          "violated": sum(1 for u in self.units.values() for i in u.get("invariants") or []
+                                          if i.get("verdict") == "violated"),
+                          "by_file": {p: {"status": u.get("status"), "invariants": (u.get("invariants") or [])[:40],
+                                          "findings": u.get("findings") or []}
+                                      for p, u in sorted(self.units.items())[:200]}}}
 
     # Saved between the requests of a long audit (services/audit_jobs.py).
     def to_state(self) -> dict:
@@ -350,7 +371,8 @@ class DeepReviewResult:
                 "summary": self.summary, "turns": self.turns, "usage": self.usage, "note": self.note,
                 "files_read": sorted(self.files_read), "passes": self.passes, "stop_reason": self.stop_reason,
                 "not_reviewed": self.not_reviewed, "map": self.map_state, "ledger": self.ledger,
-                "ledger_groups": self.ledger_groups, "kinds": self.kinds, "challenged": self.challenged}
+                "ledger_groups": self.ledger_groups, "kinds": self.kinds, "challenged": self.challenged,
+                "challenge_done": self.challenge_done, "units": self.units, "units_done": self.units_done}
 
     def restore(self, state: dict) -> None:
         self.status = state.get("status", "not_run")
@@ -369,6 +391,9 @@ class DeepReviewResult:
         self.ledger_groups = list(state.get("ledger_groups") or [])
         self.kinds = list(state.get("kinds") or [])
         self.challenged = list(state.get("challenged") or [])
+        self.challenge_done = bool(state.get("challenge_done"))
+        self.units = dict(state.get("units") or {})
+        self.units_done = bool(state.get("units_done"))
 
 
 @dataclass
@@ -494,6 +519,10 @@ class DeepReviewer:
         #: "classic": investigate, challenge passes, then coverage passes over every file.
         self.mode = mode if mode in ("classic", "ledger") else "classic"
         self.mapper = mapper
+        #: Files the focused per-file review examines at most (0 disables it), and how many at once.
+        self.max_units = 60 if self.mode == "ledger" else 0
+        self.unit_concurrency = 4
+        self.unit_turns = 14
         self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
         #: Local runs only (no request leg): time.monotonic() value by which the review must stop.
         #: The public demo sets none; it runs as a job of requests and stops only at a spend cap.
@@ -876,11 +905,14 @@ class DeepReviewer:
             focus = set(fmap.files_with(needs)) | (authority_files(artifact) if not fmap.cards else set())
             files = [p for p in _priority(artifact) if p in focus]
             return (f"ledger:{group}", ledger.instruction(group, checks, files, prior, getattr(self, "_onchain", {})), [])
-        if index == len(groups):
+        if not result.challenge_done:
+            result.challenge_done = True
             ids = ledger.to_challenge(result.ledger)
             if ids:
                 result.challenged = ids
                 return ("ledger:challenge", ledger.challenge_instruction(ids, result.ledger, prior), [])
+        if not result.units_done and self.max_units > 0:
+            return ("units", "", [])
         required = authority_files(artifact) | (result.reviewable - result.mapped())
         unread = [p for p in _priority(artifact) if p in required and p not in result.files_read]
         read = len(result.files_read & result.reviewable) if result.reviewable else len(result.files_read)
@@ -898,6 +930,171 @@ class DeepReviewer:
                 "ranges of up to 200 lines), in this order: " + ", ".join(batch) + ". Judge them against the "
                 "evidence pack, the check ledger answers so far and what earlier passes found. Skip "
                 "describe_operating_model. Record each real defect, then finish.", batch)
+
+    # ------------------------------------------------------------------ focused per-file review
+    def _unit_targets(self, artifact, result: DeepReviewResult) -> list[str]:
+        """Files that hold authority or verify what comes from outside, in review priority order."""
+        from .file_map import AUTHORITY_KINDS, FileMap, is_test
+        fmap = FileMap.from_state(result.map_state)
+        kinds = AUTHORITY_KINDS | {"authenticates_callers"}
+        chosen = {p for p, c in fmap.cards.items() if not is_test(p, c)
+                  and any(i.get("kind") in kinds for i in c.get("capabilities", []))}
+        chosen |= authority_files(artifact)
+        return [p for p in _priority(artifact) if p in chosen][:self.max_units]
+
+    def _unit_instruction(self, artifact, path: str, card: dict, prior: str) -> str:
+        lines = (artifact.code_files.get(path) or "").splitlines()
+        shown, size = [], 0
+        for n, line in enumerate(lines, 1):
+            size += len(line) + 8
+            if size > 70_000:
+                break
+            shown.append(f"{n}: {line}")
+        rest = (f"\n(lines {len(shown) + 1}-{len(lines)} not shown: read them with read_source)"
+                if len(shown) < len(lines) else "")
+        return (f"Focused review of ONE file: {path} ({len(lines)} lines). Its file-map card: "
+                + json.dumps({k: card.get(k) for k in ("role", "summary", "capabilities", "untrusted_inputs",
+                                                       "controls", "exposes")}, ensure_ascii=False)[:3000]
+                + "\n\nThe broad passes already ran; their findings are below. Your job is depth on this file only.\n"
+                "Procedure:\n"
+                "1. List every function, method, handler or contract entry point in this file that verifies, "
+                "authorizes, signs, pays, settles, submits, tracks money or state, or parses input from outside.\n"
+                "2. For each, state the concrete security invariants it must enforce for this agent to be safe, as "
+                "specific as the code allows. Stellar examples: a SEP-10/45 challenge needs at least one client "
+                "signature attributed to an expected signer and must not count the server's own signature; a "
+                "resubmitted or fee-bumped transaction must not pay again; require_auth must cover the address whose "
+                "state or funds change; a delegated or policy signer must check who invokes it; a signed URI or "
+                "message must not accept parameters outside what was signed; amounts are bounded and in the right "
+                "unit; assets carry their issuer; submission results are checked; failure paths do not leave state "
+                "stuck or paid twice. Use stellar_reference for the relevant topic.\n"
+                "3. Check each invariant against the code. Follow callers and callees into other files with "
+                "search_source and read_source; an invariant enforced elsewhere on every path holds.\n"
+                "4. Call check_invariant once per invariant (holds / violated / unclear) with the deciding line "
+                "quoted verbatim. For every violated invariant on a reachable shipped path, ALSO call "
+                "record_finding (state the severity facts), unless one of the earlier findings below already "
+                "describes the same defect at the same place.\n"
+                "5. Call finish with one line.\n"
+                f"Earlier findings:\n{prior}\n\n=== {path} ===\n" + "\n".join(shown) + rest)
+
+    async def _run_units(self, artifact, flows, pack: str, result: DeepReviewResult, cur: _Cursor, budget, leg) -> str:
+        """Review each target file in its own short conversation, a few at a time. Each conversation
+        shares the cached evidence pack; a file whose conversation the request leg cuts short keeps
+        what it recorded and is marked partial (it is not repeated, so no finding is recorded twice)."""
+        from .file_map import FileMap
+        from .progress import emit
+        from .review_budget import LegSuspended, ReviewCancelled
+        targets = self._unit_targets(artifact, result)
+        todo = [p for p in targets if p not in result.units]
+        cards = FileMap.from_state(result.map_state).cards
+        sem = asyncio.Semaphore(self.unit_concurrency)
+        lock = asyncio.Lock()
+        stops: list[str] = []
+        suspended: list[BaseException] = []
+        cancelled: list[BaseException] = []
+
+        async def one(path: str) -> None:
+            async with sem:
+                if stops or suspended or cancelled:
+                    return
+                result.units[path] = {"status": "running", "invariants": [], "findings": []}
+                try:
+                    status = await self._unit_loop(artifact, flows, pack, result, path, cards.get(path) or {},
+                                                   budget, leg)
+                except LegSuspended as exc:
+                    result.units[path]["status"] = "partial"
+                    suspended.append(exc)
+                    return
+                except ReviewCancelled as exc:
+                    cancelled.append(exc)
+                    return
+                except Exception:  # provider failure on one file: keep what it recorded, go on
+                    result.units[path]["status"] = "failed"
+                    return
+                result.units[path]["status"] = status
+                if status == "capped":
+                    stops.append(status)
+                async with lock:
+                    emit("deep_review", files_read=len(result.files_read & result.reviewable)
+                         if result.reviewable else len(result.files_read), files_total=result.total_files)
+                    await self._save(leg, result, cur)
+
+        await asyncio.gather(*(one(p) for p in todo))
+        if cancelled:
+            raise cancelled[0]
+        if suspended:
+            await self._save(leg, result, cur)
+            raise suspended[0]
+        result.units_done = True
+        return "capped" if stops else "completed"
+
+    async def _unit_loop(self, artifact, flows, pack: str, result: DeepReviewResult, path: str, card: dict,
+                         budget, leg) -> str:
+        prior = "\n".join(f"- {f.id}: {f.title} ({f.evidence[:100]})" for f in result.findings) or "- none"
+        pack_block = {"type": "text", "text": "Evidence pack (untrusted material under review):\n" + pack,
+                      "cache_control": {"type": "ephemeral"}}
+        first = {"role": "user", "content": [pack_block, {"type": "text",
+                                                          "text": self._unit_instruction(artifact, path, card, prior)}]}
+        messages: list = []
+        extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.fallbacks else {}
+        result.files_read.add(path)
+        unit = result.units[path]
+        for _ in range(self.unit_turns):
+            reason = await budget.admit(leg)
+            if reason:
+                result.stop_reason = result.stop_reason or reason
+                return "capped"
+            result.turns += 1
+            response = await budget.call(lambda: self.client.beta.messages.create(
+                model=self.model, max_tokens=16000,
+                system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+                thinking={"type": "adaptive"}, output_config={"effort": self.effort},
+                tools=LEDGER_TOOLS, messages=[first, *messages], cache_control={"type": "ephemeral"}, **extra), leg)
+            usage = getattr(response, "usage", None)
+            for key in result.usage:
+                result.usage[key] += int(getattr(usage, key, 0) or 0)
+            if response.stop_reason == "refusal":
+                return "refused"
+            content = [_plain(b) for b in response.content]
+            messages.append({"role": "assistant", "content": content})
+            uses = [b for b in content if _field(b, "type", "") == "tool_use"]
+            if not uses:
+                if response.stop_reason == "max_tokens":
+                    messages.append({"role": "user", "content": "Continue with tool calls."})
+                    continue
+                return "completed"
+            results = []
+            for block in uses:
+                name, args = _field(block, "name"), dict(_field(block, "input") or {})
+                if name == "check_invariant":
+                    output = self._check_invariant(args, artifact, unit)
+                elif name in ("answer_check", "describe_operating_model", "assess_flow"):
+                    output = "Not part of the focused file review: use check_invariant and record_finding."
+                else:
+                    output = self._run_tool(name, args, artifact, flows, result)
+                    if name == "record_finding" and output.startswith("Accepted as "):
+                        unit["findings"].append(output.removeprefix("Accepted as ").rstrip("."))
+                results.append({"type": "tool_result", "tool_use_id": _field(block, "id"), "content": output})
+            messages.append({"role": "user", "content": results})
+            if any(_field(b, "name") == "finish" for b in uses):
+                return "completed"
+        return "turn_limit"
+
+    def _check_invariant(self, args: dict, artifact, unit: dict) -> str:
+        verdict = args.get("verdict")
+        if verdict not in ("holds", "violated", "unclear"):
+            return "Unknown verdict."
+        entry = {"function": redact(str(args.get("function", ""))[:120]),
+                 "invariant": redact(str(args.get("invariant", ""))[:300]), "verdict": verdict,
+                 "reason": redact(str(args.get("reason", ""))[:600])}
+        if verdict in ("holds", "violated"):
+            problem = self._verify_quote(artifact, args.get("file", ""), args.get("line", 0),
+                                         args.get("evidence_quote", ""))
+            if problem:
+                return f"Not recorded: {problem}. Quote the deciding line verbatim."
+            entry.update(file=str(args.get("file", ""))[:300], line=int(args.get("line") or 0))
+        unit["invariants"].append(entry)
+        return ("Recorded. A violated invariant on a reachable shipped path also needs record_finding."
+                if verdict == "violated" else "Recorded.")
 
     async def _passes(self, artifact, findings, chain, result: DeepReviewResult, cur: _Cursor, budget, leg) -> None:
         import hashlib
@@ -922,7 +1119,10 @@ class DeepReviewer:
                 cur.files_at_start, cur.findings_at_start = len(result.files_read), len(result.findings)
                 await self._save(leg, result, cur)
             started = time.monotonic()
-            status = await self._loop(artifact, flows, pack, result, cur, budget, leg)
+            if cur.kind == "units":
+                status = await self._run_units(artifact, flows, pack, result, cur, budget, leg)
+            else:
+                status = await self._loop(artifact, flows, pack, result, cur, budget, leg)
             cur.durations.append(round(time.monotonic() - started, 2))
             result.passes.append({"pass": cur.number, "kind": cur.kind, "status": status,
                                   "new_findings": len(result.findings) - cur.findings_at_start,

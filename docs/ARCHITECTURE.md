@@ -176,7 +176,17 @@ the rules cannot. With consent, the review (`DEEP_REVIEW_MODE=ledger`) runs in f
    severity: for each defect it states what is at risk, who can trigger it, the network and where
    the code is, and a fixed table gives the level (testnet-only code at most medium, example code
    one lower, unwired paths low). The facts are written into the finding.
-6. **Coverage.** Authority files no pass has opened, and files the map could not read, are
+6. **Focused file review** (the `units` stage). On a benchmark of real fixed defects every miss
+   was in a file the review had opened and the map had marked as holding authority: the broad
+   passes read 40-50 files in one conversation and gave each function little attention. Now
+   every file that signs, pays, submits, holds keys, executes, decodes external transactions or
+   verifies signed input gets its own short conversation (four at a time, sharing the cached
+   evidence pack). The model lists the functions that matter, states the security invariants
+   each must enforce, checks each against the code (following callers and callees), records
+   each with `check_invariant` (holds / violated / unclear, quoted), and files every violated one
+   as a finding. The report keeps the invariants per file (`deep_review.units`). The map's
+   `test_or_example` role is honoured only for paths that look like tests or examples.
+7. **Coverage.** Authority files no pass has opened, and files the map could not read, are
    opened in batches. Files the map read that hold no authority are not reopened.
 
 The report's `deep_review` carries `file_map` (cards), `ledger` (every applicable check and
