@@ -1,0 +1,73 @@
+{
+  "agent": "swap-desk",
+  "language": "kotlin",
+  "defects": [
+    {
+      "id": "KT-D1",
+      "category": "economic_loss",
+      "severity": "high",
+      "file": "src/main/kotlin/com/example/swapdesk/SwapService.kt",
+      "line_start": 89,
+      "line_end": 89,
+      "summary": "The customer is credited the requested expectedOut instead of the amount actually received, and destMin is derived from expectedOut and slippageBps from the request; slippageBps=10000 with an inflated expectedOut mints balance from the omnibus account.",
+      "accept_categories": [
+        "stellar_protocol_misuse",
+        "control_bypass",
+        "unauthorized_payment"
+      ],
+      "alt_locations": [
+        {
+          "file": "src/main/kotlin/com/example/swapdesk/SwapService.kt",
+          "line_start": 77,
+          "line_end": 78
+        }
+      ]
+    },
+    {
+      "id": "KT-D2",
+      "category": "cross_user_access",
+      "severity": "critical",
+      "file": "src/main/kotlin/com/example/swapdesk/Routes.kt",
+      "line_start": 40,
+      "line_end": 43,
+      "summary": "Withdraw route debits the userId from the path, not the JWT subject; any customer can withdraw another customer's balance to their own address.",
+      "accept_categories": [
+        "unauthorized_payment",
+        "control_bypass"
+      ]
+    },
+    {
+      "id": "KT-D3",
+      "category": "reliability_failure",
+      "severity": "medium",
+      "file": "src/main/kotlin/com/example/swapdesk/SwapService.kt",
+      "line_start": 68,
+      "line_end": 69,
+      "summary": "submit() ignores SubmitTransactionResponse.isSuccess; a failed swap or withdrawal is treated as done (balance debited/credited, hash returned).",
+      "accept_categories": [
+        "functional_defect",
+        "economic_loss"
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "KT-K1",
+      "file": "src/main/kotlin/com/example/swapdesk/Routes.kt",
+      "line_start": 22,
+      "line_end": 24,
+      "why_safe": "/admin/rebalance is under authenticate(\"ops\"), which only accepts JWTs carrying the ops role; topUpOmnibus pays only the omnibus account with a bounded amount.",
+      "control_file": "src/main/kotlin/com/example/swapdesk/Auth.kt",
+      "control_line": 24
+    },
+    {
+      "id": "KT-K2",
+      "file": "src/main/kotlin/com/example/swapdesk/SwapService.kt",
+      "line_start": 94,
+      "line_end": 94,
+      "why_safe": "Requester-supplied withdrawal asset code/issuer are resolved through SupportedAssets.require, which rejects any pair (code and issuer) not in the supported set.",
+      "control_file": "src/main/kotlin/com/example/swapdesk/Assets.kt",
+      "control_line": 18
+    }
+  ]
+}

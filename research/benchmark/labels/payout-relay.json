@@ -1,0 +1,55 @@
+{
+  "agent": "payout-relay",
+  "language": "go",
+  "defects": [
+    {
+      "id": "GO-D1",
+      "category": "replay_or_idempotency",
+      "severity": "medium",
+      "file": "payout.go",
+      "line_start": 98,
+      "line_end": 109,
+      "summary": "Payouts are marked paid inside one DB transaction that is committed only after the whole batch; if a later payment or MarkPaid fails the function returns, the deferred Rollback undoes the 'paid' rows of payments already submitted, and the next run pays them again.",
+      "accept_categories": [
+        "reliability_failure",
+        "economic_loss"
+      ],
+      "alt_locations": [
+        {
+          "file": "payout.go",
+          "line_start": 81,
+          "line_end": 81
+        }
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "GO-K1",
+      "file": "payout.go",
+      "line_start": 53,
+      "line_end": 57,
+      "why_safe": "Destination is the creator's verified address from the database and the amount passes Policy.Check (per-payout and daily caps, valid strkey, verified flag) before signing.",
+      "control_file": "policy.go",
+      "control_line": 33
+    },
+    {
+      "id": "GO-K2",
+      "file": "main.go",
+      "line_start": 40,
+      "line_end": 47,
+      "why_safe": "The paying route is wrapped in requireOperator, which rejects an empty token and compares the bearer token in constant time.",
+      "control_file": "auth.go",
+      "control_line": 13
+    },
+    {
+      "id": "GO-K3",
+      "file": "receipts.go",
+      "line_start": 35,
+      "line_end": 35,
+      "why_safe": "Receipt file name is validated as 64 hex characters before filepath.Join, so no traversal.",
+      "control_file": "receipts.go",
+      "control_line": 31
+    }
+  ]
+}

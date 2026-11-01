@@ -1,0 +1,74 @@
+{
+  "agent": "treasury-mcp",
+  "language": "typescript",
+  "defects": [
+    {
+      "id": "TS-D1",
+      "category": "foreign_transaction_signing",
+      "severity": "critical",
+      "file": "src/index.ts",
+      "line_start": 67,
+      "line_end": 72,
+      "summary": "sign_transaction tool parses a caller-supplied XDR envelope and signs and submits it with the treasury key without inspecting operations, source, destination or amount.",
+      "accept_categories": [
+        "unauthorized_payment",
+        "account_takeover",
+        "control_bypass"
+      ]
+    },
+    {
+      "id": "TS-D2",
+      "category": "control_bypass",
+      "severity": "high",
+      "file": "src/index.ts",
+      "line_start": 57,
+      "line_end": 61,
+      "summary": "Daily budget is checked with canSpend before the awaited payment and recorded with recordSpend only after it; concurrent pay calls all pass the in-memory check and overspend the budget (budget also resets on restart).",
+      "accept_categories": [
+        "economic_loss",
+        "unauthorized_payment",
+        "replay_or_idempotency",
+        "reliability_failure"
+      ],
+      "alt_locations": [
+        {
+          "file": "src/budget.ts",
+          "line_start": 19,
+          "line_end": 24
+        }
+      ]
+    },
+    {
+      "id": "TS-D3",
+      "category": "secret_exposure",
+      "severity": "high",
+      "file": "src/index.ts",
+      "line_start": 76,
+      "line_end": 80,
+      "summary": "export_config returns every STELLAR_* environment variable to the model, which includes STELLAR_AGENT_SECRET (the treasury signing seed).",
+      "accept_categories": [
+        "intent_mismatch"
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "TS-K1",
+      "file": "src/index.ts",
+      "line_start": 35,
+      "line_end": 41,
+      "why_safe": "approve_settlement signs an external XDR only after assertSettlementOnly checks source, expiry, fee, a single payment op, destination == settlement account, USDC with issuer and amount cap.",
+      "control_file": "src/settlement.ts",
+      "control_line": 26
+    },
+    {
+      "id": "TS-K2",
+      "file": "src/index.ts",
+      "line_start": 18,
+      "line_end": 18,
+      "why_safe": "Price fetch goes to a fixed host from config; the path segment is restricted to [A-Z0-9]{1,12} and URL-encoded, so the caller cannot redirect the request.",
+      "control_file": "src/index.ts",
+      "control_line": 17
+    }
+  ]
+}

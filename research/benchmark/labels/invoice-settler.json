@@ -1,0 +1,83 @@
+{
+  "agent": "invoice-settler",
+  "language": "python",
+  "defects": [
+    {
+      "id": "PY-D1",
+      "category": "unauthorized_payment",
+      "severity": "critical",
+      "file": "app/main.py",
+      "line_start": 62,
+      "line_end": 67,
+      "summary": "POST /v1/refunds has no require_api_key dependency; destination and amount come from the request body and are paid from the settlement account with no bound, allowlist or vendor policy.",
+      "accept_categories": [
+        "control_bypass",
+        "economic_loss"
+      ],
+      "alt_locations": [
+        {
+          "file": "app/ledger.py",
+          "line_start": 46,
+          "line_end": 47
+        }
+      ]
+    },
+    {
+      "id": "PY-D2",
+      "category": "replay_or_idempotency",
+      "severity": "high",
+      "file": "app/main.py",
+      "line_start": 47,
+      "line_end": 56,
+      "summary": "Settlement checks invoice.status == 'open', awaits the payment in a worker thread, and only then marks it paid; two concurrent settle calls both pass the check and pay the vendor twice (monthly cap is also read before either write).",
+      "accept_categories": [
+        "reliability_failure",
+        "economic_loss",
+        "control_bypass"
+      ]
+    },
+    {
+      "id": "PY-D3",
+      "category": "stellar_protocol_misuse",
+      "severity": "medium",
+      "file": "app/ledger.py",
+      "line_start": 56,
+      "line_end": 56,
+      "summary": "Deposit verification matches the incoming payment by asset_code 'USDC' only, without the issuer, so a payment of a worthless self-issued USDC credits the customer balance.",
+      "accept_categories": [
+        "economic_loss",
+        "control_bypass",
+        "unauthorized_payment"
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "PY-K1",
+      "file": "app/ledger.py",
+      "line_start": 17,
+      "line_end": 17,
+      "why_safe": "Seed comes from the environment as a SecretStr and is never returned; /healthz exposes only the public key.",
+      "control_file": "app/config.py",
+      "control_line": 12
+    },
+    {
+      "id": "PY-K2",
+      "file": "app/ledger.py",
+      "line_start": 24,
+      "line_end": 26,
+      "why_safe": "Vendor payments are bound by policy.enforce_vendor_payment: vendor allowlist supplies the destination, amount is parsed and capped per invoice and per month.",
+      "control_file": "app/policy.py",
+      "control_line": 39
+    },
+    {
+      "id": "PY-K3",
+      "file": "app/main.py",
+      "line_start": 34,
+      "line_end": 39,
+      "why_safe": "Accounting webhook body is only accepted after an HMAC-SHA256 check with compare_digest in auth.verify_signature; it only records invoices and never pays.",
+      "control_file": "app/auth.py",
+      "control_line": 25
+    }
+  ]
+}

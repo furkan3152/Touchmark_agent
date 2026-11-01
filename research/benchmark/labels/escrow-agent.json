@@ -1,0 +1,112 @@
+{
+  "agent": "escrow-agent",
+  "language": "java",
+  "defects": [
+    {
+      "id": "JV-D1",
+      "category": "prompt_injection",
+      "severity": "critical",
+      "file": "src/main/java/com/example/escrow/EscrowService.java",
+      "line_start": 86,
+      "line_end": 87,
+      "summary": "releaseOnDelivery pays the payout_address an LLM extracted from an inbound e-mail instead of the escrow's seller; anyone who writes the e-mail chooses the recipient of the escrowed funds.",
+      "accept_categories": [
+        "unauthorized_payment",
+        "intent_mismatch",
+        "control_bypass"
+      ],
+      "alt_locations": [
+        {
+          "file": "src/main/java/com/example/escrow/DeliveryParser.java",
+          "line_start": 16,
+          "line_end": 16
+        }
+      ]
+    },
+    {
+      "id": "JV-D2",
+      "category": "replay_or_idempotency",
+      "severity": "high",
+      "file": "src/main/java/com/example/escrow/EscrowService.java",
+      "line_start": 59,
+      "line_end": 64,
+      "summary": "Funding proof (txHash) is never recorded or bound to the escrow/buyer; the same payment hash funds any number of escrows, each of which can then be released.",
+      "accept_categories": [
+        "economic_loss",
+        "control_bypass",
+        "unauthorized_payment"
+      ]
+    },
+    {
+      "id": "JV-D3",
+      "category": "stellar_protocol_misuse",
+      "severity": "high",
+      "file": "src/main/java/com/example/escrow/StellarGateway.java",
+      "line_start": 33,
+      "line_end": 37,
+      "summary": "Funding verification uses the network chosen by the requester; a testnet payment marks a mainnet escrow FUNDED and release pays real USDC.",
+      "accept_categories": [
+        "control_bypass",
+        "economic_loss",
+        "ssrf",
+        "unauthorized_payment"
+      ],
+      "alt_locations": [
+        {
+          "file": "src/main/java/com/example/escrow/StellarGateway.java",
+          "line_start": 47,
+          "line_end": 47
+        }
+      ]
+    },
+    {
+      "id": "JV-D4",
+      "category": "control_bypass",
+      "severity": "high",
+      "file": "src/main/java/com/example/escrow/EscrowController.java",
+      "line_start": 46,
+      "line_end": 48,
+      "summary": "/inbound/delivery-confirmations is excluded from the API key filter and has no signature check, so anyone can post a 'delivered' e-mail and release any funded escrow.",
+      "accept_categories": [
+        "unauthorized_payment",
+        "prompt_injection"
+      ],
+      "alt_locations": [
+        {
+          "file": "src/main/java/com/example/escrow/ApiKeyFilter.java",
+          "line_start": 33,
+          "line_end": 33
+        }
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "JV-K1",
+      "file": "src/main/java/com/example/escrow/EscrowController.java",
+      "line_start": 35,
+      "line_end": 37,
+      "why_safe": "Release route is behind ApiKeyFilter and EscrowService.release requires the authenticated buyer and FUNDED status, and pays the stored seller.",
+      "control_file": "src/main/java/com/example/escrow/EscrowService.java",
+      "control_line": 70
+    },
+    {
+      "id": "JV-K2",
+      "file": "src/main/java/com/example/escrow/AssetPolicy.java",
+      "line_start": 26,
+      "line_end": 27,
+      "why_safe": "Asset comparison checks both code and issuer.",
+      "control_file": "src/main/java/com/example/escrow/AssetPolicy.java",
+      "control_line": 27
+    },
+    {
+      "id": "JV-K3",
+      "file": "src/main/java/com/example/escrow/DeliveryParser.java",
+      "line_start": 37,
+      "line_end": 37,
+      "why_safe": "The API key is sent only to a fixed api.openai.com URL and never logged or returned.",
+      "control_file": "src/main/java/com/example/escrow/DeliveryParser.java",
+      "control_line": 36
+    }
+  ]
+}

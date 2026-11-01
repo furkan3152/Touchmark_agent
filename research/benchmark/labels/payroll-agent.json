@@ -1,0 +1,79 @@
+{
+  "agent": "payroll-agent",
+  "language": "csharp",
+  "defects": [
+    {
+      "id": "CS-D1",
+      "category": "foreign_transaction_signing",
+      "severity": "critical",
+      "file": "Program.cs",
+      "line_start": 30,
+      "line_end": 34,
+      "summary": "sign-payload signs arbitrary caller-supplied bytes with the payroll key; a transaction hash or Soroban auth payload submitted as a 'challenge' authorizes any transaction from the payroll account.",
+      "accept_categories": [
+        "account_takeover",
+        "unauthorized_payment",
+        "control_bypass"
+      ],
+      "alt_locations": [
+        {
+          "file": "StellarSigner.cs",
+          "line_start": 23,
+          "line_end": 23
+        }
+      ]
+    },
+    {
+      "id": "CS-D2",
+      "category": "control_bypass",
+      "severity": "medium",
+      "file": "BatchValidator.cs",
+      "line_start": 68,
+      "line_end": 70,
+      "summary": "Destination allowlist defaults to '*' and CheckDestination returns early on '*', so unless configured the allowlist allows any destination.",
+      "accept_categories": [
+        "unauthorized_payment"
+      ],
+      "alt_locations": [
+        {
+          "file": "BatchValidator.cs",
+          "line_start": 9,
+          "line_end": 9
+        }
+      ]
+    },
+    {
+      "id": "CS-D3",
+      "category": "replay_or_idempotency",
+      "severity": "high",
+      "file": "PayrollService.cs",
+      "line_start": 13,
+      "line_end": 21,
+      "summary": "BatchId is never recorded; re-posting the same batch (or an assistant retry after a timeout) pays every line again, and limits are per batch only.",
+      "accept_categories": [
+        "reliability_failure",
+        "economic_loss"
+      ]
+    }
+  ],
+  "decoys": [
+    {
+      "id": "CS-K1",
+      "file": "Program.cs",
+      "line_start": 14,
+      "line_end": 15,
+      "why_safe": "The tool returns only the account id (public key), not the seed.",
+      "control_file": "StellarSigner.cs",
+      "control_line": 21
+    },
+    {
+      "id": "CS-K2",
+      "file": "StellarSigner.cs",
+      "line_start": 16,
+      "line_end": 17,
+      "why_safe": "Seed is read from the environment at startup, not committed, logged or returned.",
+      "control_file": "StellarSigner.cs",
+      "control_line": 21
+    }
+  ]
+}
