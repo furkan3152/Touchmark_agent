@@ -411,3 +411,17 @@ def test_authentication_verification_check_applies_when_the_agent_verifies_signa
     # A7 carries the web-auth Stellar criteria and is challenged.
     assert "SEP-10 / SEP-45 web authentication" in ledger.stellar_criteria([ledger.BY_ID["A7"]])
     assert "A7" in ledger.CHALLENGED
+
+
+def test_a_violated_invariant_without_a_finding_is_sent_back_once():
+    from backend.app.services.deep_review import DeepReviewResult
+    from backend.app.models import Dimension, Finding, Severity
+    unit = {"invariants": [{"function": "pay", "invariant": "amount bounded", "verdict": "violated",
+                            "file": "a.kt", "line": 40},
+                           {"function": "pay", "invariant": "issuer checked", "verdict": "violated",
+                            "file": "a.kt", "line": 90}], "findings": []}
+    result = DeepReviewResult(mode="ledger")
+    result.findings.append(Finding(id="security-ai-x-1", dimension=Dimension.SECURITY, severity=Severity.HIGH,
+                                   title="t", detail="d", evidence="a.kt:45 `x`", auditor="deep-review"))
+    orphans = DeepReviewer._orphan_violations(unit, result)
+    assert len(orphans) == 1 and "issuer checked" in orphans[0]

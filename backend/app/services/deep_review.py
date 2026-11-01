@@ -1076,8 +1076,32 @@ class DeepReviewer:
                 results.append({"type": "tool_result", "tool_use_id": _field(block, "id"), "content": output})
             messages.append({"role": "user", "content": results})
             if any(_field(b, "name") == "finish" for b in uses):
+                orphans = self._orphan_violations(unit, result)
+                if orphans and not unit.get("reprompted"):
+                    # A violated invariant with no finding never reaches the decision: send it back once.
+                    unit["reprompted"] = True
+                    messages.append({"role": "user", "content":
+                                     "Before finishing: these invariants are marked violated but no finding records "
+                                     "them: " + "; ".join(orphans) + ". For each, call record_finding with the "
+                                     "severity facts if the path is reachable in shipped code, or call "
+                                     "check_invariant again with verdict holds or unclear and say why. Then finish."})
+                    continue
                 return "completed"
         return "turn_limit"
+
+    @staticmethod
+    def _orphan_violations(unit: dict, result) -> list[str]:
+        """Violated invariants of this file with no finding within 15 lines of the same file."""
+        from ..swarm.consolidate import _locations
+        places = [(p, n) for f in result.findings for p, n in _locations(f)]
+        out = []
+        for inv in unit.get("invariants") or []:
+            if inv.get("verdict") != "violated" or not inv.get("file"):
+                continue
+            if not any(p == inv["file"] and abs(n - int(inv.get("line") or 0)) <= 15 for p, n in places):
+                out.append(f"{inv.get('function', '')}: {inv.get('invariant', '')[:120]} "
+                           f"({inv['file']}:{inv.get('line')})")
+        return out[:12]
 
     def _check_invariant(self, args: dict, artifact, unit: dict) -> str:
         verdict = args.get("verdict")
