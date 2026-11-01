@@ -621,6 +621,14 @@ class DeepReviewer:
             existing = str(args.get("existing_finding_id", "")).strip()
             if existing and existing in known:
                 answer.finding_id = existing
+                # The check may point at another line of the same defect: the finding then cites both,
+                # so a developer sees every place to fix (model findings only; rule findings are fixed).
+                index = next((i for i, f in enumerate(result.findings) if f.id == existing), None)
+                place = f"{answer.file}:{answer.line}"
+                if index is not None and place not in result.findings[index].evidence:
+                    found = result.findings[index]
+                    result.findings[index] = found.model_copy(update={
+                        "evidence": redact(f"{found.evidence} · {place} `{answer.quote[:160]}`")[:900]})
             else:
                 severity = args.get("severity") if args.get("severity") in SEVERITIES else "low"
                 finding = self._add_finding({**args, "severity": severity, "stellar_impact": "",

@@ -227,3 +227,20 @@ def test_authority_file_the_review_never_opened_gets_a_coverage_pass():
 def test_file_map_state_round_trips():
     fmap = FileMap(cards={"a.kt": CARDS[0]}, dropped_items=2, failed=["b.kt"], calls=3, done=True)
     assert FileMap.from_state(fmap.to_state()).to_state() == fmap.to_state()
+
+
+def test_a_failing_check_linked_to_an_existing_finding_adds_its_line_to_the_evidence():
+    art = artifact()
+    reviewer = DeepReviewer(None, model="m", mode="ledger")
+    from backend.app.services.deep_review import DeepReviewResult
+    result = DeepReviewResult(mode="ledger")
+    first = reviewer._add_finding({"severity": "high", "title": "Debit before submit", "file": "src/main/kotlin/PayoutService.kt",
+                                   "line": 8, "evidence_quote": "KeyPair.fromSecretSeed(seed)", "attack_scenario": "s",
+                                   "remediation": "r"}, "reliability_failure", result)
+    reviewer._pass_checks = ["S5"]
+    out = reviewer._answer_check({"check_id": "S5", "verdict": "fails", "file": "src/main/kotlin/PayoutService.kt",
+                                  "line": 11, "evidence_quote": "server.submitTransaction(tx).hash", "reason": "unchecked",
+                                  "severity": "medium", "title": "", "attack_scenario": "", "remediation": "",
+                                  "existing_finding_id": first.id}, art, result)
+    assert first.id in out and len(result.findings) == 1
+    assert "PayoutService.kt:8" in result.findings[0].evidence and "PayoutService.kt:11" in result.findings[0].evidence

@@ -155,7 +155,7 @@
     if (!engagement) return;
     const runtime = engagement.runtime;
     const moduleResults = engagement.module_results || [];
-    byId("dossier-state").textContent = "Official review complete";
+    byId("dossier-state").textContent = "Review complete";
     byId("result-summary").textContent = runtime ? "Source findings and isolated execution evidence are bound to this review. Open questions remain visible in Coverage." : "Source findings are bound to your chosen plan. Coverage distinguishes inspected evidence from checks still required.";
     if (renderPlan && engagement.plan) renderAuditPlan({plan:engagement.plan,plan_sha256:engagement.plan_sha256});
     const results = Array.isArray(moduleResults) ? moduleResults : Object.entries(moduleResults).map(([id,value]) => ({id,...value}));

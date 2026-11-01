@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     ai_gateway_api_key: str = Field(default="", repr=False, exclude=True)
     vercel_oidc_token: str = Field(default="", repr=False, exclude=True)
     ai_review_api_key: str = Field(default="", repr=False, exclude=True)
-    llm_model: str = "claude-sonnet-4-20250514"
+    llm_model: str = "claude-sonnet-5-5"
     llm_base_url: str = ""
     llm_max_input_bytes: int = Field(default=28_000, ge=1_000, le=64_000)
     llm_max_output_tokens: int = Field(default=1800, ge=64, le=4096)
