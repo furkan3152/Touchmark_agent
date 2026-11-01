@@ -40,14 +40,21 @@
     const known = {
       413: ["The request is too large. Shorten the .tmark or audit a smaller folder.", "input"],
       429: ["Too many requests from this connection right now. Wait a minute, then try again.", "busy"],
-      502: ["The audit service did not answer: the connection was cut or the function restarted. Nothing was lost, so run it again. A large repository may need a link to the agent's folder instead.", "server"],
+      410: ["This audit is no longer kept on the server (audits expire after a day). Run it again.", "expired"],
+      502: ["The audit service did not answer: the connection was cut or the function restarted. Nothing was lost, so run it again.", "server"],
       503: ["The audit service is unavailable for a moment. Run it again in a minute.", "server"],
-      504: ["The audit took longer than the time limit. Link to the folder that holds the agent's code, or run scripts/ci_audit.py locally.", "slow"],
+      504: ["One request ended before the audit could save its place. Run it again, or run scripts/ci_audit.py locally.", "slow"],
     }[status];
     if (known) return Object.assign(new Error(known[0]), { status, kind: known[1] });
     return Object.assign(new Error(`The request failed (HTTP ${status}). Try again in a moment.`), { status, kind: "server" });
   }
   const offline = () => Object.assign(new Error("The request did not reach Touchmark. Check your connection and try again."), { kind: "network" });
+  const aborted = () => Object.assign(new Error("Cancelled."), { kind: "aborted" });
+  const cancelled = () => Object.assign(new Error("The audit was cancelled."), { kind: "cancelled" });
+  const sleep = (ms, signal) => new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    if (signal) signal.addEventListener("abort", () => { clearTimeout(timer); reject(aborted()); }, { once: true });
+  });
 
   async function post(path, body) {
     let response;
@@ -59,25 +66,35 @@
     return data;
   }
 
-  // The audit streams NDJSON (stage events and heartbeats) so the connection stays alive and
-  // the desk can show each stage; a plain JSON answer (an older server, a proxy that buffers)
-  // is read the same way, just without the stages.
-  async function streamAudit(body, onEvent) {
+  // An audit is a job of one or more requests ("legs"): no clock stops the review, so a large
+  // repository needs several. Each leg streams NDJSON (a job event, stage events, heartbeats)
+  // and ends with the result, or "continue" (open the next leg now), "busy" (another request is
+  // advancing it: try again shortly) or "cancelled". The job id is kept in sessionStorage, so a
+  // reload picks the audit up where it is. A plain JSON answer (an older server, a proxy that
+  // buffers) is read the same way, just without the stages.
+  const JOB_KEY = "touchmark.audit.job";
+  const saveJob = (job) => { try { sessionStorage.setItem(JOB_KEY, JSON.stringify(job)); } catch { /* storage off: no resume after reload */ } };
+  const loadJob = () => { try { return JSON.parse(sessionStorage.getItem(JOB_KEY) || "null"); } catch { return null; } };
+  const dropJob = () => { try { sessionStorage.removeItem(JOB_KEY); } catch { /* nothing kept */ } };
+  const ENDINGS = ["continue", "busy", "cancelled"];
+
+  async function streamLeg(path, body, onEvent, signal) {
     let response;
     try {
-      response = await fetch("/api/v1/demo/audit", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(body) });
-    } catch { throw offline(); }
+      response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(body), signal });
+    } catch (error) { throw error.name === "AbortError" ? aborted() : offline(); }
     const streamed = (response.headers.get("content-type") || "").includes("ndjson") && response.body;
     if (!response.ok || !streamed) {
       const data = await response.json().catch(() => null);
       if (!response.ok) throw failure(response.status, data && data.detail);
       if (!data) throw failure(502);
       onEvent({ type: "unstreamed" });
-      return data;
+      if (response.status === 202 && ENDINGS.includes(data.type)) return { kind: data.type, event: data };
+      return { kind: "result", data };
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = "", result = null;
+    let buffer = "", outcome = null;
     try {
       for (;;) {
         const { value, done } = await reader.read();
@@ -88,22 +105,27 @@
           const text = buffer.slice(0, cut).trim(); buffer = buffer.slice(cut + 1);
           if (!text) continue;
           const event = JSON.parse(text);
-          if (event.type === "result") result = event.data;
+          if (event.type === "result") outcome = { kind: "result", data: event.data };
           else if (event.type === "error") throw failure(event.status, event.detail);
+          else if (ENDINGS.includes(event.type)) outcome = { kind: event.type, event };
           else onEvent(event);
         }
       }
     } catch (error) {
+      if (error.name === "AbortError") throw aborted();
       if (error instanceof SyntaxError || error.name === "TypeError") throw failure(502);
       throw error;
     }
-    if (!result) throw failure(502);
-    return result;
+    if (!outcome) throw failure(502);
+    return outcome;
   }
 
   // ------------------------------------------------------------------ the desk (progress)
   const STAGES = ["resolving", "fetching", "rules", "deep_review", "verifier", "done"];
-  const desk = { started: 0, last: 0, timer: null, stage: "", streamed: true };
+  const desk = { started: 0, last: 0, timer: null, stage: "", streamed: true, leg: 1, furthest: 0, waiting: "" };
+  //: What a later leg is doing before the review resumes where it stopped.
+  const REPLAY = { resolving: "pinning the same commit again", fetching: "fetching that commit again",
+    rules: "re-running the rules on it (they give the same result)" };
 
   function stageItem(name) { return $("timeline").querySelector(`[data-stage="${name}"]`); }
   function mark(name, state, detail) {
@@ -129,6 +151,8 @@
     $("desk-ref").textContent = reference.replace(/^https:\/\/github\.com\//, "");
     $("desk-wait").textContent = "";
     for (const name of STAGES) { mark(name, "pending", ""); bar(name, 0, 0); }
+    $("desk-actions").hidden = true; $("desk-part").textContent = "";
+    $("desk-cancel").disabled = false; $("desk-cancel").hidden = false;
     const review = config && config.model_review;
     if (review && !review.available) {
       mark("deep_review", "skipped", "Not available on this deployment: rules only");
@@ -143,7 +167,7 @@
       if (punch) punch.set("scanning");
     }
     desk.started = desk.last = Date.now();
-    desk.stage = "resolving"; desk.streamed = true;
+    desk.stage = "resolving"; desk.streamed = true; desk.leg = 1; desk.furthest = 0; desk.waiting = "";
     clearInterval(desk.timer);
     desk.timer = setInterval(tick, 1000);
     tick();
@@ -155,8 +179,11 @@
     $("desk-elapsed").textContent = clock((now - desk.started) / 1000);
     const quiet = Math.round((now - desk.last) / 1000);
     if (!desk.streamed) $("desk-wait").textContent = "This connection does not stream progress; the full result arrives in one piece.";
+    else if (desk.waiting) $("desk-wait").textContent = desk.waiting;
     else if (quiet >= 25) $("desk-wait").textContent = `No signal for ${quiet} s. The audit carries on at the server; the answer is on its way.`;
-    else $("desk-wait").textContent = desk.stage === "deep_review" ? "The model review is the slow, careful part: usually a minute or two." : "";
+    else $("desk-wait").textContent = desk.stage === "deep_review"
+      ? "The model review reads every file, the ones holding keys, signing and payments first. A large repository takes several minutes and several requests; it carries on by itself."
+      : "";
   }
 
   function beat() {
@@ -174,12 +201,40 @@
     });
   }
 
+  function onJob(event) {
+    activeJob = { job_id: event.job_id, reference: event.reference || (activeJob && activeJob.reference) || "", consent: !!event.consent };
+    saveJob(activeJob);
+    desk.leg = event.leg || 1;
+    desk.waiting = "";
+    // One clock for the whole audit, across requests and reloads.
+    if (typeof event.elapsed === "number") desk.started = Math.min(desk.started, Date.now() - event.elapsed * 1000);
+    $("desk-actions").hidden = false;
+    $("desk-part").textContent = desk.leg > 1 ? `Request ${desk.leg} of this audit: it continues where the last one stopped.` : "Runs until every file is read; only a spend cap could stop it.";
+    const p = event.progress || {};
+    if (p.stage === "deep_review" || p.stage === "verifier") {
+      finishUpTo(p.stage);
+      desk.stage = p.stage; desk.furthest = Math.max(desk.furthest, STAGES.indexOf(p.stage));
+      if (p.stage === "deep_review" && p.files_total) { mark("deep_review", "active", `Read ${p.files_read || 0} of ${plural(p.files_total, "file")}`); bar("deep_review", p.files_read, p.files_total); }
+      if (p.stage === "verifier" && p.total) { mark("verifier", "active", `Re-checked ${p.checked || 0} of ${plural(p.total, "finding")} at the cited line`); bar("verifier", p.checked, p.total); }
+    }
+    tick();
+  }
+
   function onEvent(event) {
     if (event.type === "unstreamed") { desk.streamed = false; tick(); return; }
     beat();
+    if (event.type === "job") { onJob(event); return; }
     if (event.type === "heartbeat" || !event.stage || event.stage === "queued") return;
     const s = event.stage;
     if (!STAGES.includes(s)) return;
+    if (STAGES.indexOf(s) < desk.furthest) {
+      // A later request re-reads the pinned commit before the review resumes: keep the timeline.
+      desk.waiting = REPLAY[s] ? `Request ${desk.leg}: ${REPLAY[s]}, then the review continues.` : "";
+      tick();
+      return;
+    }
+    desk.waiting = "";
+    desk.furthest = Math.max(desk.furthest, STAGES.indexOf(s));
     if (s !== desk.stage) finishUpTo(s);
     desk.stage = s;
     if (s === "resolving") { mark(s, "active", "Resolving the reference to one commit"); }
@@ -209,7 +264,8 @@
   }
 
   const REVIEW_STAGE = {
-    completed: ["done", null], timeout: ["done", "Stopped at the time limit; findings so far kept"],
+    completed: ["done", null], capped: ["done", "Stopped at a spend cap; findings kept, unread files listed"],
+    timeout: ["done", "Stopped at the local time limit; findings so far kept"],
     incomplete: ["done", "Incomplete: not every file that holds authority was read"],
     skipped: ["skipped", "Skipped: no time was left after the rules"],
     unavailable: ["failed", "The model provider did not answer"],
@@ -228,7 +284,7 @@
     const [state, note] = REVIEW_STAGE[ai.review] || ["done", null];
     const deep = stageItem("deep_review");
     if (deep.dataset.state !== "done" || state !== "done" || note) mark("deep_review", state, note || undefined);
-    if (ai.review === "completed" && ai.files_total) { mark("deep_review", "done", `Read ${ai.files_read} of ${plural(ai.files_total, "file")}, added ${plural(ai.findings_added || 0, "finding")}`); bar("deep_review", ai.files_read, ai.files_total); }
+    if ((ai.review === "completed" || ai.review === "capped") && ai.files_total) { mark("deep_review", "done", `Read ${ai.files_read} of ${plural(ai.files_total, "file")}, added ${plural(ai.findings_added || 0, "finding")}`); bar("deep_review", ai.files_read, ai.files_total); }
     const v = ai.verification || {};
     if (v.checked) { mark("verifier", "done", `${v.confirmed || 0} confirmed, ${v.partial || 0} partly, ${v.refuted || 0} disputed of ${v.checked}`); bar("verifier", v.checked, v.checked); }
     else if (state !== "done") mark("verifier", "skipped", "Runs only after a model review");
@@ -238,6 +294,9 @@
     const seconds = Math.round((Date.now() - desk.started) / 1000);
     $("desk").dataset.state = "done";
     $("desk-title").textContent = `Done in ${clock(seconds)}: ${DECISION_WORDS[data.decision] || data.decision}`;
+    $("desk-actions").hidden = !(data.job && data.job.legs > 1);
+    $("desk-cancel").hidden = true;
+    $("desk-part").textContent = data.job && data.job.legs > 1 ? `Ran in ${data.job.legs} requests, one after another; the review never stopped on time.` : "";
     $("desk-wait").textContent = "";
     $("desk-elapsed").textContent = clock(seconds);
     if (punch && window.TouchmarkMascot) {
@@ -247,8 +306,22 @@
     announce(`Audit finished: ${DECISION_WORDS[data.decision] || data.decision}, score ${data.score}.`);
   }
 
+  function cancelledDesk() {
+    clearInterval(desk.timer);
+    $("desk").dataset.state = "failed";
+    $("desk-title").textContent = "Audit cancelled";
+    $("desk-wait").textContent = "Nothing more runs or is spent on it. Start a new audit whenever you like.";
+    $("desk-actions").hidden = true;
+    $("desk-error").hidden = true;
+    const item = stageItem(desk.stage || "resolving");
+    if (item && item.dataset.state === "active") item.dataset.state = "skipped";
+    if (punch) punch.set("idle");
+    announce("The audit was cancelled.");
+  }
+
   function failDesk(error, retry) {
     clearInterval(desk.timer);
+    $("desk-actions").hidden = true;
     const item = stageItem(desk.stage || "resolving");
     if (error.kind === "tmark") mark("resolving", "pending", "Not started: a pasted .tmark is checked before anything else");
     else if (item) item.dataset.state = "failed";
@@ -504,11 +577,21 @@
     not_configured: ["Rules only", "muted", "This deployment has no allowance store for the model review, so it is off."],
     off: ["Rules only", "muted", "The model review is not enabled on this deployment."],
     no_source: ["Not applicable", "muted", "No source code is linked to this reference."],
-    timeout: ["Stopped at the limit", "warn", "The review hit the time limit. Findings so far are kept, and the report says what was not read."],
+    capped: ["Stopped at a spend cap", "warn", "The review reached a spend cap before it read every file. Its findings are kept, and each unread file is listed with the cap that stopped it. Nothing stops a review on time."],
+    timeout: ["Stopped at the time limit", "warn", "A local run's time limit stopped the review. Findings so far are kept, and the report says what was not read."],
     skipped: ["Skipped", "warn", "No time was left after the rules for the model review."],
     unavailable: ["Provider error", "bad", "The model provider did not answer; the rules still ran."],
     incomplete: ["Incomplete", "warn", "Not every file that holds authority was read."],
   };
+
+  const UNREAD_WHY = {
+    token_cap: "stopped at the per-audit token cap", cost_cap: "stopped at the per-audit cost cap",
+    file_cap: "beyond the per-audit file cap", daily_budget: "stopped at the daily token budget",
+    daily_budget_unavailable: "the daily budget could not be checked", not_opened: "the model did not open it when asked",
+    provider_unavailable: "the model provider stopped answering", model_declined: "the model declined to continue",
+    turn_limit: "a pass reached its turn limit", time_limit: "a local run's time limit",
+  };
+  const tokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
 
   function renderReview(ai, decision) {
     const v = ai.verification || {};
@@ -516,11 +599,24 @@
     if (ai.review === "completed" || ai.files_total) {
       rest.push(el("p", { class: "read-fine", text: `Read ${ai.files_read || 0} of ${plural(ai.files_total || 0, "file")}; added ${plural(ai.findings_added || 0, "finding")}.` }));
       if (v.checked) rest.push(el("p", { class: "read-fine", text: `Verifier re-checked ${v.checked}: ${v.confirmed || 0} confirmed, ${v.partial || 0} partly, ${v.refuted || 0} disputed.` }));
+      const spend = ai.spend || {};
+      if (spend.tokens) rest.push(el("p", { class: "read-fine", text: `Model spend: ${tokens(spend.tokens)} tokens${typeof spend.cost_usd === "number" ? ` (about $${spend.cost_usd.toFixed(2)})` : ""}${spend.caps ? `, within caps of ${tokens(spend.caps.tokens)} tokens and $${spend.caps.cost_usd} per audit` : ""}.` }));
+    }
+    const unread = ai.not_reviewed || [];
+    if (unread.length) {
+      const count = ai.not_reviewed_count || unread.length;
+      const list = el("ul", { class: "read-list" }, ...unread.slice(0, 60).map((f) => el("li", {}, el("code", { text: f.path }), ` · ${UNREAD_WHY[f.reason] || f.reason}`)));
+      const more = count > 60 ? el("p", { class: "read-fine", text: `${count - 60} more in the report JSON (deep_review.coverage.not_reviewed).` }) : null;
+      rest.push(el("details", { class: "read-more" }, el("summary", { text: `Not reviewed: ${plural(count, "file")}` }), list, more));
     }
     if (ai.allowance && !ai.allowance.used_up && ai.allowance.left_this_hour !== null && ai.allowance.left_this_hour !== undefined) rest.push(el("p", { class: "read-fine", text: `${plural(ai.allowance.left_this_hour, "model review")} left for you this hour.` }));
     if (ai.review === "rate_limited" && ai.note) rest.push(el("p", { class: "read-fine", text: ai.note }));
     if (ai.review !== "completed" && decision !== "needs_fixes" && ai.review !== "no_source") rest.push(el("p", { class: "read-fine", text: "Without a completed model review an audit can reach needs evidence at best; it cannot pass or be stamped." }));
-    if (ai.review === "completed") { cell("read-ai", "Completed", "ok", "A model read the agent's authority code, and a second call re-checked each of its findings at the cited line.", ...rest); return; }
+    if (ai.review === "completed") {
+      const all = ai.files_total && ai.files_read >= ai.files_total;
+      cell("read-ai", "Completed", "ok", `A model read ${all ? "every source file of the agent" : "the agent's authority code"}, and a second call re-checked each of its findings at the cited line.`, ...rest);
+      return;
+    }
     const [badge, tone, lead] = REVIEW_COPY[ai.review] || [ai.review || "Unknown", "muted", ai.note || ""];
     cell("read-ai", badge, tone, lead, ...rest);
   }
@@ -604,35 +700,96 @@
 
   // ------------------------------------------------------------------ the audit
   let running = false;
-  async function audit(reference) {
-    if (running) return;
+  let activeJob = null;
+  let controller = null;
+
+  /** Drive a job to its end: open each next leg as soon as the last one says continue, wait
+   *  when another request holds it, and ride out a dropped connection (the job is saved). */
+  async function drive(first) {
+    let outcome = null, drops = 0, attempt = first;
+    for (;;) {
+      try {
+        outcome = await attempt();
+        drops = 0;
+      } catch (error) {
+        const transient = (error.kind === "server" || error.kind === "network") && error.status !== 422 && error.status !== 410;
+        if (!transient || !activeJob || ++drops > 6) throw error;
+        outcome = { kind: "busy", event: { retry_after: Math.min(30, 3 * drops) } };
+        desk.waiting = "The connection dropped. The audit is saved at the server; reconnecting…";
+        tick();
+      }
+      if (outcome.kind === "result") { dropJob(); activeJob = null; return outcome.data; }
+      if (outcome.kind === "cancelled") { dropJob(); activeJob = null; throw cancelled(); }
+      if (!activeJob) throw failure(502);
+      const wait = Math.max(0, Number(outcome.event.retry_after) || 0);
+      if (outcome.kind === "busy" && !desk.waiting) desk.waiting = "Another request is advancing this audit (another tab, or one that just ended). Waiting for it…";
+      if (outcome.kind === "continue") desk.waiting = "Continuing in a fresh request…";
+      tick();
+      if (wait) await sleep(wait * 1000, controller.signal);
+      const id = activeJob.job_id;
+      attempt = () => streamLeg("/api/v1/demo/audit/continue", { job_id: id }, onEvent, controller.signal);
+    }
+  }
+
+  async function follow(reference, consent, first) {
     running = true;
+    controller = new AbortController();
     $("error").hidden = true;
     $("result").hidden = true;
-    const consent = $("consent").checked && !$("consent").disabled;
-    const body = { reference, model_review_consent: consent };
-    const declared = $("tmark").value.trim();
-    if (declared) body.tmark = declared;
     run.disabled = true; run.setAttribute("aria-busy", "true");
     openDesk(reference, consent);
     scrollTo($("desk"), "nearest");
     try {
-      const data = await streamAudit(body, onEvent);
+      const data = await drive(first);
       closeDesk(data);
       noteAllowance(data.ai || {});
       render(data);
       scrollTo($("result"));
     } catch (error) {
+      if (error.kind === "aborted") return; // Cancel: the desk already says so
+      if (error.kind === "cancelled") { cancelledDesk(); return; }
+      if (error.kind === "expired") dropJob();
       if (error.kind === "tmark") {
         $("declare").open = true;
         chip("bad", plural(error.tmarkErrors.length, "problem"));
         $("tmark-live").textContent = "Touchmark says: not valid, so nothing was audited. Each problem is listed with its line.";
         problems(error.tmarkErrors, { server: true });
       }
-      failDesk(error, () => audit(reference));
+      if (error.kind !== "server" && error.kind !== "network") { dropJob(); activeJob = null; }
+      failDesk(error, () => (activeJob ? resume(activeJob) : audit(reference)));
     } finally {
       running = false;
       run.disabled = false; run.removeAttribute("aria-busy");
+    }
+  }
+
+  async function audit(reference) {
+    if (running) return;
+    const consent = $("consent").checked && !$("consent").disabled;
+    const body = { reference, model_review_consent: consent };
+    const declared = $("tmark").value.trim();
+    if (declared) body.tmark = declared;
+    dropJob(); activeJob = null;
+    await follow(reference, consent, () => streamLeg("/api/v1/demo/audit", body, onEvent, controller.signal));
+  }
+
+  /** A returning visitor (reload, back) sees the audit they started carry on. */
+  async function resume(job) {
+    if (running || !job || !job.job_id) return;
+    activeJob = job;
+    if (job.reference) input.value = job.reference;
+    await follow(job.reference || "", !!job.consent, () => streamLeg("/api/v1/demo/audit/continue", { job_id: job.job_id }, onEvent, controller.signal));
+  }
+
+  async function cancelAudit() {
+    const job = activeJob;
+    $("desk-cancel").disabled = true;
+    if (controller) controller.abort();
+    dropJob(); activeJob = null;
+    cancelledDesk();
+    if (job) {
+      try { await post("/api/v1/demo/audit/cancel", { job_id: job.job_id }); }
+      catch { $("desk-wait").textContent = "Cancelled here. The server could not be told; the audit stops after its current request anyway."; }
     }
   }
 
@@ -741,6 +898,7 @@
     liveCheck();
   });
   $("issue").addEventListener("click", issueCredential);
+  $("desk-cancel").addEventListener("click", cancelAudit);
   $("download").addEventListener("click", () => {
     if (!current) return;
     save(new Blob([current.report_json], { type: "application/json" }), `touchmark-${current.report_sha256.slice(0, 12)}.json`);
@@ -755,5 +913,7 @@
     requestAnimationFrame(() => scrollTo($("declare"), "center"));
   }
   const preset = new URLSearchParams(location.search).get("ref");
+  const unfinished = loadJob();
   if (preset) { input.value = preset; audit(preset); }
+  else if (unfinished && unfinished.job_id) resume(unfinished);
 })();
