@@ -21,7 +21,8 @@ async def public_surface_only(request, call_next):
                or path.startswith(("/ui/", "/media/", "/schemas/", "/mascot/"))
                or path in {"/api/v1/tmark/check", "/api/v1/tmark/template", "/api/v1/ops/allowance-check"}
                or path in {"/api/v1/demo/config", "/api/v1/demo/audit", "/api/v1/demo/credential", "/api/v1/demo/compare",
-                           "/api/v1/demo/credential/prepare"}
+                           "/api/v1/demo/credential/prepare", "/api/v1/demo/audit/continue",
+                           "/api/v1/demo/audit/cancel", "/api/v1/ops/job-check"}
                or path == '/api/v1/studio/orders' or path.startswith('/api/v1/studio/orders/')
                or path in {"/api/v1/studio/review", "/api/v1/studio/identify", "/api/v1/studio/import",
                            "/api/v1/studio/discover", "/api/v1/studio/runtime", "/api/v1/studio/capabilities", "/api/v1/studio/policy",

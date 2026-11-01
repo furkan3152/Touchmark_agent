@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -941,7 +941,14 @@ def _tmark_errors_detail(errors: list[dict]) -> dict:
 
 #: Seconds between heartbeat lines on a streamed audit: below every common proxy idle timeout.
 HEARTBEAT_SECONDS = 10.0
-DEMO_REQUEST_SECONDS = 285
+#: A request is answered by then whatever happens (vercel.json allows app.py 300 s). A job leg
+#: stops starting model calls at demo_leg_seconds, well before.
+DEMO_REQUEST_SECONDS = 290
+
+
+class DemoJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    job_id: str = Field(min_length=10, max_length=64)
 
 
 @app.post("/api/v1/demo/audit")
@@ -949,36 +956,129 @@ async def demo_audit(req: "DemoAuditRequestModel", request: Request):
     """Audit a GitHub repository, folder or agent reference: the deterministic analysers, plus
     the model review and verification when configured, consented to and within the allowance.
 
-    With ``Accept: application/x-ndjson`` the response is a stream of JSON lines: ``stage``
-    events (resolving, fetching, rules, deep_review, verifier, done), a ``heartbeat`` every
-    few seconds, then one ``result`` (the same object as the plain response) or ``error``."""
+    No clock ends the review; only a spend cap can (services/review_budget.py). Where the
+    deployment has a job store the audit is a job (services/audit_jobs.py): this request runs
+    the first leg, and an audit that needs more than one request ends its stream with a
+    ``continue`` event; POST /api/v1/demo/audit/continue runs the next leg.
+
+    With ``Accept: application/x-ndjson`` the response is a stream of JSON lines: a ``job``
+    event, ``stage`` events (resolving, fetching, rules, deep_review, verifier, done), a
+    ``heartbeat`` every few seconds, then one of ``result`` (the same object as the plain
+    response), ``continue``, ``busy``, ``cancelled`` or ``error``."""
     from .services import tmark as tmark_format
+    from .services.audit_jobs import StoreError, manager_from_settings
     from .services.demo_flow import run_demo_audit
     if req.tmark is not None:
         parsed, errors = tmark_format.check(req.tmark)
         if parsed is None:
             raise HTTPException(status_code=422, detail=_tmark_errors_detail(errors))
-    async def run() -> dict:
+
+    async def run(started: float, abandoned, announce) -> dict:
         ai, skipped, allowance = await _model_review_allowed(request, req.model_review_consent)
-        try:
-            # The audit parses and analyses source synchronously; in a thread with its own loop it
-            # cannot hold this loop, which must keep sending heartbeats and serving other requests.
-            out = await asyncio.wait_for(asyncio.to_thread(_in_own_loop, run_demo_audit, req.reference, settings, ai=ai,
-                                                           tmark_text=req.tmark, skipped=skipped),
-                                         timeout=DEMO_REQUEST_SECONDS)
+        manager = manager_from_settings(settings)
+        handle = None
+        if manager is not None:
+            try:
+                # The job takes the allowance slot claimed above, once: its later legs claim none.
+                handle = await manager.create({"reference": req.reference, "tmark": req.tmark, "ai": ai,
+                                               "consent": req.model_review_consent, "skipped": skipped,
+                                               "allowance": allowance})
+            except StoreError as exc:
+                logger.warning("audit job could not be created: %s", exc)
+                if ai:  # the allowance is spent; without a job a long review could not continue
+                    raise HTTPException(status_code=503, detail="The audit store is unavailable. "
+                                                                "Run it again in a minute.") from exc
+        if handle is None:
+            # No job store (serverless without Blob): rules only, which one request always holds.
+            try:
+                out = await asyncio.wait_for(asyncio.to_thread(_in_own_loop, run_demo_audit, req.reference, settings,
+                                                               ai=ai, tmark_text=req.tmark, skipped=skipped),
+                                             timeout=DEMO_REQUEST_SECONDS)
+            except asyncio.TimeoutError as exc:
+                raise HTTPException(status_code=504, detail="The audit did not finish within one request. "
+                                                            "Large repositories can be audited with scripts/audit_agent.py.") from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             if allowance is not None:
                 out["ai"]["allowance"] = allowance
-            return out
-        except asyncio.TimeoutError as exc:
-            raise HTTPException(status_code=504, detail="The audit did not finish within the demo time limit. "
-                                                        "Large repositories can be audited with scripts/audit_agent.py.") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return {"type": "result", "data": out}
+        return await _run_job_leg(handle, started, abandoned, announce)
 
-    if "application/x-ndjson" not in request.headers.get("accept", ""):
-        return await run()
-    return StreamingResponse(_stream(run), media_type="application/x-ndjson",
-                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+    return await _respond(run, request)
+
+
+@app.post("/api/v1/demo/audit/continue")
+async def demo_audit_continue(req: DemoJobRequest, request: Request):
+    """Run the next leg of an audit job. Idempotent: a finished job returns its result again; a
+    job another request is advancing answers ``busy`` with when to try again; two continues of
+    one job can never both run (create-only snapshots, services/audit_jobs.py)."""
+    from .services.audit_jobs import StoreError, describe, manager_from_settings
+
+    async def run(started: float, abandoned, announce) -> dict:
+        manager = manager_from_settings(settings)
+        if manager is None:
+            raise HTTPException(status_code=404, detail="This deployment keeps no audit jobs.")
+        try:
+            status, handle, info = await manager.claim(req.job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Not a job id.") from exc
+        except StoreError as exc:
+            raise HTTPException(status_code=503, detail="The audit store is unavailable. Try again in a minute.") from exc
+        if status == "completed":
+            return {"type": "result", "data": info["result"]}
+        if status == "busy":
+            return {"type": "busy", **describe(info), "retry_after": info.get("retry_after", 5)}
+        if status in ("missing", "expired"):
+            raise HTTPException(status_code=410, detail="This audit is no longer kept (audits expire after "
+                                                        f"{settings.demo_job_ttl_hours:g} hours). Run it again.")
+        if status == "cancelled":
+            return {"type": "cancelled", **describe(info)}
+        if status == "failed":
+            raise HTTPException(status_code=422, detail=info.get("error") or "This audit stopped. Run it again.")
+        return await _run_job_leg(handle, started, abandoned, announce)
+
+    return await _respond(run, request)
+
+
+@app.post("/api/v1/demo/audit/cancel")
+async def demo_audit_cancel(req: DemoJobRequest) -> dict:
+    """Cancel an audit job: a running leg stops before its next model call; nothing continues it."""
+    from .services.audit_jobs import StoreError, manager_from_settings
+    manager = manager_from_settings(settings)
+    if manager is None:
+        raise HTTPException(status_code=404, detail="This deployment keeps no audit jobs.")
+    try:
+        status = await manager.cancel(req.job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Not a job id.") from exc
+    except StoreError as exc:
+        raise HTTPException(status_code=503, detail="The audit store is unavailable. Try again.") from exc
+    return {"job_id": req.job_id, "status": status}
+
+
+async def _run_job_leg(handle, started: float, abandoned, announce) -> dict:
+    from .services.audit_jobs import describe, run_leg
+    announce({"type": "job", **describe(handle.state)})
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_in_own_loop, run_leg, handle, settings, started=started,
+                                                        abandoned=abandoned), timeout=DEMO_REQUEST_SECONDS)
+    except asyncio.TimeoutError:
+        abandoned.set()  # the leg saves and stops at its next model call; the page continues it
+        return {"type": "continue", **describe(handle.state), "reason": "request_limit", "retry_after": 10}
+
+
+async def _respond(run, request: Request):
+    """Stream the leg as NDJSON when asked; otherwise answer once (202 while a job is unfinished)."""
+    import threading
+    if "application/x-ndjson" in request.headers.get("accept", ""):
+        return StreamingResponse(_stream(run), media_type="application/x-ndjson",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+    event = await run(time.monotonic(), threading.Event(), lambda _event: None)
+    if event["type"] == "result":
+        return event["data"]
+    if event["type"] == "error":
+        raise HTTPException(status_code=event.get("status", 500), detail=event.get("detail", ""))
+    return JSONResponse(event, status_code=202)
 
 
 def _in_own_loop(fn, *args, **kwargs):
@@ -988,12 +1088,15 @@ def _in_own_loop(fn, *args, **kwargs):
 
 
 async def _stream(run):
-    """NDJSON lines for one audit: stage events as they happen, heartbeats while waiting."""
+    """NDJSON lines for one leg: stage events as they happen, heartbeats while waiting, then
+    the event that ends the leg. A client that goes away stops the leg at its next model call."""
     import json
+    import threading
     from .services import progress
     queue: asyncio.Queue = asyncio.Queue()
     started = time.monotonic()
     state = {"stage": "queued"}
+    abandoned = threading.Event()
 
     loop = asyncio.get_running_loop()
 
@@ -1013,12 +1116,12 @@ async def _stream(run):
 
     token = progress.listen(on_event)
     try:
-        task = asyncio.create_task(run())  # copies the context: the task reports to on_event
+        task = asyncio.create_task(run(started, abandoned, on_event))  # copies the context: reports to on_event
     finally:
         progress.stop(token)
     yield line({"type": "stage", "stage": "queued"})
     try:
-        # Wake on the next event, the end of the audit, or the heartbeat interval: whichever
+        # Wake on the next event, the end of the leg, or the heartbeat interval: whichever
         # comes first. Waiting on the queue alone held the result back by up to one interval.
         getter = None
         while True:
@@ -1036,7 +1139,7 @@ async def _stream(run):
             else:
                 yield line({"type": "heartbeat", "stage": state["stage"]})
         try:
-            yield line({"type": "result", "data": task.result()})
+            yield line(task.result())
         except HTTPException as exc:
             yield line({"type": "error", "status": exc.status_code, "detail": exc.detail})
         except Exception as exc:  # noqa: BLE001 - reported to the client, not hidden
@@ -1044,7 +1147,8 @@ async def _stream(run):
             yield line({"type": "error", "status": 500, "detail": "The audit stopped on an internal error. Try again."})
     finally:
         if not task.done():
-            task.cancel()  # the client went away
+            abandoned.set()  # the client went away: the leg saves its place and stops
+            task.cancel()
 
 
 _self_check_last = [0.0]
@@ -1075,6 +1179,29 @@ async def allowance_self_check(request: Request, authorization: str | None = Hea
         result["note"] = ("Vercel Blob refused the second create-only write as already existing."
                           if result["ok"] else "The Blob store did not behave as the limiter needs; see the fields.")
     return {**out, **result}
+
+
+@app.post("/api/v1/ops/job-check")
+async def job_self_check(request: Request, authorization: str | None = Header(default=None)) -> dict:
+    """Operator self-check of the audit-job machinery on the store this deployment uses: two
+    request legs of one job with a model client that costs nothing, a double continue (exactly
+    one may run), resume, an idempotent continue of the finished job, cancel and deletion.
+    Answers booleans and counts only. Open on preview deployments and to the operator key."""
+    from .services.audit_jobs import job_store_from_settings, self_check
+    keyed = bool(settings.admin_api_key) and secrets.compare_digest(
+        (authorization or "").partition(" ")[2].encode(), settings.admin_api_key.encode())
+    if not (os.environ.get("VERCEL_ENV") == "preview" or keyed):
+        raise HTTPException(status_code=404, detail="Not Found")
+    if time.monotonic() - _self_check_last[0] < 10:
+        raise HTTPException(status_code=429, detail="One self-check per 10 seconds.")
+    _self_check_last[0] = time.monotonic()
+    store = job_store_from_settings(settings)
+    from .services.rate_limit import store_kind
+    out = {"job_store": store_kind(settings), "environment": os.environ.get("VERCEL_ENV", ""),
+           "leg_seconds": settings.demo_leg_seconds}
+    if store is None:
+        return {**out, "ok": False, "note": "No job store is configured: audits run in one request, rules only."}
+    return {**out, **await asyncio.to_thread(_in_own_loop, self_check, store, settings)}
 
 
 class TmarkCheckRequest(BaseModel):

@@ -85,6 +85,8 @@ class Spend:
     #: Consecutive failed attempts at the call in progress (kept across legs).
     failures: int = 0
     last_call_tokens: int = 0
+    #: What the last call cost, in millionths of a dollar (the estimate for the next one).
+    last_call_micro_usd: int = 0
 
     def tokens(self) -> int:
         return sum(getattr(self, k) for k in TOKEN_FIELDS) + self.estimated_tokens
@@ -220,11 +222,14 @@ class Budget:
                 raise LegSuspended("leg_time")
         if self.stopped:
             return self.stopped
+        # A call is started only if one more like the last stays within the cap.
         estimate = self._estimate()
+        cost_estimate = (self.spend.last_call_micro_usd / 1_000_000 if self.spend.last_call_tokens
+                         else estimate * self.prices["input"] / 1_000_000)
         reason = ""
         if self.spend.tokens() + estimate > self.max_tokens:
             reason = "token_cap"
-        elif self.spend.cost(self.prices) + estimate * self.prices["input"] / 1_000_000 > self.max_cost:
+        elif self.spend.cost(self.prices) + cost_estimate > self.max_cost:
             reason = "cost_cap"
         elif self.daily is not None:
             reason = await self.daily.reserve(self.spend, self.spend.tokens() + estimate)
@@ -261,7 +266,9 @@ class Budget:
                 await self._sleep(min(2 ** self.spend.failures, 10))
                 continue
             self.spend.failures = 0
+            before = self.spend.cost(self.prices)
             self.spend.add(getattr(response, "usage", None) or {})
+            self.spend.last_call_micro_usd = int(round((self.spend.cost(self.prices) - before) * 1_000_000))
             return response
 
 
