@@ -2,102 +2,191 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Choose official Touchmark reviewers. Map, challenge and document your AI agent with a version-bound evidence dossier on Stellar.">
-<title>Touchmark — Trust, with evidence.</title>
-<link rel="icon" href="/ui/studio-mark.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/ui/studio.css"><link rel="stylesheet" href="/ui/mascot.css"><script src="/ui/mascot.js" defer></script><script src="/ui/studio.js" defer></script><script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script><script src="/ui/checkout.js" defer></script><script src="/ui/orders.js" defer></script>
+<meta name="description" content="The Touchmark Studio: bring private files, a project folder or a GitHub repository pinned to one commit, hold a .tmark to the code, choose official reviewers and keep a version-bound evidence dossier.">
+<title>Studio — Touchmark</title>
+<link rel="icon" href="/ui/brand/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/fonts/fonts.css">
+<link rel="stylesheet" href="/ui/press.css">
+<link rel="stylesheet" href="/ui/mascot.css">
+<link rel="stylesheet" href="/ui/studio.css">
+<script src="/ui/mascot.js" defer></script>
+<script src="/ui/tmark-builder.js" defer></script>
+<script src="/ui/studio.js" defer></script>
+<script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script>
+<script src="/ui/checkout.js" defer></script>
+<script src="/ui/orders.js" defer></script>
 </head>
-<body>
-<a class="skip" href="#workspace">Skip to audit</a>
-<header class="site-header">
-  <a class="brand" href="/"><img src="/ui/studio-mark.svg" alt="" width="32" height="32">Touchmark <span>on Stellar</span></a>
-  <nav aria-label="Main navigation"><a href="#coverage">The standard</a><a href="#plans">Pricing</a><a href="#verify">Verify a report</a><a href="/guide">Guide</a><a class="nav-cta" href="#workspace">Open workspace <span aria-hidden="true">↗</span></a></nav>
+<body class="studio">
+<svg width="0" height="0" class="defs" aria-hidden="true">
+  <!-- Rough ink edge for rubber stamps. -->
+  <filter id="ink"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter>
+  <symbol id="mark" viewBox="0 0 64 64">
+    <path d="M14 4h36a10 10 0 0 0 10 10v36a10 10 0 0 0-10 10H14A10 10 0 0 0 4 50V14A10 10 0 0 0 14 4Z" class="mark-plate"/>
+    <path d="M33.6 11.5c1.5 11.4 7.9 17.8 19.3 19.3-11.4 1.5-17.8 7.9-19.3 19.3-1.5-11.4-7.9-17.8-19.3-19.3 11.4-1.5 17.8-7.9 19.3-19.3Z" class="mark-star"/>
+    <path d="M32 13c1.5 11.4 7.9 17.8 19.3 19.3C39.9 33.8 33.5 40.2 32 51.6 30.5 40.2 24.1 33.8 12.7 32.3 24.1 30.8 30.5 24.4 32 13Z" class="mark-line"/>
+  </symbol>
+</svg>
+<a class="skip" href="#workspace">Skip to the workbench</a>
+
+<header class="bar">
+  <a class="brand" href="/" aria-label="Touchmark home"><svg class="logo" width="34" height="34"><use href="#mark"/></svg><span class="word">touchmark</span><span class="where">on Stellar</span></a>
+  <nav aria-label="Main"><a href="/#how" class="nav-wide">How it works</a><a href="/#video" class="nav-wide">Video</a><a href="/guide">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a><a href="/studio" aria-current="page">Studio</a></nav>
 </header>
-<main>
-  <section class="hero" aria-labelledby="hero-title">
-    <div class="hero-copy"><p class="eyebrow"><span class="status-dot"></span> AGENT ASSURANCE, BUILT ON STELLAR</p>
-      <h1 id="hero-title">Autonomy.<br>With accountability.</h1>
-      <p class="hero-deck">Before your agent gets the keys,<br>get the whole picture.</p>
-      <p class="hero-detail">Inspect its instructions, code and authority. Find the gaps. Keep the evidence. A clearer standard for agents that act in the real world.</p>
-      <div class="hero-actions"><a class="primary" href="#workspace">Build your audit <span aria-hidden="true">↗</span></a><a class="text-link" href="#coverage">Explore the standard <span aria-hidden="true">↓</span></a></div>
-      <p class="micro">Official reviewers · Isolated execution by consent · Evidence you keep</p>
+
+<main class="s-main">
+  <section class="s-hero" aria-labelledby="hero-title">
+    <div class="s-hero-copy">
+      <p class="eyebrow"><span>The Studio</span><span>Desk 2 · the back room</span></p>
+      <h1 id="hero-title">Bring the whole agent. <em>Keep the dossier.</em></h1>
+      <p class="lede">The quick test on the home page reads one public repository at the counter. The Studio is the bench behind it: private files that stay in memory, a GitHub repository pinned to one commit, a <code>.tmark</code> held to the code, reviewers you choose, and an evidence dossier you download and keep.</p>
+      <div class="s-cta"><a class="s-btn" href="#workspace">Open the workbench <span aria-hidden="true">↓</span></a><a class="s-btn ghost" href="/">Quick test instead</a></div>
+      <p class="s-micro">No wallet. No payment. Nothing runs unless you consent to it.</p>
     </div>
-    <div class="evidence-art" aria-label="Illustration of a version-bound audit record">
-      <div class="orbit-label">THE EVIDENCE RECORD <span>01 / 03</span></div>
-      <div class="paper paper-back"><span>02 — AUTHORITY</span></div>
-      <div class="paper paper-mid"><span>03 — PROVENANCE</span></div>
-      <div class="paper paper-front"><div class="paper-header"><img src="/ui/studio-mark.svg" width="30" height="30" alt=""><span>Touchmark<br><small>AUDIT RECORD</small></span><span class="paper-arrow">↗</span></div>
-        <div class="paper-title">Treasury agent.<br>Every permission<br>has a consequence.</div>
-        <div class="paper-rule"></div><div class="paper-stats"><div><strong>24</strong><span>control areas</span></div><div><strong>7</strong><span>review dimensions</span></div></div>
-        <div class="paper-lines"><span>Source & instructions</span><b>Inspect</b><span>Authority & access</span><b>Challenge</b><span>Evidence & limitations</span><b>Record</b></div>
-        <div class="paper-foot"><span class="record-mark">V</span><span>Bound to a version.<br>Open to verification.</span><span class="paper-code">AV / 001</span></div>
-      </div><p class="illustration-note">Illustrative record · not an issued credential</p>
-    </div>
+    <figure class="s-hero-art" aria-hidden="true">
+      <p class="s-bubble"><b>Punch, back room.</b> Hand me files, a repository or a <code>.tmark</code>. I read every line before I stamp anything.</p>
+      <span class="s-hero-punch" data-tm-mascot="pointing" data-tm-facing="left" data-tm-decorative></span>
+      <div class="s-sheets"><span class="s-sheet s-sheet-3"></span><span class="s-sheet s-sheet-2"></span><span class="s-sheet s-sheet-1"><b>DOSSIER</b><i></i><i></i><i></i><em>Nº 02</em></span></div>
+      <figcaption>Punch · assay office, desk 2</figcaption>
+    </figure>
   </section>
-  <div class="principle-strip"><span>Trust is a process.</span><span>Inspect the source</span><span>Challenge the authority</span><span>Verify the evidence</span></div>
-  <section class="workspace-heading" id="workspace"><div><p class="eyebrow">01 / THE WORKSPACE</p><h2>Meet your agent.<br>Including its blind spots.</h2></div><p>One project. A review built around it.<br>Choose your scope, test depth and evidence.</p></section>
+
+  <section class="s-adds" aria-labelledby="adds-title">
+    <h2 class="g-vh" id="adds-title">What the Studio adds to the quick test</h2>
+    <article class="s-card" data-reveal><span class="num">i.</span><h3>Private code, kept private</h3><p>Upload files or a project folder. An immediate review stays in this server's memory and in your tab.</p></article>
+    <article class="s-card" data-reveal><span class="num">ii.</span><h3>GitHub, pinned to a commit</h3><p>Import a public repository at one immutable commit. Entry points are discovered; nothing is executed.</p></article>
+    <article class="s-card" data-reveal><span class="num">iii.</span><h3>A <code>.tmark</code>, held to the code</h3><p>Declare what the agent may do. Every claim is checked against the source that signs and pays.</p></article>
+    <article class="s-card" data-reveal><span class="num">iv.</span><h3>A dossier you keep</h3><p>Choose reviewers and depth, then download the designed report, the evidence JSON and a capsule.</p></article>
+  </section>
+
+  <nav class="s-index" aria-label="Studio sections">
+    <a href="#workspace"><b>01</b>Workbench</a><a href="#coverage"><b>02</b>The standard</a><a href="#stellar"><b>03</b>Stellar</a><a href="#verify"><b>04</b>Verify</a><a href="#policy-lab"><b>05</b>Authority lab</a><a href="#plans"><b>06</b>Pricing</a><a href="#method"><b>07</b>Questions</a>
+  </nav>
+
+  <section class="s-section-head" id="workspace" aria-labelledby="workspace-title">
+    <span class="s-num">01</span>
+    <div><h2 id="workspace-title">The workbench</h2><p>File the agent on the ticket: source, a <code>.tmark</code>, its intended behaviour and the reviewers you want. The dossier fills in as Punch reads.</p></div>
+  </section>
+
+  <div id="handoff" class="s-handoff" hidden>
+    <span class="s-handoff-punch" id="handoff-punch" data-tm-mascot="pointing" data-tm-size="64" data-tm-decorative></span>
+    <div class="s-handoff-body">
+      <p class="s-handoff-kicker">Carried over from the quick test</p>
+      <p class="s-handoff-ref"><code id="handoff-ref"></code><span id="handoff-verdict" class="s-chip" hidden></span></p>
+      <p id="handoff-note" class="s-fine"></p>
+    </div>
+    <div class="s-handoff-actions"><button type="button" id="handoff-go" class="s-btn small">Import it <span aria-hidden="true">→</span></button><button type="button" id="handoff-close" class="s-link" aria-label="Dismiss the carried-over reference">Dismiss</button></div>
+  </div>
+
   <section class="workspace" id="audit-form" aria-label="Agent audit">
     <div class="submission">
-      <form id="review-form">
-        <div class="section-heading"><h2>Agent intake</h2><label class="network-label" for="stellar-network"><span class="sr-only">Stellar network</span><select id="stellar-network"><option value="testnet">Stellar Testnet</option><option value="mainnet">Stellar Mainnet · read only</option></select></label></div>
-        <div class="source-tabs" role="tablist" aria-label="Add agent using">
-          <button type="button" id="tab-address" data-source-mode="address" role="tab" aria-selected="true" aria-controls="source-address">Stellar address</button>
-          <button type="button" id="tab-github" data-source-mode="github" role="tab" aria-selected="false" aria-controls="source-github" tabindex="-1">GitHub</button>
-          <button type="button" id="tab-files" data-source-mode="files" role="tab" aria-selected="false" aria-controls="source-upload" tabindex="-1">Upload files</button>
+      <form id="review-form" class="s-ticket">
+        <div class="s-ticket-head">
+          <span class="s-ticket-no">Nº 02 · Agent to file</span>
+          <label class="network-label" for="stellar-network"><span class="g-vh">Stellar network</span><select id="stellar-network"><option value="testnet">Stellar Testnet</option><option value="mainnet">Stellar Mainnet · read only</option></select></label>
         </div>
-        <div id="source-address" class="source-panel" role="tabpanel" aria-labelledby="tab-address">
-          <label for="stellar-address">Agent's public account or contract</label>
-          <div class="input-action"><input id="stellar-address" placeholder="G… or C…" maxlength="56" spellcheck="false" autocomplete="off"><button id="identify-address" type="button">Check address</button></div>
-          <p class="help">No universal agent key is required. Use a public Stellar address, never an S… secret key.</p>
-          <p id="address-status" class="address-status" role="status">An address locates an account. Add source files for a code audit.</p>
-        </div>
-        <div id="source-github" class="source-panel" role="tabpanel" aria-labelledby="tab-github" hidden>
-          <label for="github-repository">Public GitHub repository</label>
-          <div class="input-action"><input id="github-repository" type="text" inputmode="url" placeholder="https://github.com/owner/agent"><button id="import-github" type="button">Import</button></div>
-          <p class="help">Discovers source, dependencies and possible entry points at a fixed commit. No special filename needed. Import does not execute code.</p>
-          <button type="button" id="download-template" class="text-button">Download the bundle template</button>
-          <p id="import-status" role="status" class="help"></p>
-        </div>
-        <div id="source-upload" class="source-panel" role="tabpanel" aria-labelledby="tab-files" hidden>
-          <label for="source-files" class="upload-label">Choose your agent files</label>
-          <input id="source-files" type="file" multiple accept=".tmcapsule,.veritas,.tmark,.py,.js,.ts,.rs,.go,.json,.md,.txt,.toml,.yaml,.yml">
-          <label for="source-folder" class="text-button">Or choose a project folder</label><input id="source-folder" type="file" webkitdirectory multiple><p id="folder-status" class="help"></p>
-          <p class="help">Drop in a .tmcapsule capsule (or an older .veritas one), an agent-audit.json bundle, or source files. Up to 12 files, 32 KB per file and 64 KB total source.</p>
-        </div>
-        <div id="file-list" class="file-list" aria-live="polite"></div>
-        <button type="button" id="discover-project" class="text-button">Map this project with a Blueprint</button><p class="help">Include a root veritas.json to locate your entry point, instructions, tools and policies precisely. Discovery can create a draft for supported projects.</p><div id="discovery-results" class="discovery-card" hidden></div>
-        <div class="examples"><span>Just exploring?</span><button type="button" data-example="reader">Try a read-only agent</button><button type="button" data-example="payment">Try an unsafe agent</button></div>
-        <div class="section-heading second-step"><h2>Intended behavior</h2><span>Be specific</span></div>
-        <label for="agent-name">Agent name</label><input id="agent-name" required maxlength="100" placeholder="e.g. Treasury assistant" autocomplete="off">
-        <label for="agent-purpose">What is it allowed to do?</label><textarea id="agent-purpose" required minlength="12" maxlength="2000" rows="2" placeholder="Send approved payments, read balances, research markets…"></textarea>
-        <fieldset class="capabilities"><legend>Declared capabilities <span>Choose what it can actually do</span></legend>
-          <label><input type="checkbox" data-scope="read:chain"> Read Stellar data</label>
-          <label><input type="checkbox" data-scope="read:web"> Browse the web</label>
-          <label><input type="checkbox" data-scope="sign:tx"> Sign or move funds</label>
-          <label><input type="checkbox" data-scope="exec:host"> Run code or commands</label>
+
+        <fieldset class="s-stub" id="stub-source">
+          <legend class="s-stub-title"><span class="s-stub-no">A</span>Source</legend>
+          <div class="source-tabs" role="tablist" aria-label="Add the agent using">
+            <button type="button" id="tab-github" data-source-mode="github" role="tab" aria-selected="true" aria-controls="source-github">GitHub</button>
+            <button type="button" id="tab-files" data-source-mode="files" role="tab" aria-selected="false" aria-controls="source-upload" tabindex="-1">Upload</button>
+            <button type="button" id="tab-paste" data-source-mode="paste" role="tab" aria-selected="false" aria-controls="source-paste" tabindex="-1">Paste</button>
+            <button type="button" id="tab-address" data-source-mode="address" role="tab" aria-selected="false" aria-controls="source-address" tabindex="-1">Address</button>
+          </div>
+          <div id="source-github" class="source-panel" role="tabpanel" aria-labelledby="tab-github">
+            <label for="github-repository">Public GitHub repository</label>
+            <div class="input-action"><input id="github-repository" type="text" inputmode="url" placeholder="https://github.com/owner/agent" spellcheck="false" autocomplete="off"><button id="import-github" type="button" class="s-btn small">Import <span aria-hidden="true">→</span></button></div>
+            <p class="help">Pinned to one commit. Source, dependencies and possible entry points are discovered; no special filename is needed and nothing is executed.</p>
+            <p id="import-status" role="status" class="help s-status"></p>
+            <button type="button" id="download-template" class="text-button">Download the bundle template</button>
+          </div>
+          <div id="source-upload" class="source-panel" role="tabpanel" aria-labelledby="tab-files" hidden>
+            <div class="s-drop" id="drop-zone">
+              <span class="s-drop-art" aria-hidden="true"></span>
+              <p class="s-drop-title" id="drop-title">Drop the agent's files here</p>
+              <p class="s-drop-text">Source files, a <code>.tmark</code>, an <code>agent-audit.json</code> bundle or a <code>.tmcapsule</code></p>
+              <div class="s-drop-actions">
+                <label for="source-files" class="upload-label s-btn small">Choose files</label>
+                <input id="source-files" class="s-file" type="file" multiple accept=".tmcapsule,.veritas,.tmark,.py,.js,.ts,.rs,.go,.json,.md,.txt,.toml,.yaml,.yml">
+                <label for="source-folder" class="s-btn small ghost">Choose a project folder</label><input id="source-folder" class="s-file" type="file" webkitdirectory multiple>
+              </div>
+            </div>
+            <p id="folder-status" class="help s-status" role="status"></p>
+            <p class="help">Up to 12 files, 32 KB per file and 64 KB of source in all. An older <code>.veritas</code> capsule still loads.</p>
+          </div>
+          <div id="source-paste" class="source-panel" role="tabpanel" aria-labelledby="tab-paste" hidden>
+            <label for="paste-name">File name</label>
+            <input id="paste-name" maxlength="160" placeholder="agent.py" spellcheck="false" autocomplete="off">
+            <label for="paste-source">Source</label>
+            <textarea id="paste-source" class="code-input" rows="7" maxlength="32000" spellcheck="false" wrap="off" placeholder="Paste one source file: the code that reads requests, calls tools or signs."></textarea>
+            <div class="s-row"><button type="button" id="paste-add" class="s-btn small">Add to the bench <span aria-hidden="true">→</span></button><span id="paste-status" class="help" role="status"></span></div>
+          </div>
+          <div id="source-address" class="source-panel" role="tabpanel" aria-labelledby="tab-address" hidden>
+            <label for="stellar-address">Agent's public account or contract</label>
+            <div class="input-action"><input id="stellar-address" placeholder="G… or C…" maxlength="56" spellcheck="false" autocomplete="off"><button id="identify-address" type="button" class="s-btn small">Check address</button></div>
+            <p class="help">A public Stellar address, never an S… secret key. No universal agent key is required.</p>
+            <p id="address-status" class="address-status s-status" role="status">An address locates an account. Add source files for a code audit.</p>
+          </div>
+
+          <div class="s-manifest">
+            <div class="s-manifest-head"><span class="s-manifest-punch" id="bench-punch" data-tm-mascot="idle" data-tm-size="44" data-tm-decorative></span><h3>On the bench</h3><span class="s-fine" id="bench-count">empty</span></div>
+            <div id="file-list" class="file-list" aria-live="polite"></div>
+          </div>
+          <div class="s-row s-discover"><button type="button" id="discover-project" class="text-button">Map this project with a Blueprint</button></div>
+          <p class="help">A root <code>veritas.json</code> locates the entry point, instructions, tools and policies precisely. Discovery can draft one for supported projects.</p>
+          <div id="discovery-results" class="discovery-card" hidden></div>
+          <div class="examples"><span>Just exploring?</span><button type="button" data-example="reader">A read-only agent</button><button type="button" data-example="payment">An unsafe agent</button></div>
         </fieldset>
-        <details class="permissions"><summary>Advanced inputs <span id="tool-count">0 tools declared</span></summary>
-          <label for="agent-prompt">System instructions</label><textarea id="agent-prompt" maxlength="12000" rows="3" placeholder="Paste the instructions your agent actually receives."></textarea>
-          <label for="tool-manifest">Tool manifest JSON</label><textarea id="tool-manifest" class="code-input" rows="4" spellcheck="false">[]</textarea>
-          <p class="help">Imported manifests keep their tool names and configuration. A declared permission is not proof that a limit is enforced.</p>
-        </details>
-        <details class="permissions"><summary>Architecture & trust boundaries <span>Optional</span></summary>
-          <label for="architecture-manifest">Architecture manifest JSON</label><textarea id="architecture-manifest" class="code-input" rows="6" spellcheck="false">{}</textarea>
-          <p class="help">Describe mcp_servers, delegates, memory_stores, allowed_domains and controls. Declarations are checked separately from source evidence.</p>
-        </details>
-        <section class="audit-builder" aria-labelledby="audit-builder-title">
-          <div class="section-heading second-step"><h2 id="audit-builder-title">Design your audit</h2><span class="official-badge">TOUCHMARK OFFICIAL</span></div>
-          <p class="builder-intro">One accountable operator. Specialist reviewers for the parts that matter to you.</p>
+
+        <fieldset class="s-stub" id="stub-tmark">
+          <legend class="s-stub-title"><span class="s-stub-no">B</span>Declaration <code>.tmark</code><span class="s-tag">optional</span><span class="s-chip" id="tmark-state" data-state="none">none</span></legend>
+          <p class="help">A <code>.tmark</code> says what the agent may do. The review holds the code to each claim, so a broken promise becomes a precise finding. <a href="/guide/tmark">What goes in one</a></p>
+          <div class="s-editor">
+            <div class="s-editor-bar"><span class="s-file-tag">.tmark</span><span id="tmark-live" class="s-fine" aria-live="polite">Paste it, upload it, or drop it with the source.</span></div>
+            <textarea id="studio-tmark" rows="7" maxlength="64000" spellcheck="false" wrap="off" autocapitalize="off" autocomplete="off" aria-label=".tmark declaration" aria-describedby="tmark-live" placeholder='{ "tmark": "1.1", "agent": { … }, "authority": { … } }'></textarea>
+          </div>
+          <ul id="tmark-notes" class="s-notes" aria-label=".tmark problems"></ul>
+          <div class="s-row">
+            <label class="s-btn small ghost" for="tmark-upload">Upload a .tmark</label><input id="tmark-upload" class="s-file" type="file" accept=".tmark,application/json">
+            <a class="s-btn small ghost" href="/guide/tmark#builder">Open the builder <span aria-hidden="true">↗</span></a>
+            <button type="button" id="tmark-clear" class="s-link">Clear</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="s-stub" id="stub-intent">
+          <legend class="s-stub-title"><span class="s-stub-no">C</span>Intended behaviour<span class="s-tag">be specific</span></legend>
+          <label for="agent-name">Agent name</label><input id="agent-name" required maxlength="100" placeholder="e.g. Treasury assistant" autocomplete="off">
+          <label for="agent-purpose">What is it allowed to do?</label><textarea id="agent-purpose" required minlength="12" maxlength="2000" rows="2" placeholder="Send approved payments, read balances, research markets…"></textarea>
+          <fieldset class="capabilities"><legend>Declared capabilities <span>what it can actually do</span></legend>
+            <label><input type="checkbox" data-scope="read:chain"><span>Read Stellar data</span></label>
+            <label><input type="checkbox" data-scope="read:web"><span>Browse the web</span></label>
+            <label><input type="checkbox" data-scope="sign:tx"><span>Sign or move funds</span></label>
+            <label><input type="checkbox" data-scope="exec:host"><span>Run code or commands</span></label>
+          </fieldset>
+          <details class="permissions"><summary>Advanced inputs <span id="tool-count">0 tools declared</span></summary>
+            <label for="agent-prompt">System instructions</label><textarea id="agent-prompt" maxlength="12000" rows="3" placeholder="Paste the instructions your agent actually receives."></textarea>
+            <label for="tool-manifest">Tool manifest JSON</label><textarea id="tool-manifest" class="code-input" rows="4" spellcheck="false">[]</textarea>
+            <p class="help">Imported manifests keep their tool names and configuration. A declared permission is not proof that a limit is enforced.</p>
+          </details>
+          <details class="permissions"><summary>Architecture &amp; trust boundaries <span>optional</span></summary>
+            <label for="architecture-manifest">Architecture manifest JSON</label><textarea id="architecture-manifest" class="code-input" rows="6" spellcheck="false">{}</textarea>
+            <p class="help">Describe mcp_servers, delegates, memory_stores, allowed_domains and controls. Declarations are checked separately from source evidence.</p>
+          </details>
+        </fieldset>
+
+        <fieldset class="s-stub audit-builder" aria-labelledby="audit-builder-title">
+          <legend class="s-stub-title" id="audit-builder-title"><span class="s-stub-no">D</span>Design your audit<span class="official-badge">Touchmark official</span></legend>
+          <p class="help">One accountable operator. Specialist reviewers for the parts that matter to you.</p>
           <fieldset class="tier-picker"><legend>Choose the depth</legend><div id="audit-tiers" class="tier-options"><p class="help">Loading available review plans…</p></div></fieldset>
           <fieldset class="module-picker"><legend>Choose your reviewers <span id="module-count"></span></legend><div id="audit-modules" class="module-options"></div></fieldset>
           <p class="help operator-note">All official reviewers are operated by Touchmark. Baseline source checks always run; your selection shapes the investigation. Independent operators will join later.</p>
           <details class="permissions capsule-details"><summary>Your Touchmark capsule <span>.tmcapsule</span></summary>
             <p class="help">A portable audit contract: source, intended behavior, authority boundaries and scenario expectations travel together. Fingerprints tie the plan to the exact evidence.</p>
             <div id="capsule-state" class="capsule-state">No capsule loaded. You can create one from your project.</div>
-            <button type="button" id="export-capsule" class="text-button">Create & download capsule ↗</button><button type="button" id="edit-capsule-draft" class="text-button" hidden>Edit as a new draft</button>
+            <div class="s-row"><button type="button" id="export-capsule" class="text-button">Create &amp; download capsule ↗</button><button type="button" id="edit-capsule-draft" class="text-button" hidden>Edit as a new draft</button></div>
             <p class="help">The capsule contains your source. Keep it private unless you intend to share it.</p>
           </details>
-          <details class="permissions" id="execution-options"><summary>Execution settings <span>Explicit consent</span></summary>
+          <details class="permissions" id="execution-options"><summary>Execution settings <span>explicit consent</span></summary>
             <label for="audit-entrypoint">Python entry point</label><input id="audit-entrypoint" placeholder="main.py:run" spellcheck="false" autocomplete="off">
             <p class="help">Use the detected entry point or the one declared in veritas.json. Imports and execution occur only inside an isolated microVM.</p>
             <label for="audit-runtime-key">Runtime pilot access key</label><input id="audit-runtime-key" type="password" autocomplete="off" placeholder="Provided by your workspace operator">
@@ -106,118 +195,200 @@
           <button type="button" id="preview-audit-plan" class="secondary plan-preview">Preview my audit plan <span aria-hidden="true">↗</span></button>
           <div id="audit-plan" class="audit-plan" role="status" hidden></div>
           <p id="catalog-status" class="help" role="status"></p>
-        </section>
-        <label class="ai-optin"><input type="checkbox" id="ai-consent" disabled><span>Add an AI second opinion <small id="ai-availability">Checking availability…</small></span></label>
-        <div id="ai-access-settings" hidden><label for="ai-access-key">AI review pilot access key</label><input id="ai-access-key" type="password" autocomplete="off" placeholder="Provided by your workspace operator"><p class="help">This authorizes the bounded AI request. Your model provider credentials are never requested in this workspace.</p></div>
+        </fieldset>
+
+        <div class="s-consent">
+          <label class="ai-optin"><input type="checkbox" id="ai-consent" disabled><span>Add an AI second opinion <small id="ai-availability">Checking availability…</small></span></label>
+          <div id="ai-access-settings" hidden><label for="ai-access-key">AI review pilot access key</label><input id="ai-access-key" type="password" autocomplete="off" placeholder="Provided by your workspace operator"><p class="help">This authorizes the bounded AI request. Your model provider credentials are never requested in this workspace.</p></div>
+        </div>
         <p class="privacy-note">An immediate source review stays in memory. Official orders store the submitted source with your explicit consent. Optional AI review sends redacted source to the named provider only with your consent. Never upload credentials.</p>
         <p id="form-error" class="error" role="alert" hidden></p>
-        <button id="run-review" class="primary" type="submit">Run Preview review</button>
-        <p id="run-status" class="help" role="status">No wallet connection. No payment. No transaction.</p>
+        <button id="run-review" class="primary s-run" type="submit">Run Preview review</button>
+        <p id="run-status" class="help s-run-status" role="status">No wallet connection. No payment. No transaction.</p>
       </form>
-      <details class="checkout-panel" id="checkout-panel"><summary><span>Order an official Testnet review</span><span class="official-badge">PILOT</span></summary>
+
+      <details class="checkout-panel" id="checkout-panel"><summary><span>Order an official Testnet review</span><span class="official-badge">Pilot</span></summary>
         <p class="help">Create your private order, then fund its scoped review with test XLM. Your wallet signs each payment step. Available automation runs the review and completes report delivery after funding is verified.</p>
         <div class="checkout-connect"><button type="button" id="checkout-connect" class="secondary">Connect Freighter ↗</button><a href="https://www.freighter.app/" target="_blank" rel="noopener noreferrer">Get the wallet</a></div>
         <label for="checkout-requester">Requester’s public Testnet account</label><input id="checkout-requester" maxlength="56" placeholder="G…" spellcheck="false" autocomplete="off">
         <label for="checkout-key">Checkout pilot access key</label><input id="checkout-key" type="password" autocomplete="off" placeholder="Provided by your workspace operator">
-        <button type="button" id="checkout-quote" class="secondary">Get a Testnet quote</button><button type="button" id="checkout-refresh" class="text-button" hidden>Refresh ledger state</button>
+        <div class="s-row"><button type="button" id="checkout-quote" class="secondary">Get a Testnet quote</button><button type="button" id="checkout-refresh" class="text-button" hidden>Refresh ledger state</button></div>
         <p id="checkout-status" class="help" role="status">Preview your audit plan above, then request a quote.</p>
         <div id="checkout-quote-result" hidden></div>
         <section class="order-intake" aria-labelledby="order-intake-title"><h4 id="order-intake-title">One order. The whole review.</h4>
           <p id="order-availability" class="help" role="status">Checking official order availability…</p>
           <label class="ai-optin order-consent"><input id="order-consent" type="checkbox"><span>I authorize this scoped official review.<small>Retain my submitted source for the official review, store the report privately, settle its funded Testnet escrow automatically, and publish its report hash and token record on Stellar Testnet. Selected runtime and AI consent still apply.</small></span></label>
           <button type="button" id="order-create" class="secondary" disabled>Prepare private order ↗</button>
-          <div id="order-challenge" hidden><label for="order-challenge-message">Wallet ownership message</label><textarea id="order-challenge-message" readonly rows="5" class="code-input" spellcheck="false"></textarea><p class="help">This message binds your wallet to this exact review scope and consent. It does not transfer funds or sign a transaction.</p><button id="order-sign-create" type="button" class="secondary">Sign ownership & create order ↗</button></div>
+          <div id="order-challenge" hidden><label for="order-challenge-message">Wallet ownership message</label><textarea id="order-challenge-message" readonly rows="5" class="code-input" spellcheck="false"></textarea><p class="help">This message binds your wallet to this exact review scope and consent. It does not transfer funds or sign a transaction.</p><button id="order-sign-create" type="button" class="secondary">Sign ownership &amp; create order ↗</button></div>
           <p id="order-intake-status" class="help" role="status">Get a quote first. Keep the private order receipt to resume later.</p>
         </section>
         <details class="order-resume"><summary>Resume an existing order</summary>
           <label for="order-resume-id">Order ID</label><input id="order-resume-id" maxlength="64" spellcheck="false" autocomplete="off" placeholder="64-character order ID">
           <label for="order-resume-token">Private order access token</label><input id="order-resume-token" type="password" maxlength="64" autocomplete="off" placeholder="From your private receipt">
-          <button type="button" id="order-resume" class="secondary">Open order ↗</button><label class="text-button" for="order-receipt-file">Or import your private receipt</label><input id="order-receipt-file" type="file" accept=".json" class="sr-only">
+          <div class="s-row"><button type="button" id="order-resume" class="secondary">Open order ↗</button><label class="text-button" for="order-receipt-file">Or import your private receipt</label><input id="order-receipt-file" type="file" accept=".json" class="sr-only"></div>
           <p class="help">Use the pilot key above and your private receipt. Source, access tokens and pilot keys are never saved in browser storage.</p><button type="button" id="order-recover" class="text-button" disabled>Lost the receipt? Recover access with your wallet</button><p class="help">Load the same project and audit selection, get its quote, then prove requester ownership. Recovery rotates the private token; the previous receipt stops working.</p>
         </details>
         <div id="checkout-transaction" hidden><p id="checkout-transaction-detail" class="help"></p><label for="checkout-xdr">Prepared transaction XDR</label><textarea id="checkout-xdr" readonly rows="3" class="code-input" spellcheck="false"></textarea>
-          <div class="result-actions"><button type="button" id="checkout-download">Download unsigned XDR</button><button type="button" id="checkout-sign">Review & sign in Freighter</button><button type="button" id="checkout-submit" hidden>Submit signed transaction</button></div>
+          <div class="result-actions"><button type="button" id="checkout-download">Download unsigned XDR</button><button type="button" id="checkout-sign">Review &amp; sign in Freighter</button><button type="button" id="checkout-submit" hidden>Submit signed transaction</button></div>
           <p class="help">Signing stays in your wallet. Submit is a separate action. A submitted hash is not proof of funding; the next step is read from the ledger.</p>
         </div>
       </details>
     </div>
-    <section class="dossier" aria-labelledby="dossier-title" aria-live="polite">
-      <div class="section-heading"><h2 id="dossier-title">Evidence dossier</h2><span id="dossier-state">Ready when you are</span></div>
-      <section id="official-order" class="official-order" hidden aria-labelledby="order-title">
-        <div class="order-header"><span class="eyebrow">YOUR OFFICIAL REVIEW</span><span id="order-state" class="order-state">Awaiting payment</span></div>
-        <h3 id="order-title">A clear path to your report.</h3><p id="order-description"></p>
-        <ol id="order-progress" class="order-progress" aria-label="Official review progress"></ol>
-        <div id="order-issue" class="order-issue" hidden></div>
-        <div class="result-actions"><button id="order-refresh" type="button">Refresh status</button><button id="order-activate" type="button" hidden>Check funding & continue</button><button id="order-refund" type="button" hidden>Check refund eligibility</button><button id="order-retry" type="button" hidden>Retry official processing</button><button id="order-open-report" type="button" hidden>Open report ↗</button><button id="order-receipt" type="button">Save private receipt</button></div>
-        <p id="order-status-note" class="help" role="status"></p>
-        <details class="order-identity"><summary>Order identity & privacy</summary><code id="order-id"></code><code id="order-source-hash"></code><code id="order-plan-hash"></code><p class="help">The receipt grants access to this private order. Store it securely. No wallet private key is included. Sharing an order ID alone does not grant access.</p></details>
-      </section>
-      <div id="empty-report" class="empty-report">
-        <span class="studio-punch" id="studio-punch" data-tm-mascot="idle" data-tm-size="112" data-tm-decorative></span><h3 id="empty-title">Trust needs a paper trail.</h3>
-        <p>Add an agent to see concrete findings, what is missing, and what to check next.</p>
-        <ol class="review-steps"><li><strong>Find risky permissions</strong><span>Signing, spending, code execution and data access.</span></li><li><strong>Understand the evidence</strong><span>Source locations and actionable checks, not just a score.</span></li><li><strong>Keep your report</strong><span>Download an integrity-checked report. Stellar publication is a separate step.</span></li></ol>
-        <div class="boundary-note"><strong>Address ≠ audit</strong><p>A wallet balance cannot tell us how an agent behaves. Source and runtime evidence answer different questions.</p></div>
-      </div>
-      <div id="review-result" hidden>
-        <div class="result-banner"><span id="result-decision"></span><h3 id="result-name"></h3><p id="result-summary"></p><p id="result-subject"></p></div>
-        <dl class="evidence-counts"><div><dt>Observations</dt><dd id="finding-count">0</dd></div><div><dt>Priority source findings</dt><dd id="priority-count">0</dd></div><div><dt>Dimensions</dt><dd id="dimension-count">0</dd></div></dl>
-        <div class="result-actions"><button type="button" id="download-designed-report">Download designed report ↗</button><button type="button" id="download-report">Evidence JSON</button><button type="button" id="download-bundle">Agent bundle</button></div>
-        <p id="download-note" class="help">Download your report before leaving this tab.</p>
-        <div class="result-tabs" role="group" aria-label="Report view"><button type="button" data-result-view="findings" aria-pressed="true">Findings</button><button type="button" data-result-view="coverage" aria-pressed="false">Coverage</button><button type="button" data-result-view="ai" aria-pressed="false">AI review</button><button type="button" data-result-view="runtime" aria-pressed="false">Runtime</button><button type="button" data-result-view="delivery" aria-pressed="false">Credential</button></div>
-        <div id="view-delivery" hidden>
-          <div class="credential-card" id="credential-card"><div class="credential-top"><span>TOUCHMARK</span><span>REPORT RECORD</span></div><div class="credential-symbol" aria-hidden="true">T</div><p class="credential-subtitle">VERSION-BOUND EVIDENCE</p><h3 id="credential-name">Your agent</h3><p id="credential-status">Local evidence record · not issued onchain</p><div class="credential-bottom"><span id="credential-short-hash">SHA-256 / —</span><span>STELLAR ↗</span></div></div>
-          <p class="help" id="delivery-note">Your evidence card is ready to download. Onchain issuance is shown only after a matching ledger receipt is verified.</p>
-          <div class="result-actions"><button type="button" id="download-evidence-card">Download SVG card</button><button type="button" id="prepare-delivery">Prepare evidence package</button></div>
-          <div id="delivery-results" class="delivery-results" role="status"></div>
-          <details class="permissions"><summary>Already issued on Stellar? <span>Verify live record</span></summary>
-            <label for="credential-contract">Official Testnet credential contract</label><input id="credential-contract" maxlength="56" placeholder="C…" spellcheck="false" autocomplete="off">
-            <label for="credential-token">Credential token ID</label><input id="credential-token" maxlength="64" placeholder="64-character token identifier" spellcheck="false" autocomplete="off">
-            <label for="credential-owner">Credential owner</label><input id="credential-owner" maxlength="56" placeholder="Public G… or C… address" spellcheck="false" autocomplete="off">
-            <button type="button" id="verify-credential" class="secondary">Verify onchain record ↗</button>
-            <p class="help">Checks the supported official Testnet contract against this report. No wallet connection or signature is requested.</p>
-          </details>
+
+    <section class="dossier" id="dossier" data-state="empty" aria-labelledby="dossier-title" aria-live="polite">
+      <div class="s-folder-tab"><h2 id="dossier-title">Evidence dossier</h2><span id="dossier-state" class="s-folder-state">Ready when you are</span></div>
+      <div class="s-folder">
+        <section id="official-order" class="official-order" hidden aria-labelledby="order-title">
+          <div class="order-header"><span class="eyebrow-mini">Your official review</span><span id="order-state" class="order-state">Awaiting payment</span></div>
+          <h3 id="order-title">A clear path to your report.</h3><p id="order-description"></p>
+          <ol id="order-progress" class="order-progress" aria-label="Official review progress"></ol>
+          <div id="order-issue" class="order-issue" hidden></div>
+          <div class="result-actions"><button id="order-refresh" type="button">Refresh status</button><button id="order-activate" type="button" hidden>Check funding &amp; continue</button><button id="order-refund" type="button" hidden>Check refund eligibility</button><button id="order-retry" type="button" hidden>Retry official processing</button><button id="order-open-report" type="button" hidden>Open report ↗</button><button id="order-receipt" type="button">Save private receipt</button></div>
+          <p id="order-status-note" class="help" role="status"></p>
+          <details class="order-identity"><summary>Order identity &amp; privacy</summary><code id="order-id"></code><code id="order-source-hash"></code><code id="order-plan-hash"></code><p class="help">The receipt grants access to this private order. Store it securely. No wallet private key is included. Sharing an order ID alone does not grant access.</p></details>
+        </section>
+
+        <div id="empty-report" class="empty-report">
+          <div class="s-empty-scene">
+            <span class="studio-punch" id="studio-punch" data-tm-mascot="idle" data-tm-size="132" data-tm-facing="left" data-tm-decorative></span>
+            <h3 id="empty-title" class="s-say">Trust needs a paper trail.</h3>
+          </div>
+          <p class="s-empty-lead" id="empty-lead">Bring an agent to the bench. The dossier shows concrete findings, what is missing, and what to check next.</p>
+          <ol class="review-steps">
+            <li><strong>Find risky permissions</strong><span>Signing, spending, code execution and data access.</span></li>
+            <li><strong>Understand the evidence</strong><span>Source locations and actionable checks, not just a score.</span></li>
+            <li><strong>Keep your report</strong><span>An integrity-checked download. Stellar publication is a separate step.</span></li>
+          </ol>
+          <div class="s-progress" id="dossier-progress" hidden>
+            <p class="s-clock"><span class="s-pulse" aria-hidden="true"></span><span class="g-vh">Elapsed time </span><span id="dossier-elapsed">0:00</span></p>
+            <ol class="s-timeline" id="dossier-timeline">
+              <li data-stage="plan"><span class="t-dot" aria-hidden="true"></span><div><b>Draft the plan</b><span class="t-detail">Tier, reviewers and evidence, fingerprinted</span></div></li>
+              <li data-stage="audit"><span class="t-dot" aria-hidden="true"></span><div><b>Read the source</b><span class="t-detail">The reviewers work through the bench</span></div></li>
+              <li data-stage="seal"><span class="t-dot" aria-hidden="true"></span><div><b>Check the seal</b><span class="t-detail">The report's SHA-256, recomputed in this tab</span></div></li>
+              <li data-stage="done"><span class="t-dot" aria-hidden="true"></span><div><b>File the dossier</b><span class="t-detail"></span></div></li>
+            </ol>
+          </div>
+          <div class="boundary-note"><strong>Address ≠ audit</strong><p>A wallet balance cannot tell us how an agent behaves. Source and runtime evidence answer different questions.</p></div>
         </div>
-        <div id="view-coverage" hidden><h4>24 control areas. No invisible gaps.</h4><p id="coverage-summary" class="help"></p><div id="control-results"></div></div>
-        <div id="view-runtime" hidden><h4>Run the actual entry point.</h4><p class="help">Six behavior probes in a disposable microVM. Network access and production secrets are excluded. Responses are observations, not proof of safety.</p>
-          <label for="runtime-entrypoint">Detected Python entry point</label><select id="runtime-entrypoint"></select>
-          <label for="runtime-access">Runtime pilot access key</label><input id="runtime-access" type="password" autocomplete="off" placeholder="Provided by your workspace operator">
-          <label class="ai-optin"><input id="runtime-consent" type="checkbox"><span>I own this code or have permission to execute and test it in Vercel Sandbox.</span></label>
-          <button id="run-runtime" type="button">Run isolated probes</button><p id="runtime-status" class="help" role="status"></p><div id="runtime-results"></div><button id="download-runtime" type="button" hidden>Download runtime evidence</button>
+
+        <div id="review-result" hidden>
+          <div class="result-banner s-verdict">
+            <div class="s-stamp-wrap">
+              <div id="result-stamp" class="s-stamp">
+                <svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="52" class="track"/><circle id="result-ring" cx="60" cy="60" r="52" class="ring"/></svg>
+                <span id="result-score">–</span><small>/ 100</small>
+                <span id="result-stamp-word" class="s-stamp-word"></span>
+              </div>
+              <span class="s-verdict-punch" id="verdict-punch" data-tm-mascot="idle" data-tm-size="76" data-tm-decorative></span>
+            </div>
+            <div class="s-verdict-copy">
+              <span id="result-decision" class="s-decision"></span><h3 id="result-name"></h3><p id="result-summary"></p><p id="result-subject" class="s-fine"></p>
+            </div>
+          </div>
+          <dl class="evidence-counts"><div><dt>Observations</dt><dd id="finding-count">0</dd></div><div><dt>Priority findings</dt><dd id="priority-count">0</dd></div><div><dt>Dimensions</dt><dd id="dimension-count">0</dd></div></dl>
+          <div class="result-actions"><button type="button" id="download-designed-report" class="s-btn small">Download designed report ↗</button><button type="button" id="download-report">Evidence JSON</button><button type="button" id="download-bundle">Agent bundle</button></div>
+          <p id="download-note" class="help">Download your report before leaving this tab.</p>
+          <div class="result-tabs" role="group" aria-label="Report view"><button type="button" data-result-view="findings" aria-pressed="true">Findings</button><button type="button" data-result-view="coverage" aria-pressed="false">Coverage</button><button type="button" data-result-view="ai" aria-pressed="false">AI review</button><button type="button" data-result-view="runtime" aria-pressed="false">Runtime</button><button type="button" data-result-view="delivery" aria-pressed="false">Credential</button></div>
+          <div class="s-view">
+            <div id="view-delivery" hidden>
+              <div class="credential-card" id="credential-card"><div class="credential-top"><span>Touchmark</span><span>Report record</span></div><svg class="credential-symbol" width="56" height="56" aria-hidden="true"><use href="#mark"/></svg><p class="credential-subtitle">Version-bound evidence</p><h3 id="credential-name">Your agent</h3><p id="credential-status">Local evidence record · not issued onchain</p><div class="credential-bottom"><span id="credential-short-hash">SHA-256 / —</span><span>Stellar ↗</span></div></div>
+              <p class="help" id="delivery-note">Your evidence card is ready to download. Onchain issuance is shown only after a matching ledger receipt is verified.</p>
+              <div class="result-actions"><button type="button" id="download-evidence-card">Download SVG card</button><button type="button" id="prepare-delivery">Prepare evidence package</button></div>
+              <div id="delivery-results" class="delivery-results" role="status"></div>
+              <details class="permissions"><summary>Already issued on Stellar? <span>verify live record</span></summary>
+                <label for="credential-contract">Official Testnet credential contract</label><input id="credential-contract" maxlength="56" placeholder="C…" spellcheck="false" autocomplete="off">
+                <label for="credential-token">Credential token ID</label><input id="credential-token" maxlength="64" placeholder="64-character token identifier" spellcheck="false" autocomplete="off">
+                <label for="credential-owner">Credential owner</label><input id="credential-owner" maxlength="56" placeholder="Public G… or C… address" spellcheck="false" autocomplete="off">
+                <button type="button" id="verify-credential" class="secondary">Verify onchain record ↗</button>
+                <p class="help">Checks the supported official Testnet contract against this report. No wallet connection or signature is requested.</p>
+              </details>
+            </div>
+            <div id="view-coverage" hidden><h4>24 control areas. No invisible gaps.</h4><p id="coverage-summary" class="help"></p><div id="control-results"></div></div>
+            <div id="view-runtime" hidden><h4>Run the actual entry point.</h4><p class="help">Six behavior probes in a disposable microVM. Network access and production secrets are excluded. Responses are observations, not proof of safety.</p>
+              <label for="runtime-entrypoint">Detected Python entry point</label><select id="runtime-entrypoint"></select>
+              <label for="runtime-access">Runtime pilot access key</label><input id="runtime-access" type="password" autocomplete="off" placeholder="Provided by your workspace operator">
+              <label class="ai-optin"><input id="runtime-consent" type="checkbox"><span>I own this code or have permission to execute and test it in Vercel Sandbox.</span></label>
+              <button id="run-runtime" type="button" class="secondary">Run isolated probes</button><p id="runtime-status" class="help" role="status"></p><div id="runtime-results"></div><button id="download-runtime" type="button" hidden>Download runtime evidence</button>
+            </div>
+            <div id="view-ai" hidden><h4>A second opinion, grounded in source.</h4><div id="ai-results"></div></div>
+            <div id="view-findings"><h4>What needs attention</h4><div id="findings"></div>
+              <h4>What is still missing</h4><ul id="missing-evidence" class="missing-evidence"></ul>
+            </div>
+          </div>
+          <details class="technical"><summary>Evidence details and report hash</summary><div id="dimensions"></div><p class="help">SHA-256 of your report download. Integrity is not a safety guarantee.</p><code id="report-hash"></code><ul id="scope-limits"></ul></details>
         </div>
-        <div id="view-ai" hidden><h4>A second opinion, grounded in source.</h4><div id="ai-results"></div></div>
-        <div id="view-findings"><h4>What needs attention</h4><div id="findings"></div>
-        <h4>What is still missing</h4><ul id="missing-evidence" class="missing-evidence"></ul>
-        </div><details class="technical"><summary>Evidence details and report hash</summary><div id="dimensions"></div><p class="help">SHA-256 of your report download. Integrity is not a safety guarantee.</p><code id="report-hash"></code><ul id="scope-limits"></ul></details>
       </div>
     </section>
   </section>
-  <section class="standard-section" id="coverage"><div class="section-top"><div><p class="eyebrow">02 / THE STANDARD</p><h2>Look past the prompt.</h2></div><p>An agent is a system of permissions, dependencies<br>and decisions. Its review should be, too.</p></div>
-    <div class="standard-grid"><article><span class="standard-number">01</span><h3>What it intends.</h3><p>Instructions, goal conflicts, prompt injection, tool manipulation and delegation.</p><span class="tag">Intent & control</span></article><article><span class="standard-number">02</span><h3>What it can touch.</h3><p>Signing authority, spend limits, credentials, network access, memory and private data.</p><span class="tag">Security & authority</span></article><article><span class="standard-number">03</span><h3>What you can prove.</h3><p>Source locations, build provenance, failures, report commitments and evidence gaps.</p><span class="tag">Evidence & accountability</span></article></div>
-    <details class="catalogue"><summary>Explore all 24 control areas <span>+</span></summary><div id="control-catalogue" class="catalogue-grid"></div></details>
+
+  <section class="s-section standard-section" id="coverage" aria-labelledby="coverage-title">
+    <div class="s-section-head"><span class="s-num">02</span><div><h2 id="coverage-title">Look past the prompt</h2><p>An agent is a system of permissions, dependencies and decisions. Its review should be, too.</p></div></div>
+    <div class="standard-grid">
+      <article class="s-card" data-reveal><span class="num">i.</span><h3>What it intends</h3><p>Instructions, goal conflicts, prompt injection, tool manipulation and delegation.</p><span class="s-tag">Intent &amp; control</span></article>
+      <article class="s-card" data-reveal><span class="num">ii.</span><h3>What it can touch</h3><p>Signing authority, spend limits, credentials, network access, memory and private data.</p><span class="s-tag">Security &amp; authority</span></article>
+      <article class="s-card" data-reveal><span class="num">iii.</span><h3>What you can prove</h3><p>Source locations, build provenance, failures, report commitments and evidence gaps.</p><span class="s-tag">Evidence &amp; accountability</span></article>
+    </div>
+    <details class="catalogue"><summary>Explore all 24 control areas</summary><div id="control-catalogue" class="catalogue-grid"></div></details>
   </section>
-  <section class="stellar-section"><div><p class="eyebrow">03 / STELLAR, WITH A PURPOSE</p><h2>Evidence that travels.<br>Authority that doesn’t.</h2><p>Keep private source off-chain. Bind a report to an exact agent version, its issuer and its lifecycle.</p><a class="text-link" href="#method">Understand the trust model ↗</a></div><div class="stellar-features"><article><span>01</span><div><h3>Authorization, at the contract.</h3><p>Soroban authorization binds signatures to invocation arguments. Application policy still defines what is allowed.</p></div></article><article><span>02</span><div><h3>Payment for work. Not a verdict.</h3><p>SAC escrow separates requester, provider and evaluator. Payment does not buy a passing result.</p></div></article><article><span>03</span><div><h3>A credential with an expiry date.</h3><p>Non-transferable report credentials bind to a version, expire and can be revoked. The Testnet pilot links scoped review evidence to registry-bound payment and a report credential. Check the published receipt below.</p></div></article></div></section>
-  <section class="chain-proof" aria-labelledby="chain-proof-title">
-    <div class="proof-heading"><div><p class="eyebrow">THE STELLAR PROOF</p><h3 id="chain-proof-title">From a funded review<br>to a verifiable record.</h3></div><span id="pilot-proof-state" class="proof-status">Checking the pilot receipt</span></div>
-    <p id="pilot-proof-summary">Follow the official Testnet pilot: a scoped source report, registry-bound escrow and a non-transferable credential.</p>
-    <div id="pilot-proof-content" hidden></div>
-    <p class="help proof-boundary">This is a published protocol demonstration using our fixture. It does not issue a credential for an agent you upload.</p>
+
+  <section class="s-section stellar-section" id="stellar" aria-labelledby="stellar-title">
+    <div class="s-section-head"><span class="s-num">03</span><div><h2 id="stellar-title">Evidence that travels. Authority that doesn’t.</h2><p>Private source stays off-chain. A report binds to an exact agent version, its issuer and its lifecycle. <a href="#method">Understand the trust model</a></p></div></div>
+    <div class="stellar-features">
+      <article data-reveal><span>01</span><div><h3>Authorization, at the contract</h3><p>Soroban authorization binds signatures to invocation arguments. Application policy still defines what is allowed.</p></div></article>
+      <article data-reveal><span>02</span><div><h3>Payment for work. Not a verdict.</h3><p>SAC escrow separates requester, provider and evaluator. Payment does not buy a passing result.</p></div></article>
+      <article data-reveal><span>03</span><div><h3>A credential with an expiry date</h3><p>Non-transferable report credentials bind to a version, expire and can be revoked. The Testnet pilot links scoped review evidence to registry-bound payment and a report credential. Check the published receipt below.</p></div></article>
+    </div>
+    <section class="chain-proof" aria-labelledby="chain-proof-title" data-reveal>
+      <div class="proof-heading"><div><p class="eyebrow-mini">The Stellar proof</p><h3 id="chain-proof-title">From a funded review to a verifiable record.</h3></div><span id="pilot-proof-state" class="proof-status">Checking the pilot receipt</span></div>
+      <p id="pilot-proof-summary">Follow the official Testnet pilot: a scoped source report, registry-bound escrow and a non-transferable credential.</p>
+      <div id="pilot-proof-content" hidden></div>
+      <p class="help proof-boundary">This is a published protocol demonstration using our fixture. It does not issue a credential for an agent you upload.</p>
+    </section>
   </section>
-  <section class="verification-section" id="verify"><div><p class="eyebrow">04 / INDEPENDENT VERIFICATION</p><h2>Check the record.</h2><p>Verify the exact bytes of a downloaded report against a fingerprint you obtained independently. Your file stays in this browser.</p></div><form id="verify-form"><label for="verify-file">Audit report JSON</label><input id="verify-file" type="file" accept=".json" required><label for="verify-hash">Expected SHA-256 fingerprint</label><input id="verify-hash" pattern="[a-fA-F0-9]{64}" maxlength="64" placeholder="64-character report hash" required><button class="secondary" type="submit">Verify integrity ↗</button><p id="verify-result" role="status" class="help">Integrity confirms a file match. It does not prove issuer identity or safety.</p></form></section>
-  <section class="policy-section" id="policy-lab"><div class="section-top"><div><p class="eyebrow">05 / THE AUTHORITY LAB</p><h2>Give autonomy a boundary.</h2></div><p>Try the same deterministic rules used by the enforcement SDK.<br>This simulation never signs or sends a transaction.</p></div><div class="policy-layout"><form id="policy-form"><label for="policy-scenario">Scenario</label><select id="policy-scenario"><option value="normal">Approved destination · within budget</option><option value="overspend">Payment exceeds the per-action limit</option><option value="destination">Payment to an unknown destination</option><option value="version">Agent source changed after review</option><option value="paused">Emergency stop is active</option><option value="depth">Delegate exceeds permitted depth</option></select><button class="secondary" type="submit">Evaluate action ↗</button></form><div class="policy-output"><span class="mono">POLICY / TESTNET / DEMO</span><h3 id="policy-decision">Authority is explicit.</h3><p id="policy-reasons" role="status">10 XLM per action. 50 XLM total. One permitted destination. One delegation level.</p><small>Rule evaluation only; no signed approval or execution.</small></div></div></section>
-  <section id="plans" class="pricing-section"><div class="pricing-heading"><h2>Pay for the review.<br>Not a passing score.</h2><p>Choose the depth of investigation. The verdict never changes the price.</p></div>
+
+  <section class="s-section verification-section" id="verify" aria-labelledby="verify-title">
+    <div class="s-section-head"><span class="s-num">04</span><div><h2 id="verify-title">Check the record</h2><p>Verify the exact bytes of a downloaded report against a fingerprint you obtained independently. Your file stays in this browser.</p></div></div>
+    <form id="verify-form" class="s-ticket s-ticket-slim">
+      <div class="s-ticket-head"><span class="s-ticket-no">Nº 04 · Report to check</span><span class="s-fine">SHA-256 · in this tab</span></div>
+      <div class="s-verify-grid">
+        <div><label for="verify-file">Audit report JSON</label><input id="verify-file" type="file" accept=".json" required></div>
+        <div><label for="verify-hash">Expected SHA-256 fingerprint</label><input id="verify-hash" pattern="[a-fA-F0-9]{64}" maxlength="64" placeholder="64-character report hash" required spellcheck="false"></div>
+        <button class="s-btn" type="submit">Verify integrity <span aria-hidden="true">→</span></button>
+      </div>
+      <p id="verify-result" role="status" class="help s-status">Integrity confirms a file match. It does not prove issuer identity or safety.</p>
+    </form>
+  </section>
+
+  <section class="s-section policy-section" id="policy-lab" aria-labelledby="policy-title">
+    <div class="s-section-head"><span class="s-num">05</span><div><h2 id="policy-title">Give autonomy a boundary</h2><p>Try the same deterministic rules the enforcement SDK uses. This simulation never signs or sends a transaction.</p></div></div>
+    <div class="policy-layout">
+      <form id="policy-form" class="s-panel"><label for="policy-scenario">Scenario</label><select id="policy-scenario"><option value="normal">Approved destination · within budget</option><option value="overspend">Payment exceeds the per-action limit</option><option value="destination">Payment to an unknown destination</option><option value="version">Agent source changed after review</option><option value="paused">Emergency stop is active</option><option value="depth">Delegate exceeds permitted depth</option></select><button class="s-btn" type="submit">Evaluate action <span aria-hidden="true">→</span></button></form>
+      <div class="policy-output s-receipt"><span class="s-receipt-head">Policy · Testnet · demo</span><h3 id="policy-decision">Authority is explicit.</h3><p id="policy-reasons" role="status">10 XLM per action. 50 XLM total. One permitted destination. One delegation level.</p><small>Rule evaluation only; no signed approval or execution.</small></div>
+    </div>
+  </section>
+
+  <section id="plans" class="s-section pricing-section" aria-labelledby="plans-title">
+    <div class="s-section-head"><span class="s-num">06</span><div><h2 id="plans-title">Pay for the review. Not a passing score.</h2><p>Choose the depth of investigation. The verdict never changes the price.</p></div></div>
     <div id="public-plans" class="price-grid">
-      <article class="price-card available-plan"><span class="plan-status">SOURCE TRIAGE</span><h3>Preview</h3><p class="price">Free</p><p>Map your project, inspect the supplied evidence and find what needs a closer look.</p><a href="#workspace">Build your audit ↗</a></article>
-      <article class="price-card"><span class="plan-status">BOUNDED EXECUTION</span><h3>Assurance</h3><p class="price">Testnet pilot</p><p>Run a supported entry point, challenge selected behaviors and keep reproducible observations.</p><a href="#workspace">Choose your reviewers ↗</a></article>
-      <article class="price-card"><span class="plan-status">EXTENDED INVESTIGATION</span><h3>Deep</h3><p class="price">Testnet pilot</p><p>Expand the test plan and examine more boundaries. Every report distinguishes executed checks from open questions.</p><a href="#workspace">Set the scope ↗</a></article>
+      <article class="price-card available-plan"><span class="plan-status">Source triage</span><h3>Preview</h3><p class="price">Free</p><p>Map your project, inspect the supplied evidence and find what needs a closer look.</p><a href="#workspace">Build your audit ↗</a></article>
+      <article class="price-card"><span class="plan-status">Bounded execution</span><h3>Assurance</h3><p class="price">Testnet pilot</p><p>Run a supported entry point, challenge selected behaviors and keep reproducible observations.</p><a href="#workspace">Choose your reviewers ↗</a></article>
+      <article class="price-card"><span class="plan-status">Extended investigation</span><h3>Deep</h3><p class="price">Testnet pilot</p><p>Expand the test plan and examine more boundaries. Every report distinguishes executed checks from open questions.</p><a href="#workspace">Set the scope ↗</a></article>
     </div><p id="pricing-status" class="help pricing-note">Loading current plan budgets and pilot prices. Production checkout is not active.</p>
   </section>
-  <section id="method" class="method"><h2>Good questions.<br>Straight answers.</h2><div>
-    <details><summary>Can I add any Stellar agent?</summary><p>You can submit a public G-account or C-contract address on Testnet or Mainnet, or provide source without a wallet. The address check is read-only. A private agent needs its owner's source or a later authorized runtime test; no service can fully audit hidden behavior from an address alone.</p></details>
-    <details><summary>Does Stellar have an agent key?</summary><p>There is no universal agent ID required by this product. Agents may use ordinary Stellar accounts or smart accounts with delegated permissions. We ask for public identifiers only. A private key is authority to act, not evidence of trustworthy behavior.</p></details>
-    <details><summary>What does an audit establish?</summary><p>Official reviewers inspect the supplied source and declared boundaries. Authorized runtime plans execute supported Python entry points in isolated microVMs. The dossier keeps source findings, runtime observations, AI hypotheses and chain evidence distinct. Each claim is bound to the evidence actually collected; an untested surface remains an open question.</p></details>
-    <details><summary>Does a credential mean the agent is safe?</summary><p>No. It records an issuer's assessment of a specific version. It cannot reveal hidden behavior or guarantee future behavior. Always check the report scope, issuer, version, expiry and revocation state.</p></details>
-    <details><summary>What is available today?</summary><p>The workspace checks the available reviewers, providers and official order service on this deployment. Immediate source review works without keys. An enabled official order service saves the consented scope before funding, runs the review and completes Testnet delivery. Private receipts control access to the report; its hash and token record are public. Runtime and AI review keep their separate consent and access requirements. Testnet uses test assets only.</p></details>
-  </div></section>
+
+  <section id="method" class="s-section method" aria-labelledby="method-title">
+    <div class="s-section-head"><span class="s-num">07</span><div><h2 id="method-title">Good questions. Straight answers.</h2><p>What the Studio establishes, and what it does not.</p></div></div>
+    <div class="s-faq">
+      <details><summary>Can I add any Stellar agent?</summary><p>You can submit a public G-account or C-contract address on Testnet or Mainnet, or provide source without a wallet. The address check is read-only. A private agent needs its owner's source or a later authorized runtime test; no service can fully audit hidden behavior from an address alone.</p></details>
+      <details><summary>Does Stellar have an agent key?</summary><p>There is no universal agent ID required by this product. Agents may use ordinary Stellar accounts or smart accounts with delegated permissions. We ask for public identifiers only. A private key is authority to act, not evidence of trustworthy behavior.</p></details>
+      <details><summary>What does an audit establish?</summary><p>Official reviewers inspect the supplied source and declared boundaries. Authorized runtime plans execute supported Python entry points in isolated microVMs. The dossier keeps source findings, runtime observations, AI hypotheses and chain evidence distinct. Each claim is bound to the evidence actually collected; an untested surface remains an open question.</p></details>
+      <details><summary>Does a credential mean the agent is safe?</summary><p>No. It records an issuer's assessment of a specific version. It cannot reveal hidden behavior or guarantee future behavior. Always check the report scope, issuer, version, expiry and revocation state.</p></details>
+      <details><summary>What is available today?</summary><p>The workspace checks the available reviewers, providers and official order service on this deployment. Immediate source review works without keys. An enabled official order service saves the consented scope before funding, runs the review and completes Testnet delivery. Private receipts control access to the report; its hash and token record are public. Runtime and AI review keep their separate consent and access requirements. Testnet uses test assets only.</p></details>
+      <details><summary>When should I use the quick test on the home page instead?</summary><p>When the agent's code is in a public repository and you want a verdict in a minute or two, with an optional model review and a testnet stamp for a pass. Come to the Studio for private code, uploads, a declaration you are still drafting, chosen reviewers, or a dossier you keep.</p></details>
+    </div>
+  </section>
 </main>
-<footer><span>Touchmark <span class="footer-motto">Trust, with evidence.</span></span><a href="/operator">Operator console</a><span>Built for Stellar. Designed for accountability.</span></footer>
-</body></html>
+
+<footer class="foot"><svg class="logo" width="20" height="20" aria-hidden="true"><use href="#mark"/></svg><span>Touchmark Studio · testnet pilot · A report records evidence about one version. It is not a guarantee of safety.</span><a class="foot-link" href="/operator">Operator console</a></footer>
+</body>
+</html>

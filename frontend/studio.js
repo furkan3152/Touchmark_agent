@@ -36,7 +36,7 @@
   }
   function applyCapsuleLock() {
     const locked = Boolean(capsule);
-    const ids = ["agent-name","agent-purpose","agent-prompt","tool-manifest","architecture-manifest","stellar-address","stellar-network","source-files","source-folder","import-github","identify-address"];
+    const ids = ["agent-name","agent-purpose","agent-prompt","tool-manifest","architecture-manifest","stellar-address","stellar-network","source-files","source-folder","import-github","identify-address","studio-tmark","tmark-upload","tmark-clear","paste-add"];
     ids.forEach((id) => {byId(id).disabled = locked;});
     document.querySelectorAll("[data-scope], [data-example], #file-list button, #audit-tiers input, #audit-modules input").forEach((control) => {control.disabled = locked;});
     byId("edit-capsule-draft").hidden = !locked;
@@ -329,7 +329,7 @@
   });
 
   function sourceMode(mode) {
-    const panels = { address: "source-address", github: "source-github", files: "source-upload" };
+    const panels = { address: "source-address", github: "source-github", files: "source-upload", paste: "source-paste" };
     document.querySelectorAll("[data-source-mode]").forEach((button) => {
       const active = button.dataset.sourceMode === mode;
       button.setAttribute("aria-selected", String(active));
@@ -371,16 +371,34 @@
     byId("discovery-results").hidden = true;
     byId("review-result").hidden = true;
     byId("empty-report").hidden = false;
-    punch("idle", "Trust needs a paper trail.");
+    dossier("empty");
+    punch(greeting(), "Trust needs a paper trail.");
     byId("dossier-state").textContent = "Awaiting review";
     byId("run-status").textContent = "Review your plan before starting. No automatic transaction or payment.";
     byId("download-note").textContent = "Your report stays in this tab until you leave or run another review.";
   }
-  // Punch (mascot.js) reads along while a review runs, and says so when it fails.
-  function punch(state, title) {
+  // Punch (mascot.js) keeps the dossier company: it points at the intake while the bench is empty,
+  // reads along while a review runs, strikes or flags the verdict, and says so when something fails.
+  const wide = matchMedia("(min-width: 1041px)");
+  function greeting() { return wide.matches ? "pointing" : "idle"; }
+  function punch(state, title, opts = {}) {
     const host = byId("studio-punch");
-    if (host && host.tmMascot) host.tmMascot.set(state);
-    if (title) byId("empty-title").textContent = title;
+    if (host && host.tmMascot) host.tmMascot.set(state, opts);
+    if (title) {
+      const say = byId("empty-title");
+      if (say.textContent !== title) { say.textContent = title; say.style.animation = "none"; void say.offsetWidth; say.style.animation = ""; }
+    }
+  }
+  // The small Punch beside the bench manifest reacts to what lands on the bench.
+  function benchReact(state, opts = {}) {
+    const host = byId("bench-punch");
+    if (!host || !host.tmMascot) return;
+    host.tmMascot.flash(state, 1700, opts);
+    host.classList.remove("react"); void host.offsetWidth; host.classList.add("react");
+  }
+  function dossier(state) {
+    byId("dossier").dataset.state = state;
+    if (state === "empty") byId("dossier-progress").hidden = true;
   }
   function setBusy(value) {
     busy = value;
@@ -392,6 +410,7 @@
   function renderFiles() {
     const list = byId("file-list");
     list.replaceChildren();
+    const before = list.dataset.count;
     Object.entries(files).forEach(([name, content]) => {
       const row = node("div", undefined, "file-row");
       row.append(node("span", `${name} · ${new TextEncoder().encode(content).length.toLocaleString("en-US")} bytes`));
@@ -403,7 +422,7 @@
       list.append(row);
     });
     if (tmarkText) {
-      const row = node("div", undefined, "file-row");
+      const row = node("div", undefined, "file-row is-tmark");
       row.append(node("span", `.tmark (declaration) · ${new TextEncoder().encode(tmarkText).length.toLocaleString("en-US")} bytes`));
       const remove = node("button", "Remove");
       remove.type = "button";
@@ -413,6 +432,11 @@
       list.append(row);
     }
     if (!Object.keys(files).length) list.append(node("p", "No source files added."));
+    const count = Object.keys(files).length;
+    list.dataset.count = String(count);
+    byId("bench-count").textContent = count ? `${count} file${count === 1 ? "" : "s"}${tmarkText ? " + .tmark" : ""}` : tmarkText ? ".tmark only" : "empty";
+    if (byId("studio-tmark").value !== tmarkText) { byId("studio-tmark").value = tmarkText; checkTmark(tmarkText, {quiet:true}); }
+    if (before !== undefined && count > Number(before)) benchReact("success");
   }
   function updateToolCount() {
     try {
@@ -467,11 +491,12 @@
       finally { setBusy(false); }
     });
   });
-  byId("source-files").addEventListener("change", async (event) => {
-    if (busy) return;
+  byId("source-files").addEventListener("change", (event) => addFiles([...event.target.files], event.target));
+  // One path for chosen and dropped files.
+  async function addFiles(selected, picker) {
+    if (busy || !selected.length) return;
     error(); setBusy(true);
     try {
-      const selected = [...event.target.files];
       if (selected.some((file) => file.size > 131072)) throw new Error("File too large. Source files must be at most 32 KB; an audit bundle at most 128 KiB.");
       // .tmcapsule is the current extension; .veritas capsules from before the rename still load.
       if (selected.length === 1 && /\.(tmcapsule|veritas)$/.test(selected[0].name)) {
@@ -498,9 +523,9 @@
         files = pending; sourceReference = ""; sourceRevision = ""; invalidate(); renderFiles();
       }
       document.querySelectorAll("[data-example]").forEach((item) => item.setAttribute("aria-pressed", "false"));
-    } catch (failure) { error(failure.message); }
-    finally { event.target.value = ""; setBusy(false); }
-  });
+    } catch (failure) { error(failure.message); benchReact("error"); }
+    finally { if (picker) picker.value = ""; setBusy(false); }
+  }
   form.addEventListener("input", (event) => {
     if (busy || ["ai-access-key","audit-runtime-key"].includes(event.target.id)) return;
     invalidate(); error();
@@ -538,24 +563,30 @@
     const address = byId("stellar-address").value.trim();
     if (!/^[GC][A-Z2-7]{55}$/.test(address)) { error("Enter a public G-account or C-contract address. Never enter a secret key."); return; }
     error(); setBusy(true); byId("address-status").textContent = "Looking up the public ledger…";
+    punch("scanning", "Looking the address up on the ledger…");
     try {
       const value = await post("identify", {address, network: byId("stellar-network").value});
       byId("address-status").dataset.state = value.ledger_presence;
       byId("address-status").textContent = value.ledger_presence === "found" ? `Stellar ${value.kind} found. Ownership and agent behavior are not verified. Add source for a code audit.` : value.ledger_presence === "not_found" ? "Not found in active ledger state on this network. Check the network; a contract may also be archived." : "Ledger lookup unavailable. Retry later; no verification is claimed.";
       if (!byId("agent-name").value) byId("agent-name").value = `Stellar agent ${address.slice(-6)}`;
       if (!byId("agent-purpose").value) byId("agent-purpose").value = "Review the evidence available for this Stellar agent.";
-    } catch (failure) { error(failure.message); byId("address-status").textContent = "Address could not be checked. No verification is claimed."; }
+      punch(value.ledger_presence === "found" ? "success" : "warning", value.ledger_presence === "found" ? "Found on the ledger. Now bring me its code." : "Nothing on the ledger there. Check the network.", {tone: "evidence"});
+    } catch (failure) { error(failure.message); byId("address-status").textContent = "Address could not be checked. No verification is claimed."; punch("error", "The ledger did not answer."); }
     finally { setBusy(false); }
   });
   byId("import-github").addEventListener("click", async () => {
     if (busy) return;
     error(); setBusy(true); byId("import-status").textContent = "Discovering the repository at a fixed commit…";
+    const repository = byId("github-repository").value.trim();
+    dossier("empty"); punch("scanning", `Fetching ${repository.replace(/^https:\/\/github\.com\//, "") || "the repository"} at one commit…`);
     try {
       const value = await post("import", {repository:byId("github-repository").value.trim()});
       loadBundle({...value.bundle, source_reference:value.source});
       renderDiscovery(value.discovery);
       byId("import-status").textContent = `Imported ${Object.keys(files).length} files at ${value.revision.slice(0,8)}. ${value.import_scope.eligible_files_omitted} eligible files outside scope or limits. Selection: ${value.import_scope.selection || "provisional discovery"}.`;
-    } catch (failure) { error(failure.message); byId("import-status").textContent = "Nothing imported. You can upload files instead."; }
+      punch("success", `${Object.keys(files).length} files on the bench, pinned to ${value.revision.slice(0,8)}.`);
+      setTimeout(() => { if (!busy && !result) punch(greeting()); }, 1800);
+    } catch (failure) { error(failure.message); byId("import-status").textContent = "Nothing imported. You can upload files instead."; punch("error", "That repository did not come through."); }
     finally { setBusy(false); }
   });
   byId("download-template").addEventListener("click", async () => {
@@ -713,6 +744,7 @@
       needs_evidence: "More evidence required",
     };
     byId("result-decision").textContent = decisions[value.decision] || decisions.needs_evidence;
+    strike(value);
     byId("result-name").textContent = value.report.agent.name;
     byId("result-summary").textContent = "Source inspected. Runtime behavior, owner identity and onchain publication have not been verified.";
     renderDiscovery(value.report.discovery);
@@ -731,6 +763,7 @@
     findings.forEach((finding, index) => {
       const details = node("details", undefined, "finding");
       details.open = false;
+      details.dataset.severity = finding.severity;
       const summary = node("summary");
       const fallback = finding.id.replace(/^[^-]+-/, "").replaceAll("-", " ");
       summary.append(node("span", finding.title || findingTitles[finding.id] || fallback.charAt(0).toUpperCase() + fallback.slice(1)), node("span", finding.severity, "severity"));
@@ -789,15 +822,19 @@
     } catch (failure) { error(failure.message); return; }
     setBusy(true);
     punch("scanning", "Reading the evidence…");
+    progress.start();
     byId("dossier-state").textContent = "Reviewing";
     byId("run-review").textContent = "Building evidence…";
     byId("run-status").textContent = activeTier === "quick" ? "Official reviewers are inspecting the submitted evidence…" : "Preparing your plan, then running the authorized investigation…";
     try {
       if (!catalogue) throw new Error("The reviewer catalogue is unavailable. Refresh to check the current audit options.");
       const body = auditRequest(input);
+      progress.stage("plan");
       auditPlan = await post("plan", body);
       renderAuditPlan(auditPlan);
       if (auditPlan.plan.blockers?.length) throw new Error(auditPlan.plan.blockers.map((item) => typeof item === "string" ? item : item.message || item.reason).join(" "));
+      const fileCount = Object.keys(input.files).length, reviewerCount = auditPlan.plan.modules?.length || selectedModules.size;
+      progress.stage("audit", `${fileCount} file${fileCount === 1 ? "" : "s"} · ${reviewerCount} reviewer${reviewerCount === 1 ? "" : "s"}`);
       const headers = {"Content-Type":"application/json"};
       const runtimeKey = byId("audit-runtime-key").value.trim();
       if (activeTier !== "quick" && runtimeKey) headers.Authorization = `Bearer ${runtimeKey}`;
@@ -805,11 +842,13 @@
       const response = await fetch("/api/v1/studio/audit", { method: "POST", headers, body: JSON.stringify({...body, plan_sha256:auditPlan.plan_sha256}), signal: AbortSignal.timeout(activeTier === "quick" ? 45000 : 120000) });
       const value = await response.json();
       if (!response.ok) throw new Error(requestError(value, response.status));
+      progress.stage("seal");
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value.report_json));
       const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2,"0")).join("");
       if (hash !== value.report_sha256) throw new Error("Report integrity check failed. Run a new review.");
       // Render the committed bytes, not a potentially divergent response view.
       value.report = JSON.parse(value.report_json);
+      progress.stage("done", `SHA-256 ${value.report_sha256.slice(0, 12)}…`); progress.stop();
       result = value; submitted = input;
       byId("download-bundle").hidden = false; byId("run-runtime").disabled = false;
       renderReport(value); renderEngagement(value.report); renderCredential(value);
@@ -820,6 +859,7 @@
     } catch (failure) {
       error(failure.name === "TimeoutError" ? "The review timed out. Retry with a smaller source bundle." : failure.message);
       byId("run-status").textContent = "No completed review. Your inputs are still available to retry.";
+      dossier(progress.fail() ? "error" : "empty");
       punch("error", "No review this time.");
       byId("dossier-state").textContent = "Ready when you are";
     } finally { setBusy(false); updateRunLabel(); byId("audit-runtime-key").value = ""; byId("ai-access-key").value = ""; }
@@ -879,6 +919,7 @@
       const response = await fetch("/api/v1/studio/policy", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({policy,action,paused:scenario === "paused",spent:0}),signal:AbortSignal.timeout(10000)});
       const value = await response.json(); if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : "Policy check unavailable.");
       byId("policy-decision").textContent = value.allowed ? "Within the policy." : "Action blocked.";
+      byId("policy-decision").dataset.allowed = String(Boolean(value.allowed)); restamp(byId("policy-decision"));
       const reasons = {emergency_stop:"The emergency stop is active.",version_mismatch:"Source version differs from the approved version.",destination_denied:"The recipient is outside the allowlist.",per_action_limit:"The amount exceeds the 10 XLM action limit.",delegation_depth:"The delegation chain exceeds one level."};
       byId("policy-reasons").textContent = value.allowed ? "All simulated conditions satisfied. No real approval, reservation or transaction was created." : value.reasons.map((r) => reasons[r] || r.replaceAll("_", " ")).join(" ");
     } catch (failure) { byId("policy-decision").textContent = "Check unavailable."; byId("policy-reasons").textContent = failure.message; }
@@ -908,6 +949,190 @@
       event.detail.resolve?.();
     } catch (failure) {event.detail.reject?.(failure);}
   });
+
+  // ------------------------------------------------------------ the Studio's own furniture
+  // The verdict stamp: the home page's rubber stamp, with the overall score in its ring.
+  const STAMP_WORDS = { pass: "Touchmark", needs_fixes: "Fix first", needs_evidence: "More evidence" };
+  function strike(value) {
+    dossier("result");
+    const decision = ["pass","needs_fixes","needs_evidence"].includes(value.decision) ? value.decision : "needs_evidence";
+    const raw = Number(value.report?.result?.overall_score);
+    const surfaces = value.report?.result?.coverage?.surface_coverage?.surfaces || {};
+    const unscored = !Number.isFinite(raw) || (decision === "needs_evidence" && !surfaces.implementation && !surfaces.behavioral_contract);
+    const stamp = byId("result-stamp");
+    stamp.className = `s-stamp ${decision}`;
+    byId("result-score").textContent = unscored ? "—" : raw.toFixed(1);
+    byId("result-stamp-word").textContent = STAMP_WORDS[decision];
+    byId("result-decision").className = `s-decision ${decision}`;
+    const ring = byId("result-ring"); ring.style.strokeDashoffset = "327";
+    void stamp.offsetWidth; stamp.classList.add("slam");
+    requestAnimationFrame(() => { ring.style.strokeDashoffset = String(327 - 327 * (unscored ? 0 : Math.max(0, Math.min(100, raw))) / 100); });
+    const host = byId("verdict-punch");
+    if (host && host.tmMascot) { const {state, tone} = TouchmarkMascot.forDecision(decision); host.tmMascot.set(state, {tone}); }
+  }
+  function restamp(element) { element.classList.remove("stamped"); void element.offsetWidth; element.classList.add("stamped"); }
+
+  // The review's real steps, shown on the dossier while it runs: plan, audit, seal, filed.
+  const progress = (() => {
+    const order = ["plan","audit","seal","done"];
+    let timer = null, started = 0, current = null;
+    const items = () => [...byId("dossier-timeline").children];
+    const tick = () => { const s = Math.floor((Date.now() - started) / 1000); byId("dossier-elapsed").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+    return {
+      start() {
+        dossier("working"); byId("dossier-progress").hidden = false; current = null;
+        items().forEach((li) => {
+          li.removeAttribute("data-state");
+          const detail = li.querySelector(".t-detail");
+          detail.dataset.rest ??= detail.textContent; detail.textContent = detail.dataset.rest;
+        });
+        started = Date.now(); tick(); clearInterval(timer); timer = setInterval(tick, 1000);
+      },
+      stage(name, detail) {
+        current = name;
+        items().forEach((li) => {
+          const at = order.indexOf(li.dataset.stage), now = order.indexOf(name);
+          li.dataset.state = at < now || name === "done" ? "done" : at === now ? "active" : "";
+          if (li.dataset.stage === name && detail) li.querySelector(".t-detail").textContent = detail;
+        });
+      },
+      // Marks the stage that failed; false when the review never left the intake (nothing to show).
+      fail() { clearInterval(timer); const li = items().find((item) => item.dataset.stage === current); if (li) li.dataset.state = "failed"; return Boolean(li); },
+      stop() { clearInterval(timer); },
+      reset() { clearInterval(timer); byId("dossier-progress").hidden = true; },
+    };
+  })();
+
+  // The .tmark: pasted, uploaded or dropped with the source. Checked here with the same rules as the
+  // builder (tmark-builder.js, TmarkRules); the server stays the authority when the review runs.
+  function checkTmark(text, {quiet = false} = {}) {
+    const chip = byId("tmark-state"), notes = byId("tmark-notes"), live = byId("tmark-live");
+    notes.replaceChildren();
+    const set = (state, word, say) => {
+      if (chip.dataset.state !== state || chip.textContent !== word) { chip.dataset.state = state; chip.textContent = word; chip.classList.remove("pop"); void chip.offsetWidth; chip.classList.add("pop"); }
+      live.textContent = say;
+    };
+    if (!text.trim()) { set("none", "none", "Paste it, upload it, or drop it with the source."); return; }
+    const rules = window.TmarkRules;
+    if (!rules) { set("none", "unchecked", "Added. The review checks it against the code."); return; }
+    const { errors } = rules.check(text);
+    if (!errors.length) {
+      set("ok", "valid", "Valid .tmark 1.1. The review will hold the code to each claim.");
+      if (!quiet) benchReact("success");
+      return;
+    }
+    set("bad", `${errors.length} problem${errors.length === 1 ? "" : "s"}`, "Not valid yet. An invalid .tmark is reported and not used.");
+    errors.slice(0, 6).forEach((item) => { const li = node("li"); li.append(node("b", item.path), document.createTextNode(item.msg)); notes.append(li); });
+    if (errors.length > 6) notes.append(node("li", `…and ${errors.length - 6} more.`));
+    if (!quiet) benchReact("warning", {tone: "evidence"});
+  }
+  let tmarkTimer = null;
+  byId("studio-tmark").addEventListener("input", (event) => {
+    tmarkText = event.target.value;
+    clearTimeout(tmarkTimer);
+    tmarkTimer = setTimeout(() => { checkTmark(tmarkText); renderFiles(); }, 450);
+  });
+  byId("tmark-upload").addEventListener("change", async (event) => {
+    const file = event.target.files[0]; event.target.value = "";
+    if (!file || busy) return;
+    if (file.size > 64000) { error(".tmark exceeds 64 KB."); benchReact("error"); return; }
+    tmarkText = await file.text(); invalidate(); renderFiles(); checkTmark(tmarkText);
+  });
+  byId("tmark-clear").addEventListener("click", () => { if (busy) return; tmarkText = ""; invalidate(); renderFiles(); checkTmark(""); });
+
+  // Paste one file onto the bench.
+  byId("paste-add").addEventListener("click", () => {
+    if (busy) return;
+    const name = byId("paste-name").value.trim().replace(/^\/+/, "") || "agent.py";
+    const text = byId("paste-source").value;
+    const status = byId("paste-status");
+    try {
+      if (!text.trim()) throw new Error("Paste some source first.");
+      if (name.length > 160 || /(^|\/)\.\.(\/|$)/.test(name)) throw new Error("Use a plain relative file name, such as agent.py.");
+      if (name === ".tmark") { tmarkText = text; invalidate(); renderFiles(); checkTmark(text); status.textContent = "Added as the .tmark declaration."; return; }
+      if (new TextEncoder().encode(text).length > 32000) throw new Error(`${name} exceeds 32 KB.`);
+      const next = { ...files, [name]: text };
+      if (Object.keys(next).length > 12 || Object.values(next).reduce((sum, content) => sum + new TextEncoder().encode(content).length, 0) > 64000) throw new Error("A review accepts at most 12 files and 64 KB of source.");
+      const replaced = name in files;
+      files = next; sourceReference = ""; sourceRevision = ""; invalidate(); renderFiles();
+      byId("paste-source").value = ""; byId("paste-name").value = "";
+      status.textContent = replaced ? `${name} replaced on the bench.` : `${name} added to the bench.`;
+      if (!byId("agent-name").value) byId("agent-name").value = "Pasted agent";
+    } catch (failure) { status.textContent = failure.message; benchReact("error"); }
+  });
+
+  // Drag and drop: files dropped anywhere on the intake ticket land in the upload tray.
+  (() => {
+    const ticket = form, zone = byId("drop-zone"), title = byId("drop-title");
+    const rest = title.textContent;
+    let depth = 0;
+    const hasFiles = (event) => [...(event.dataTransfer?.types || [])].includes("Files");
+    const over = (on) => { ticket.classList.toggle("is-over", on); title.textContent = on ? "Release to put them on the bench" : rest; };
+    ticket.addEventListener("dragenter", (event) => {
+      if (!hasFiles(event) || busy) return;
+      event.preventDefault();
+      if (depth++ === 0) { sourceMode("files"); over(true); const host = byId("studio-punch"); if (host?.tmMascot && !result) host.tmMascot.set("pointing"); }
+    });
+    ticket.addEventListener("dragover", (event) => { if (hasFiles(event) && !busy) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } });
+    ticket.addEventListener("dragleave", () => { if (depth && --depth === 0) over(false); });
+    ticket.addEventListener("drop", (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault(); depth = 0; over(false);
+      const items = [...(event.dataTransfer.items || [])];
+      if (items.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) { error("Folders cannot be dropped. Use Choose a project folder instead."); benchReact("error"); return; }
+      zone.classList.remove("is-landed"); void zone.offsetWidth; zone.classList.add("is-landed");
+      addFiles([...event.dataTransfer.files]);
+    });
+  })();
+
+  // A reference carried over from the quick test on the home page: /studio?ref=… (and, after a
+  // result, sessionStorage "touchmark.studio.handoff" with its verdict). The Studio opens prefilled.
+  (() => {
+    let carried = null;
+    try { carried = JSON.parse(sessionStorage.getItem("touchmark.studio.handoff") || "null"); sessionStorage.removeItem("touchmark.studio.handoff"); } catch { carried = null; }
+    const query = new URLSearchParams(location.search).get("ref");
+    const reference = (query || carried?.reference || "").trim().slice(0, 300);
+    if (!reference) return;
+    if (carried && query && carried.reference !== query) carried = null;
+    const box = byId("handoff"), go = byId("handoff-go"), note = byId("handoff-note");
+    byId("handoff-ref").textContent = reference.replace(/^https:\/\/github\.com\//, "").replace(/\/(?:tree|blob)\/[^/]+/, "");
+    if (carried?.decision && STAMP_WORDS[carried.decision]) {
+      const chip = byId("handoff-verdict"); chip.hidden = false; chip.className = `s-chip ${carried.decision}`;
+      chip.textContent = `${{pass: "Pass", needs_fixes: "Needs fixes", needs_evidence: "Needs evidence"}[carried.decision]}${carried.score ? " · " + carried.score : ""}`;
+    }
+    const GITHUB = /^https:\/\/github\.com\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:\/(?:tree|blob)\/([^/]+)(?:\/(.+?))?)?\/?$/;
+    const repo = reference.match(GITHUB) || (carried?.repository || "").match(GITHUB);
+    const address = reference.match(/^[GC][A-Z2-7]{55}$/);
+    if (repo) {
+      const root = `https://github.com/${repo[1]}/${repo[2]}`;
+      byId("github-repository").value = root; sourceMode("github");
+      note.textContent = repo[4] ? `The Studio imports the whole repository at its latest commit; the quick test read ${repo[4]}. Upload that folder instead to review only it.` : "The Studio imports it at its latest commit, then you choose the reviewers.";
+      go.addEventListener("click", () => { box.hidden = true; byId("import-github").click(); });
+    } else if (address) {
+      byId("stellar-address").value = reference; sourceMode("address");
+      note.textContent = "An address locates an account. Add source files for a code audit.";
+      go.textContent = "Check the address";
+      go.addEventListener("click", () => { box.hidden = true; byId("identify-address").click(); });
+    } else {
+      note.textContent = "This reference has no GitHub repository the Studio can import. Upload the agent's files instead.";
+      go.textContent = "Upload files"; sourceMode("files");
+      go.addEventListener("click", () => { box.hidden = true; byId("source-files").click(); });
+    }
+    byId("handoff-close").addEventListener("click", () => { box.hidden = true; });
+    box.hidden = false;
+    punch(greeting(), "Carried over from the counter. Import it when you are ready.");
+  })();
+
+  // Gentle reveals below the fold; nothing moves under prefers-reduced-motion.
+  if ("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.documentElement.classList.add("reveal-ready");
+    const seen = new IntersectionObserver((entries) => entries.forEach((entry) => { if (entry.isIntersecting) { entry.target.classList.add("is-in"); seen.unobserve(entry.target); } }), {rootMargin: "0px 0px -8% 0px"});
+    document.querySelectorAll("[data-reveal]").forEach((element) => seen.observe(element));
+  }
+  // The first greeting: Punch points at the intake (or rests, when the dossier sits below it).
+  const greet = () => { if (!busy && !result && byId("dossier").dataset.state === "empty") punch(greeting()); };
+  if (document.readyState === "complete") greet(); else window.addEventListener("load", greet);
+  wide.addEventListener?.("change", greet);
 
   byId("download-report").addEventListener("click", () => { if (result) { download("agent-review.json", result.report_json); byId("download-note").textContent = "Report exported. Verify its SHA-256 against the fingerprint below."; } });
   byId("download-bundle").addEventListener("click", () => { if (submitted) download("agent-audit.json", JSON.stringify(submitted, null, 2)); });
