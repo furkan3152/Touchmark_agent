@@ -1,5 +1,5 @@
 """The deployment's hard daily cost cap for model reviews, cost kept out of every public
-response.
+response, and job ids kept out of the logs.
 
 - the cap is claimed in create-only chunks in the allowance store (here a fake Vercel Blob),
   shared by concurrent audits on separate invocations, and passed by at most one chunk per
@@ -7,7 +7,8 @@ response.
 - reached mid-job, the review stops like at a per-audit cap (capped, daily_cost_cap, every
   unread file listed); reached before an audit, no model review starts and the visitor is told
   when it returns, without any amount;
-- measured tokens and dollars stay in the job state and the server log."""
+- measured tokens and dollars stay in the job state and the server log;
+- the HTTP client loggers, whose INFO lines name Blob paths (and so job ids), stay quiet."""
 
 from __future__ import annotations
 
@@ -306,3 +307,22 @@ def test_a_full_audit_with_review_and_verification_returns_no_spend(tmp_path, mo
     assert reviewer.budget.spend.calls >= 1  # the review ran and was measured
     assert_no_spend(out)
 
+
+# ------------------------------------------------------------------------------ logs
+def test_the_http_client_loggers_never_log_requests_or_store_paths(caplog):
+    import httpx
+    api.quiet_http_client_logs()
+    for name in ("httpx", "httpcore"):
+        assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING
+        assert not logging.getLogger(name).isEnabledFor(logging.INFO)
+    caplog.set_level(logging.DEBUG)  # even with the root logger at its most verbose
+    path = "touchmark-jobs/20261101/AbCdEfGhIjKlMnOpQrStUvWx/s/000003"
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    with httpx.Client(transport=transport) as client:
+        client.get(f"https://store.blob.vercel-storage.com/{path}")
+    assert "AbCdEfGhIjKlMnOpQrStUvWx" not in caplog.text and "HTTP Request" not in caplog.text
+    # A warning that names a store path is dropped as well; other warnings still get through.
+    caplog.clear()
+    logging.getLogger("httpx").warning("retrying %s", f"https://store.blob.vercel-storage.com/{path}")
+    logging.getLogger("httpx").warning("connection pool is full")
+    assert "AbCdEfGhIjKlMnOpQrStUvWx" not in caplog.text and "connection pool is full" in caplog.text

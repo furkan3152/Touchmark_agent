@@ -32,6 +32,32 @@ from .services.studio_intake import AddressRequest, GitHubRequest, identify_addr
 
 logger = logging.getLogger("touchmark.api")
 
+
+class _NoStorePaths(logging.Filter):
+    """Drops HTTP client records that name an audit job's store path: a job id is the job's only
+    credential (continue, cancel), so it must not reach the runtime logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            text = record.getMessage()
+        except Exception:  # noqa: BLE001 - a record that cannot be formatted is dropped
+            return False
+        return "touchmark-jobs/" not in text and "touchmark-limits/" not in text
+
+
+def quiet_http_client_logs() -> None:
+    """httpx logs every request at INFO with its URL, and Vercel Blob URLs carry the object path
+    (touchmark-jobs/<day>/<job token>/...). Those lines are kept out of the logs: the HTTP
+    client loggers log warnings and errors only, and never a store path."""
+    for name in ("httpx", "httpx2", "httpcore"):
+        client_logger = logging.getLogger(name)
+        client_logger.setLevel(logging.WARNING)
+        if not any(isinstance(f, _NoStorePaths) for f in client_logger.filters):
+            client_logger.addFilter(_NoStorePaths())
+
+
+quiet_http_client_logs()
+
 settings = get_settings()
 pipeline = AuditPipeline(settings)
 ingestion = IngestionService(settings)
