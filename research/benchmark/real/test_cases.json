@@ -1,0 +1,822 @@
+[
+  {
+    "id": "sdp-tss-unknown-outcome-unlock-double-pay",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "subdir": "internal/transactionsubmission",
+    "vulnerable_commit": "2662eee779d7642fafcfd2eee09bf38c5e7de803",
+    "fixed_commit": "bc26006c7d8429939c671fd879754ae7e8c863cc",
+    "language": "go",
+    "category": "replay_or_idempotency",
+    "accept_categories": [
+      "reliability_failure",
+      "economic_loss",
+      "unauthorized_payment"
+    ],
+    "severity_estimate": "critical",
+    "files": [
+      {
+        "path": "transaction_worker.go",
+        "line_start": 243,
+        "line_end": 259
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "transaction_worker.go",
+        "line_start": 248,
+        "line_end": 272
+      }
+    ],
+    "summary": "When a Horizon submission ends without a verdict (5xx incl. 504, client timeout, transport error), handleFailedTransaction marks the transaction for reprocessing and unlocks the transaction and channel account immediately, although the signed envelope (hash already recorded) may still be included until its ledger bound. The next poll rebuilds a second envelope with an independent sequence; if the first one lands too, the receiver is paid twice.",
+    "fix_summary": "Add TransactionError.IsOutcomeUnknown(); when the outcome is unknown and a hash was recorded, return without unlocking or preparing for reprocessing, so the bundle stays locked until the envelope's MaxLedger expires and reconcile becomes authoritative.",
+    "evidence_url": "https://github.com/stellar/stellar-disbursement-platform-backend/pull/1208",
+    "confidence": "high",
+    "notes": "Same file as the development case sdp-tss-feebump-replaced-double-pay, but a different defect and a different (repo, fix commit) pair."
+  },
+  {
+    "id": "sdp-sep24-get-transaction-cross-user",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "subdir": "internal/serve/httphandler",
+    "vulnerable_commit": "5c697f3d3d6b3dafbf11babbe402ed582afd5991",
+    "fixed_commit": "dd0e73c23338bf94e5a7a9e13857e843bd0ebd17",
+    "language": "go",
+    "category": "cross_user_access",
+    "accept_categories": [
+      "control_bypass",
+      "secret_exposure"
+    ],
+    "severity_estimate": "medium",
+    "files": [
+      {
+        "path": "sep24_handler.go",
+        "line_start": 127,
+        "line_end": 165
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "sep24_handler.go",
+        "line_start": 127,
+        "line_end": 166
+      }
+    ],
+    "summary": "GET /sep24/transaction looks the receiver wallet up by the SEP-24 transaction id alone (GetBySEP24TransactionID). Any SEP-10/SEP-45 authenticated caller who knows or guesses another user's transaction id gets that receiver's status, Stellar address, memo and a freshly generated more_info_url token for that transaction.",
+    "fix_summary": "Parse account and memo from the JWT subject and query GetBySEP24TransactionIDAndAccount, which only matches wallets with no address yet or whose stellar_address and memo equal the caller's; others get 404/incomplete.",
+    "evidence_url": "https://github.com/stellar/stellar-disbursement-platform-backend/pull/1115",
+    "confidence": "high",
+    "notes": "HackerOne #3681382. The ownership predicate itself lives in internal/data/receivers_wallet.go, outside the audited subdir; at the fixed commit the handler only shows the call to the account-scoped query. Follow-up #1117 fixed a NULL comparison in that query (fail-closed, functional)."
+  },
+  {
+    "id": "sdp-payment-cancel-toctou-race",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "subdir": "internal/data",
+    "vulnerable_commit": "d4ca61736480b72b11ea5d2ac7efd6819c8d8864",
+    "fixed_commit": "54be5bd008a39dcbeaa5807d52e022755a5c32f4",
+    "language": "go",
+    "category": "reliability_failure",
+    "accept_categories": [
+      "economic_loss",
+      "functional_defect",
+      "control_bypass"
+    ],
+    "severity_estimate": "medium",
+    "files": [
+      {
+        "path": "payments.go",
+        "line_start": 608,
+        "line_end": 615
+      },
+      {
+        "path": "payments.go",
+        "line_start": 637,
+        "line_end": 646
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "payments.go",
+        "line_start": 608,
+        "line_end": 616
+      },
+      {
+        "path": "payments.go",
+        "line_start": 638,
+        "line_end": 648
+      }
+    ],
+    "summary": "Payment.UpdateStatuses and Payment.Update validate the state transition against the in-memory status the caller loaded, then UPDATE ... WHERE id = $n only. PATCH /payments/{id}/status reads without a lock; if the scheduler concurrently moves the payment to PENDING and creates the TSS transaction, the waiting cancel overwrites it with CANCELED. The payment settles on-chain while SDP records it as canceled, and the row then blocks the tenant's TSS-to-SDP sync on every tick.",
+    "fix_summary": "Make both writers compare-and-set: UpdateStatuses adds AND status = ANY(source statuses of the transition), Update adds AND status = the loaded status; CancelPayment returns 'payment is not ready to be canceled' when no row matches.",
+    "evidence_url": "https://github.com/stellar/stellar-disbursement-platform-backend/pull/1245",
+    "confidence": "medium",
+    "notes": "The racing caller (CancelPayment) is in internal/services, outside the audited subdir; the defect is recognisable from the unconditional UPDATE after an in-memory transition check. Medium because the impact is accounting/stuck sync rather than a direct second payment."
+  },
+  {
+    "id": "sdp-apikey-cache-cross-tenant",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "subdir": "internal/serve/middleware",
+    "vulnerable_commit": "6f900c18f357366e854c9aa9c0b2512bbd9ced58",
+    "fixed_commit": "29dd24b01830945931d55fc381fd31f326da0e7b",
+    "language": "go",
+    "category": "cross_user_access",
+    "accept_categories": [
+      "control_bypass",
+      "unauthorized_payment"
+    ],
+    "severity_estimate": "critical",
+    "files": [
+      {
+        "path": "api_keys_middleware.go",
+        "line_start": 45,
+        "line_end": 71
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "api_keys_middleware.go",
+        "line_start": 45,
+        "line_end": 75
+      }
+    ],
+    "summary": "The API-key authenticator caches validation results in a process-wide cache keyed only by the raw key. On a cache hit it returns the cached key without the tenant-schema-scoped DB lookup that binds a key to its tenant. Since the request tenant comes from the client-controlled SDP-Tenant-Name header, a key valid for tenant A, once cached, can be replayed with tenant B's name and act (including payment writes) in tenant B.",
+    "fix_summary": "Namespace cache entries as tenant.ID + ':' + rawKey and bypass the cache when no tenant is resolved, so a cross-tenant request falls through to the schema-scoped lookup and is rejected.",
+    "evidence_url": "https://github.com/stellar/stellar-disbursement-platform-backend/pull/1142",
+    "confidence": "high"
+  },
+  {
+    "id": "sdp-auth-tenant-header-fallback",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "subdir": "internal/serve/middleware",
+    "vulnerable_commit": "5d51e03cd493b7f07a78e8d9b9f40268dbab2d2f",
+    "fixed_commit": "f699b44741012719d1ac2484c20840a66258478f",
+    "language": "go",
+    "category": "cross_user_access",
+    "accept_categories": [
+      "control_bypass"
+    ],
+    "severity_estimate": "high",
+    "files": [
+      {
+        "path": "middleware.go",
+        "line_start": 118,
+        "line_end": 125
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "middleware.go",
+        "line_start": 118,
+        "line_end": 144
+      }
+    ],
+    "summary": "AuthenticateMiddleware only overwrites the context tenant (seeded earlier from the client SDP-Tenant-Name header) when the token's tenant_id resolves to an active tenant. If the token's tenant cannot be read, is empty, or is deactivated/deleted, the request silently continues under whatever tenant the caller named in the header, e.g. reading another tenant's balances.",
+    "fix_summary": "Fail closed: return 401 when the tenant id cannot be read, is empty, or the tenant does not exist; 500 on unexpected lookup errors; only a clean resolution sets the tenant. GenerateToken also refuses to issue tenantless tokens.",
+    "evidence_url": "https://github.com/stellar/stellar-disbursement-platform-backend/pull/1205",
+    "confidence": "high",
+    "notes": "Same subdir as sdp-apikey-cache-cross-tenant (different file and defect)."
+  },
+  {
+    "id": "go-recoverysigner-unverified-email",
+    "repo": "stellar/go",
+    "subdir": "exp/services/recoverysigner",
+    "vulnerable_commit": "41b6026bdb637e76bd56f7fe7212e73fcf6a2835",
+    "fixed_commit": "5538abeab1eda5c49c2694614ad58e9cc8b93d0f",
+    "language": "go",
+    "category": "account_takeover",
+    "accept_categories": [
+      "control_bypass",
+      "foreign_transaction_signing"
+    ],
+    "severity_estimate": "critical",
+    "files": [
+      {
+        "path": "internal/serve/auth/firebase.go",
+        "line_start": 24,
+        "line_end": 38
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "internal/serve/auth/firebase.go",
+        "line_start": 24,
+        "line_end": 40
+      }
+    ],
+    "summary": "The SEP-30 recovery signer authenticates users by the email claim of a Firebase JWT without checking email_verified. Firebase lets anyone create an account with an unverified address, so an attacker who registers the victim's email obtains a token that satisfies the victim's email identity and can have the recovery server sign transactions for (i.e. take over) the victim's Stellar account.",
+    "fix_summary": "Only populate auth.Email when the token's email_verified claim is true.",
+    "evidence_url": "https://github.com/stellar/go/pull/2497",
+    "confidence": "high",
+    "notes": "stellar/go is now archived/renamed (stellar/go-stellar-sdk); the commits remain public in stellar/go."
+  },
+  {
+    "id": "anchor-observer-asset-mismatch-credited",
+    "repo": "stellar/java-stellar-anchor-sdk",
+    "subdir": "platform/src/main/java/org/stellar/anchor/platform/observer",
+    "vulnerable_commit": "c78c9696ab5440be0315656185426b5f25116ae5",
+    "fixed_commit": "2ede9d7a52176c76306dd74379797d47dc3c0883",
+    "language": "java",
+    "category": "unauthorized_payment",
+    "accept_categories": [
+      "stellar_protocol_misuse",
+      "economic_loss"
+    ],
+    "severity_estimate": "critical",
+    "files": [
+      {
+        "path": "stellar/DefaultPaymentListener.java",
+        "line_start": 438,
+        "line_end": 449
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "stellar/DefaultPaymentListener.java",
+        "line_start": 444,
+        "line_end": 468
+      }
+    ],
+    "summary": "checkAssetAmountSufficient, the only gate before a SEP-6/24/31 transaction is credited from an observed payment, compares the payment asset with amount_in_asset but only logs a debug message on mismatch and falls through to the amount check. A withdrawal denominated in USDC is credited in full by a payment of the same numeric amount in native XLM (or any asset).",
+    "fix_summary": "Add enforceAssetMatch: for SEP-31 and SEP-6/24 withdrawals an asset mismatch is logged as an error, counted, and rejected (return false).",
+    "evidence_url": "https://github.com/stellar/java-stellar-anchor-sdk/pull/1973",
+    "confidence": "high",
+    "notes": "HackerOne #3856257."
+  },
+  {
+    "id": "anchor-strict-send-sendamount-credited",
+    "repo": "stellar/java-stellar-anchor-sdk",
+    "subdir": "core/src/main/java/org/stellar/anchor",
+    "vulnerable_commit": "063e435efd4fc1b4e8fa0a8e1934fa516d1935d4",
+    "fixed_commit": "546503bd4d2ec2356c2ceb5e33c3c47bcb3d426c",
+    "language": "java",
+    "category": "unauthorized_payment",
+    "accept_categories": [
+      "stellar_protocol_misuse",
+      "economic_loss"
+    ],
+    "severity_estimate": "critical",
+    "files": [
+      {
+        "path": "ledger/LedgerClientHelper.java",
+        "line_start": 117,
+        "line_end": 120
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "ledger/LedgerClientHelper.java",
+        "line_start": 118,
+        "line_end": 120
+      },
+      {
+        "path": "ledger/LedgerClientHelper.java",
+        "line_start": 218,
+        "line_end": 247
+      }
+    ],
+    "summary": "When converting a PATH_PAYMENT_STRICT_SEND operation into a ledger payment, the helper reports destAsset with amount = sendAmount, the attacker-chosen debit in the source asset. A user can send a large sendAmount of a near-worthless asset that converts to dust USDC and have the anchor credit the full sendAmount as received USDC, draining a withdrawal payout for about zero.",
+    "fix_summary": "Take the received amount from the operation result (PathPaymentStrictSendResult success.last.amount), failing closed when the result is missing; pass per-operation results through getLedgerOperations and check the counts match. The listener also rejects insufficient amounts instead of warning.",
+    "evidence_url": "https://github.com/stellar/java-stellar-anchor-sdk/pull/1967",
+    "confidence": "high",
+    "notes": "The fix also touched platform/.../DefaultPaymentListener.java (outside this subdir) to turn the amount check into a hard reject."
+  },
+  {
+    "id": "anchor-sep10-threshold-sign-extension",
+    "repo": "stellar/java-stellar-anchor-sdk",
+    "subdir": "core/src/main/java/org/stellar/anchor",
+    "vulnerable_commit": "13060b3423a307e72f87fa4ff069b642850deff3",
+    "fixed_commit": "0bc0f3380bc021cd4e4e263f981de7b9ccb0c762",
+    "language": "java",
+    "category": "control_bypass",
+    "accept_categories": [
+      "account_takeover",
+      "stellar_protocol_misuse"
+    ],
+    "severity_estimate": "high",
+    "files": [
+      {
+        "path": "ledger/StellarRpc.java",
+        "line_start": 117,
+        "line_end": 133
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "ledger/StellarRpc.java",
+        "line_start": 117,
+        "line_end": 143
+      }
+    ],
+    "summary": "On the RPC ledger backend, getAccount casts the XDR threshold bytes (master weight, low/med/high) from Java's signed byte to long/int. Values above 127 become negative, so an account with medium threshold e.g. 200 gets a negative threshold and SEP-10 multisig verification is satisfied by any single (or zero-weight) signer, authenticating as a multisig account without its required signatures.",
+    "fix_summary": "Convert each threshold byte with b & 0xFF (unsignedByte) before building the signer and Thresholds.",
+    "evidence_url": "https://github.com/stellar/java-stellar-anchor-sdk/pull/1987",
+    "confidence": "high"
+  },
+  {
+    "id": "blend-backstop-share-inflation",
+    "repo": "blend-capital/blend-contracts",
+    "subdir": "backstop",
+    "vulnerable_commit": "1d30893ddb218f82265b131f8dd1ac6d4b379af6",
+    "fixed_commit": "bdeac71844e6e7a607eecb54e5ae5cf01f6dbb7c",
+    "language": "rust",
+    "category": "economic_loss",
+    "accept_categories": [
+      "unauthorized_payment"
+    ],
+    "severity_estimate": "high",
+    "files": [
+      {
+        "path": "src/backstop/deposit.rs",
+        "line_start": 19,
+        "line_end": 27
+      },
+      {
+        "path": "src/backstop/withdrawal.rs",
+        "line_start": 56,
+        "line_end": 60
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "src/backstop/deposit.rs",
+        "line_start": 21,
+        "line_end": 30
+      },
+      {
+        "path": "src/backstop/withdrawal.rs",
+        "line_start": 56,
+        "line_end": 63
+      }
+    ],
+    "summary": "Backstop deposits mint convert_to_shares(amount) = floor(amount * shares / tokens) with no minimum and no zero check, and anyone can donate tokens to a pool balance. A first depositor mints a tiny number of shares, donates to inflate the share price, and later depositors' transfers mint zero (or heavily rounded-down) shares, so their tokens accrue to the attacker. Withdrawals likewise burn shares for zero tokens.",
+    "fix_summary": "Panic with InvalidShareMintAmount when to_mint == 0 or when the first mint is below MIN_INITIAL_SHARES; panic with InvalidTokenWithdrawAmount when a withdrawal returns zero tokens.",
+    "evidence_url": "https://github.com/blend-capital/blend-contracts/pull/196",
+    "confidence": "high",
+    "notes": "Commit is on the audit-fix branch merged into main (single parent, reachable from main, not on main's first-parent line)."
+  },
+  {
+    "id": "blend-self-liquidation-position-duplication",
+    "repo": "blend-capital/blend-contracts",
+    "subdir": "pool",
+    "vulnerable_commit": "5102917809b0674b810ca889d97ac0c1134153bd",
+    "fixed_commit": "a10f49dd0d37cb6ebe0fedc5e3d30423e22c5894",
+    "language": "rust",
+    "category": "economic_loss",
+    "accept_categories": [
+      "control_bypass",
+      "functional_defect"
+    ],
+    "severity_estimate": "high",
+    "files": [
+      {
+        "path": "src/auctions/auction.rs",
+        "line_start": 143,
+        "line_end": 156
+      },
+      {
+        "path": "src/auctions/user_liquidation_auction.rs",
+        "line_start": 123,
+        "line_end": 134
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "src/auctions/auction.rs",
+        "line_start": 143,
+        "line_end": 158
+      }
+    ],
+    "summary": "auctions::fill does not reject a filler equal to the liquidated user. fill_user_liq_auction loads a fresh User for the liquidatee, removes the lot/bid positions and stores it, while the filler's User (loaded earlier by submit for the same address) adds the lot and bid and is stored afterwards, overwriting the removal. A user can fill their own liquidation and end up with the lot collateral credited twice, creating value from the pool.",
+    "fix_summary": "Panic with InvalidLiquidation when user == filler_state.address.",
+    "evidence_url": "https://github.com/blend-capital/blend-contracts/pull/195",
+    "confidence": "medium",
+    "notes": "Audit fix; the fix message only says 'block self-liquidations'. The state-overwrite reasoning is ours. Commit is on a merged branch (single parent, reachable from main)."
+  },
+  {
+    "id": "soroswap-pair-fee-floor-rounding",
+    "repo": "soroswap/core",
+    "subdir": "contracts/pair",
+    "vulnerable_commit": "81536823f254297546f1cb0367519f403fa90e00",
+    "fixed_commit": "4eca4c1dcc7fd793992e27ad27ab3ccce427ffdb",
+    "language": "rust",
+    "category": "economic_loss",
+    "accept_categories": [
+      "stellar_protocol_misuse"
+    ],
+    "severity_estimate": "medium",
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "line_start": 251,
+        "line_end": 260
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "src/lib.rs",
+        "line_start": 252,
+        "line_end": 261
+      }
+    ],
+    "summary": "The pair's swap K check deducts a 0.3% fee computed as floor(amount_in * 3 / 1000). Any input below 334 units pays no fee and larger inputs are under-charged, so traders can split swaps (or route dust swaps) to avoid LP fees, moving value from liquidity providers.",
+    "fix_summary": "Compute the fee with checked_ceiling_div(1000) so it rounds in the pool's favour (new math.rs CheckedCeilingDiv).",
+    "evidence_url": "https://github.com/soroswap/core/pull/155",
+    "confidence": "medium",
+    "notes": "Merge commit; vulnerable_commit is its first parent. Pre-audit development code; impact is per-swap dust that compounds."
+  },
+  {
+    "id": "soroban-mintlock-limit-not-pinned-to-token",
+    "repo": "stellar/soroban-examples",
+    "subdir": "mint-lock",
+    "vulnerable_commit": "92b43359d7afbd8691baef2b14a3715c35bd189f",
+    "fixed_commit": "758f65df41605d17d50022af619929d1a6502864",
+    "language": "rust",
+    "category": "unauthorized_payment",
+    "accept_categories": [
+      "control_bypass",
+      "economic_loss"
+    ],
+    "severity_estimate": "high",
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "line_start": 21,
+        "line_end": 30
+      },
+      {
+        "path": "src/lib.rs",
+        "line_start": 70,
+        "line_end": 76
+      },
+      {
+        "path": "src/lib.rs",
+        "line_start": 117,
+        "line_end": 153
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "src/lib.rs",
+        "line_start": 21,
+        "line_end": 31
+      },
+      {
+        "path": "src/lib.rs",
+        "line_start": 71,
+        "line_end": 78
+      },
+      {
+        "path": "src/lib.rs",
+        "line_start": 109,
+        "line_end": 164
+      }
+    ],
+    "summary": "The mint-lock admin contract stores a minter's limit keyed only by the minter address, while mint() takes an arbitrary `contract` argument and calls its mint. A minter authorised (with a limit) for token A can mint any other token whose admin is this mint-lock contract, using A's allowance.",
+    "fix_summary": "Key MinterConfig and MinterStats by (contract, minter) and look them up with the contract being minted.",
+    "evidence_url": "https://github.com/stellar/soroban-examples/pull/297",
+    "confidence": "high",
+    "notes": "Example contract."
+  },
+  {
+    "id": "soroban-lp-deposit-slippage-check",
+    "repo": "stellar/soroban-examples",
+    "subdir": "liquidity_pool",
+    "vulnerable_commit": "186443aab0bf8b7c2673428c38708bf38cb772ab",
+    "fixed_commit": "c7947120dc3ef92345d6e019737065d916cfae9d",
+    "language": "rust",
+    "category": "economic_loss",
+    "accept_categories": [
+      "functional_defect"
+    ],
+    "severity_estimate": "medium",
+    "files": [
+      {
+        "path": "src/lib.rs",
+        "line_start": 143,
+        "line_end": 149
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "src/lib.rs",
+        "line_start": 143,
+        "line_end": 149
+      }
+    ],
+    "summary": "get_deposit_amounts compares desired_a < min_a instead of the computed amount_a < min_a in the branch where token A is scaled down, so the depositor's minimum for token A is never enforced. A front-runner who moves the reserve ratio makes the deposit go through at a worse ratio than the user's slippage bounds allow.",
+    "fix_summary": "Check amount_a < min_a.",
+    "evidence_url": "https://github.com/stellar/soroban-examples/pull/289",
+    "confidence": "high",
+    "notes": "Example contract; the same commit also stops writing empty allowances in the token example (unrelated)."
+  },
+  {
+    "id": "oz-vault-zero-share-deposit",
+    "repo": "OpenZeppelin/stellar-contracts",
+    "subdir": "packages/tokens/src/vault",
+    "vulnerable_commit": "0aaf9cb6af5b600e7467f8c3bd52b6b94adbf6b4",
+    "fixed_commit": "39501f5e0ab9db64ca612ffdcf23b0a4736789d9",
+    "language": "rust",
+    "category": "economic_loss",
+    "accept_categories": [
+      "unauthorized_payment"
+    ],
+    "severity_estimate": "high",
+    "files": [
+      {
+        "path": "storage.rs",
+        "line_start": 339,
+        "line_end": 354
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "storage.rs",
+        "line_start": 351,
+        "line_end": 368
+      }
+    ],
+    "summary": "Vault::deposit transfers the assets and mints preview_deposit(assets) shares even when that rounds to zero. After a donation inflates the share price, a positive deposit mints nothing and its assets accrue to the existing (attacker-held) shares.",
+    "fix_summary": "Panic with VaultZeroShares when shares == 0 && assets > 0, before the transfer; correct the inflation-attack docs.",
+    "evidence_url": "https://github.com/OpenZeppelin/stellar-contracts/pull/883",
+    "confidence": "medium",
+    "notes": "The vulnerable doc comment claims the default offset makes the attack unprofitable (misleading, not a hint of the defect). Virtual shares limit, but do not remove, the loss. Commit is reachable from main but not on its first-parent line."
+  },
+  {
+    "id": "reflector-lastprice-stale",
+    "repo": "reflector-network/reflector-contract",
+    "subdir": "src",
+    "vulnerable_commit": "b7855dae89d35b6d5be3d28781202ab63c66c996",
+    "fixed_commit": "a6379b12aa9e7673039bc9bb9c7acec134c1bcf8",
+    "language": "rust",
+    "category": "economic_loss",
+    "accept_categories": [
+      "stellar_protocol_misuse",
+      "reliability_failure"
+    ],
+    "severity_estimate": "medium",
+    "files": [
+      {
+        "path": "lib.rs",
+        "line_start": 99,
+        "line_end": 104
+      },
+      {
+        "path": "lib.rs",
+        "line_start": 138,
+        "line_end": 142
+      },
+      {
+        "path": "lib.rs",
+        "line_start": 413,
+        "line_end": 430
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "lib.rs",
+        "line_start": 99,
+        "line_end": 108
+      },
+      {
+        "path": "lib.rs",
+        "line_start": 141,
+        "line_end": 148
+      },
+      {
+        "path": "lib.rs",
+        "line_start": 419,
+        "line_end": 430
+      },
+      {
+        "path": "lib.rs",
+        "line_start": 461,
+        "line_end": 472
+      }
+    ],
+    "summary": "lastprice, x_last_price and prices/twap read the last stored update timestamp and return that price however old it is (and even a timestamp in the future). When price updates stop, consumers such as lending protocols keep receiving a stale price as the 'most recent' one, enabling liquidations or borrowing at outdated prices.",
+    "fix_summary": "Introduce get_last_timestamp that returns 0 (no price) when the last update is in the future or older than two resolution periods, and use it in lastprice, x_last_price and prices.",
+    "evidence_url": "https://github.com/reflector-network/reflector-contract/commit/a6379b12aa9e7673039bc9bb9c7acec134c1bcf8",
+    "confidence": "medium",
+    "notes": "OtterSec audit revision (PR #8). Returned PriceData carries a timestamp, so a careful consumer could check staleness itself. Commit is on a merged branch."
+  },
+  {
+    "id": "anchor-server-withdraw-any-payment-completes",
+    "repo": "stellar/django-polaris",
+    "subdir": "src",
+    "vulnerable_commit": "9e8d02eed20537b780006f5a28f01bd83cd32e3d",
+    "fixed_commit": "89a1dd0d3994efa34a36a04dc3e9baa4c32dd0b9",
+    "language": "python",
+    "category": "unauthorized_payment",
+    "accept_categories": [
+      "stellar_protocol_misuse",
+      "economic_loss"
+    ],
+    "severity_estimate": "critical",
+    "files": [
+      {
+        "path": "withdraw/tasks.py",
+        "line_start": 29,
+        "line_end": 66
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "withdraw/tasks.py",
+        "line_start": 30,
+        "line_end": 98
+      }
+    ],
+    "summary": "process_withdrawal marks a withdrawal completed as soon as any successful Stellar transaction to the anchor carries the withdrawal's hash memo; it never checks that the transaction contains a payment of the expected asset (and issuer) and amount to the anchor account. Sending 0.0000001 of anything with the memo triggers the off-chain payout.",
+    "fix_summary": "Decode the envelope and require a PAYMENT op to the anchor address with matching asset code, issuer = anchor and amount = amount_in; record stellar_transaction_id and amount_out.",
+    "evidence_url": "https://github.com/stellar/django-polaris/pull/102",
+    "confidence": "high",
+    "notes": "Early stellar-anchor-server code that lives in django-polaris history. The vulnerable code has a TODO 'Check amount and asset type in response against database.' that hints at the defect."
+  },
+  {
+    "id": "polaris-multisig-deposit-stuck-pending-signatures",
+    "repo": "stellar/django-polaris",
+    "subdir": "polaris/polaris",
+    "vulnerable_commit": "e0c7de5d4dd7de1b07b9ae95fd153f5c93390c0e",
+    "fixed_commit": "54dd82c5abf3c7ae6838b34f3a942052fd0ea23e",
+    "language": "python",
+    "category": "reliability_failure",
+    "accept_categories": [
+      "functional_defect"
+    ],
+    "severity_estimate": "medium",
+    "files": [
+      {
+        "path": "management/commands/poll_pending_deposits.py",
+        "line_start": 55,
+        "line_end": 86
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "management/commands/poll_pending_deposits.py",
+        "line_start": 55,
+        "line_end": 86
+      }
+    ],
+    "summary": "For a multisig distribution account, check_for_multisig saves pending_signatures=True and status pending_anchor before creating the channel account and the envelope. If channel creation or account loading fails, the deposit is left flagged as awaiting signatures with no envelope_xdr (and the error path keeps pending_signatures=True), so it is never submitted or retried.",
+    "fix_summary": "Set pending_signatures and pending_anchor only after the envelope has been created, signed and stored.",
+    "evidence_url": "https://github.com/stellar/django-polaris/commit/54dd82c5abf3c7ae6838b34f3a942052fd0ea23e",
+    "confidence": "medium",
+    "notes": "Commit message is a one-line title; reliability rather than loss of funds. Same repository and subdir as the development case polaris-trustline-stuck-execution, different file and commit."
+  },
+  {
+    "id": "jssdk-readchallengetx-no-server-signature",
+    "repo": "stellar/js-stellar-sdk",
+    "subdir": "src",
+    "vulnerable_commit": "ac46a8d23ce1c29fed287fffcba86441064fe001",
+    "fixed_commit": "6f0bb889c2d10b431ddd5f4a1bcdd519c80430b3",
+    "language": "typescript",
+    "category": "control_bypass",
+    "accept_categories": [
+      "foreign_transaction_signing",
+      "stellar_protocol_misuse"
+    ],
+    "severity_estimate": "medium",
+    "files": [
+      {
+        "path": "utils.ts",
+        "line_start": 242,
+        "line_end": 268
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "utils.ts",
+        "line_start": 266,
+        "line_end": 274
+      }
+    ],
+    "summary": "Utils.readChallengeTx validates the structure of a SEP-10 challenge (source, sequence, time bounds, home domain, operations) but never checks that the server account actually signed it. Code that relies on readChallengeTx (wallets deciding whether to sign, or servers doing their own client-signature check) accepts a challenge forged by anyone.",
+    "fix_summary": "Throw InvalidSep10ChallengeError when verifyTxSignedBy(transaction, serverAccountID) fails.",
+    "evidence_url": "https://github.com/stellar/js-stellar-sdk/security/advisories/GHSA-6cgh-hjpw-q3gq",
+    "confidence": "high",
+    "notes": "verifyChallengeTxSigners already checked the server signature, so the library's full verification path was not affected; impact is on readChallengeTx callers."
+  },
+  {
+    "id": "jssdk-redirect-leaks-custom-auth-headers",
+    "repo": "stellar/js-stellar-sdk",
+    "subdir": "src/http-client",
+    "vulnerable_commit": "07b687ff3fce8950cc7835ae12fd7b4b301e0de4",
+    "fixed_commit": "5fe2c35c0d177551f76fb8079fb6233c55b624a4",
+    "language": "typescript",
+    "category": "secret_exposure",
+    "accept_categories": [
+      "ssrf"
+    ],
+    "severity_estimate": "medium",
+    "files": [
+      {
+        "path": "fetch-client.ts",
+        "line_start": 283,
+        "line_end": 298
+      },
+      {
+        "path": "fetch-client.ts",
+        "line_start": 425,
+        "line_end": 430
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "fetch-client.ts",
+        "line_start": 283,
+        "line_end": 327
+      },
+      {
+        "path": "fetch-client.ts",
+        "line_start": 454,
+        "line_end": 459
+      }
+    ],
+    "summary": "On a cross-origin redirect the bounded fetch adapter strips only Authorization, Proxy-Authorization and Cookie. Credentials sent in other headers, such as Horizon's X-Auth-Token or an RPC provider API key passed in headers, are forwarded to whatever host the Location header names.",
+    "fix_summary": "Replace the denylist with an allowlist (SAFE_CROSS_ORIGIN_HEADERS) so a cross-origin hop receives only non-credential headers.",
+    "evidence_url": "https://github.com/stellar/js-stellar-sdk/pull/1814",
+    "confidence": "medium",
+    "notes": "Requires a redirecting (malicious or compromised) upstream; the earlier denylist was an incomplete fix of the same issue."
+  },
+  {
+    "id": "walletsdk-sep10-domain-signer-swaps-tx",
+    "repo": "stellar/typescript-wallet-sdk",
+    "subdir": "@stellar/typescript-wallet-sdk/src",
+    "vulnerable_commit": "41d1cba93978d2adb58af00cda0de84c1c829b8c",
+    "fixed_commit": "6e624e96aa3cdc72d8c5d93d693df86f7d766a6a",
+    "language": "typescript",
+    "category": "foreign_transaction_signing",
+    "accept_categories": [
+      "control_bypass",
+      "account_takeover"
+    ],
+    "severity_estimate": "high",
+    "files": [
+      {
+        "path": "walletSdk/Auth/index.ts",
+        "line_start": 187,
+        "line_end": 204
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "walletSdk/Auth/index.ts",
+        "line_start": 187,
+        "line_end": 217
+      }
+    ],
+    "summary": "Sep10.sign validates the anchor's challenge, then, when it has a client_domain op, replaces the transaction with whatever the remote domain signer (signWithDomainAccount) returns and signs that with the user's account key without re-validating it. A malicious or compromised domain-signing endpoint can return a different transaction (e.g. a payment or set_options from the user's account) and get it signed by the user's key.",
+    "fix_summary": "Compare the returned transaction's hash with the validated challenge's hash and throw DomainSigningModifiedError if they differ.",
+    "evidence_url": "https://github.com/stellar/typescript-wallet-sdk/pull/237",
+    "confidence": "high",
+    "notes": "The same defect was fixed separately in the key-manager package (#245); that pair is not included."
+  },
+  {
+    "id": "walletsdk-recovery-duplicate-signers-lockout",
+    "repo": "stellar/typescript-wallet-sdk",
+    "subdir": "@stellar/typescript-wallet-sdk/src",
+    "vulnerable_commit": "0ddb6d0d81be9b96acad4beb1a327e2f60d00e4c",
+    "fixed_commit": "a88002a77cf1192dee9a4df3ca13754fad751f19",
+    "language": "typescript",
+    "category": "reliability_failure",
+    "accept_categories": [
+      "stellar_protocol_misuse",
+      "account_takeover",
+      "economic_loss"
+    ],
+    "severity_estimate": "high",
+    "files": [
+      {
+        "path": "walletSdk/Recovery/index.ts",
+        "line_start": 96,
+        "line_end": 130
+      },
+      {
+        "path": "walletSdk/Recovery/index.ts",
+        "line_start": 190,
+        "line_end": 249
+      }
+    ],
+    "fixed_files": [
+      {
+        "path": "walletSdk/Recovery/index.ts",
+        "line_start": 74,
+        "line_end": 93
+      },
+      {
+        "path": "walletSdk/Recovery/index.ts",
+        "line_start": 157,
+        "line_end": 190
+      },
+      {
+        "path": "walletSdk/Recovery/index.ts",
+        "line_start": 258,
+        "line_end": 280
+      }
+    ],
+    "summary": "createRecoverableWallet adds every signer key returned by the SEP-30 recovery servers, plus the device key, in one transaction that also sets thresholds and locks the master key, without checking for duplicates. Signers are keyed by public key and SetOptions overwrites, so if two servers return the same key (or a server returns the device key or the account key) fewer signers are installed than the thresholds assume and the account can be permanently locked, or a single party gains more control than intended.",
+    "fix_summary": "Reject a signer key returned by more than one server or equal to the device key, and assert in registerRecoveryServerSigners that addresses are distinct and none is the account itself, before building the transaction.",
+    "evidence_url": "https://github.com/stellar/typescript-wallet-sdk/pull/255",
+    "confidence": "medium",
+    "notes": "Requires a misbehaving or colluding recovery server; the loss is funds stuck in a locked account."
+  }
+]

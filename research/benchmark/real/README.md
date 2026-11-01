@@ -165,3 +165,86 @@ clear it. Read the detection rate together with the clear rate.
 - Several cases are in libraries or SDKs rather than standalone agents (mpp-sdk, OpenZeppelin,
   one-way-channel). The auditor still sees code that verifies or moves value, but its
   operating-model step may be less certain.
+
+## Held-out test set
+
+`test_cases.json` holds a separate **held-out test set** of 22 cases in the same format as `cases.json`.
+**These cases must never be used to tune the auditor**: not its prompts, catalog, checks, thresholds or examples, and not
+to pick between auditor versions during development. Run them only to measure a frozen auditor, and do not copy their
+summaries, file names or code into anything the auditor sees. Tune on `cases.json` only.
+
+Score them with `python3 score_real.py --cases test_cases.json --reports DIR`.
+
+| id | repo | lang | category | severity | confidence |
+| --- | --- | --- | --- | --- | --- |
+| `sdp-tss-unknown-outcome-unlock-double-pay` | stellar/stellar-disbursement-platform-backend | go | replay_or_idempotency | critical | high |
+| `sdp-sep24-get-transaction-cross-user` | stellar/stellar-disbursement-platform-backend | go | cross_user_access | medium | high |
+| `sdp-payment-cancel-toctou-race` | stellar/stellar-disbursement-platform-backend | go | reliability_failure | medium | medium |
+| `sdp-apikey-cache-cross-tenant` | stellar/stellar-disbursement-platform-backend | go | cross_user_access | critical | high |
+| `sdp-auth-tenant-header-fallback` | stellar/stellar-disbursement-platform-backend | go | cross_user_access | high | high |
+| `go-recoverysigner-unverified-email` | stellar/go | go | account_takeover | critical | high |
+| `anchor-observer-asset-mismatch-credited` | stellar/java-stellar-anchor-sdk | java | unauthorized_payment | critical | high |
+| `anchor-strict-send-sendamount-credited` | stellar/java-stellar-anchor-sdk | java | unauthorized_payment | critical | high |
+| `anchor-sep10-threshold-sign-extension` | stellar/java-stellar-anchor-sdk | java | control_bypass | high | high |
+| `blend-backstop-share-inflation` | blend-capital/blend-contracts | rust | economic_loss | high | high |
+| `blend-self-liquidation-position-duplication` | blend-capital/blend-contracts | rust | economic_loss | high | medium |
+| `soroswap-pair-fee-floor-rounding` | soroswap/core | rust | economic_loss | medium | medium |
+| `soroban-mintlock-limit-not-pinned-to-token` | stellar/soroban-examples | rust | unauthorized_payment | high | high |
+| `soroban-lp-deposit-slippage-check` | stellar/soroban-examples | rust | economic_loss | medium | high |
+| `oz-vault-zero-share-deposit` | OpenZeppelin/stellar-contracts | rust | economic_loss | high | medium |
+| `reflector-lastprice-stale` | reflector-network/reflector-contract | rust | economic_loss | medium | medium |
+| `anchor-server-withdraw-any-payment-completes` | stellar/django-polaris | python | unauthorized_payment | critical | high |
+| `polaris-multisig-deposit-stuck-pending-signatures` | stellar/django-polaris | python | reliability_failure | medium | medium |
+| `jssdk-readchallengetx-no-server-signature` | stellar/js-stellar-sdk | typescript | control_bypass | medium | high |
+| `jssdk-redirect-leaks-custom-auth-headers` | stellar/js-stellar-sdk | typescript | secret_exposure | medium | medium |
+| `walletsdk-sep10-domain-signer-swaps-tx` | stellar/typescript-wallet-sdk | typescript | foreign_transaction_signing | high | high |
+| `walletsdk-recovery-duplicate-signers-lockout` | stellar/typescript-wallet-sdk | typescript | reliability_failure | high | medium |
+
+The 22 cases come from 11 repositories and 5 languages: Rust 7, Go 6, TypeScript 4, Java 3 and Python 2.
+14 are high confidence and 8 are medium. Every audited subdir has at most 153 files in total
+(the largest is `polaris/polaris`). `language` gains the value `java` for the anchor-platform cases.
+
+### Sources and how they were found
+
+The same method as above: `git clone --filter=blob:none` (stellar/go with `--filter=tree:0`), message search with
+`git log -i -E --grep` over fix|secur|vuln|auth|signature|replay|double|race|overflow|validat|check|limit|issuer|
+threshold|nonce|expir|reentr|underflow|round|HackerOne|GHSA|audit, reading every candidate diff and the code before it,
+and checking every line range with `git show SHA:path` at both commits (`files` at the vulnerable commit,
+`fixed_files` at the fixed commit). `vulnerable_commit` is always the first parent of `fixed_commit`.
+
+Repositories: stellar/stellar-disbursement-platform-backend (PRs #1208, #1115, #1245, #1142, #1205),
+stellar/java-stellar-anchor-sdk (anchor platform, HackerOne fixes #1967, #1973, #1987), stellar/go
+(exp/services/recoverysigner), blend-capital/blend-contracts (audit fixes #195, #196), soroswap/core (#155),
+stellar/soroban-examples (#289, #297), OpenZeppelin/stellar-contracts (#883, vault package only),
+reflector-network/reflector-contract (OtterSec audit revision), stellar/django-polaris (including the earlier
+stellar-anchor-server code in its history), stellar/js-stellar-sdk (GHSA-6cgh-hjpw-q3gq, #1814) and
+stellar/typescript-wallet-sdk (#237, #255).
+
+No (repo, fix commit) pair overlaps `cases.json`. Three repositories also appear in the development set
+(stellar-disbursement-platform-backend, django-polaris and OpenZeppelin/stellar-contracts); the shared
+SDP cases are different defects, and `sdp-tss-unknown-outcome-unlock-double-pay` sits in the same file
+(`transaction_worker.go`) as a development case. `sdp-sep24-get-transaction-cross-user` uses as its vulnerable
+commit the fixed commit of the development case `sdp-payment-amount-6dp`; the pair is different.
+
+Also searched and rejected (no case kept): py-stellar-base SEP-10 and auth fixes (hardening or functional only),
+stellar-mpp-sdk and x402-stellar remaining fixes (operator configuration, UX or already rejected above),
+coinbase/x402 (Stellar changes only arrive in squashed upstream syncs), freighter (UX or rendering fixes whose code
+is spread over a large UI tree), js-stellar-base, Albedo, Stellar-Wallets-Kit, smart-account-kit, soroswap
+burn/klast changes, Blend rounding of one stroop, OZ NFT and SAC-admin fixes (DoS or functional), several
+anchor-platform hardening fixes (operator-dependent or bounded impact), and the key-manager twin of
+`walletsdk-sep10-domain-signer-swaps-tx` (typescript-wallet-sdk #245; same defect, callback supplied by the integrator).
+
+### Caveats
+
+- `anchor-server-withdraw-any-payment-completes` has a TODO in the vulnerable code that names the missing check.
+- Several fixed commits keep the related checks partly outside the audited subdir:
+  `sdp-sep24-get-transaction-cross-user` (query in `internal/data`), `sdp-payment-cancel-toctou-race` (caller in
+  `internal/services`) and `anchor-strict-send-sendamount-credited` (listener in `platform/`).
+- Blend, OpenZeppelin and Reflector fix commits are single-parent commits on merged branches. They are reachable
+  from the default branch but not on its first-parent line. `soroswap-pair-fee-floor-rounding` is a merge commit
+  scored against its first parent.
+- Medium-confidence cases either rest on our own reasoning about exploitability (`blend-self-liquidation-...`,
+  `oz-vault-zero-share-deposit`), need a misbehaving third party (`jssdk-redirect-...`, `walletsdk-recovery-...`),
+  have reliability rather than direct loss as impact, or are dust-level rounding (`soroswap-...`); see `notes`.
+- The TypeScript and Python counts are below the 6 and 3 we aimed for. Few public Stellar TypeScript or Python
+  repositories had fixes that met the inclusion rules.
