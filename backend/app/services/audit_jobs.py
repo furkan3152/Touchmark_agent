@@ -394,6 +394,13 @@ async def run_leg(handle: JobHandle, settings, *, started: float, abandoned: thr
               verification_state=handle.state.get("verification"), pin=dict(handle.state.get("pin") or {}))
     info = lambda: describe(handle.state, handle.clock())  # noqa: E731
     try:
+        return await _advance(handle, settings, request, budget, leg, info, audit)
+    finally:
+        _log_spend(str(handle.state.get("status", "")), budget, int(handle.state.get("leg", 0)))
+
+
+async def _advance(handle: JobHandle, settings, request: dict, budget: Budget, leg: Leg, info, audit) -> dict:
+    try:
         with leg_scope(leg):
             out = await audit(request["reference"], settings, ai=bool(request.get("ai")),
                               tmark_text=request.get("tmark"), skipped=request.get("skipped"))
@@ -427,6 +434,16 @@ async def run_leg(handle: JobHandle, settings, *, started: float, abandoned: thr
         return {"type": "result", "data": out}  # the result is here; only a reload could not fetch it again
     await handle.finish("completed", spend=budget.spend.to_dict(), progress={"stage": "done"})
     return {"type": "result", "data": out}
+
+
+def _log_spend(outcome: str, budget: Budget, leg: int) -> None:
+    """Measured spend goes to the server log (and the job state), never to a public response.
+    The job id is left out: it is the job's only credential (continue, cancel)."""
+    if not budget.spend.calls and not budget.spend.cut_calls:
+        return
+    s = budget.summary()
+    logger.info("audit leg %s (leg %d): %d model calls, %d tokens, %.4f USD; stopped by %s",
+                outcome, leg, s["calls"], s["tokens"], s["cost_usd"], s["stopped_by"] or "nothing")
 
 
 def is_serverless(settings) -> bool:

@@ -231,8 +231,9 @@ def test_a_token_cap_reached_mid_review_stops_cleanly_and_names_every_unread_fil
     assert {f["reason"] for f in result.not_reviewed} == {"token_cap"}
     assert "token cap" in result.note and "never stops on time" in result.note
     record = result.report()
-    assert record["coverage"]["not_reviewed_count"] == 6 and record["spend"]["tokens"] == 4 * PER_CALL
-    assert record["spend"]["stopped_by"] == "token_cap"
+    assert record["coverage"]["not_reviewed_count"] == 6 and "spend" not in record and "usage" not in record
+    # Spend is internal: kept on the result for the server log, not in the public record.
+    assert result.spend["tokens"] == 4 * PER_CALL and result.spend["stopped_by"] == "token_cap"
 
 
 def test_the_cost_cap_counts_cache_reads_and_writes_at_their_prices(first_call_like_the_rest):

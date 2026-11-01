@@ -737,7 +737,8 @@ async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer
                 v = by_id[f["id"]]
                 f["verification"] = {k: v[k] for k in ("verdict", "reviewed_severity", "file", "line", "quote",
                                                        "reason", "quote_verified", "note")}
-        payload["verification"] = verification["summary"]
+        # Token usage is not part of the report: no public response carries spend.
+        payload["verification"] = {k: v for k, v in verification["summary"].items() if k != "usage"}
     encoded = canonical_json(payload)
     return {"decision": report.decision, "report": payload, "report_json": encoded,
             "report_sha256": sha256(encoded.encode()).hexdigest()}

@@ -887,12 +887,32 @@ async def _allowance_for(request: Request) -> dict | None:
         return hit[1]
     try:
         out = limiter.describe(await limiter.remaining(_demo_client(request)))
+        if await _daily_cost_reached(limiter):
+            out = _daily_cost_used_up(limiter, out)
+        else:
+            out["daily_cost_available"] = True
     except StoreUnavailable:
         return None
     if len(_allowance_cache) > 2000:
         _allowance_cache.clear()
     _allowance_cache[key] = (time.monotonic(), out)
     return out
+
+
+async def _daily_cost_reached(limiter) -> bool:
+    """Has today's model-review cost cap been used up? (Raises StoreUnavailable.)"""
+    from .services.review_budget import daily_cost_reached
+    return limiter.store is not None and await daily_cost_reached(settings, limiter.store)
+
+
+def _daily_cost_used_up(limiter, allowance: dict | None = None) -> dict:
+    """The allowance as a visitor sees it once the daily cost cap is reached: used up until the
+    next UTC midnight. Only that it is reached is said, never an amount."""
+    from datetime import timedelta
+    now = limiter.clock()
+    next_day = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).isoformat()
+    return {**(allowance or {"left_this_hour": None, "left_today": None}), "used_up": True, "reason": "daily_cost",
+            "resets_at": next_day, "daily_cost_available": False}
 
 
 def _model_review_status() -> dict:
@@ -920,6 +940,13 @@ async def _model_review_allowed(request: Request, consent: bool) -> tuple[bool, 
     from .services.rate_limit import limiter_from_settings
     limiter = limiter_from_settings(settings)
     try:
+        # Checked before an allowance slot is claimed: once today's cost cap is used up, no model
+        # review starts until the next UTC day, and no slot is spent on a review that cannot run.
+        if await _daily_cost_reached(limiter):
+            allowance = _daily_cost_used_up(limiter)
+            return False, {"reason": "rate_limited", "limit": "daily_cost",
+                           "note": "The demo reached today's model-review limit, so this audit used the rules only. "
+                                   "Model reviews resume at 00:00 UTC."}, allowance
         decision = await limiter.acquire(_demo_client(request))
     except Exception as exc:  # noqa: BLE001 - the allowance must never fail the audit
         logger.warning("model-review allowance failed: %s", type(exc).__name__)
@@ -927,6 +954,8 @@ async def _model_review_allowed(request: Request, consent: bool) -> tuple[bool, 
                                                               "this audit used the rules only."}, None
     _allowance_cache.pop(limiter.client_key(_demo_client(request)), None)
     allowance = limiter.describe(decision.left) if decision.left else None
+    if allowance is not None:
+        allowance["daily_cost_available"] = True
     if decision.allowed:
         return True, None, allowance
     reason = "rate_limited" if decision.reason in {"client_hour", "hour", "day"} else decision.reason

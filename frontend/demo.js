@@ -363,7 +363,8 @@
     if (allowance.used_up) {
       const when = allowance.resets_at ? ` They reset at ${localTime(allowance.resets_at)}.` : "";
       const whose = { client_hour: "This connection has used its model reviews for this hour.",
-        hour: "The demo has used its model reviews for this hour.", day: "The demo has reached today's model-review ceiling." }[allowance.reason]
+        hour: "The demo has used its model reviews for this hour.", day: "The demo has reached today's model-review ceiling.",
+        daily_cost: "The demo has reached today's model-review limit." }[allowance.reason]
         || "The model-review allowance is used up for now.";
       return `${whose}${when} Audits run on the rules meanwhile.`;
     }
@@ -586,12 +587,12 @@
 
   const UNREAD_WHY = {
     token_cap: "stopped at the per-audit token cap", cost_cap: "stopped at the per-audit cost cap",
-    file_cap: "beyond the per-audit file cap", daily_budget: "stopped at the daily token budget",
+    file_cap: "beyond the per-audit file cap", daily_cost_cap: "stopped at the demo's daily limit",
+    daily_budget: "stopped at the daily token budget",
     daily_budget_unavailable: "the daily budget could not be checked", not_opened: "the model did not open it when asked",
     provider_unavailable: "the model provider stopped answering", model_declined: "the model declined to continue",
     turn_limit: "a pass reached its turn limit", time_limit: "a local run's time limit",
   };
-  const tokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
 
   function renderReview(ai, decision) {
     const v = ai.verification || {};
@@ -599,8 +600,6 @@
     if (ai.review === "completed" || ai.files_total) {
       rest.push(el("p", { class: "read-fine", text: `Read ${ai.files_read || 0} of ${plural(ai.files_total || 0, "file")}; added ${plural(ai.findings_added || 0, "finding")}.` }));
       if (v.checked) rest.push(el("p", { class: "read-fine", text: `Verifier re-checked ${v.checked}: ${v.confirmed || 0} confirmed, ${v.partial || 0} partly, ${v.refuted || 0} disputed.` }));
-      const spend = ai.spend || {};
-      if (spend.tokens) rest.push(el("p", { class: "read-fine", text: `Model spend: ${tokens(spend.tokens)} tokens${typeof spend.cost_usd === "number" ? ` (about $${spend.cost_usd.toFixed(2)})` : ""}${spend.caps ? `, within caps of ${tokens(spend.caps.tokens)} tokens and $${spend.caps.cost_usd} per audit` : ""}.` }));
     }
     const unread = ai.not_reviewed || [];
     if (unread.length) {
@@ -611,6 +610,7 @@
     }
     if (ai.allowance && !ai.allowance.used_up && ai.allowance.left_this_hour !== null && ai.allowance.left_this_hour !== undefined) rest.push(el("p", { class: "read-fine", text: `${plural(ai.allowance.left_this_hour, "model review")} left for you this hour.` }));
     if (ai.review === "rate_limited" && ai.note) rest.push(el("p", { class: "read-fine", text: ai.note }));
+    if (ai.review === "rate_limited" && ai.allowance && ai.allowance.used_up && ai.allowance.resets_at) rest.push(el("p", { class: "read-fine", text: `Model reviews are available again at ${localTime(ai.allowance.resets_at)}.` }));
     if (ai.review !== "completed" && decision !== "needs_fixes" && ai.review !== "no_source") rest.push(el("p", { class: "read-fine", text: "Without a completed model review an audit can reach needs evidence at best; it cannot pass or be stamped." }));
     if (ai.review === "completed") {
       const all = ai.files_total && ai.files_read >= ai.files_total;

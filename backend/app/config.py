@@ -99,13 +99,17 @@ class Settings(BaseSettings):
     # nothing stops it on time. What stops it is money: per audit, the tokens the model
     # processed (input, cache writes, cache reads and output, as Anthropic reports them), their
     # cost at the prices below, and the number of files read; across the deployment, a daily
-    # token budget on top of the daily review count. A cap that is hit ends the review cleanly,
-    # keeps every finding and lists each file left unread with the cap that stopped it.
+    # hard cost cap and a token budget (a secondary safety net), on top of the daily review
+    # count. A cap that is hit ends the review cleanly, keeps every finding and lists each
+    # file left unread with the cap that stopped it.
     # The defaults are sized so a 100-200 file agent repository completes with room to spare.
     deep_review_max_tokens_per_audit: int = Field(default=60_000_000, ge=0, le=2_000_000_000)
     deep_review_max_cost_usd_per_audit: float = Field(default=30.0, ge=0.0, le=10_000.0)
     deep_review_max_files_per_audit: int = Field(default=400, ge=0, le=5_000)
     deep_review_daily_token_budget: int = Field(default=600_000_000, ge=0, le=100_000_000_000)
+    # USD all model reviews together may cost per UTC day, claimed in 0.25 USD create-only chunks
+    # in the allowance store. Once used up, no model review starts that day (rules only).
+    deep_review_daily_cost_usd: float = Field(default=100.0, ge=0.0, le=1_000.0)
     # USD per million tokens, used to turn measured usage into cost (Claude Sonnet 5.5 list prices).
     deep_review_price_input_per_mtok: float = Field(default=2.0, ge=0.0)
     deep_review_price_output_per_mtok: float = Field(default=10.0, ge=0.0)

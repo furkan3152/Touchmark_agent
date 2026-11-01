@@ -47,7 +47,7 @@ def main() -> None:
     summary = {
         "decision": result["decision"], "score": report["result"]["overall_score"],
         "badge": report["result"]["badge"], "priority": report["priority_finding_ids"],
-        "deep_review": {k: report["deep_review"].get(k) for k in ("status", "turns", "coverage", "passes", "usage")},
+        "deep_review": {k: report["deep_review"].get(k) for k in ("status", "turns", "coverage", "passes", "stop_reason")},
         "selection": {k: report["repository"][k] for k in ("source_files_selected", "complete")},
         "report_sha256": result["report_sha256"],
     }

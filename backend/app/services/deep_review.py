@@ -218,8 +218,9 @@ NOT_REVIEWED_REASONS = {
     "token_cap": "stopped at the per-audit token cap",
     "cost_cap": "stopped at the per-audit cost cap",
     "file_cap": "beyond the per-audit file cap",
+    "daily_cost_cap": "stopped at the deployment's daily cost cap",
     "daily_budget": "stopped at the deployment's daily token budget",
-    "daily_budget_unavailable": "the daily token budget could not be checked",
+    "daily_budget_unavailable": "the daily budget could not be checked",
     "not_opened": "the model did not open it when asked to",
     "provider_unavailable": "the model provider stopped answering",
     "model_declined": "the model declined to continue",
@@ -250,7 +251,8 @@ class DeepReviewResult:
     stop_reason: str = ""
     #: Reviewable files never read, in review order, each with why: [{"path", "reason"}].
     not_reviewed: list = field(default_factory=list)
-    #: Spend of the whole audit (review and verification) when the review ended.
+    #: Spend of the whole audit (review and verification) when the review ended. Internal:
+    #: logged by the server, never part of the report (no public response carries cost).
     spend: dict = field(default_factory=dict)
 
     def coverage(self) -> dict:
@@ -261,11 +263,13 @@ class DeepReviewResult:
                 "not_reviewed": self.not_reviewed[:500], "not_reviewed_count": len(self.not_reviewed)}
 
     def report(self) -> dict:
+        """The public record of the review. Measured usage and cost stay out of it: they are kept
+        in the job state and the server logs only."""
         return {"status": self.status, "model": self.model, "operating_model": self.operating_model,
                 "flow_assessments": self.flow_assessments,
                 "accepted_findings": [f.id for f in self.findings], "rejected_claims": self.rejected,
-                "summary": self.summary, "turns": self.turns, "usage": self.usage, "note": self.note,
-                "passes": self.passes, "stop_reason": self.stop_reason, "spend": self.spend,
+                "summary": self.summary, "turns": self.turns, "note": self.note,
+                "passes": self.passes, "stop_reason": self.stop_reason,
                 "coverage": self.coverage(),
                 "can_remove_findings": False}
 

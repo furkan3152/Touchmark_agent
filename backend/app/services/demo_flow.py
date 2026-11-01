@@ -115,11 +115,11 @@ def _ai_summary(report: dict, ai: bool, settings: Settings, skipped: dict | None
         configured = bool(settings.enable_deep_review and settings.anthropic_api_key)
         if skipped and configured:
             # no_consent | rate_limited | store_unavailable | not_configured
-            return {"review": skipped["reason"], "note": skipped.get("note", "")}
+            return {"review": skipped["reason"], "note": skipped.get("note", ""),
+                    **({"limit": skipped["limit"]} if skipped.get("limit") else {})}
         return {"review": "rate_limited" if configured and not ai else "off"}
     verification = report.get("verification") or {}
     coverage = review.get("coverage") or {}
-    spend = review.get("spend") or {}
     return {"review": review.get("status", "not_run"), "note": review.get("note", ""),
             "findings_added": len(review.get("accepted_findings") or []),
             "files_read": len(coverage.get("files_read") or []), "files_total": coverage.get("files_total", 0),
@@ -127,7 +127,6 @@ def _ai_summary(report: dict, ai: bool, settings: Settings, skipped: dict | None
             "stop_reason": review.get("stop_reason", ""),
             "not_reviewed": (coverage.get("not_reviewed") or [])[:200],
             "not_reviewed_count": coverage.get("not_reviewed_count", len(coverage.get("not_reviewed") or [])),
-            "spend": {k: spend[k] for k in ("tokens", "cost_usd", "calls", "caps", "stopped_by") if k in spend},
             "verification": {k: verification[k] for k in ("checked", "confirmed", "partial", "refuted",
                                                          "unverifiable", "agreement") if k in verification}}
 
