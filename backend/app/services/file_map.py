@@ -285,7 +285,8 @@ class FileMapper:
 
     def __init__(self, client, *, model: str, effort: str = "low", concurrency: int = 4, fallbacks: bool = True):
         self.client, self.model, self.effort = client, model, effort
-        self.concurrency, self.fallbacks = concurrency, fallbacks
+        from .deep_review import supports_fallbacks
+        self.concurrency, self.fallbacks = concurrency, fallbacks and supports_fallbacks(model)
 
     async def _call(self, budget, leg, messages):
         extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.fallbacks else {}

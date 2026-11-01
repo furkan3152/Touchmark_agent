@@ -425,3 +425,13 @@ def test_a_violated_invariant_without_a_finding_is_sent_back_once():
                                    title="t", detail="d", evidence="a.kt:45 `x`", auditor="deep-review"))
     orphans = DeepReviewer._orphan_violations(unit, result)
     assert len(orphans) == 1 and "issuer checked" in orphans[0]
+
+
+def test_haiku_requests_carry_no_refusal_fallback():
+    from backend.app.services.deep_review import supports_fallbacks
+    from backend.app.services.finding_verifier import FindingVerifier
+    assert supports_fallbacks("claude-sonnet-5-5") and not supports_fallbacks("claude-haiku-5-5")
+    assert not DeepReviewer(None, model="claude-haiku-5-5").fallbacks
+    assert not FileMapper(None, model="claude-haiku-5-5").fallbacks
+    assert not FindingVerifier(None, model="claude-haiku-5-5").fallbacks
+    assert DeepReviewer(None, model="claude-sonnet-5-5").fallbacks

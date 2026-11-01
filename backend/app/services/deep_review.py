@@ -119,6 +119,11 @@ Stellar checklist (call stellar_reference for details):
 """
 
 
+def supports_fallbacks(model: str) -> bool:
+    """Server-side refusal fallbacks exist for Sonnet, Opus and Fable models, not for Haiku."""
+    return not str(model).startswith("claude-haiku")
+
+
 def _strict(name: str, description: str, properties: dict, required: list[str]) -> dict:
     return {"name": name, "description": description, "strict": True,
             "input_schema": {"type": "object", "properties": properties, "required": required,
@@ -523,7 +528,8 @@ class DeepReviewer:
         self.max_units = 60 if self.mode == "ledger" else 0
         self.unit_concurrency = 4
         self.unit_turns = 14
-        self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
+        self.max_turns, self.timeout_seconds = max_turns, timeout_seconds
+        self.fallbacks = fallbacks and supports_fallbacks(model)
         #: Local runs only (no request leg): time.monotonic() value by which the review must stop.
         #: The public demo sets none; it runs as a job of requests and stops only at a spend cap.
         self.deadline: float | None = None

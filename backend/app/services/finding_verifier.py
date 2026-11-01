@@ -111,7 +111,9 @@ class FindingVerifier:
     def __init__(self, client, *, model: str, effort: str = "medium", max_turns: int = 8,
                  concurrency: int = 4, timeout_seconds: float = 180.0, fallbacks: bool = True):
         self.client, self.model, self.effort = client, model, effort
-        self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
+        from .deep_review import supports_fallbacks
+        self.max_turns, self.timeout_seconds = max_turns, timeout_seconds
+        self.fallbacks = fallbacks and supports_fallbacks(model)
         #: time.monotonic() value by which verification must stop (a serverless request limit).
         self.deadline: float | None = None
         self.concurrency = concurrency
