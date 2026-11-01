@@ -73,9 +73,16 @@ def test_challenger_pass_sees_prior_findings_and_unread_files(tmp_path, monkeypa
     monkeypatch.setattr(deep_review, "reviewer_from_settings", lambda settings: reviewer)
     result = asyncio.run(audit_repository(repo, name="pay", purpose="Pay invoices.", settings=Settings(_env_file=None)))
     deep = result["report"]["deep_review"]
-    assert [p["pass"] for p in deep["passes"]] == [1, 2] and deep["passes"][0]["new_findings"] == 1
+    # Two configured passes, then a coverage pass that asks for the file still unread.
+    assert [(p["pass"], p["kind"]) for p in deep["passes"]] == [(1, "investigate"), (2, "challenge"), (3, "coverage")]
+    assert deep["passes"][0]["new_findings"] == 1
     challenge = client.requests[2]["messages"][0]["content"][1]["text"]
     assert "Challenge pass 2" in challenge and "Model-chosen recipient" in challenge and "src/util.ts" in challenge
-    assert deep["coverage"] == {"files_read": ["src/pay.ts"], "files_total": 2, "ratio": 0.5}
+    coverage = client.requests[3]["messages"][0]["content"][1]["text"]
+    assert "Coverage pass 3" in coverage and "in this order: src/util.ts." in coverage
+    # The model never opened it, so the report names it and says why.
+    assert deep["coverage"] == {"files_read": ["src/pay.ts"], "files_total": 2, "ratio": 0.5,
+                                "not_reviewed": [{"path": "src/util.ts", "reason": "not_opened"}],
+                                "not_reviewed_count": 1}
     assert result["decision"] == "needs_fixes"
     assert result["report"]["repository"]["source_files_selected"] == 2

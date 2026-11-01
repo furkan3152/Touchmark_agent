@@ -370,7 +370,7 @@ class AuditSwarm:
                    "proofs, unauthenticated endpoints or budgets an attacker can sidestep, so the audit "
                    "cannot pass on rules alone.",
             evidence=", ".join(unread[:20]) or status, evidence_grade=EvidenceGrade.CONFIRMED,
-            remediation="Run the audit with the deep review enabled and enough time to read these files.",
+            remediation="Run the audit with the deep review enabled, within a spend cap that lets it read these files.",
             auditor="security", confidence=0.9, kind=FindingKind.EVIDENCE_GAP)
         out, added = [], False
         for verdict in verdicts:

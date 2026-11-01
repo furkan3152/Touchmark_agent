@@ -113,7 +113,9 @@ class FindingVerifier:
         self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
         #: time.monotonic() value by which verification must stop (a serverless request limit).
         self.deadline: float | None = None
-        self.semaphore = asyncio.Semaphore(concurrency)
+        self.concurrency = concurrency
+        #: Spend caps and call policy (review_budget.Budget), shared with the reviewer of the audit.
+        self.budget = None
 
     @staticmethod
     def _lines(files: dict[str, str], path: str) -> list[str] | None:
@@ -160,7 +162,8 @@ class FindingVerifier:
             return knowledge.reference(args.get("topic", ""))
         return "Unknown tool."
 
-    async def verify_one(self, finding: Finding, files: dict[str, str], run: VerificationRun) -> Verification:
+    async def verify_one(self, finding: Finding, files: dict[str, str], run: VerificationRun,
+                         budget=None, leg=None) -> Verification:
         result = Verification(finding_id=finding.id)
         places = claim_locations(finding.evidence)
         where = ", ".join(f"{p}:{n}" for p, n in places) or "no line cited; search the code"
@@ -168,15 +171,21 @@ class FindingVerifier:
                  f"Files available: {len(files)} (use search_source to find others).")
         messages: list = [{"role": "user", "content": claim}]
         extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.fallbacks else {}
-        async with self.semaphore:
+        from .review_budget import Budget, LegSuspended, ReviewCancelled
+        budget = budget or self.budget or Budget()
+        async with self._semaphore():
             try:
                 for _ in range(self.max_turns):
+                    stop = await budget.admit(leg)
+                    if stop:
+                        result.note = f"not verified: stopped at {stop}"
+                        return result
                     result.turns += 1
-                    response = await self.client.beta.messages.create(
+                    response = await budget.call(lambda: self.client.beta.messages.create(
                         model=self.model, max_tokens=8000,
                         system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
                         thinking={"type": "adaptive"}, output_config={"effort": self.effort},
-                        tools=TOOLS, messages=messages, cache_control={"type": "ephemeral"}, **extra)
+                        tools=TOOLS, messages=list(messages), cache_control={"type": "ephemeral"}, **extra), leg)
                     usage = getattr(response, "usage", None)
                     for key in run.usage:
                         run.usage[key] += int(getattr(usage, key, 0) or 0)
@@ -222,34 +231,84 @@ class FindingVerifier:
                                         "content": self._tool(block.name, args, files)})
                     messages.append({"role": "user", "content": outputs})
                 result.note = "turn limit"
+            except (LegSuspended, ReviewCancelled):
+                raise
             except Exception as exc:  # a provider failure leaves the finding unverified, never removed
                 result.note = f"verification failed: {type(exc).__name__}"
         return result
 
-    async def verify(self, findings: list[Finding], files: dict[str, str]) -> VerificationRun:
-        from .progress import emit
-        run = VerificationRun(model=self.model)
-        done = [0]
-        emit("verifier", checked=0, total=len(findings))
+    def _semaphore(self) -> asyncio.Semaphore:
+        # Made in the loop that verifies: an audit may run on a worker thread's own event loop.
+        loop = asyncio.get_running_loop()
+        if getattr(self, "_sem_loop", None) is not loop:
+            self._sem, self._sem_loop = asyncio.Semaphore(self.concurrency), loop
+        return self._sem
 
-        async def one(f: Finding) -> Verification:
+    async def verify(self, findings: list[Finding], files: dict[str, str]) -> VerificationRun:
+        """Verify each finding. In a request leg (review_budget.Leg) each verdict is saved as it
+        arrives; findings the leg has no time left for are deferred to the next leg (LegSuspended
+        after the rest are saved). A spend cap leaves the remaining findings unverified, saying so."""
+        from .progress import emit
+        from .review_budget import Budget, LegSuspended, ReviewCancelled, current_leg
+        leg = current_leg()
+        budget = self.budget or (leg.budget if leg is not None else None) or Budget()
+        run = VerificationRun(model=self.model)
+        saved = ((leg.verification_state if leg is not None else None) or {})
+        done_by_id: dict[str, Verification] = {}
+        for fid, data in (saved.get("results") or {}).items():
+            names = set(Verification.__dataclass_fields__)
+            done_by_id[fid] = Verification(**{k: v for k, v in data.items() if k in names})
+        run.usage = {**run.usage, **(saved.get("usage") or {})}
+        done = [sum(1 for f in findings if f.id in done_by_id)]
+        emit("verifier", checked=done[0], total=len(findings))
+        save_lock = asyncio.Lock()
+        deferred: list[str] = []
+        stopped: list[BaseException] = []
+
+        async def save() -> None:
+            if leg is None:
+                return
+            async with save_lock:
+                await leg.checkpoint(verification={"results": {k: v.as_dict() for k, v in done_by_id.items()},
+                                                   "usage": run.usage},
+                                     progress={"stage": "verifier", "checked": done[0], "total": len(findings)})
+
+        async def one(f: Finding) -> None:
+            if f.id in done_by_id:
+                return
             try:
-                return await checked(f)
-            finally:
-                done[0] += 1
-                emit("verifier", checked=done[0], total=len(findings))
+                verdict = await checked(f)
+            except LegSuspended:
+                deferred.append(f.id)
+                return
+            except ReviewCancelled as exc:
+                stopped.append(exc)
+                return
+            done_by_id[f.id] = verdict
+            done[0] += 1
+            emit("verifier", checked=done[0], total=len(findings))
+            await save()
 
         async def checked(f: Finding) -> Verification:
-            timeout = self.timeout_seconds
-            if self.deadline is not None:
-                timeout = min(timeout, self.deadline - time.monotonic())
-                if timeout <= 0:
+            if leg is None:
+                timeout = self.timeout_seconds
+                if self.deadline is not None:
+                    timeout = min(timeout, self.deadline - time.monotonic())
+                    if timeout <= 0:
+                        return Verification(finding_id=f.id, note="timeout")
+                try:
+                    return await asyncio.wait_for(self.verify_one(f, files, run, budget, leg), timeout=timeout)
+                except asyncio.TimeoutError:
                     return Verification(finding_id=f.id, note="timeout")
-            try:
-                return await asyncio.wait_for(self.verify_one(f, files, run), timeout=timeout)
-            except asyncio.TimeoutError:
-                return Verification(finding_id=f.id, note="timeout")
-        run.results = list(await asyncio.gather(*(one(f) for f in findings)))
+            return await self.verify_one(f, files, run, budget, leg)
+
+        await asyncio.gather(*(one(f) for f in findings))
+        if stopped:
+            raise stopped[0]
+        if deferred:
+            await save()
+            raise LegSuspended("leg_time")
+        run.results = [done_by_id[f.id] for f in findings if f.id in done_by_id]
         return run
 
 
@@ -268,7 +327,8 @@ def verifier_from_settings(settings) -> FindingVerifier | None:
         from anthropic import AsyncAnthropic
     except ImportError:  # the deterministic audit runs without the model verifier
         return None
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=120.0, max_retries=2)
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=settings.deep_review_call_timeout_seconds + 15,
+                            max_retries=0)
     return FindingVerifier(client, model=settings.verifier_model, effort=settings.verifier_effort)
 
 
