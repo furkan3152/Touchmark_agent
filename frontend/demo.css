@@ -180,6 +180,7 @@
 .ledger-mark{min-width:7.2em;text-align:center;font:700 10.5px var(--mono);letter-spacing:.8px;text-transform:uppercase;padding:2px 6px;border-radius:3px;border:1.5px solid currentColor}
 .ledger-mark.holds{color:var(--green);background:var(--soft-green)}
 .ledger-mark.fails{color:var(--red);background:var(--soft-red)}
+.ledger-mark.fails.minor{color:var(--amber);background:var(--soft-amber)}
 .ledger-mark.not_applicable,.ledger-mark.not_run{color:var(--ink-soft);background:var(--paper-2)}
 .ledger-mark.cannot_determine,.ledger-mark.unanswered{color:var(--amber);background:var(--soft-amber)}
 .read-more{margin-top:8px}.read-more summary{font-size:12px}

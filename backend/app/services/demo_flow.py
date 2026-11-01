@@ -129,10 +129,10 @@ def _ai_summary(report: dict, ai: bool, settings: Settings, skipped: dict | None
             "not_reviewed_count": coverage.get("not_reviewed_count", len(coverage.get("not_reviewed") or [])),
             "verification": {k: verification[k] for k in ("checked", "confirmed", "partial", "refuted",
                                                          "unverifiable", "agreement") if k in verification},
-            **_ledger_summary(review)}
+            **_ledger_summary(review, report.get("findings") or [])}
 
 
-def _ledger_summary(review: dict) -> dict:
+def _ledger_summary(review: dict, findings: list | None = None) -> dict:
     """Check-ledger mode: every applicable check with its answer, the languages and what read
     them, and how many files the model mapped and examined (services/audit_ledger.py)."""
     if review.get("mode") != "ledger":
@@ -140,8 +140,14 @@ def _ledger_summary(review: dict) -> dict:
     ledger = review.get("ledger") or {}
     fmap = review.get("file_map") or {}
     coverage = review.get("coverage") or {}
+    severity = {f.get("id"): f.get("severity") for f in findings or [] if f.get("kind") == "risk"}
     checks = [{k: c.get(k) for k in ("id", "group", "title", "verdict", "file", "line", "reason", "finding_id")
                if c.get(k) not in (None, "")} for c in ledger.get("checks") or []]
+    for check in checks:
+        # A failing check carries the severity of its finding (after verification), so "fails" on
+        # a latent or demo path reads as low, not as a blocker.
+        if check.get("verdict") == "fails" and severity.get(check.get("finding_id")):
+            check["severity"] = severity[check["finding_id"]]
     return {"mode": "ledger",
             "ledger": {"checks": checks, "counts": ledger.get("counts", {}), "applicable": ledger.get("applicable", 0),
                        "answered": ledger.get("answered", 0), "complete": ledger.get("complete", False)},

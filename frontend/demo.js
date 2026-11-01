@@ -636,6 +636,14 @@
     access: "Access, secrets, entry points", model: "Model behaviour and intent" };
   const RULES_WORDS = { data_flow: "rules + data flow", patterns: "pattern rules", none: "model only" };
 
+  const SEVERE = new Set(["critical", "high", "medium"]);
+  function serious(checks) {
+    const fails = checks.filter((c) => c.verdict === "fails");
+    if (!fails.length) return "";
+    const n = fails.filter((c) => SEVERE.has(c.severity)).length;
+    return n === fails.length ? "" : ` (${n} at medium or above, ${fails.length - n} low)`;
+  }
+
   function renderLedger(ai) {
     const box = $("ledger");
     const ledger = ai.ledger;
@@ -643,7 +651,7 @@
     box.hidden = false;
     const n = ledger.counts || {};
     $("ledger-lead").textContent = `${ledger.answered} of ${plural(ledger.applicable, "check")} answered from the code: `
-      + `${n.holds || 0} hold, ${n.fails || 0} fail, ${n.not_applicable || 0} not applicable, ${(n.cannot_determine || 0) + (n.unanswered || 0) + (n.not_run || 0)} open.`;
+      + `${n.holds || 0} hold, ${n.fails || 0} fail${serious(ledger.checks)}, ${n.not_applicable || 0} not applicable, ${(n.cannot_determine || 0) + (n.unanswered || 0) + (n.not_run || 0)} open.`;
     const langs = (ai.languages || []).map((l) => `${l.language} ${l.files} (${RULES_WORDS[l.rules] || l.rules})`).join(" · ");
     $("ledger-langs").textContent = `The model mapped ${plural(ai.files_mapped || 0, "file")} line by line and examined ${ai.files_examined || 0} in depth, `
       + `including every one of the ${plural(ai.authority_files || 0, "file")} that holds keys, payments or signing.${langs ? " Languages: " + langs + "." : ""}`;
@@ -657,7 +665,8 @@
           const why = [c.reason, where && `at ${where}`, c.finding_id && `finding ${c.finding_id}`].filter(Boolean).join(" · ");
           const label = `${c.id} ${c.title}`;
           return el("li", { class: "ledger-row" },
-            el("span", { class: "ledger-mark " + c.verdict, text: LEDGER_MARK[c.verdict] || c.verdict }),
+            el("span", { class: "ledger-mark " + c.verdict + (c.verdict === "fails" && !SEVERE.has(c.severity) ? " minor" : ""),
+              text: (LEDGER_MARK[c.verdict] || c.verdict) + (c.verdict === "fails" && c.severity ? ` · ${c.severity}` : "") }),
             why ? el("details", {}, el("summary", { text: label }), el("p", { class: "why", text: why })) : el("span", { text: label }));
         }))));
     }
