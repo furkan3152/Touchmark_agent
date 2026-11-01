@@ -193,14 +193,14 @@ DANGEROUS_CODE_PATTERNS: tuple[tuple[str, str, str, Severity, str], ...] = (
     ),
     (
         r"(?:private_key|PRIVATE_KEY|mnemonic|MNEMONIC|seed_phrase)\s*=\s*[\"'][^\"']{16,}[\"']",
-        "kodda-g-m-l-zel-anahtar",
+        "code-embedded-signing-secret",
         "Signing secret embedded in source",
         Severity.CRITICAL,
         "A private key or mnemonic is hardcoded in the source.",
     ),
     (
         r"(?:api_key|API_KEY|secret|SECRET|token|TOKEN)\s*=\s*[\"'][A-Za-z0-9_\-]{20,}[\"']",
-        "kodda-g-m-l-api-anahtar",
+        "code-embedded-api-credential",
         "API credential embedded in source",
         Severity.HIGH,
         "A credential is hardcoded in the source.",

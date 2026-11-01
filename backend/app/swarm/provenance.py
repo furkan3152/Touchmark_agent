@@ -15,13 +15,16 @@ from .base import BaseAuditor
 
 
 MANIFEST_NAMES = ("package.json", "requirements.txt", "requirements.in", "pyproject.toml", "setup.cfg",
-                  "cargo.toml", "go.mod", "dockerfile", "pipfile", "gemfile")
+                  "cargo.toml", "go.mod", "dockerfile", "pipfile", "gemfile",
+                  # JVM, .NET, PHP, Swift, Dart, Elixir and Scala builds
+                  "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+                  "composer.json", "package.swift", "pubspec.yaml", "mix.exs", "build.sbt")
 
 
 def _is_manifest(name: str) -> bool:
     base = name.lower().rsplit("/", 1)[-1]
     return (base in MANIFEST_NAMES or base.startswith(("requirements", "dockerfile"))
-            or base.endswith((".dockerfile", ".hbs.dockerfile")) or base.startswith("dockerfile.")
+            or base.endswith((".dockerfile", ".hbs.dockerfile", ".csproj", ".fsproj")) or base.startswith("dockerfile.")
             or (("/.github/workflows/" in "/" + name.lower()) and base.endswith((".yml", ".yaml"))))
 
 
@@ -60,6 +63,8 @@ class ProvenanceAuditor(BaseAuditor):
         lock_markers = (
             "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "cargo.lock",
             "poetry.lock", "uv.lock", "pipfile.lock", "go.sum", "bun.lock", "bun.lockb",
+            "gradle.lockfile", "packages.lock.json", "composer.lock", "gemfile.lock", "package.resolved",
+            "pubspec.lock", "mix.lock",
         )
         # Version ranges live in manifests and build files, not in application source:
         # `/**` comments and `a >= b` comparisons in code are not floating dependencies.

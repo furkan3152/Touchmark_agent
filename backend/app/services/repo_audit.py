@@ -32,12 +32,13 @@ from ..reporting.generator import canonical_json, report_to_dict
 from ..swarm.provenance import _is_manifest
 from .lockfiles import Lockset
 
-SOURCE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", ".go", ".sol")
+from .languages import SOURCE_SUFFIXES  # noqa: E402  (every language the review reads; see services/languages.py)
 #: Code generators ship the agent as templates (server.py.hbs, tools.ts.tmpl). A template
 #: whose stem is a source file is reviewed like source.
 TEMPLATE_SUFFIXES = (".hbs", ".handlebars", ".j2", ".jinja", ".jinja2", ".tmpl", ".mustache", ".ejs")
 LOCKFILES = ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "poetry.lock", "uv.lock",
-             "Pipfile.lock", "go.sum", "bun.lock", "bun.lockb")
+             "Pipfile.lock", "go.sum", "bun.lock", "bun.lockb", "gradle.lockfile", "packages.lock.json",
+             "composer.lock", "Gemfile.lock", "Package.resolved", "pubspec.lock", "mix.lock")
 #: Deeper paths are not source anyone reads: real repositories stay far below this, and
 #: path handling costs grow with depth (a hostile tree of ~1,000-level branches stalls it).
 MAX_PATH_DEPTH = 64
@@ -56,12 +57,18 @@ _TOOL_PATTERNS = (
 )
 SKIP_DIRS = {"node_modules", "dist", "build", "out", ".git", "target", "vendor", "__pycache__", "coverage",
              ".next", ".turbo", ".venv", "venv", "test", "tests", "__tests__", "spec", "fixtures", "e2e",
-             "examples", "example", "docs", "benchmarks", ".github"}
+             "examples", "example", "docs", "benchmarks", "benchmark", ".github", "bin", "obj", "pods", "deriveddata",
+             "eval", "evals"}
+#: Test files by the naming conventions of languages without a tests/ folder habit
+#: (case-sensitive: "Contest.java" is not a test).
+_TEST_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$|_test\.(?:go|dart|exs?|rb)|_spec\.rb|(?:Test|Tests|Spec|IT)\.(?:java|kt|cs|swift|scala|php))$")
 SIGNALS = re.compile(
     r"stellar|soroban|Keypair|fromSecret|from_secret|sign\(|signTransaction|submitTransaction|submit_transaction|"
     r"server\.tool|registerTool|@tool|tool\(|process\.env|os\.environ|fetch\(|axios|httpx|requests\.|exec\(|"
     r"spawn\(|child_process|subprocess|payment|transfer|trustline|setOptions|set_options|secret|mnemonic|seed|"
-    r"anthropic|openai|messages\.create|mcp|policy|limit|allowlist|approve", re.I)
+    r"anthropic|openai|messages\.create|mcp|policy|limit|allowlist|approve|"
+    r"KeyPair\.fromSecretSeed|Transaction\.Builder|TransactionBuilder|signTransaction|submitTransaction|"
+    r"@(?:Post|Get|Request)Mapping|\[Http(?:Post|Get)\]|MapPost\(|routing\s*\{|Route::", re.I)
 
 
 #: Files that decide who may do what. They are kept first when a repository exceeds the budget.
@@ -255,6 +262,28 @@ _DEV_TOOLING = re.compile(r"^(?:build(?:[-_.][\w-]+)?|smoke[-_]?tests?(?:[-_][\w
                           r"\.(?:[cm]?[jt]s|py)$", re.I)
 
 
+#: Code that uses a key the program holds itself: a seed, a private key from the environment, signing.
+HELD_KEY = re.compile(r"fromSecret|from_secret|fromSecretSeed|Keypair\.(?:from_secret|fromSecret)|KeyPair\.from|"
+                      r"PRIVATE_KEY|SECRET_KEY|SECRET_SEED|STELLAR_SECRET|SIGNER_SECRET|\bS[A-Z2-7]{55}\b|"
+                      r"\.sign\(|signTransaction\(|sign_transaction\(")
+_EXAMPLE_DIRS = {"examples", "example", "demo", "demos", "quickstart", "samples"}
+_NOT_EXAMPLE = {"test", "tests", "__tests__", "spec", "fixtures", "e2e", "node_modules", "dist", "build", "out",
+                "target", "vendor", ".git", "coverage", ".next", ".turbo", ".venv", "venv"}
+
+
+def _example_root(rel: Path) -> str:
+    """"examples/facilitator" for examples/facilitator/src/x.ts; "" outside example folders or
+    when the file is also under a test or build folder."""
+    parts = list(rel.parts[:-1])
+    lowered = [p.lower() for p in parts]
+    if any(p in _NOT_EXAMPLE or p.startswith(".") for p in lowered):
+        return ""
+    for i, part in enumerate(lowered):
+        if part in _EXAMPLE_DIRS:
+            return "/".join(parts[:i + 2]) if len(parts) > i + 1 else "/".join(parts[:i + 1])
+    return ""
+
+
 def _skipped(rel: Path) -> bool:
     parts = [p.lower() for p in rel.parts[:-1]]
     name = rel.name.lower()
@@ -264,7 +293,7 @@ def _skipped(rel: Path) -> bool:
     tooling = bool(_DEV_TOOLING.match(name)) and not agent_tools
     return (any(p in SKIP_DIRS or p.startswith(".") for p in parts) or tooling
             or name.endswith((".d.ts", ".min.js", ".test.ts", ".spec.ts", ".test.js", ".spec.js", "_test.py", ".map"))
-            or name.startswith("test_"))
+            or name.startswith("test_") or bool(_TEST_NAME.search(rel.name)))
 
 
 def _is_source(name: str) -> bool:
@@ -288,6 +317,8 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     """Choose the agent-defining source within a budget. Returns (files, manifest)."""
     root = root.resolve()
     candidates, instructions, manifests, skipped, oversized = [], {}, {}, 0, []
+    #: Source under examples/ (and similar), by example folder: see _example_root.
+    examples: dict[str, list[tuple[str, str]]] = {}
     #: Source left out as tests, examples, docs or builds, by folder: the scope of the analysis.
     excluded: dict[str, int] = {}
     ownership: dict = {}
@@ -327,6 +358,15 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
         if not (_is_source(rel.name) or manifest_file):
             continue
         if _skipped(rel):
+            example = _example_root(rel)
+            if example and _is_source(rel.name) and path.stat().st_size <= max_file_bytes:
+                # Example servers and CLIs a user is told to run often hold the real keys (a
+                # facilitator, a paying client). Kept aside: an example folder whose code uses a
+                # held key is brought into the review below, after the agent's own source.
+                try:
+                    examples.setdefault(example, []).append((rel.as_posix(), path.read_text()))
+                except UnicodeDecodeError:
+                    pass
             skipped += 1
             folder = next((part for part in rel.parts[:-1] if part.lower() in SKIP_DIRS or part.startswith(".")), "")
             label = (folder + "/") if folder else "test and build files"
@@ -350,6 +390,15 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                  + (40 if SECURITY_PATH.search(rel.as_posix()) else 0))
         candidates.append((score, rel.as_posix(), text))
     candidates.sort(key=lambda c: (-c[0], c[1]))
+    key_examples = sorted(ex for ex, items in examples.items() if any(HELD_KEY.search(t) for _, t in items))
+    for example in key_examples:
+        for rel_path, text in sorted(examples[example]):
+            candidates.append((-1, rel_path, text))
+            label = example.split("/", 1)[0] + "/"
+            excluded[label] = excluded.get(label, 1) - 1
+            if excluded[label] <= 0:
+                excluded.pop(label, None)
+            skipped -= 1
     files, used, left_out = {}, 0, []
     for score, rel, text in candidates:
         size = len(text.encode())
@@ -364,6 +413,7 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
                 "files_too_large": oversized[:50], "instruction_files": sorted(instructions),
                 "excluded_scope": dict(sorted(excluded.items(), key=lambda kv: (-kv[1], kv[0]))[:20]),
                 "complete": not left_out and not oversized,
+                "examples_with_keys_included": key_examples[:50],
                 "budget": {"max_files": max_files, "max_bytes": max_bytes, "max_file_bytes": max_file_bytes}}
     seed_keys: dict[str, list[str]] = {}
     return files, {"manifest": manifest, "instructions": instructions, "ownership": ownership, "blueprint": blueprint,
@@ -561,6 +611,7 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
                                               + selection["manifest"]["files_too_large"]),
                       "committed_seeds": selection.get("committed_seeds", []),
                       "excluded_scope": selection["manifest"].get("excluded_scope", {}),
+                      "examples_with_keys": selection["manifest"].get("examples_with_keys_included", []),
                       # A README describes the project to people; it is not the agent's prompt.
                       "agent_instructions": any(p.lower() not in README_NAMES for p in selection["instructions"]),
                       "deployment_markers": selection.get("deployment_markers", []),

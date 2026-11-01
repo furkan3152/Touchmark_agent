@@ -31,10 +31,11 @@ from .guards import (
     is_within,
     resolve_ingest_path,
 )
+from ..services.languages import SOURCE_SUFFIXES
 from .templates import TEMPLATES
 
 STELLAR_ADDRESS_RE = re.compile(r"^[GC][A-Z2-7]{55}$")
-CODE_SUFFIXES = {".py", ".ts", ".js", ".tsx", ".jsx", ".sol", ".rs", ".go", ".json", ".yaml", ".yml", ".toml", ".lock", ".md", ".txt", ".example", ".sample", ".template"}
+CODE_SUFFIXES = {*SOURCE_SUFFIXES, ".json", ".yaml", ".yml", ".toml", ".lock", ".md", ".txt", ".example", ".sample", ".template"}
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "dist", "build", ".next"}
 #: Directories never taken into the audit surface. `keystore` holds the operator's
 #: private key and `sanctions` the 5.6 MB OFAC cache; neither is the audited

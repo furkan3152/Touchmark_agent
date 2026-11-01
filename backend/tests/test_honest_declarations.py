@@ -90,13 +90,16 @@ def test_a_card_that_names_no_financial_authority_is_still_reported():
 
 
 # (c) ------------------------------------------------------------------ analysed scope
-def test_declared_tools_whose_code_is_outside_the_analysed_scope_are_a_scope_gap():
+def test_example_code_that_uses_a_held_key_is_brought_into_scope():
+    # examples/client-cli pays a 402 challenge from an env key. Example servers and CLIs a user is
+    # told to run are where such keys live (live x402-stellar run: the facilitator was skipped and
+    # the repository passed "read in full"), so an example folder that uses a held key is reviewed.
     report = run(HONEST / "x402")
     found = {f["id"]: f for f in report["findings"]}
-    assert "security-unbounded-spend" not in found and "economic-no-spend-policy" not in found
-    gap = found["security-declared-tools-outside-scope"]
-    assert gap["kind"] == "evidence_gap" and "client-cli" in gap["detail"] and "examples/" in gap["evidence"]
-    assert report["repository"]["excluded_scope"] == {"examples/": 1}
+    assert "security-declared-tools-outside-scope" not in found
+    assert report["repository"]["excluded_scope"] == {}
+    # The honest "no limit" declaration about code the rules read is an evidence gap, not a score.
+    assert found["security-unbounded-spend"]["kind"] == "evidence_gap"
 
 
 def test_unbounded_spend_in_analysed_code_is_still_a_risk(tmp_path):

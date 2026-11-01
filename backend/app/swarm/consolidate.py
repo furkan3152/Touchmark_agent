@@ -96,7 +96,9 @@ def merge_duplicates(findings: list[Finding]) -> list[Finding]:
         # The same line and kind for two model findings (a later pass repeating an earlier
         # one); for a rule finding, a nearby line and the matching kind of defect.
         twin = next((k for k in kept if k.is_risk and (
-            (_same_place(k, f, 0) and _category(k.id) == _category(f.id)) if "-ai-" in k.id
+            # The same kind of defect a few lines apart in one file is one defect reported per line
+            # (on live repositories one shell injection came back as four findings).
+            (_same_place(k, f, 6) and _category(k.id) == _category(f.id)) if "-ai-" in k.id
             else (_same_place(k, f) and _category(f.id) in _RULE_TWINS.get(_SUFFIX.sub("", k.id), set())))), None)
         if twin is None:
             kept.append(f)
@@ -108,6 +110,31 @@ def merge_duplicates(findings: list[Finding]) -> list[Finding]:
             "verified": twin.verified or f.verified,
         })
         kept[kept.index(twin)] = merged
+    return kept
+
+
+#: Rules that report a secret written into the repository. Several fire on the same line (a seed
+#: rule, an embedded-credential rule, a committed-file rule): that is one exposed secret.
+_SECRET_RULE = re.compile(r"secret-seed|embedded-signing-secret|embedded-api-credential|committed-(?:seed|secret|"
+                          r"credential)|hardcoded-secret|default-secret|-ai-secret-exposure-\d+$")
+
+
+def merge_secret_reports(findings: list[Finding]) -> list[Finding]:
+    """Every report of a committed secret at the same place (within two lines) becomes one
+    finding, the most severe, which names the others."""
+    kept: list[Finding] = []
+    for f in findings:
+        if not (f.is_risk and _SECRET_RULE.search(f.id) and _locations(f)):
+            kept.append(f)
+            continue
+        twin = next((k for k in kept if k.is_risk and _SECRET_RULE.search(k.id) and _same_place(k, f, 2)), None)
+        if twin is None:
+            kept.append(f)
+            continue
+        lead, other = (twin, f) if twin.severity.rank >= f.severity.rank else (f, twin)
+        kept[kept.index(twin)] = lead.model_copy(update={
+            "detail": lead.detail + f" Also reported as {other.id}: {other.title}.",
+            "verified": lead.verified or other.verified})
     return kept
 
 
@@ -150,4 +177,4 @@ def harness_notes(findings: list[Finding]) -> list[Finding]:
 
 
 def consolidate(findings: list[Finding]) -> list[Finding]:
-    return harness_notes(fold_absence_notes(merge_duplicates(findings)))
+    return harness_notes(fold_absence_notes(merge_secret_reports(merge_duplicates(findings))))
