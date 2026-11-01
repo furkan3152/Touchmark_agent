@@ -66,7 +66,7 @@ Commit `.tmark` at the root, next to `README.md`. The [GitHub Action](../README.
 | `authority.holds_keys` | yes | boolean | `false` while the code loads or uses a key → **authority mismatch** |
 | `authority.key_source` | yes | `env`, `kms`, `external_signer`, `wallet_prompt`, `none`; 1.1: `caller_supplied`, `agent_generated` | Must agree with `holds_keys`. `caller_supplied`: the caller passes a secret with each call and the agent keeps none, so loading that key is not an authority mismatch (its path through the model is still checked). `agent_generated`: the agent creates and stores a key itself; `holds_keys` must be `true` |
 | `authority.signs` | yes | any of `payments`, `contract_calls`, `account_changes`, `trustlines`, `foreign_transactions`, `messages` | The code signing something not listed → **authority mismatch** |
-| `authority.agent_account` | no | `G...` or `C...` | Read from the ledger: signers, thresholds, balances |
+| `authority.agent_account` | no | `G...` or `C...` | Read from the ledger: signers, thresholds, balances. A co-signer requirement for payments, or for signer changes, is credited in the check ledger as an enforced control (checks V1, V2, A4, S6) |
 | `limits` | when the agent moves funds | | |
 | `limits.per_payment`, `limits.per_day` | no | `{amount, asset}` | Missing cap or running total in the paying code → **limit not enforced** |
 | `limits.recipients` | yes | `allowlist`, `any`, `none` | `allowlist` without one in code → **limit not enforced** |

@@ -161,7 +161,12 @@ the rules cannot. With consent, the review (`DEEP_REVIEW_MODE=ledger`) runs in f
    check with `holds` (quoting the enforcing line), `fails` (quoting the defective line; it
    becomes a finding and is verified like any other), `not_applicable` or `cannot_determine`.
    A pass that tries to finish with checks open is sent back once; checks still open are
-   reported as `unanswered`. An answer never removes or lowers a finding.
+   reported as `unanswered`. An answer never removes or lowers a finding. Each pass carries the
+   Stellar reference text for its checks (`audit_ledger.STELLAR_TOPICS`: asset identity, passphrases
+   and endpoints, sequence and retries, signers and thresholds, auth entries) so every run judges
+   them by the same written criteria. When the agent's account was read from the ledger, a
+   co-signer requirement for payments or for signer changes is a fact the answer may cite
+   (`file: "onchain"`, quoted exactly; `audit_ledger.ONCHAIN_SUPPORTS`) for the checks it enforces.
 4. **Coverage.** Authority files no pass has opened, and files the map could not read, are
    opened in batches. Files the map read that hold no authority are not reopened.
 

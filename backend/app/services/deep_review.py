@@ -607,7 +607,18 @@ class DeepReviewer:
         if verdict not in ledger.VERDICTS:
             return "Unknown verdict."
         answer = ledger.Answer(check_id=check.id, verdict=verdict, reason=redact(str(args.get("reason", ""))[:1200]))
-        if verdict in ("holds", "fails"):
+        onchain = verdict == "holds" and str(args.get("file", "")).strip().lower() == "onchain"
+        if onchain:
+            # A control the ledger enforces: the quote must be one of the facts read for this account,
+            # and that fact must support this check (audit_ledger.ONCHAIN_SUPPORTS).
+            quote = " ".join(str(args.get("evidence_quote", "")).split())
+            fact = next((fid for fid, text in getattr(self, "_onchain", {}).items() if text == quote), None)
+            if fact is None or check.id not in ledger.ONCHAIN_SUPPORTS.get(fact, set()):
+                return ("Not recorded: an on-chain answer must quote, exactly, one of the on-chain facts listed for "
+                        "this check. Otherwise cite the enforcing code line.")
+            answer.file, answer.line, answer.quote, answer.quote_verified = "onchain", 0, quote, True
+            answer.onchain = fact
+        elif verdict in ("holds", "fails"):
             problem = self._verify_quote(artifact, args.get("file", ""), args.get("line", 0),
                                          args.get("evidence_quote", ""))
             if problem:
@@ -650,6 +661,7 @@ class DeepReviewer:
         from .progress import emit
         from .review_budget import Budget, LegSuspended, ProviderUnavailable, ReviewCancelled, current_leg
         reviewable = _reviewable(artifact)
+        self._onchain = ledger.onchain_facts(chain)
         result = DeepReviewResult(model=self.model, total_files=len(reviewable), reviewable=reviewable, mode=self.mode)
         leg = current_leg()
         budget = self.budget or (leg.budget if leg is not None else None) or Budget()
@@ -836,7 +848,7 @@ class DeepReviewer:
             needs = set().union(*(c.needs for c in checks)) if any(c.needs for c in checks) else set(fmap.kinds())
             focus = set(fmap.files_with(needs)) | (authority_files(artifact) if not fmap.cards else set())
             files = [p for p in _priority(artifact) if p in focus]
-            return (f"ledger:{group}", ledger.instruction(group, checks, files, prior), [])
+            return (f"ledger:{group}", ledger.instruction(group, checks, files, prior, getattr(self, "_onchain", {})), [])
         required = authority_files(artifact) | (result.reviewable - result.mapped())
         unread = [p for p in _priority(artifact) if p in required and p not in result.files_read]
         read = len(result.files_read & result.reviewable) if result.reviewable else len(result.files_read)

@@ -661,12 +661,12 @@
       if (!rows.length) continue;
       groups.append(el("div", { class: "ledger-group" }, el("h4", { text: title }),
         el("ul", {}, ...rows.map((c) => {
-          const where = c.file ? `${c.file}:${c.line}` : "";
+          const where = c.onchain ? "the Stellar ledger (signers and thresholds of the agent's account)" : c.file ? `${c.file}:${c.line}` : "";
           const why = [c.reason, where && `at ${where}`, c.finding_id && `finding ${c.finding_id}`].filter(Boolean).join(" · ");
           const label = `${c.id} ${c.title}`;
           return el("li", { class: "ledger-row" },
             el("span", { class: "ledger-mark " + c.verdict + (c.verdict === "fails" && !SEVERE.has(c.severity) ? " minor" : ""),
-              text: (LEDGER_MARK[c.verdict] || c.verdict) + (c.verdict === "fails" && c.severity ? ` · ${c.severity}` : "") }),
+              text: (LEDGER_MARK[c.verdict] || c.verdict) + (c.verdict === "fails" && c.severity ? ` · ${c.severity}` : "") + (c.onchain ? " · on-chain" : "") }),
             why ? el("details", {}, el("summary", { text: label }), el("p", { class: "why", text: why })) : el("span", { text: label }));
         }))));
     }

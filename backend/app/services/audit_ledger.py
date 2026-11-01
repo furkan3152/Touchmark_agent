@@ -41,6 +41,21 @@ CHAIN = SIGN | VALUE | {"changes_account_authority"}
 PRIVILEGED = CHAIN | {"holds_or_loads_secret", "executes_code"}
 
 
+#: The Stellar reference topics (stellar/knowledge.py) that state the criteria for each check. A
+#: ledger pass carries the text of its checks' topics, so every run judges Stellar specifics
+#: (asset identity, passphrases and endpoints, sequence and retries, signers and thresholds,
+#: auth entries) against the same written rules instead of the model's memory.
+STELLAR_TOPICS = {
+    "V1": ("payments",), "V4": ("payments", "memos_and_muxed"), "V5": ("payments", "trustlines_and_assets"),
+    "V6": ("transaction_lifecycle",), "V7": ("transaction_lifecycle", "anchors", "memos_and_muxed"),
+    "V8": ("payments",), "S1": ("transaction_lifecycle", "soroban_auth"), "S2": ("key_management",),
+    "S3": ("endpoints",), "S4": ("transaction_lifecycle",), "S5": ("transaction_lifecycle",),
+    "S6": ("multisig", "trustlines_and_assets"), "S7": ("soroban_auth",), "A2": ("key_management",),
+    "A3": ("agent_surfaces",), "A4": ("multisig",), "M1": ("memos_and_muxed", "agent_surfaces"),
+    "M3": ("agent_surfaces",), "V2": ("agent_surfaces",), "V3": ("agent_surfaces",),
+}
+
+
 @dataclass(frozen=True)
 class Check:
     id: str
@@ -74,7 +89,10 @@ CATALOG: tuple[Check, ...] = (
     _c("V5", "value", "Asset identity and units",
        "Are assets identified by code AND issuer (or contract id), and are amounts parsed one way with the "
        "right unit (stroops vs decimal; no float, hex, exponent or negative surprises) both where they are "
-       "checked and where they are signed?", "stellar_protocol_misuse", VALUE),
+       "checked and where they are signed? holds only if EVERY place that accepts, compares or pays an asset "
+       "uses the issuer or contract id (native XLM excepted) AND the value checked is the value signed; fails "
+       "if any one path compares the code alone or parses the amount differently from what it signs.",
+       "stellar_protocol_misuse", VALUE),
     _c("V6", "value", "Replay and double payment",
        "Can a request, a retry after a timeout, or a resubmitted proof cause the same payment or action "
        "twice? Look for idempotency keys, sequence handling and retry logic.", "replay_or_idempotency", VALUE),
@@ -99,7 +117,10 @@ CATALOG: tuple[Check, ...] = (
     _c("S3", "signing", "Network and endpoint pinning",
        "Are the network passphrase and the Horizon / Soroban RPC / facilitator URLs fixed by operator "
        "configuration on every path that signs or submits, and never chosen by the requester? Does the "
-       "configured network actually reach the signing path?", "stellar_protocol_misuse", CHAIN),
+       "configured network actually reach the signing path? holds only if, on EVERY signing, submitting or "
+       "payment-verifying path, the passphrase and the Horizon/RPC URL come from code constants or operator "
+       "configuration; fails if a request field, tool argument, CLI flag, fetched config or a testnet/mainnet "
+       "switch the requester controls can choose either, even on one path.", "stellar_protocol_misuse", CHAIN),
     _c("S4", "signing", "Expiry and fees",
        "Do signed transactions carry a bounded timeout (not 0 / infinite), and are fees, fee bumps and any "
        "sponsorship bounded rather than set from input?", "stellar_protocol_misuse", SIGN),
@@ -124,7 +145,9 @@ CATALOG: tuple[Check, ...] = (
        "committed files (.env copies, key files, notes)?", "secret_exposure", {"holds_or_loads_secret"}),
     _c("A3", "access", "Tenant isolation",
        "Can one user or caller act on keys, funds, sessions or records that belong to another user or to "
-       "a shared treasury? Is state shared across users of the same process keyed by the caller?",
+       "a shared treasury? Is state shared across users of the same process keyed by the caller? Answer "
+       "not_applicable only when the service has exactly one principal (a single operator); whenever more than "
+       "one caller identity exists (users, API keys, chats, tenants), answer holds or fails.",
        "cross_user_access", {"stores_shared_state", "moves_value", "holds_or_loads_secret"}),
     _c("A4", "access", "Approvals fail closed",
        "Where an approval, confirmation or policy gate exists, does it deny on timeout, error, a missing "
@@ -183,11 +206,59 @@ def plan(kinds: set[str]) -> list[tuple[str, list[Check]]]:
     return [(g, [c for c in checks if c.group == g]) for g in GROUPS if any(c.group == g for c in checks)]
 
 
-def instruction(group: str, checks: list[Check], files: list[str], prior: str) -> str:
+def stellar_criteria(checks: list[Check]) -> str:
+    from ..stellar import knowledge
+    topics = list(dict.fromkeys(t for c in checks for t in STELLAR_TOPICS.get(c.id, ())))
+    return "\n\n".join(knowledge.reference(t) for t in topics)
+
+
+# ---------------------------------------------------------------------------------- on-chain facts
+#: On Stellar who can move an account's funds is public (signers, weights, thresholds). When the
+#: agent's account was read, these facts are controls no code change or prompt can remove, and a
+#: ledger answer may cite them. Each is a fixed sentence generated from the chain read; an answer
+#: citing one must quote it exactly, and the fact must be true for the account that was read.
+ONCHAIN_SUPPORTS = {
+    "payments_need_cosigner": {"V1", "V2", "A4"},
+    "agent_key_cannot_administer": {"S6"},
+}
+
+
+def onchain_facts(chain: dict | None) -> dict[str, str]:
+    """fact id -> the sentence an answer quotes, for the facts that hold on the account read."""
+    account = (chain or {}).get("account") or {}
+    if account.get("status") != "found":
+        return {}
+    t = account.get("thresholds") or {}
+    agent = account.get("agent_key") or {}
+    out = {}
+    if account.get("multisig_required_for_payments") or (agent and agent.get("is_signer") and not agent.get("can_pay_alone")):
+        who = f"agent key weight {agent.get('weight')}" if agent else "no single signer"
+        out["payments_need_cosigner"] = (f"onchain: {account.get('address')} needs a co-signer for every payment "
+                                         f"({who} < medium threshold {t.get('medium')})")
+    if (agent and agent.get("is_signer") and not agent.get("can_administer_alone")) or \
+            (not agent and not account.get("single_key_can_administer")):
+        out["agent_key_cannot_administer"] = (f"onchain: {account.get('address')} signer and threshold changes need "
+                                              f"more than one key (high threshold {t.get('high')})")
+    return out
+
+
+def instruction(group: str, checks: list[Check], files: list[str], prior: str,
+                chain_facts: dict[str, str] | None = None) -> str:
     rows = "\n".join(f"- {c.id} ({c.title}): {c.question}" for c in checks)
     focus = ", ".join(files[:40]) or "the files in read_first"
+    ids = {c.id for c in checks}
+    onchain = [(fid, text) for fid, text in (chain_facts or {}).items() if ONCHAIN_SUPPORTS.get(fid, set()) & ids]
+    onchain_text = ("\nOn-chain controls read from the ledger for the agent's account. They hold whatever the code "
+                    "does. For " + ", ".join(sorted(set().union(*(ONCHAIN_SUPPORTS[f] for f, _ in onchain)) & ids))
+                    + " you may answer holds citing one with file \"onchain\", line 0 and evidence_quote copied "
+                    "exactly, but only if the code signs or pays from that account (check its source account or "
+                    "configured key); say in the reason what the code alone would allow:\n"
+                    + "\n".join(f"  {text}" for _, text in onchain)) if onchain else ""
+    criteria = stellar_criteria(checks)
     return (f"Check-ledger pass: {GROUP_TITLES[group]}. Answer EVERY check below with answer_check, one call "
-            f"per check, after reading the code that decides it.\n{rows}\n\n"
+            f"per check, after reading the code that decides it.\n{rows}\n"
+            + (f"\nStellar criteria for these checks (judge by these, not by memory):\n{criteria}\n" if criteria else "")
+            + onchain_text + "\n"
             f"Start with these files (the file map shows they hold the relevant capabilities): {focus}. Search "
             "for sibling paths that do the same thing and judge all of them.\n"
             "Verdicts: holds = the code enforces it (quote the enforcing line); fails = it does not on at least "
@@ -210,6 +281,8 @@ class Answer:
     reason: str = ""
     finding_id: str = ""
     quote_verified: bool = False
+    #: The on-chain fact a "holds" answer rests on (ONCHAIN_SUPPORTS), when it rests on the ledger.
+    onchain: str = ""
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)

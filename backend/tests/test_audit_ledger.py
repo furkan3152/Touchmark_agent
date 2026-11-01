@@ -244,3 +244,45 @@ def test_a_failing_check_linked_to_an_existing_finding_adds_its_line_to_the_evid
                                   "existing_finding_id": first.id}, art, result)
     assert first.id in out and len(result.findings) == 1
     assert "PayoutService.kt:8" in result.findings[0].evidence and "PayoutService.kt:11" in result.findings[0].evidence
+
+
+CHAIN = {"account": {"status": "found", "address": "GAGENT", "thresholds": {"low": 1, "medium": 2, "high": 3},
+                     "multisig_required_for_payments": True, "single_key_can_administer": False,
+                     "agent_key": {"key": "GKEY", "weight": 1, "is_signer": True, "can_pay_alone": False,
+                                   "can_administer_alone": False}}}
+
+
+def test_on_chain_thresholds_become_citable_controls_only_for_the_checks_they_enforce():
+    facts = ledger.onchain_facts(CHAIN)
+    assert set(facts) == {"payments_need_cosigner", "agent_key_cannot_administer"}
+    assert "agent key weight 1 < medium threshold 2" in facts["payments_need_cosigner"]
+    assert ledger.onchain_facts({"account": {"status": "not_supplied"}}) == {}
+    solo = {"account": {**CHAIN["account"], "multisig_required_for_payments": False,
+                        "agent_key": {**CHAIN["account"]["agent_key"], "weight": 2, "can_pay_alone": True}}}
+    assert "payments_need_cosigner" not in ledger.onchain_facts(solo)
+
+    art = artifact()
+    reviewer = DeepReviewer(None, model="m", mode="ledger")
+    reviewer._onchain = facts
+    from backend.app.services.deep_review import DeepReviewResult
+    result = DeepReviewResult(mode="ledger")
+    reviewer._pass_checks = ["V1", "S3"]
+    base = {"verdict": "holds", "file": "onchain", "line": 0, "reason": "co-signer", "severity": "none", "title": "",
+            "attack_scenario": "", "remediation": "", "existing_finding_id": ""}
+    out = reviewer._answer_check({**base, "check_id": "V1", "evidence_quote": facts["payments_need_cosigner"]}, art, result)
+    assert "Recorded V1: holds" in out and result.ledger["V1"]["onchain"] == "payments_need_cosigner"
+    # A fact that does not enforce the check, or a made-up one, is refused.
+    assert "Not recorded" in reviewer._answer_check({**base, "check_id": "S3",
+                                                     "evidence_quote": facts["payments_need_cosigner"]}, art, result)
+    assert "Not recorded" in reviewer._answer_check({**base, "check_id": "V1",
+                                                     "evidence_quote": "onchain: trust me"}, art, result)
+
+
+def test_a_ledger_pass_carries_the_stellar_criteria_and_on_chain_facts_of_its_checks():
+    checks = [c for c in ledger.CATALOG if c.group == "signing"]
+    text = ledger.instruction("signing", checks, ["a.kt"], "- none", ledger.onchain_facts(CHAIN))
+    assert "Stellar criteria for these checks" in text and "Network endpoints" in text   # S3
+    assert "Signers and thresholds" in text and "Soroban authorization" in text          # S6, S7
+    assert "high threshold 3" in text and "medium threshold 2" not in text               # only S6's fact
+    value = ledger.instruction("value", [c for c in ledger.CATALOG if c.group == "value"], [], "- none", {})
+    assert "Asset identity is code + issuer" in value and "On-chain controls" not in value

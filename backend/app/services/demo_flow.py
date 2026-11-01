@@ -141,7 +141,7 @@ def _ledger_summary(review: dict, findings: list | None = None) -> dict:
     fmap = review.get("file_map") or {}
     coverage = review.get("coverage") or {}
     severity = {f.get("id"): f.get("severity") for f in findings or [] if f.get("kind") == "risk"}
-    checks = [{k: c.get(k) for k in ("id", "group", "title", "verdict", "file", "line", "reason", "finding_id")
+    checks = [{k: c.get(k) for k in ("id", "group", "title", "verdict", "file", "line", "reason", "finding_id", "onchain")
                if c.get(k) not in (None, "")} for c in ledger.get("checks") or []]
     for check in checks:
         # A failing check carries the severity of its finding (after verification), so "fails" on
