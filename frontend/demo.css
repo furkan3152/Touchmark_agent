@@ -172,6 +172,9 @@ h1 em{font-style:italic;font-weight:600;color:var(--red);position:relative}
 .t-bar i{display:block;height:100%;width:0;background:repeating-linear-gradient(-45deg,var(--red) 0 5px,transparent 5px 8px);transition:width .4s}
 @keyframes spin{to{transform:rotate(360deg)}}
 .desk-wait{margin:4px 0 0;font:12.5px/1.45 var(--mono);color:var(--ink-soft);min-height:1.45em}
+.desk-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.desk-actions[hidden]{display:none}
+.desk-part{margin:0;font:12px/1.4 var(--mono);color:var(--ink-soft)}
 .desk-error{margin-top:12px;padding:12px 14px;border:2px solid var(--red);border-radius:4px;background:var(--soft-red)}
 .desk-error[hidden]{display:none}
 .desk-error p{margin:0;color:var(--ink);font-weight:600;line-height:1.5}
@@ -287,7 +290,7 @@ a.ghost{text-decoration:none;display:inline-flex;align-items:center;gap:4px}
   .desk-body{display:contents}
   .desk-punch{width:84px;height:84px;margin:-4px 0 0 -6px}.desk-punch .tm-mascot{width:84px}
   .desk-head{grid-column:2;align-self:center;gap:6px}
-  .desk-ref,.timeline,.desk-wait,.desk-error,#desk-live{grid-column:1/-1}
+  .desk-ref,.timeline,.desk-wait,.desk-actions,.desk-error,#desk-live{grid-column:1/-1}
   .desk-title{font-size:20px}
   .declare-bar{flex-wrap:wrap}
   .declare textarea{font-size:13px}

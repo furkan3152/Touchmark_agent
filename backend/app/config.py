@@ -95,6 +95,37 @@ class Settings(BaseSettings):
     deep_review_daily_limit: int = Field(default=200, ge=0, le=100_000)
     #: Key for hashing client addresses in the allowance store; derived from the Blob token when empty.
     deep_review_rate_salt: str = Field(default="", repr=False, exclude=True)
+    # Spend caps (services/review_budget.py). A review runs until it has read every source file;
+    # nothing stops it on time. What stops it is money: per audit, the tokens the model
+    # processed (input, cache writes, cache reads and output, as Anthropic reports them), their
+    # cost at the prices below, and the number of files read; across the deployment, a daily
+    # hard cost cap and a token budget (a secondary safety net), on top of the daily review
+    # count. A cap that is hit ends the review cleanly, keeps every finding and lists each
+    # file left unread with the cap that stopped it.
+    # The defaults are sized so a 100-200 file agent repository completes with room to spare.
+    deep_review_max_tokens_per_audit: int = Field(default=60_000_000, ge=0, le=2_000_000_000)
+    deep_review_max_cost_usd_per_audit: float = Field(default=30.0, ge=0.0, le=10_000.0)
+    deep_review_max_files_per_audit: int = Field(default=400, ge=0, le=5_000)
+    deep_review_daily_token_budget: int = Field(default=600_000_000, ge=0, le=100_000_000_000)
+    # USD all model reviews together may cost per UTC day, claimed in 0.25 USD create-only chunks
+    # in the allowance store. Once used up, no model review starts that day (rules only).
+    deep_review_daily_cost_usd: float = Field(default=100.0, ge=0.0, le=1_000.0)
+    # USD per million tokens, used to turn measured usage into cost (Claude Sonnet 5.5 list prices).
+    deep_review_price_input_per_mtok: float = Field(default=2.0, ge=0.0)
+    deep_review_price_output_per_mtok: float = Field(default=10.0, ge=0.0)
+    deep_review_price_cache_write_per_mtok: float = Field(default=2.5, ge=0.0)
+    deep_review_price_cache_read_per_mtok: float = Field(default=0.2, ge=0.0)
+    # Files a coverage pass is asked to read; coverage passes follow until every file is read.
+    deep_review_files_per_pass: int = Field(default=10, ge=1, le=50)
+    # One model request may take this long before it counts as hung; it is retried (with
+    # backoff) this many times, and the review stops as unavailable only when every retry fails.
+    deep_review_call_timeout_seconds: float = Field(default=120.0, ge=10.0, le=600.0)
+    deep_review_call_retries: int = Field(default=2, ge=0, le=6)
+    # Long audits run as a job of several requests ("legs") when one serverless invocation
+    # cannot hold them (services/audit_jobs.py). A leg stops starting model calls this many
+    # seconds after its request began, inside the 300 s function limit (vercel.json).
+    demo_leg_seconds: float = Field(default=240.0, ge=30.0, le=780.0)
+    demo_job_ttl_hours: float = Field(default=24.0, ge=1.0, le=168.0)
     enable_finding_verification: bool = True
     verifier_model: str = "claude-sonnet-5-5"
     verifier_effort: str = Field(default="medium", pattern="^(low|medium|high|xhigh|max)$")

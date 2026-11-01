@@ -159,17 +159,31 @@ _TEST_PATH = re.compile(r"(^|/)(tests?|spec|__tests__|e2e|fixtures?|examples?|do
                         r"_test\.\w+$|(^|/)test_[^/]*$", re.I)
 
 
+#: How much each observed capability says a file holds the agent's authority. Keys, signing and
+#: payments first, then what reaches out (contracts, network, processes, files), then the rest.
+_CAPABILITY_WEIGHT = {
+    "key_custody": 8, "secret_material": 8, "hardcoded_secret": 8, "stellar_signing": 8,
+    "foreign_tx_signing": 8, "delegated_signing": 8, "tx_submission": 7, "tx_relay": 7, "payment": 7,
+    "account_control": 7, "contract_invocation": 5, "trustline": 5, "code_execution": 5, "process_spawn": 5,
+    "network_fetch": 4, "file_access": 3, "llm_call": 1,
+}
+
+
 def _priority(artifact) -> list[str]:
     """Reviewable files, those holding the agent's authority first: where the analysis saw
-    signing, payment, approval or input entry points, then risk-named files, tests last.
-    In a repository larger than a review can read, this decides what gets read."""
+    signing, keys, payments, then contract, network and process access, untrusted-input flows
+    and tool or route handlers (entry points), then risk-named files, tests and docs last.
+    The review reads in this order, so a spend cap, if one is ever reached, leaves out the
+    least important files."""
     profile = artifact.code_profile or {}
     hits: dict[str, int] = {}
-    for group in ("capabilities", "controls"):
-        for locs in (profile.get(group) or {}).values():
-            for loc in locs:
-                path = loc.split(":", 1)[0]
-                hits[path] = hits.get(path, 0) + 2
+    for capability, locs in (profile.get("capabilities") or {}).items():
+        weight = _CAPABILITY_WEIGHT.get(capability, 2)
+        for path in {loc.split(":", 1)[0] for loc in locs}:
+            hits[path] = hits.get(path, 0) + weight
+    for locs in (profile.get("controls") or {}).values():
+        for path in {loc.split(":", 1)[0] for loc in locs}:
+            hits[path] = hits.get(path, 0) + 2
     for flow in profile.get("flows") or []:
         path = str(flow.get("location", "")).split(":", 1)[0]
         hits[path] = hits.get(path, 0) + 3
@@ -199,6 +213,22 @@ def _reviewable(artifact) -> set[str]:
     return {name for name in artifact.code_files if not _is_manifest(name)}
 
 
+#: Why a file was left unread, as the report says it.
+NOT_REVIEWED_REASONS = {
+    "token_cap": "stopped at the per-audit token cap",
+    "cost_cap": "stopped at the per-audit cost cap",
+    "file_cap": "beyond the per-audit file cap",
+    "daily_cost_cap": "stopped at the deployment's daily cost cap",
+    "daily_budget": "stopped at the deployment's daily token budget",
+    "daily_budget_unavailable": "the daily budget could not be checked",
+    "not_opened": "the model did not open it when asked to",
+    "provider_unavailable": "the model provider stopped answering",
+    "model_declined": "the model declined to continue",
+    "turn_limit": "a configured pass reached its turn limit",
+    "time_limit": "the review's time limit (local runs only)",
+}
+
+
 @dataclass
 class DeepReviewResult:
     status: str = "not_run"
@@ -216,21 +246,103 @@ class DeepReviewResult:
     total_files: int = 0
     reviewable: set = field(default_factory=set)
     passes: list = field(default_factory=list)
+    #: Why the review ended before reading everything ("" when it did not): a cap
+    #: (review_budget.STOP_REASONS), provider_unavailable, model_declined, time_limit, ...
+    stop_reason: str = ""
+    #: Reviewable files never read, in review order, each with why: [{"path", "reason"}].
+    not_reviewed: list = field(default_factory=list)
+    #: Spend of the whole audit (review and verification) when the review ended. Internal:
+    #: logged by the server, never part of the report (no public response carries cost).
+    spend: dict = field(default_factory=dict)
 
     def coverage(self) -> dict:
         """Share of reviewable source files the model read (manifests are not counted)."""
         read = self.files_read & self.reviewable if self.reviewable else self.files_read
         return {"files_read": sorted(read), "files_total": self.total_files,
-                "ratio": round(min(1.0, len(read) / self.total_files), 3) if self.total_files else 0.0}
+                "ratio": round(min(1.0, len(read) / self.total_files), 3) if self.total_files else 0.0,
+                "not_reviewed": self.not_reviewed[:500], "not_reviewed_count": len(self.not_reviewed)}
 
     def report(self) -> dict:
+        """The public record of the review. Measured usage and cost stay out of it: they are kept
+        in the job state and the server logs only."""
         return {"status": self.status, "model": self.model, "operating_model": self.operating_model,
                 "flow_assessments": self.flow_assessments,
                 "accepted_findings": [f.id for f in self.findings], "rejected_claims": self.rejected,
-                "summary": self.summary, "turns": self.turns, "usage": self.usage, "note": self.note,
-                "passes": self.passes,
+                "summary": self.summary, "turns": self.turns, "note": self.note,
+                "passes": self.passes, "stop_reason": self.stop_reason,
                 "coverage": self.coverage(),
                 "can_remove_findings": False}
+
+    # Saved between the requests of a long audit (services/audit_jobs.py).
+    def to_state(self) -> dict:
+        return {"status": self.status, "operating_model": self.operating_model,
+                "flow_assessments": self.flow_assessments,
+                "findings": [f.model_dump(mode="json") for f in self.findings], "rejected": self.rejected,
+                "summary": self.summary, "turns": self.turns, "usage": self.usage, "note": self.note,
+                "files_read": sorted(self.files_read), "passes": self.passes, "stop_reason": self.stop_reason,
+                "not_reviewed": self.not_reviewed}
+
+    def restore(self, state: dict) -> None:
+        self.status = state.get("status", "not_run")
+        self.operating_model = state.get("operating_model") or {}
+        self.flow_assessments = list(state.get("flow_assessments") or [])
+        self.findings = [Finding.model_validate(f) for f in state.get("findings") or []]
+        self.rejected = list(state.get("rejected") or [])
+        self.summary, self.turns, self.note = state.get("summary", ""), int(state.get("turns", 0)), state.get("note", "")
+        self.usage = {**self.usage, **(state.get("usage") or {})}
+        self.files_read = set(state.get("files_read") or [])
+        self.passes = list(state.get("passes") or [])
+        self.stop_reason = state.get("stop_reason", "")
+        self.not_reviewed = list(state.get("not_reviewed") or [])
+
+
+@dataclass
+class _Cursor:
+    """Where the review is: the pass in progress and its conversation so far (after the
+    evidence pack, which is rebuilt from the source and checked by its hash on resume)."""
+    number: int = 0
+    kind: str = ""
+    instruction: str = ""
+    batch: list = field(default_factory=list)
+    messages: list = field(default_factory=list)
+    turn: int = 0
+    pack_sha: str = ""
+    open: bool = False
+    files_at_start: int = 0
+    findings_at_start: int = 0
+    last_status: str = ""
+    progressed: bool = True
+    durations: list = field(default_factory=list)
+    done: bool = False
+
+    def to_state(self) -> dict:
+        return dict(self.__dict__)
+
+    @classmethod
+    def from_state(cls, state: dict | None) -> "_Cursor":
+        names = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in (state or {}).items() if k in names})
+
+
+def _plain(block) -> dict:
+    """A response content block as the request body carries it (JSON, for saving between legs)."""
+    if isinstance(block, dict):
+        return block
+    if hasattr(block, "model_dump"):
+        return block.model_dump(mode="json", exclude_unset=True, by_alias=True,
+                                exclude=getattr(block, "__api_exclude__", None))
+    out = {}
+    for key, value in vars(block).items():
+        if isinstance(value, (list, tuple)):
+            value = [_plain(v) if hasattr(v, "__dict__") or hasattr(v, "model_dump") else v for v in value]
+        elif hasattr(value, "__dict__") and not isinstance(value, (str, int, float, bool)):
+            value = _plain(value)
+        out[key] = value
+    return out
+
+
+def _field(block, name: str, default=None):
+    return block.get(name, default) if isinstance(block, dict) else getattr(block, name, default)
 
 
 def _unbuilt_contracts(files: dict[str, str]) -> list[str]:
@@ -292,12 +404,17 @@ class DeepReviewer:
     """Agentic review loop over an Anthropic client (injected for tests)."""
 
     def __init__(self, client, *, model: str, effort: str = "high", max_turns: int = 24,
-                 timeout_seconds: float = 240.0, fallbacks: bool = True, passes: int = 1):
+                 timeout_seconds: float = 240.0, fallbacks: bool = True, passes: int = 1, files_per_pass: int = 10):
         self.client, self.model, self.effort = client, model, effort
         self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
-        #: time.monotonic() value by which the review must stop (a serverless request limit).
+        #: Local runs only (no request leg): time.monotonic() value by which the review must stop.
+        #: The public demo sets none; it runs as a job of requests and stops only at a spend cap.
         self.deadline: float | None = None
         self.passes = max(1, min(passes, 3))
+        self.files_per_pass = max(1, files_per_pass)
+        #: Spend caps and the call timeout/retry policy (review_budget.Budget), shared with the
+        #: verifier of the same audit. Defaults apply when none is given.
+        self.budget = None
 
     # ------------------------------------------------------------------ tools
     def _lines(self, artifact: AgentArtifact, path: str) -> list[str] | None:
@@ -327,6 +444,12 @@ class DeepReviewer:
             start = max(1, int(args.get("start_line", 1)))
             end = min(len(lines), int(args.get("end_line", start + 80)), start + 200)
             if args.get("path", "") not in result.files_read:
+                cap = getattr(self, "_file_cap", None)
+                if cap is not None and args.get("path", "") in result.reviewable \
+                        and len(result.files_read & result.reviewable) >= cap:
+                    return (f"Not opened: this audit reads at most {cap} source files (the per-audit file cap), "
+                            "and that many have been read. The report lists this file as not reviewed. "
+                            "Record what you have found, then finish.")
                 result.files_read.add(args.get("path", ""))
                 from .progress import emit
                 emit("deep_review", files_read=len(result.files_read & result.reviewable) if result.reviewable
@@ -398,120 +521,227 @@ class DeepReviewer:
 
     # ------------------------------------------------------------------ loop
     async def review(self, artifact: AgentArtifact, findings: list[Finding], chain: dict | None = None) -> DeepReviewResult:
+        """Read the agent until every reviewable file is read or a spend cap is reached.
+
+        In a request leg (review_budget.Leg, the public demo) the review saves its place after
+        every model turn and raises LegSuspended when the request must end; the next leg
+        continues it. Without a leg (local runs) ``timeout_seconds`` and ``deadline`` bound it."""
+        from .progress import emit
+        from .review_budget import Budget, LegSuspended, ProviderUnavailable, ReviewCancelled, current_leg
         reviewable = _reviewable(artifact)
         result = DeepReviewResult(model=self.model, total_files=len(reviewable), reviewable=reviewable)
+        leg = current_leg()
+        budget = self.budget or (leg.budget if leg is not None else None) or Budget()
+        self._file_cap = budget.max_files
+        saved = (leg.review_state if leg is not None else None) or {}
+        cursor = _Cursor.from_state(saved.get("cursor"))
+        if saved.get("result"):
+            result.restore(saved["result"])
+        read_count = lambda: len(result.files_read & reviewable) if reviewable else len(result.files_read)  # noqa: E731
+        if cursor.done:  # an earlier leg finished the review
+            result.spend = budget.summary()
+            emit("deep_review", files_read=read_count(), files_total=result.total_files)
+            return result
+        timed = leg is None
         timeout = self.timeout_seconds
-        if self.deadline is not None:
-            timeout = min(timeout, self.deadline - time.monotonic())
-            if timeout < MIN_REVIEW_SECONDS:
-                result.status, result.note = "skipped", "No time was left for the review within the request limit."
-                return result
-        # The passes see the same time limit, so an extra pass starts only when it can finish.
-        self._review_ends = time.monotonic() + timeout
-        from .progress import emit
-        emit("deep_review", files_read=0, files_total=result.total_files)
+        if timed:
+            if self.deadline is not None:
+                timeout = min(timeout, self.deadline - time.monotonic())
+                if timeout < MIN_REVIEW_SECONDS:
+                    result.status, result.note = "skipped", "No time was left for the review within the request limit."
+                    return result
+            # The passes see the same time limit, so an extra pass starts only when it can finish.
+            self._review_ends = time.monotonic() + timeout
+        emit("deep_review", files_read=read_count(), files_total=result.total_files)
         try:
-            await asyncio.wait_for(self._passes(artifact, findings, chain, result), timeout=timeout)
+            run = self._passes(artifact, findings, chain, result, cursor, budget, leg)
+            if timed:
+                await asyncio.wait_for(run, timeout=timeout)
+            else:
+                await run
             if result.status == "not_run":
                 result.status = "completed" if result.operating_model else "incomplete"
         except asyncio.TimeoutError:
-            configured = result.passes[:self.passes]
+            configured = [p for p in result.passes if p["pass"] <= self.passes]
+            result.stop_reason = result.stop_reason or "time_limit"
             if len(configured) == self.passes and all(p["status"] == "completed" for p in configured):
-                # Only an extra pass was cut short: the configured review is complete.
+                # Only an extra challenge pass was cut short: the configured review is complete.
                 result.status = "completed"
                 result.note = "An extra challenge pass stopped at the time limit; its accepted findings are kept."
             else:
                 result.status, result.note = "timeout", "The review stopped at its time limit; accepted findings are kept."
+        except (LegSuspended, ReviewCancelled):
+            raise
+        except ProviderUnavailable as exc:
+            result.status, result.stop_reason = "unavailable", "provider_unavailable"
+            result.note = (f"The model provider did not answer after {budget.retries + 1} attempts ({exc}); "
+                           "accepted findings are kept.")
         except Exception as exc:  # provider errors must not fail the deterministic audit
-            result.status, result.note = "unavailable", f"{type(exc).__name__}: provider call failed."
+            result.status, result.stop_reason = "unavailable", "provider_unavailable"
+            result.note = f"{type(exc).__name__}: provider call failed."
+        self._close(artifact, result, budget)
+        cursor.done, cursor.messages = True, []
+        await self._save(leg, result, cursor)
         return result
 
+    def _close(self, artifact, result: DeepReviewResult, budget) -> None:
+        """List every file left unread with the reason; a cap that cut the review makes it capped."""
+        from .review_budget import STOP_REASONS
+        read = result.files_read & result.reviewable if result.reviewable else result.files_read
+        unread = [p for p in _priority(artifact) if p not in result.files_read]
+        reason = result.stop_reason
+        if unread and not reason:
+            reason = "file_cap" if len(read) >= budget.max_files else "not_opened"
+            if reason == "file_cap":
+                result.stop_reason = "file_cap"
+        result.not_reviewed = [{"path": p, "reason": reason} for p in unread]
+        if unread and result.stop_reason in STOP_REASONS and result.status in ("completed", "capped", "not_run"):
+            result.status = "capped"
+            result.note = (f"The review stopped at {STOP_REASONS[result.stop_reason]} after reading {len(read)} of "
+                           f"{result.total_files} files. Its findings are kept; the {len(unread)} unread files are "
+                           "listed with that reason. It never stops on time.")
+        elif unread and reason == "not_opened" and not result.note:
+            result.note = (f"{len(unread)} files were offered to the model and not opened; they are listed as "
+                           "not reviewed.")
+        result.spend = budget.summary()
+
+    async def _save(self, leg, result: DeepReviewResult, cursor: _Cursor) -> None:
+        if leg is None:
+            return
+        read = len(result.files_read & result.reviewable) if result.reviewable else len(result.files_read)
+        await leg.checkpoint(review={"result": result.to_state(), "cursor": cursor.to_state()},
+                             progress={"stage": "deep_review", "files_read": read, "files_total": result.total_files})
+
     def _time_for_pass(self, durations: list[float] | None = None) -> bool:
-        """Enough time remains for one more pass as long as the ones so far took."""
+        """Local runs: enough time remains for one more pass as long as the ones so far took."""
         ends = [t for t in (getattr(self, "deadline", None), getattr(self, "_review_ends", None)) if t is not None]
         if not ends:
             return True
         need = max(3 * MIN_REVIEW_SECONDS, sum(durations) / len(durations) if durations else 0.0)
         return min(ends) - time.monotonic() > need
 
-    async def _passes(self, artifact, findings, chain, result: DeepReviewResult) -> None:
-        """Pass 1 investigates; later passes challenge it, starting from what it did not cover."""
-        number, progressed, durations = 0, True, []
-        while True:
-            number += 1
-            unread_share = len(_reviewable(artifact) - result.files_read) / max(1, len(_reviewable(artifact)))
-            # The configured passes always run; up to two more follow while over a fifth of the
-            # source is still unread and time allows, because misses cluster in unread files.
-            extra = number > self.passes
-            if extra and (number > self.passes + 2 or unread_share <= 0.2 or not self._time_for_pass(durations)
-                          or not progressed):
-                break
-            before, read_before = len(result.findings), len(result.files_read)
-            if number == 1:
-                instruction = ("Begin with describe_operating_model, then assess every flow, then investigate "
-                               "and record findings, then finish. Read the files in read_first before others: "
-                               "they hold the signing, payment, approval and input-handling code.")
-            else:
-                unread = [path for path in _priority(artifact) if path not in result.files_read]
-                prior = "\n".join(f"- {f.id}: {f.title} ({f.evidence[:120]})" for f in result.findings) or "- none"
-                instruction = (
-                    f"Challenge pass {number}. A previous reviewer already recorded:\n{prior}\n"
+    def _next_pass(self, artifact, result: DeepReviewResult, cur: _Cursor, budget, timed: bool):
+        """(kind, instruction, batch) of the next pass, or None when the review is done.
+
+        Pass 1 investigates; passes 2..``passes`` challenge it; then coverage passes, each asked
+        to read the next ``files_per_pass`` unread files in priority order, follow until every
+        file is read. They end early only at the file cap, when a coverage pass opened none of
+        the files it was given, or (local runs) when the time limit leaves no room for a pass."""
+        number = cur.number + 1
+        prior = "\n".join(f"- {f.id}: {f.title} ({f.evidence[:120]})" for f in result.findings) or "- none"
+        if number == 1:
+            return ("investigate", "Begin with describe_operating_model, then assess every flow, then investigate "
+                    "and record findings, then finish. Read the files in read_first before others: "
+                    "they hold the signing, payment, approval and input-handling code.", [])
+        unread = [path for path in _priority(artifact) if path not in result.files_read]
+        if number <= self.passes:
+            return ("challenge", f"Challenge pass {number}. A previous reviewer already recorded:\n{prior}\n"
                     "Do not repeat these. Assume the previous pass missed something serious and find it. "
                     "Prioritise files it never read: " + (", ".join(unread[:40]) or "none") + ". Look for "
                     "logic flaws, missing checks on alternative code paths, functional defects and Stellar "
-                    "protocol misuse. Skip describe_operating_model. Record findings, then finish.")
+                    "protocol misuse. Skip describe_operating_model. Record findings, then finish.", [])
+        read = len(result.files_read & result.reviewable) if result.reviewable else len(result.files_read)
+        if not unread or read >= budget.max_files:
+            return None
+        if cur.kind == "coverage" and not cur.progressed:
+            return None
+        if timed and not self._time_for_pass(cur.durations):
+            result.stop_reason = result.stop_reason or "time_limit"
+            return None
+        batch = unread[:max(1, min(self.files_per_pass, budget.max_files - read))]
+        return ("coverage", f"Coverage pass {number}. Earlier passes recorded:\n{prior}\n"
+                "Do not repeat these. No pass has read the files below yet; read each of them now with "
+                "read_source (all of it, in ranges of up to 200 lines), in this order: " + ", ".join(batch) + ". "
+                "Judge them against the evidence pack and what the earlier passes found: logic flaws, missing "
+                "checks on alternative code paths, controls that can be bypassed, functional defects and Stellar "
+                "protocol misuse. Skip describe_operating_model. Record each real defect, then finish.", batch)
+
+    async def _passes(self, artifact, findings, chain, result: DeepReviewResult, cur: _Cursor, budget, leg) -> None:
+        import hashlib
+        from .review_budget import STOP_REASONS
+        pack, flows = evidence_pack(artifact, findings, chain)
+        pack_sha = hashlib.sha256(pack.encode()).hexdigest()
+        if cur.open and cur.pack_sha != pack_sha:
+            cur.messages, cur.turn, cur.pack_sha = [], 0, pack_sha  # not the saved conversation's source
+        while True:
+            if not cur.open:
+                upcoming = self._next_pass(artifact, result, cur, budget, timed=leg is None)
+                if upcoming is None:
+                    break
+                cur.kind, cur.instruction, cur.batch = upcoming
+                cur.number += 1
+                cur.messages, cur.turn, cur.open, cur.pack_sha = [], 0, True, pack_sha
+                cur.files_at_start, cur.findings_at_start = len(result.files_read), len(result.findings)
+                await self._save(leg, result, cur)
             started = time.monotonic()
-            status = await self._loop(artifact, findings, chain, result, instruction)
-            durations.append(time.monotonic() - started)
-            result.passes.append({"pass": number, "status": status, "new_findings": len(result.findings) - before})
-            progressed = len(result.files_read) > read_before  # a pass that opened nothing new ends the extra ones
-            if status in ("refused",):
+            status = await self._loop(artifact, flows, pack, result, cur, budget, leg)
+            cur.durations.append(round(time.monotonic() - started, 2))
+            result.passes.append({"pass": cur.number, "kind": cur.kind, "status": status,
+                                  "new_findings": len(result.findings) - cur.findings_at_start,
+                                  **({"files": len(cur.batch)} if cur.batch else {})})
+            cur.progressed = len(result.files_read) > cur.files_at_start
+            cur.last_status, cur.open, cur.messages = status, False, []
+            await self._save(leg, result, cur)
+            if status in ("refused", "capped"):
                 break
-            if number >= self.passes and status != "completed":
+            if cur.number >= self.passes and status != "completed" and cur.kind != "coverage":
                 break
-        statuses = [p["status"] for p in result.passes]
-        configured, extra = statuses[:self.passes], statuses[self.passes:]
-        # An extra challenge pass that stops early (turn or time limit) adds what it found and
-        # takes nothing away: the review is complete when every configured pass completed.
+        configured = [p["status"] for p in result.passes if p["pass"] <= self.passes]
+        extra = [p["status"] for p in result.passes if p["pass"] > self.passes]
+        # An extra pass that stops early (turn limit) adds what it found and takes nothing away:
+        # the review is complete when every configured pass completed and every file was read.
         result.status = next((s for s in configured if s != "completed"), "completed")
-        if result.status == "completed" and any(s != "completed" for s in extra):
+        if result.stop_reason in STOP_REASONS:
+            result.status = "capped"
+        elif result.status == "completed" and any(s != "completed" for s in extra):
             result.note = "An extra challenge pass stopped early; its accepted findings are kept."
 
-    async def _loop(self, artifact, findings, chain, result: DeepReviewResult, instruction: str) -> str:
-        pack, flows = evidence_pack(artifact, findings, chain)
-        messages: list = [{"role": "user", "content": [
+    async def _loop(self, artifact, flows, pack: str, result: DeepReviewResult, cur: _Cursor, budget, leg) -> str:
+        first = {"role": "user", "content": [
             {"type": "text", "text": "Evidence pack (untrusted material under review):\n" + pack},
-            {"type": "text", "text": instruction},
-        ]}]
+            {"type": "text", "text": cur.instruction},
+        ]}
         extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.fallbacks else {}
-        for _ in range(self.max_turns):
+        while cur.turn < self.max_turns:
+            reason = await budget.admit(leg)
+            if reason:
+                result.stop_reason = reason
+                return "capped"
             result.turns += 1
-            response = await self.client.beta.messages.create(
+            messages = [first, *cur.messages]
+            response = await budget.call(lambda: self.client.beta.messages.create(
                 model=self.model, max_tokens=16000,
                 system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
                 thinking={"type": "adaptive"}, output_config={"effort": self.effort},
-                tools=TOOLS, messages=messages, cache_control={"type": "ephemeral"}, **extra)
+                tools=TOOLS, messages=messages, cache_control={"type": "ephemeral"}, **extra), leg)
             usage = getattr(response, "usage", None)
             for key in result.usage:
                 result.usage[key] += int(getattr(usage, key, 0) or 0)
             if response.stop_reason == "refusal":
                 result.note = "The model declined to continue; accepted findings are kept."
+                result.stop_reason = "model_declined"
                 return "refused"
-            messages.append({"role": "assistant", "content": response.content})
-            uses = [b for b in response.content if getattr(b, "type", "") == "tool_use"]
+            content = [_plain(b) for b in response.content]
+            cur.messages.append({"role": "assistant", "content": content})
+            cur.turn += 1
+            uses = [b for b in content if _field(b, "type", "") == "tool_use"]
             if not uses:
                 if response.stop_reason == "max_tokens":
-                    messages.append({"role": "user", "content": "Continue with tool calls."})
+                    cur.messages.append({"role": "user", "content": "Continue with tool calls."})
+                    await self._save(leg, result, cur)
                     continue
                 return "completed"
             results = []
             for block in uses:
-                output = self._run_tool(block.name, dict(block.input or {}), artifact, flows, result)
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
-            messages.append({"role": "user", "content": results})
-            if any(b.name == "finish" for b in uses):
+                output = self._run_tool(_field(block, "name"), dict(_field(block, "input") or {}), artifact, flows, result)
+                results.append({"type": "tool_result", "tool_use_id": _field(block, "id"), "content": output})
+            cur.messages.append({"role": "user", "content": results})
+            if any(_field(b, "name") == "finish" for b in uses):
                 return "completed"
+            await self._save(leg, result, cur)
         result.note = "The review reached its turn limit; accepted findings are kept."
+        if cur.number <= self.passes:
+            result.stop_reason = result.stop_reason or "turn_limit"
         return "turn_limit"
 
 
@@ -522,7 +752,10 @@ def reviewer_from_settings(settings) -> DeepReviewer | None:
         from anthropic import AsyncAnthropic
     except ImportError:  # the deterministic audit runs without the model reviewer
         return None
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=120.0, max_retries=2)
+    # Retries are the reviewer's (review_budget.Budget.call), so a leg can stop between them;
+    # the SDK timeout is only a backstop behind the per-call timeout.
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=settings.deep_review_call_timeout_seconds + 15,
+                            max_retries=0)
     return DeepReviewer(client, model=settings.deep_review_model, effort=settings.deep_review_effort,
                         max_turns=settings.deep_review_max_turns, timeout_seconds=settings.deep_review_timeout_seconds,
-                        passes=settings.deep_review_passes)
+                        passes=settings.deep_review_passes, files_per_pass=settings.deep_review_files_per_pass)

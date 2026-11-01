@@ -486,8 +486,9 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
                            contract_facts: dict | None = None, source_binding: dict | None = None,
                            deadline: float | None = None, tmark_override: dict | None = None,
                            progress=None) -> dict:
-    """``deadline`` (a ``time.monotonic()`` value) bounds the model review and verification,
-    for callers with a request time limit; the deterministic analysis always runs in full.
+    """``deadline`` (a ``time.monotonic()`` value) bounds the model review and verification for
+    local callers with a time limit; the deterministic analysis always runs in full. The public
+    demo passes none: it runs in request legs (review_budget.Leg) and stops only at a spend cap.
 
     ``tmark_override`` ({"text": ...}) is a .tmark supplied with the request (the demo, CI's
     --tmark). It is used exactly as a committed .tmark would be, except that it never names the
@@ -589,7 +590,17 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
         "Repository selection was budget-limited; unselected files were not reviewed. "
         "See repository.source_files_not_selected."]
     from .finding_verifier import verifier_from_settings
+    from .review_budget import Budget, current_leg
     verifier = verifier_from_settings(settings) if deep else None
+    leg = current_leg()
+    if leg is not None:
+        # A long audit runs over several requests: each must review the same bytes.
+        await leg.pin_source(revision, payload_extra["repository"]["source_sha256"], len(files))
+    # One budget for the whole audit: the review and the verification spend from the same caps.
+    budget = leg.budget if leg is not None else Budget.from_settings(settings)
+    for model_stage in (reviewer, verifier):
+        if model_stage is not None:
+            model_stage.budget = budget
     if deadline is not None:
         # The review stops early enough to leave the verifier time to re-check what it found.
         if reviewer is not None:
@@ -726,7 +737,8 @@ async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer
                 v = by_id[f["id"]]
                 f["verification"] = {k: v[k] for k in ("verdict", "reviewed_severity", "file", "line", "quote",
                                                        "reason", "quote_verified", "note")}
-        payload["verification"] = verification["summary"]
+        # Token usage is not part of the report: no public response carries spend.
+        payload["verification"] = {k: v for k, v in verification["summary"].items() if k != "usage"}
     encoded = canonical_json(payload)
     return {"decision": report.decision, "report": payload, "report_json": encoded,
             "report_sha256": sha256(encoded.encode()).hexdigest()}

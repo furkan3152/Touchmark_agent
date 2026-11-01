@@ -267,9 +267,12 @@ The same check runs locally with `python scripts/ci_audit.py path/to/repo`.
   admin and validator.
 - The contracts have a self-assessed security review in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and **have not been
   externally audited**. Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
-- Coverage depends on the deep review. On large repositories the demo's time limit can stop it before every
-  authority file is read. The result is then `needs_evidence`, not a pass. With `scripts/audit_agent.py` the review time,
-  turns and passes are set by `DEEP_REVIEW_TIMEOUT_SECONDS` (up to 900), `DEEP_REVIEW_MAX_TURNS` and `DEEP_REVIEW_PASSES`.
+- Coverage depends on the deep review. It reads every source file and no clock stops it: on the demo a large
+  repository runs over several requests. Only a spend cap (`DEEP_REVIEW_MAX_TOKENS_PER_AUDIT`,
+  `DEEP_REVIEW_MAX_COST_USD_PER_AUDIT`, `DEEP_REVIEW_MAX_FILES_PER_AUDIT`, the deployment's daily cost cap
+  `DEEP_REVIEW_DAILY_COST_USD` and its daily token budget `DEEP_REVIEW_DAILY_TOKEN_BUDGET`) can end it early; the report then lists each unread file with the cap, and the result is `needs_evidence`, not a pass. With
+  `scripts/audit_agent.py` a local time limit still applies (`DEEP_REVIEW_TIMEOUT_SECONDS`, up to 900), with
+  `DEEP_REVIEW_MAX_TURNS` and `DEEP_REVIEW_PASSES`.
 - Ownership means control of the repository and the named key, not legal identity.
 - A pass is not a certificate of safety. It means that no actionable risk was found in the reviewed code.
 

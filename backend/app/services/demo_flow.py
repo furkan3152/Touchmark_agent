@@ -29,8 +29,6 @@ ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "deployments/demo-testnet.json"
 LOCAL_KEY = ROOT / "data/demo-operator.json"
 TICKET_TTL = 30 * 60
-#: The model review and verification stop by then, inside the 300 s function limit (vercel.json).
-DEMO_DEADLINE_SECONDS = 250.0
 CREDENTIAL_DAYS = 90
 EXPLORER = "https://stellar.expert/explorer/testnet"
 NO_ENDPOINT = hashlib.sha256(b"agentveritas.demo.no-endpoint").digest()
@@ -117,13 +115,18 @@ def _ai_summary(report: dict, ai: bool, settings: Settings, skipped: dict | None
         configured = bool(settings.enable_deep_review and settings.anthropic_api_key)
         if skipped and configured:
             # no_consent | rate_limited | store_unavailable | not_configured
-            return {"review": skipped["reason"], "note": skipped.get("note", "")}
+            return {"review": skipped["reason"], "note": skipped.get("note", ""),
+                    **({"limit": skipped["limit"]} if skipped.get("limit") else {})}
         return {"review": "rate_limited" if configured and not ai else "off"}
     verification = report.get("verification") or {}
     coverage = review.get("coverage") or {}
     return {"review": review.get("status", "not_run"), "note": review.get("note", ""),
             "findings_added": len(review.get("accepted_findings") or []),
             "files_read": len(coverage.get("files_read") or []), "files_total": coverage.get("files_total", 0),
+            # Every file the review did not read, with why (a spend cap, never the clock).
+            "stop_reason": review.get("stop_reason", ""),
+            "not_reviewed": (coverage.get("not_reviewed") or [])[:200],
+            "not_reviewed_count": coverage.get("not_reviewed_count", len(coverage.get("not_reviewed") or [])),
             "verification": {k: verification[k] for k in ("checked", "confirmed", "partial", "refuted",
                                                          "unverifiable", "agreement") if k in verification}}
 
@@ -131,11 +134,12 @@ def _ai_summary(report: dict, ai: bool, settings: Settings, skipped: dict | None
 async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True, tmark_text: str | None = None,
                          skipped: dict | None = None) -> dict:
     """``ai`` allows the model review and verification when they are configured; the
-    deterministic analysis always runs. Both stop by DEMO_DEADLINE_SECONDS. ``tmark_text`` is a
-    supplied declaration (already validated by the caller)."""
+    deterministic analysis always runs. No clock stops the review: it reads every file unless a
+    spend cap ends it (services/review_budget.py), and on serverless it runs over as many
+    request legs as it needs (services/audit_jobs.py). ``tmark_text`` is a supplied declaration
+    (already validated by the caller)."""
     from .progress import emit
-    deadline = time.monotonic() + DEMO_DEADLINE_SECONDS
-    result = await audit_reference(reference.strip(), settings, network="testnet", deep=ai, deadline=deadline,
+    result = await audit_reference(reference.strip(), settings, network="testnet", deep=ai, deadline=None,
                                    tmark_override={"text": tmark_text} if tmark_text is not None else None)
     emit("done")
     report = result["report"]

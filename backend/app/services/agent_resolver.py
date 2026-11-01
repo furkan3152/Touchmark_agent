@@ -412,6 +412,16 @@ async def audit_reference(reference: str, settings: Settings, *, network: str = 
     stellar_address = wallet if StrKey.is_valid_ed25519_public_key(wallet) else ""
     source = resolution["source"]
     onchain_identity = resolution["kind"] in {"registry_agent", "contract"}
+    from .review_budget import current_leg
+    leg = current_leg()
+    pinned = (leg.pin or {}).get("revision", "") if leg is not None else ""
+    if pinned and source["repository"] and source.get("revision") != pinned:
+        # A later request of a long audit: review the commit the first request pinned, even
+        # if the reference (a branch) has moved on since.
+        resolution["steps"].append({"check": "source_pin", "result": "pinned",
+                                    "evidence": f"continuing the audit of {pinned}; the reference now resolves to "
+                                                f"{source.get('revision') or 'nothing'}"})
+        source["revision"] = pinned
     if source["repository"] and not _SHA.match(source.get("revision") or ""):
         if resolution["kind"] == "repository":
             raise ValueError("The repository's commit could not be resolved; nothing was audited.")

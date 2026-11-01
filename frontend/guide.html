@@ -135,16 +135,17 @@
           <li class="g-stage" data-stage="review">
             <span class="g-stage-dot" aria-hidden="true"></span>
             <div class="g-stage-body">
-              <p class="g-stage-meta"><span>Stage C</span><span>one to a few minutes</span><span class="g-consent">with your consent</span></p>
+              <p class="g-stage-meta"><span>Stage C</span><span>minutes; longer for a large repository</span><span class="g-consent">with your consent</span></p>
               <h3>Deep model review</h3>
-              <p>A model reads the files that hold the agent's authority and looks for what rules miss: replayable payment proofs, unauthenticated pay endpoints, budgets keyed on an address an attacker can rotate. Every finding must quote a line that exists; a quote that does not match the source is rejected.</p>
+              <p>A model reads every source file of the agent, those that hold its authority first (keys, signing, payments, tool and route handlers, network access), and looks for what rules miss: replayable payment proofs, unauthenticated pay endpoints, budgets keyed on an address an attacker can rotate. Every finding must quote a line that exists; a quote that does not match the source is rejected.</p>
+              <p class="g-note">No clock stops the review. A large repository needs more than one request, so the audit runs as a job: when a request nears the platform's limit the review saves its place and the page opens the next request at once, on the same commit, with the same timeline and one clock. A reload picks it up again, and <span class="g-ui">Cancel the audit</span> stops it. The only stop is a spend cap: per audit on the tokens the model processes, their cost and the files it reads, and a daily limit across the demo. Once the demo reaches its daily limit, audits run on the rules until the next UTC day, and the consent box says when model reviews return. If a cap is reached, the review ends, keeps every finding, and the report lists each file it did not read with the cap that stopped it.</p>
               <p class="g-note">This is the only stage that sends code to a model provider, and it runs only when you tick <span class="g-ui">Deep review by a model</span> on the ticket. Each connection has a small hourly allowance, shown next to the box; when it is used up, or the model review is not enabled, the box is greyed out and says why. Without it the audit runs on the rules alone, and the report says so. A rules-only audit can reach <span class="g-chip needs_evidence">needs evidence</span> at best: it cannot pass or be stamped.</p>
             </div>
           </li>
           <li class="g-stage" data-stage="verify">
             <span class="g-stage-dot" aria-hidden="true"></span>
             <div class="g-stage-body">
-              <p class="g-stage-meta"><span>Stage D</span><span>under a minute</span></p>
+              <p class="g-stage-meta"><span>Stage D</span><span>a minute or more, by finding</span></p>
               <h3>Independent verification</h3>
               <p>A second model re-checks each finding at the cited line and labels it: <span class="g-tag ok">Verified</span> <span class="g-tag">Partly verified</span> <span class="g-tag bad">Disputed</span> <span class="g-tag">Not verified</span>. A high pattern-rule finding blocks a pass only once it is verified.</p>
             </div>
@@ -160,7 +161,7 @@
         </ol>
         <div class="g-clock g-reveal">
           <div><strong>≈ 1 min</strong><span>a small repository, model review included, on the live demo</span></div>
-          <div><strong>250 s</strong><span>the demo's limit. A review cut off by it keeps the findings so far and says so</span></div>
+          <div><strong>no time limit</strong><span>a review runs until every file is read, over several requests if it needs them; only a spend cap can stop it, and the report says which files it left</span></div>
           <div><strong>seconds</strong><span>rules only, when the model review is off or its hourly allowance is used</span></div>
         </div>
       </section>

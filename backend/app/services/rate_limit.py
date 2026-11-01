@@ -30,6 +30,7 @@ import hmac
 import logging
 import os
 import secrets
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -59,13 +60,14 @@ class MemoryStore:
 
     def __init__(self) -> None:
         self.paths: set[str] = set()
-        self._lock = asyncio.Lock()
+        # A thread lock: audits run on worker threads, each with its own event loop.
+        self._lock = threading.Lock()
 
     async def count(self, prefix: str) -> int:
-        return sum(1 for p in self.paths if p.startswith(prefix))
+        return sum(1 for p in list(self.paths) if p.startswith(prefix))
 
     async def claim(self, path: str) -> bool:
-        async with self._lock:
+        with self._lock:
             if path in self.paths:
                 return False
             self.paths.add(path)
@@ -121,9 +123,49 @@ class BlobStore:
 
     async def delete_prefix(self, prefix: str) -> None:
         async with self._client() as client:
-            page = await client.list_objects(prefix=prefix, limit=1000)
-            if page.blobs:
+            for _ in range(20):  # 20,000 objects at most per sweep
+                page = await client.list_objects(prefix=prefix, limit=1000)
+                if not page.blobs:
+                    break
                 await client.delete([b.url for b in page.blobs])
+                if not page.has_more:
+                    break
+
+    # Objects with content (audit job state, services/audit_jobs.py). Each is written once and
+    # never changed, so no reader can see a stale copy of it.
+    async def listing(self, prefix: str) -> dict[str, str]:
+        """{pathname: url} under ``prefix`` (at most 5,000)."""
+        out, cursor = {}, None
+        async with self._client() as client:
+            for _ in range(5):
+                page = await client.list_objects(prefix=prefix, limit=1000, cursor=cursor)
+                out.update({b.pathname: b.url for b in page.blobs})
+                if not page.has_more or not page.cursor:
+                    break
+                cursor = page.cursor
+        return out
+
+    async def put_new(self, path: str, data: bytes) -> bool:
+        """Create-only write with content: False when the path exists."""
+        from vercel.blob import BlobError
+        async with self._client() as client:
+            try:
+                await client.put(path, data, access="private", content_type="application/octet-stream",
+                                 add_random_suffix=False, overwrite=False)
+            except BlobError as exc:
+                if "already exists" in str(exc).lower():
+                    return False
+                raise
+        return True
+
+    async def read(self, url: str) -> bytes | None:
+        from vercel.blob import BlobNotFoundError
+        async with self._client() as client:
+            try:
+                got = await client.get(url, access="private", use_cache=False)
+            except BlobNotFoundError:
+                return None
+        return got.content if getattr(got, "status_code", 200) == 200 else None
 
 
 @dataclass
