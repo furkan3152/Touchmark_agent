@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(default="", repr=False, exclude=True,
                                    validation_alias=AliasChoices("anthropic_api_key", "anthropic_ai_key"))
     deep_review_model: str = "claude-sonnet-5-5"
-    deep_review_effort: str = Field(default="high", pattern="^(low|medium|high|xhigh|max)$")
+    deep_review_effort: str = Field(default="xhigh", pattern="^(low|medium|high|xhigh|max)$")
     deep_review_max_turns: int = Field(default=24, ge=4, le=60)
     # 2 = an investigation pass plus a challenger pass that hunts for what the first missed.
     deep_review_passes: int = Field(default=2, ge=1, le=3)
@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     deep_review_mode: str = Field(default="ledger", pattern="^(ledger|classic)$")
     # The file map reads every file once and records structure, not judgements: low effort suffices.
     deep_review_map_model: str = ""
-    deep_review_map_effort: str = Field(default="low", pattern="^(low|medium|high|xhigh|max)$")
+    deep_review_map_effort: str = Field(default="medium", pattern="^(low|medium|high|xhigh|max)$")
     # Independent re-check of each finding by a second model (services/finding_verifier.py).
     # On by default (it still needs an API key): a medium payment bypass that no verifier
     # checked holds back a pass, so without it a model-reviewed agent can never pass.
@@ -135,7 +135,7 @@ class Settings(BaseSettings):
     demo_job_ttl_hours: float = Field(default=24.0, ge=1.0, le=168.0)
     enable_finding_verification: bool = True
     verifier_model: str = "claude-sonnet-5-5"
-    verifier_effort: str = Field(default="medium", pattern="^(low|medium|high|xhigh|max)$")
+    verifier_effort: str = Field(default="high", pattern="^(low|medium|high|xhigh|max)$")
     # Adversarial payloads go to a real endpoint only for an isolated target with explicit opt-in.
     enable_active_agent_probes: bool = False
 

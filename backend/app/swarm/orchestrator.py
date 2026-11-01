@@ -54,6 +54,16 @@ _KEEPS_SEVERITY = re.compile(
 _STRUCTURAL = re.compile(r"^stellar_native-(?:onchain-contract-|stellar-secret-seed|dep-)|^security-default-secret")
 
 
+_EXAMPLE_PLACE = re.compile(r"(?:^|/)(?:examples?|demos?|samples?|quickstart|scripts?|tests?|__tests__|spec|"
+                            r"fixtures?|e2e)/|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|/)test_[^/]*$|_test\.\w+$")
+
+
+def _only_examples(f) -> bool:
+    from .consolidate import _locations
+    places = _locations(f)
+    return bool(places) and all(_EXAMPLE_PLACE.search(p) for p, _ in places)
+
+
 class AuditSwarm:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -462,6 +472,17 @@ class AuditSwarm:
                         "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"
                                   f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.5)})
+                elif refuted and _KEEPS_SEVERITY.search(f.id) and _only_examples(f):
+                    # A fund-control rule that fires only in example, test or tooling code and is refuted at a
+                    # quoted code line (stellar-mpp-sdk: a fixed-format message signed in an example was
+                    # reported as signing arbitrary bytes) is kept as a disputed note at no weight.
+                    f = f.model_copy(update={
+                        "kind": FindingKind.WARNING, "severity": Severity.INFO,
+                        "title": "Disputed: " + f.title,
+                        "detail": f.detail + f" Independent verification refutes this at {r.get('file', '')}:"
+                                  f"{r.get('line', '')}, and every cited place is example or test code: "
+                                  f"{str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.3)})
                 elif refuted and (_STRUCTURAL.search(f.id) or _KEEPS_SEVERITY.search(f.id)):
                     # Structural facts and fund-control rules stay risks when refuted: lowered one level,
                     # and (fund controls) never below medium, as before.

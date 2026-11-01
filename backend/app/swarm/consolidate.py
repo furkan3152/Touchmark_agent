@@ -37,6 +37,8 @@ _RULE_TWINS = {
     "security-path-untrusted-to-network": {"ssrf"},
     "security-path-untrusted-to-file": {"path-traversal"},
     "security-path-secret-to-model": {"secret-exposure"},
+    "security-path-secret-handled-by-model": {"secret-exposure"},
+    "security-path-controls-not-enforced": {"unauthorized-payment", "control-bypass", "economic-loss"},
     "security-path-secret-via-model": {"secret-exposure"},
     "security-path-secret-to-exfiltration": {"secret-exposure"},
     "security-path-untrusted-account-control": {"account-takeover", "control-bypass"},
@@ -83,6 +85,12 @@ def _same_place(a: Finding, b: Finding, slack: int = 3) -> bool:
     return bool(la and lb) and la[0][0] == lb[0][0] and abs(la[0][1] - lb[0][1]) <= slack
 
 
+def _near(a: Finding, b: Finding, slack: int) -> bool:
+    """Any place one cites is in the same file as, and within ``slack`` lines of, a place the other
+    cites. A rule finding names the sink, the model often the source or a sibling call nearby."""
+    return any(pa == pb and abs(na - nb) <= slack for pa, na in _locations(a) for pb, nb in _locations(b))
+
+
 def merge_duplicates(findings: list[Finding]) -> list[Finding]:
     """A model finding at the same place and of the same kind as one already kept is the
     same defect reported again: it is folded into the kept one, never dropped silently.
@@ -99,7 +107,7 @@ def merge_duplicates(findings: list[Finding]) -> list[Finding]:
             # The same kind of defect a few lines apart in one file is one defect reported per line
             # (on live repositories one shell injection came back as four findings).
             (_same_place(k, f, 6) and _category(k.id) == _category(f.id)) if "-ai-" in k.id
-            else (_same_place(k, f) and _category(f.id) in _RULE_TWINS.get(_SUFFIX.sub("", k.id), set())))), None)
+            else (_near(k, f, 40) and _category(f.id) in _RULE_TWINS.get(_SUFFIX.sub("", k.id), set())))), None)
         if twin is None:
             kept.append(f)
             continue

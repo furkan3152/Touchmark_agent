@@ -313,7 +313,7 @@ class FindingVerifier:
         return run
 
 
-def selectable(findings: list[Finding], limit: int = 30) -> list[Finding]:
+def selectable(findings: list[Finding], limit: int = 60) -> list[Finding]:
     """Risks of medium severity or above, most severe first. Candidate-rule findings come
     first at each severity: the verifier is what decides them (swarm/policy.py)."""
     from ..swarm.policy import candidate

@@ -286,3 +286,56 @@ def test_a_ledger_pass_carries_the_stellar_criteria_and_on_chain_facts_of_its_ch
     assert "high threshold 3" in text and "medium threshold 2" not in text               # only S6's fact
     value = ledger.instruction("value", [c for c in ledger.CATALOG if c.group == "value"], [], "- none", {})
     assert "Asset identity is code + issuer" in value and "On-chain controls" not in value
+
+
+def test_severity_follows_from_stated_facts():
+    from backend.app.services.severity import compute
+    # syronlabs: shell injection through MCP tool arguments, any content the model reads can steer it.
+    assert compute("host_code_execution", "anyone", "mainnet_or_configurable", "shipped") == "critical"
+    # kalepail: a committed token for a testnet service.
+    assert compute("keys_or_secrets", "anyone", "testnet_only", "shipped") == "medium"
+    assert compute("funds", "counterparty", "mainnet_or_configurable", "shipped") == "high"
+    assert compute("funds", "operator_only", "mainnet_or_configurable", "shipped") == "medium"
+    assert compute("funds", "anyone", "mainnet_or_configurable", "example_or_quickstart") == "high"
+    assert compute("funds", "nobody_yet", "mainnet_or_configurable", "shipped") == "low"
+    assert compute("keys_or_secrets", "anyone", "mainnet_or_configurable", "test_or_dev_tool") == "low"
+    assert compute("funds_locked_or_delayed", "counterparty", "mainnet_or_configurable", "shipped") == "medium"
+    assert compute("none", "anyone", "not_applicable", "shipped") == "low"
+
+
+def test_failure_path_check_applies_to_value_and_signing_agents():
+    assert "S8" in {c.id for c in ledger.applicable({"submits_transactions"})}
+    assert "S8" not in {c.id for c in ledger.applicable({"calls_llm"})}
+
+
+def test_holds_answers_on_fund_checks_are_challenged_and_can_flip():
+    art = artifact()
+    operating = call("describe_operating_model", purpose="p", triggers="t", example_run="e",
+                     trust_boundaries=[], assets_at_risk=[])
+    read = call("read_source", path="src/main/kotlin/PayoutService.kt", start_line=1, end_line=14)
+    facts = {"asset": "funds", "trigger": "anyone", "network": "mainnet_or_configurable", "location": "shipped"}
+    blank = {"asset": "none", "trigger": "nobody_yet", "network": "not_applicable", "location": "shipped"}
+
+    def ans(cid, verdict, line=0, quote="", **kw):
+        return call("answer_check", check_id=cid, verdict=verdict, file="src/main/kotlin/PayoutService.kt" if line else "",
+                    line=line, evidence_quote=quote, reason="r", title=kw.get("title", ""), attack_scenario="s",
+                    remediation="m", existing_finding_id="", **(kw.get("f") or blank))
+    groups = ledger.plan({"signs_transactions", "submits_transactions", "holds_or_loads_secret"})
+    turns = [reply(operating, read), reply(call("finish", summary="done"))]
+    for group, checks in groups:
+        turns.append(reply(*[ans(c.id, "holds", 10, "tx.sign(signer)") if c.id == "S3"
+                             else ans(c.id, "cannot_determine") for c in checks]))
+        turns.append(reply(call("finish", summary="done")))
+    # The challenge finds a path the first answer missed.
+    turns.append(reply(ans("S3", "fails", 11, "server.submitTransaction(tx).hash", title="Network chosen by caller", f=facts)))
+    turns.append(reply(call("finish", summary="done")))
+    client = RoutingClient(turns)
+    reviewer = DeepReviewer(client, model="claude-sonnet-5-5", mode="ledger",
+                            mapper=FileMapper(client, model="claude-sonnet-5-5"))
+    result = run(reviewer, art)
+    assert [p["kind"] for p in result.passes if p["kind"] == "ledger:challenge"] == ["ledger:challenge"]
+    assert result.challenged == ["S3"]
+    s3 = result.ledger["S3"]
+    assert s3["verdict"] == "fails" and s3["challenged_from"] == "holds"
+    finding = next(f for f in result.findings if f.id == s3["finding_id"])
+    assert finding.severity.value == "critical" and "Severity basis: at risk funds" in finding.detail

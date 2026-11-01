@@ -167,7 +167,16 @@ the rules cannot. With consent, the review (`DEEP_REVIEW_MODE=ledger`) runs in f
    them by the same written criteria. When the agent's account was read from the ledger, a
    co-signer requirement for payments or for signer changes is a fact the answer may cite
    (`file: "onchain"`, quoted exactly; `audit_ledger.ONCHAIN_SUPPORTS`) for the checks it enforces.
-4. **Coverage.** Authority files no pass has opened, and files the map could not read, are
+4. **Challenge.** Every fund, signing, access or model check answered `holds`
+   (`audit_ledger.CHALLENGED`) is re-examined by a pass whose only task is to find one reachable
+   path where the control is absent (a sibling route, an error or retry path, another input
+   format). It must answer each again; a flipped answer becomes a verified finding, and the report
+   keeps `challenged_from`. A wrong `holds` is how a defect is missed.
+5. **Severity from facts** (`services/severity.py`). In this mode the model does not pick a
+   severity: for each defect it states what is at risk, who can trigger it, the network and where
+   the code is, and a fixed table gives the level (testnet-only code at most medium, example code
+   one lower, unwired paths low). The facts are written into the finding.
+6. **Coverage.** Authority files no pass has opened, and files the map could not read, are
    opened in batches. Files the map read that hold no authority are not reopened.
 
 The report's `deep_review` carries `file_map` (cards), `ledger` (every applicable check and

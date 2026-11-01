@@ -111,6 +111,7 @@ Severity, judged on the code as shipped, not on what it might become:
 - high: a privileged or paid action is reachable without an enforced control, or the agent's core function does not work as shipped (a buyer could not use it for its stated purpose, or it loses money or access).
 - medium: exploitable only under realistic extra conditions, or limited impact.
 - low: latent (the path is not wired up, the function has no caller, settlement is mocked), demo/mock code, test-only code, hardening, or documentation. Files in unbuilt_contract_sources are not compiled into the agent (samples, fixtures, inputs it audits or deploys): a defect in them is at most low, and a deliberately vulnerable sample is not a finding.
+When record_finding or answer_check asks for asset, trigger, network and location instead of a severity, state those facts exactly as the code shows them; the severity is computed from them by a fixed table (example code, testnet-only code, a counterparty or operator as the only trigger, and unwired paths all lower it). Do not inflate a fact to raise the severity or deflate one to lower it.
 Before recording, check that the path is reached: who calls this code, is the dangerous call actually wired, does a control elsewhere (a helper, a caller, the platform) already stop it. If you rely on how an SDK or service behaves, say so in the scenario; prefer stellar_reference over memory.
 
 Stellar checklist (call stellar_reference for details):
@@ -155,14 +156,25 @@ TOOLS = [
 #: The check-ledger mode adds one tool: the answer to one ledger check (services/audit_ledger.py).
 from . import audit_ledger as ledger  # noqa: E402
 
-LEDGER_TOOLS = [*TOOLS[:-1], _strict(
+from . import severity as severity_table  # noqa: E402
+
+#: In ledger mode the model states the facts a severity follows from (services/severity.py)
+#: instead of choosing a level, so the same defect gets the same severity on every run.
+_FINDING_FIELDS = {"category": {"type": "string", "enum": sorted(CATEGORIES)},
+                   **severity_table.FACTOR_SCHEMA,
+                   "title": _STR, "file": _STR, "line": {"type": "integer"}, "evidence_quote": _STR,
+                   "attack_scenario": _STR, "stellar_impact": _STR, "remediation": _STR}
+_LEDGER_RECORD = _strict("record_finding", "Record one verified defect with the facts its severity follows from.",
+                         _FINDING_FIELDS, list(_FINDING_FIELDS))
+
+LEDGER_TOOLS = [*[t if t["name"] != "record_finding" else _LEDGER_RECORD for t in TOOLS[:-1]], _strict(
     "answer_check", "Answer one check of the check ledger after reading the code that decides it.",
     {"check_id": {"type": "string", "enum": [c.id for c in ledger.CATALOG]},
      "verdict": {"type": "string", "enum": ledger.VERDICTS},
      "file": _STR, "line": {"type": "integer"}, "evidence_quote": _STR, "reason": _STR,
-     "severity": {"type": "string", "enum": [*SEVERITIES, "none"]},
+     **severity_table.FACTOR_SCHEMA,
      "title": _STR, "attack_scenario": _STR, "remediation": _STR, "existing_finding_id": _STR},
-    ["check_id", "verdict", "file", "line", "evidence_quote", "reason", "severity", "title",
+    ["check_id", "verdict", "file", "line", "evidence_quote", "reason", *severity_table.FACTOR_SCHEMA, "title",
      "attack_scenario", "remediation", "existing_finding_id"]), TOOLS[-1]]
 
 
@@ -285,6 +297,8 @@ class DeepReviewResult:
     ledger: dict = field(default_factory=dict)
     ledger_groups: list = field(default_factory=list)
     kinds: list = field(default_factory=list)
+    #: Checks answered "holds" that the challenge pass re-examined (audit_ledger.CHALLENGED).
+    challenged: list = field(default_factory=list)
     mode: str = "classic"
 
     def mapped(self) -> set[str]:
@@ -336,7 +350,7 @@ class DeepReviewResult:
                 "summary": self.summary, "turns": self.turns, "usage": self.usage, "note": self.note,
                 "files_read": sorted(self.files_read), "passes": self.passes, "stop_reason": self.stop_reason,
                 "not_reviewed": self.not_reviewed, "map": self.map_state, "ledger": self.ledger,
-                "ledger_groups": self.ledger_groups, "kinds": self.kinds}
+                "ledger_groups": self.ledger_groups, "kinds": self.kinds, "challenged": self.challenged}
 
     def restore(self, state: dict) -> None:
         self.status = state.get("status", "not_run")
@@ -354,6 +368,7 @@ class DeepReviewResult:
         self.ledger = dict(state.get("ledger") or {})
         self.ledger_groups = list(state.get("ledger_groups") or [])
         self.kinds = list(state.get("kinds") or [])
+        self.challenged = list(state.get("challenged") or [])
 
 
 @dataclass
@@ -554,6 +569,9 @@ class DeepReviewer:
             result.flow_assessments.append(entry)
             return "Recorded." if not problem else f"Recorded without a verified quote ({problem})."
         if name == "record_finding":
+            if "asset" in args:
+                args = {**args, "severity": severity_table.compute(args.get("asset"), args.get("trigger"),
+                                                                   args.get("network"), args.get("location"))}
             problem = self._verify_quote(artifact, args.get("file", ""), args.get("line", 0), args.get("evidence_quote", ""))
             category = args.get("category")
             if not problem and category not in CATEGORIES:
@@ -587,7 +605,8 @@ class DeepReviewer:
             title=redact(str(args.get("title") or label)[:200]),
             detail=redact(str(args.get("attack_scenario", ""))[:1500]
                           + ("\nStellar impact: " + str(args.get("stellar_impact", ""))[:600]
-                             if args.get("stellar_impact") else "")),
+                             if args.get("stellar_impact") else "")
+                          + ("\n" + severity_table.basis(args) if "asset" in args else "")),
             # Quotes are verified against source first, then secrets are masked for the report.
             evidence=redact(f"{args['file']}:{args['line']} `{' '.join(args['evidence_quote'].split())[:240]}`"),
             evidence_grade=EvidenceGrade.INFERRED,
@@ -607,6 +626,8 @@ class DeepReviewer:
         if verdict not in ledger.VERDICTS:
             return "Unknown verdict."
         answer = ledger.Answer(check_id=check.id, verdict=verdict, reason=redact(str(args.get("reason", ""))[:1200]))
+        if getattr(self, "_pass_kind", "") == "ledger:challenge" and check.id in result.ledger:
+            answer.challenged_from = result.ledger[check.id].get("verdict", "")
         onchain = verdict == "holds" and str(args.get("file", "")).strip().lower() == "onchain"
         if onchain:
             # A control the ledger enforces: the quote must be one of the facts read for this account,
@@ -641,13 +662,17 @@ class DeepReviewer:
                     result.findings[index] = found.model_copy(update={
                         "evidence": redact(f"{found.evidence} · {place} `{answer.quote[:160]}`")[:900]})
             else:
-                severity = args.get("severity") if args.get("severity") in SEVERITIES else "low"
+                severity = (severity_table.compute(args.get("asset"), args.get("trigger"), args.get("network"),
+                                                   args.get("location"))
+                            if "asset" in args else args.get("severity") if args.get("severity") in SEVERITIES else "low")
                 finding = self._add_finding({**args, "severity": severity, "stellar_impact": "",
                                              "title": args.get("title") or check.title,
                                              "ledger_check": f"{check.id} ({check.title})"}, check.category, result)
                 answer.finding_id = finding.id
         result.ledger[check.id] = answer.as_dict()
-        missing = [c for c in allowed if c not in result.ledger]
+        missing = ([c for c in allowed if not (result.ledger.get(c) or {}).get("challenged_from")]
+                   if getattr(self, "_pass_kind", "") == "ledger:challenge" else
+                   [c for c in allowed if c not in result.ledger])
         return (f"Recorded {check.id}: {verdict}" + (f" as {answer.finding_id}" if answer.finding_id else "")
                 + (". Still to answer: " + ", ".join(missing) if missing else ". All checks of this pass are answered."))
 
@@ -822,6 +847,8 @@ class DeepReviewer:
                 "protocol misuse. Skip describe_operating_model. Record each real defect, then finish.", batch)
 
     def _ledger_checks(self, result: DeepReviewResult, kind: str) -> list[str]:
+        if kind == "ledger:challenge":
+            return list(result.challenged)
         if not kind.startswith("ledger:"):
             return []
         group = kind.split(":", 1)[1]
@@ -849,6 +876,11 @@ class DeepReviewer:
             focus = set(fmap.files_with(needs)) | (authority_files(artifact) if not fmap.cards else set())
             files = [p for p in _priority(artifact) if p in focus]
             return (f"ledger:{group}", ledger.instruction(group, checks, files, prior, getattr(self, "_onchain", {})), [])
+        if index == len(groups):
+            ids = ledger.to_challenge(result.ledger)
+            if ids:
+                result.challenged = ids
+                return ("ledger:challenge", ledger.challenge_instruction(ids, result.ledger, prior), [])
         required = authority_files(artifact) | (result.reviewable - result.mapped())
         unread = [p for p in _priority(artifact) if p in required and p not in result.files_read]
         read = len(result.files_read & result.reviewable) if result.reviewable else len(result.files_read)
@@ -927,7 +959,13 @@ class DeepReviewer:
         first = {"role": "user", "content": [pack_block, {"type": "text", "text": cur.instruction}]}
         tools = LEDGER_TOOLS if self.mode == "ledger" else TOOLS
         self._pass_checks = self._ledger_checks(result, cur.kind)
-        missing = lambda: [c for c in self._pass_checks if c not in result.ledger]  # noqa: E731
+        self._pass_kind = cur.kind
+        if cur.kind == "ledger:challenge":
+            # Every challenged check must be answered again in this pass (challenged_from marks it).
+            missing = lambda: [c for c in self._pass_checks  # noqa: E731
+                               if not (result.ledger.get(c) or {}).get("challenged_from")]
+        else:
+            missing = lambda: [c for c in self._pass_checks if c not in result.ledger]  # noqa: E731
         extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.fallbacks else {}
         while cur.turn < self.max_turns:
             reason = await budget.admit(leg)

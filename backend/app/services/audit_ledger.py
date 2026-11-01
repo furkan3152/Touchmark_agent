@@ -50,7 +50,7 @@ STELLAR_TOPICS = {
     "V6": ("transaction_lifecycle",), "V7": ("transaction_lifecycle", "anchors", "memos_and_muxed"),
     "V8": ("payments",), "S1": ("transaction_lifecycle", "soroban_auth"), "S2": ("key_management",),
     "S3": ("endpoints",), "S4": ("transaction_lifecycle",), "S5": ("transaction_lifecycle",),
-    "S6": ("multisig", "trustlines_and_assets"), "S7": ("soroban_auth",), "A2": ("key_management",),
+    "S6": ("multisig", "trustlines_and_assets"), "S7": ("soroban_auth",), "S8": ("transaction_lifecycle",), "A2": ("key_management",),
     "A3": ("agent_surfaces",), "A4": ("multisig",), "M1": ("memos_and_muxed", "agent_surfaces"),
     "M3": ("agent_surfaces",), "V2": ("agent_surfaces",), "V3": ("agent_surfaces",),
 }
@@ -135,6 +135,14 @@ CATALOG: tuple[Check, ...] = (
        "In contracts the agent ships or calls: does every state-changing function require_auth the right "
        "address, are per-user records in persistent (not instance) storage, and are TTLs extended for entries "
        "it depends on?", "stellar_protocol_misuse", {"invokes_contract"}),
+    _c("S8", "signing", "Failure and rollback paths",
+       "When a submission, settlement, close or payment is rejected, times out, fails on chain (FAILED, "
+       "ERROR, not PENDING) or throws after a state change, does every such path restore or reconcile state? "
+       "Look at what each catch, early return and status branch leaves behind: a debit with no refund, a "
+       "'settling', 'pending' or lock marker that blocks every later request, a sequence number or nonce "
+       "consumed, a record marked paid that was not. fails if any failure path leaves the system stuck, "
+       "inconsistent or able to pay twice; a marker that blocks all later use is not a fail-closed control.",
+       "reliability_failure", SIGN | VALUE),
     # ---- access, secrets, entry points ----------------------------------------------------
     _c("A1", "access", "Caller authentication",
        "Does every route, tool, webhook or command that reaches signing, payment, approval or secrets "
@@ -151,7 +159,8 @@ CATALOG: tuple[Check, ...] = (
        "cross_user_access", {"stores_shared_state", "moves_value", "holds_or_loads_secret"}),
     _c("A4", "access", "Approvals fail closed",
        "Where an approval, confirmation or policy gate exists, does it deny on timeout, error, a missing "
-       "reviewer or a flag the requester or model can set?", "control_bypass", PRIVILEGED),
+       "reviewer or a flag the requester or model can set? A failure that leaves a marker blocking every "
+       "later request is a reliability failure (S8), not a working approval.", "control_bypass", PRIVILEGED),
     _c("A5", "access", "Code, command and query execution",
        "Is any shell command, eval, SQL, template or deserialization built from model output, tool input or "
        "fetched data?", "code_execution", {"executes_code", "reads_writes_files"}),
@@ -204,6 +213,34 @@ def plan(kinds: set[str]) -> list[tuple[str, list[Check]]]:
     """(group, checks) for each group with at least one applicable check, in fixed order."""
     checks = applicable(kinds)
     return [(g, [c for c in checks if c.group == g]) for g in GROUPS if any(c.group == g for c in checks)]
+
+
+#: Checks whose "holds" answer is challenged by a second pass: a wrong "holds" on these is how a
+#: defect is missed (stellar-mpp-sdk: a failure path that left the channel stuck was answered as a
+#: fail-closed control). The challenge looks for one reachable path where the control is absent.
+CHALLENGED = ("V1", "V2", "V3", "V4", "V5", "V6", "V7", "S1", "S2", "S3", "S5", "S8", "A1", "A2", "A3", "A4", "A5",
+              "M1", "M2")
+
+
+def to_challenge(answers: dict[str, dict]) -> list[str]:
+    return [cid for cid in CHALLENGED if (answers.get(cid) or {}).get("verdict") == "holds"]
+
+
+def challenge_instruction(ids: list[str], answers: dict[str, dict], prior: str) -> str:
+    rows = "\n".join(f"- {cid} ({BY_ID[cid].title}): {BY_ID[cid].question}\n  Answered holds at "
+                     f"{answers[cid].get('file')}:{answers[cid].get('line')}: {answers[cid].get('reason', '')[:400]}"
+                     for cid in ids)
+    criteria = stellar_criteria([BY_ID[cid] for cid in ids])
+    return ("Challenge pass. Earlier passes answered the checks below as holds. Your job is to break each answer: "
+            "look for ONE reachable path where the control is absent or can be bypassed: a sibling tool or route, "
+            "an error, timeout or retry path, an alternative input format, a second caller, a different network, "
+            "a path that runs before the control or skips it. Read the code; do not assume the earlier reader "
+            "covered every path.\n" + rows + "\n"
+            + (f"\nStellar criteria (judge by these):\n{criteria}\n" if criteria else "")
+            + "\nAnswer EVERY check again with answer_check: holds (quote the enforcing line that covers every "
+            "path you looked at) or fails (quote the defective line, state the severity facts, attack scenario "
+            "and remediation; use existing_finding_id when an earlier finding already describes it). Do not "
+            "change an answer without code that shows it. Earlier passes recorded:\n" + prior + "\nThen finish.")
 
 
 def stellar_criteria(checks: list[Check]) -> str:
@@ -286,6 +323,8 @@ class Answer:
     quote_verified: bool = False
     #: The on-chain fact a "holds" answer rests on (ONCHAIN_SUPPORTS), when it rests on the ledger.
     onchain: str = ""
+    #: Set when the challenge pass re-answered the check: the verdict before it ("holds").
+    challenged_from: str = ""
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)

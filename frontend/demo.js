@@ -662,7 +662,9 @@
       groups.append(el("div", { class: "ledger-group" }, el("h4", { text: title }),
         el("ul", {}, ...rows.map((c) => {
           const where = c.onchain ? "the Stellar ledger (signers and thresholds of the agent's account)" : c.file ? `${c.file}:${c.line}` : "";
-          const why = [c.reason, where && `at ${where}`, c.finding_id && `finding ${c.finding_id}`].filter(Boolean).join(" · ");
+          const why = [c.reason, where && `at ${where}`, c.finding_id && `finding ${c.finding_id}`,
+            c.challenged_from && (c.verdict === c.challenged_from ? "confirmed by a challenge pass that looked for a way around it"
+              : `changed from ${LEDGER_MARK[c.challenged_from] || c.challenged_from} by a challenge pass`)].filter(Boolean).join(" · ");
           const label = `${c.id} ${c.title}`;
           return el("li", { class: "ledger-row" },
             el("span", { class: "ledger-mark " + c.verdict + (c.verdict === "fails" && !SEVERE.has(c.severity) ? " minor" : ""),

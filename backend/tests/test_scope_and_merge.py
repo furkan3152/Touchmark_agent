@@ -64,3 +64,31 @@ def test_one_defect_reported_per_line_or_per_rule_becomes_one_finding():
     assert "stellar_native-stellar-secret-seed" in ids and "security-code-embedded-api-credential" not in ids
     lead = next(f for f in out if f.id == "stellar_native-stellar-secret-seed")
     assert "Also reported as security-code-embedded-api-credential" in lead.detail
+
+
+def test_a_rule_finding_absorbs_the_model_finding_of_the_same_defect_nearby():
+    # syronlabs: the payment rule cites the sign call, the model the payment operation nine lines up.
+    out = consolidate([
+        _f("security-path-untrusted-to-financial-sink", "src/classic.ts:117 `transaction.sign(sourceKeypair);`"),
+        _f("security-ai-unauthorized-payment-3", "src/classic.ts:108 `Operation.payment({` · src/classic.ts:183 `x`"),
+        _f("security-ai-unauthorized-payment-4", "src/other.ts:10 `Operation.payment({`"),
+    ])
+    ids = [f.id for f in out]
+    assert "security-ai-unauthorized-payment-3" not in ids and "security-ai-unauthorized-payment-4" in ids
+
+
+def test_a_refuted_fund_rule_in_example_code_only_carries_no_weight():
+    from backend.app.models import AuditorVerdict
+    from backend.app.swarm.orchestrator import AuditSwarm
+    f = _f("security-path-key-signs-arbitrary-bytes", "examples/charge-client-fee-bump.ts:111 `keypair.sign(`", Severity.MEDIUM)
+    shipped = _f("security-path-key-signs-arbitrary-bytes-2", "src/client.ts:20 `keypair.sign(`", Severity.MEDIUM)
+    shipped = shipped.model_copy(update={"id": "security-path-key-signs-arbitrary-bytes"})
+    refute = lambda fid: {"results": [{"finding_id": fid, "verdict": "refuted", "quote_verified": True,  # noqa: E731
+                                       "quote": "keypair.sign(Buffer.from(`${challenge.id}:${hash}`))",
+                                       "file": "x.ts", "line": 1, "reason": "fixed-format message"}]}
+    v = AuditorVerdict(auditor="security", dimension=Dimension.SECURITY, score=50.0, findings=[f])
+    out = AuditSwarm._apply_disputes([v], refute(f.id))[0].findings[0]
+    assert not out.is_risk and out.title.startswith("Disputed")
+    v2 = AuditorVerdict(auditor="security", dimension=Dimension.SECURITY, score=50.0, findings=[shipped])
+    kept = AuditSwarm._apply_disputes([v2], refute(shipped.id))[0].findings[0]
+    assert kept.is_risk and kept.severity == Severity.LOW  # shipped fund-control rules keep the old rule: one level lower
