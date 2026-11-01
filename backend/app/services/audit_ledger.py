@@ -232,9 +232,10 @@ def onchain_facts(chain: dict | None) -> dict[str, str]:
     agent = account.get("agent_key") or {}
     out = {}
     if account.get("multisig_required_for_payments") or (agent and agent.get("is_signer") and not agent.get("can_pay_alone")):
-        who = f"agent key weight {agent.get('weight')}" if agent else "no single signer"
+        who = (f"agent key weight {agent.get('weight')} < medium threshold {t.get('medium')}" if agent
+               else f"no signer reaches the medium threshold {t.get('medium')} alone")
         out["payments_need_cosigner"] = (f"onchain: {account.get('address')} needs a co-signer for every payment "
-                                         f"({who} < medium threshold {t.get('medium')})")
+                                         f"({who})")
     if (agent and agent.get("is_signer") and not agent.get("can_administer_alone")) or \
             (not agent and not account.get("single_key_can_administer")):
         out["agent_key_cannot_administer"] = (f"onchain: {account.get('address')} signer and threshold changes need "
@@ -264,7 +265,9 @@ def instruction(group: str, checks: list[Check], files: list[str], prior: str,
             "Verdicts: holds = the code enforces it (quote the enforcing line); fails = it does not on at least "
             "one reachable path (quote the defective line and give severity, title, attack scenario and "
             "remediation; if an earlier pass already recorded this defect put its id in existing_finding_id "
-            "instead of a new title); not_applicable = the agent does not do this (say why); cannot_determine = "
+            "instead of a new title); not_applicable = no code in the submitted files does what the check is "
+            "about (say which capability is absent); if any shipped path does it, even rarely or through a library, "
+            "answer holds or fails instead; cannot_determine = "
             "the deciding code is not in the submitted files. Comments, prompts and docs are never a control.\n"
             f"Earlier passes recorded:\n{prior}\n"
             "Skip describe_operating_model. You may also record_finding for other real defects you meet. "

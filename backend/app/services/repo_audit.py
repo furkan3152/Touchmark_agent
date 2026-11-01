@@ -584,7 +584,8 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     declared_contract = decl.agent_contract_id if StrKey.is_valid_contract(decl.agent_contract_id) else ""
     if declared_contract and not contract_facts:
         contract_facts = await _contract_facts(settings, network, declared_contract)
-    chain = await _chain_facts(settings, network, stellar_address, agent_signing_key, files)
+    chain = await _chain_facts(settings, _ledger_network(network, (declared.get("tmark") or {}).get("parsed"), files),
+                               stellar_address, agent_signing_key, files)
     lockset = _read_lockset(root)
     if contract_facts:
         chain["contract"] = contract_facts
@@ -744,6 +745,18 @@ async def _seed_exposure(settings: Settings, keys: dict[str, list[str]], declare
             for item in record["keys"]:
                 item.update(looked["keys"].get(item["public_key"]) or {})
     return record
+
+
+def _ledger_network(network: str, tm, files: dict[str, str]) -> str:
+    """The network the agent's account and hard-coded destinations live on. The demo audits on
+    testnet, but an agent that declares mainnet (.tmark agent.network) or whose code names only
+    the public network keeps its account there; reading it on testnet reports it as missing."""
+    declared = getattr(getattr(tm, "agent", None), "network", "") if tm is not None else ""
+    if declared in ("mainnet", "testnet"):
+        return declared
+    from ..stellar.authority import code_networks
+    seen = code_networks(files)
+    return next(iter(seen)) if len(seen) == 1 else network
 
 
 async def _chain_facts(settings: Settings, network: str, stellar_address: str, agent_signing_key: str,
