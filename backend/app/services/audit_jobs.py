@@ -58,7 +58,7 @@ LEASE_SECONDS = FUNCTION_MAX_SECONDS + 30.0
 #: A live leg checkpoints after every model turn and before every retry; one call may take
 #: deep_review_call_timeout_seconds (120 s). A lease quiet for longer than this is abandoned.
 STALE_SECONDS = 180.0
-#: Snapshots kept per job (older ones are deleted as new ones are written).
+#: Snapshots kept per job when older ones are pruned (every fourth write).
 KEEP_SNAPSHOTS = 3
 
 
@@ -149,7 +149,8 @@ class JobHandle:
         self.seq += 1
         self.state = state
         self._written.append(path)
-        await self._prune()
+        if self.seq % 4 == 0:  # every fourth write: each store call costs time on a leg
+            await self._prune()
         return True
 
     async def _prune(self) -> None:
