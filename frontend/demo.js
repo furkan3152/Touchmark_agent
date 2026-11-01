@@ -527,6 +527,7 @@
 
   function render(data) {
     current = data;
+    Object.assign($("result").dataset, { reference: data.reference || "", repository: (data.source || {}).repository || "", decision: data.decision || "" }); // read by studio-cta.js
     $("result").hidden = false;
     // With no code to review there is nothing to score: show a dash, not a perfect 100.
     const unscored = !data.files && data.decision === "needs_evidence";
