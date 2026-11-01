@@ -339,3 +339,15 @@ def test_holds_answers_on_fund_checks_are_challenged_and_can_flip():
     assert s3["verdict"] == "fails" and s3["challenged_from"] == "holds"
     finding = next(f for f in result.findings if f.id == s3["finding_id"])
     assert finding.severity.value == "critical" and "Severity basis: at risk funds" in finding.detail
+
+
+def test_authentication_verification_check_applies_when_the_agent_verifies_signatures():
+    # The SEP-10 miss: an agent that verifies incoming challenges, not just signs its own.
+    assert "A7" in {c.id for c in ledger.applicable({"authenticates_callers"})}
+    assert "A7" in {c.id for c in ledger.applicable({"verifies_incoming_payment"})}
+    assert "A7" not in {c.id for c in ledger.applicable({"moves_value"})}
+    text = ledger.instruction("access", [c for c in ledger.CATALOG if c.group == "access"], [], "- none", {})
+    assert "SEP-10" in text and "least one required client signer" in text
+    # A7 carries the web-auth Stellar criteria and is challenged.
+    assert "SEP-10 / SEP-45 web authentication" in ledger.stellar_criteria([ledger.BY_ID["A7"]])
+    assert "A7" in ledger.CHALLENGED

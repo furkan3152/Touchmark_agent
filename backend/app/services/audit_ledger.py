@@ -51,7 +51,8 @@ STELLAR_TOPICS = {
     "V8": ("payments",), "S1": ("transaction_lifecycle", "soroban_auth"), "S2": ("key_management",),
     "S3": ("endpoints",), "S4": ("transaction_lifecycle",), "S5": ("transaction_lifecycle",),
     "S6": ("multisig", "trustlines_and_assets"), "S7": ("soroban_auth",), "S8": ("transaction_lifecycle",), "A2": ("key_management",),
-    "A3": ("agent_surfaces",), "A4": ("multisig",), "M1": ("memos_and_muxed", "agent_surfaces"),
+    "A3": ("agent_surfaces",), "A4": ("multisig",), "A7": ("web_auth", "multisig"),
+    "M1": ("memos_and_muxed", "agent_surfaces"),
     "M3": ("agent_surfaces",), "V2": ("agent_surfaces",), "V3": ("agent_surfaces",),
 }
 
@@ -167,6 +168,15 @@ CATALOG: tuple[Check, ...] = (
     _c("A6", "access", "Outbound requests and file paths",
        "Can the requester steer outbound URLs (SSRF, internal addresses) or file paths (traversal) the "
        "agent fetches, reads or writes?", "ssrf", {"calls_network", "reads_writes_files"}),
+    _c("A7", "access", "Verification of incoming authentication",
+       "Where the agent VERIFIES something signed or authenticated that came from outside (a SEP-10/SEP-45 "
+       "challenge, a signed message, a JWT, a webhook signature, a payment proof, an auth entry), is the "
+       "verification complete? Check that each signature is attributed to exactly one expected signer, that at "
+       "least one required client signer is present, that the agent's own or server key is excluded from the "
+       "count, that unmatched or duplicate signatures are rejected, that a default account's zero threshold "
+       "cannot be met by no signature, and that the challenge's structure, domain, timebounds and operations "
+       "are checked. fails if any accepted artifact can pass with a missing, wrong, reused or self-produced "
+       "signature.", "control_bypass", {"authenticates_callers", "verifies_incoming_payment", "signs_raw_bytes"}),
     # ---- the model and the agent's behaviour ----------------------------------------------
     _c("M1", "model", "Instructions in data",
        "Can text the agent reads (web pages, documents, memos, tool results, other agents' messages) choose "
@@ -219,7 +229,7 @@ def plan(kinds: set[str]) -> list[tuple[str, list[Check]]]:
 #: defect is missed (stellar-mpp-sdk: a failure path that left the channel stuck was answered as a
 #: fail-closed control). The challenge looks for one reachable path where the control is absent.
 CHALLENGED = ("V1", "V2", "V3", "V4", "V5", "V6", "V7", "S1", "S2", "S3", "S5", "S8", "A1", "A2", "A3", "A4", "A5",
-              "M1", "M2")
+              "A7", "M1", "M2")
 
 
 def to_challenge(answers: dict[str, dict]) -> list[str]:
