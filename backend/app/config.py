@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     # 2 = an investigation pass plus a challenger pass that hunts for what the first missed.
     deep_review_passes: int = Field(default=2, ge=1, le=3)
     deep_review_timeout_seconds: float = Field(default=240.0, ge=30.0, le=900.0)
+    # ledger: map every file in any language (services/file_map.py), investigate, then answer the
+    # fixed check ledger (services/audit_ledger.py) group by group, then open every authority file
+    # still unexamined. classic: investigate, challenge passes, then coverage passes over every file.
+    deep_review_mode: str = Field(default="ledger", pattern="^(ledger|classic)$")
+    # The file map reads every file once and records structure, not judgements: low effort suffices.
+    deep_review_map_model: str = ""
+    deep_review_map_effort: str = Field(default="low", pattern="^(low|medium|high|xhigh|max)$")
     # Independent re-check of each finding by a second model (services/finding_verifier.py).
     # On by default (it still needs an API key): a medium payment bypass that no verifier
     # checked holds back a pass, so without it a model-reviewed agent can never pass.
@@ -103,7 +110,7 @@ class Settings(BaseSettings):
     # count. A cap that is hit ends the review cleanly, keeps every finding and lists each
     # file left unread with the cap that stopped it.
     # The defaults are sized so a 100-200 file agent repository completes with room to spare.
-    deep_review_max_tokens_per_audit: int = Field(default=60_000_000, ge=0, le=2_000_000_000)
+    deep_review_max_tokens_per_audit: int = Field(default=200_000_000, ge=0, le=2_000_000_000)
     deep_review_max_cost_usd_per_audit: float = Field(default=30.0, ge=0.0, le=10_000.0)
     deep_review_max_files_per_audit: int = Field(default=400, ge=0, le=5_000)
     deep_review_daily_token_budget: int = Field(default=600_000_000, ge=0, le=100_000_000_000)

@@ -104,7 +104,7 @@ Work in this order:
 5. Call record_finding for each real defect, with the exact file, line and a verbatim quote of that line. Describe a concrete attack scenario and its Stellar impact. Do not record style issues or speculation you cannot tie to a line.
 6. Call finish with a short summary.
 
-Be precise and concrete. A finding without a verifiable line is discarded. Never report that a file, module or function is missing because you could not open it: the submitted set can leave files out of a large repository, so say "not reviewed" instead. When you find a defect in one tool or route, search the sibling tools for the same pattern and cite each location.
+Write every title, scenario, reason and summary in English, whatever the language of the code or its comments. Be precise and concrete. A finding without a verifiable line is discarded. Never report that a file, module or function is missing because you could not open it: the submitted set can leave files out of a large repository, so say "not reviewed" instead. When you find a defect in one tool or route, search the sibling tools for the same pattern and cite each location.
 
 Severity, judged on the code as shipped, not on what it might become:
 - critical: an outside party can take funds or keys through a reachable path in the shipped code.
@@ -152,6 +152,19 @@ TOOLS = [
     _strict("finish", "End the review.", {"summary": _STR}, ["summary"]),
 ]
 
+#: The check-ledger mode adds one tool: the answer to one ledger check (services/audit_ledger.py).
+from . import audit_ledger as ledger  # noqa: E402
+
+LEDGER_TOOLS = [*TOOLS[:-1], _strict(
+    "answer_check", "Answer one check of the check ledger after reading the code that decides it.",
+    {"check_id": {"type": "string", "enum": [c.id for c in ledger.CATALOG]},
+     "verdict": {"type": "string", "enum": ledger.VERDICTS},
+     "file": _STR, "line": {"type": "integer"}, "evidence_quote": _STR, "reason": _STR,
+     "severity": {"type": "string", "enum": [*SEVERITIES, "none"]},
+     "title": _STR, "attack_scenario": _STR, "remediation": _STR, "existing_finding_id": _STR},
+    ["check_id", "verdict", "file", "line", "evidence_quote", "reason", "severity", "title",
+     "attack_scenario", "remediation", "existing_finding_id"]), TOOLS[-1]]
+
 
 _RISK_NAME = re.compile(r"polic|approv|sign|pay|wallet|key|secret|limit|budget|auth|x402|mpp|settle|escrow|transfer|"
                         r"vault|spend|guard|permission|tool|mcp|server|route|handler|webhook|contract|lib\.rs", re.I)
@@ -190,6 +203,14 @@ def _priority(artifact) -> list[str]:
     for entry in profile.get("entrypoints") or {}:
         path = entry.split(":", 1)[0]
         hits[path] = hits.get(path, 0) + 3
+    # The file map (services/file_map.py) sees capabilities in every language the rules miss.
+    from .file_map import AUTHORITY_KINDS
+    for path, card in ((artifact.raw_metadata or {}).get("file_map_cards") or {}).items():
+        if card.get("role") == "test_or_example":
+            continue
+        kinds = {c.get("kind") for c in card.get("capabilities", [])}
+        hits[path] = hits.get(path, 0) + 8 * len(kinds & AUTHORITY_KINDS) + 2 * len(kinds - AUTHORITY_KINDS) \
+            + 2 * min(3, len(card.get("controls", []))) + 3 * min(2, len(card.get("exposes", [])))
 
     def score(path: str) -> tuple:
         return (bool(_TEST_PATH.search(path)), -(hits.get(path, 0) + (2 if _RISK_NAME.search(path) else 0)), path)
@@ -204,7 +225,11 @@ def authority_files(artifact) -> set[str]:
              for locs in (profile.get(group) or {}).values() for loc in locs}
     paths |= {str(flow.get("location", "")).split(":", 1)[0] for flow in profile.get("flows") or []}
     paths |= {entry.split(":", 1)[0] for entry in profile.get("entrypoints") or {}}
-    return {p for p in paths & _reviewable(artifact) if not _TEST_PATH.search(p)}
+    # Files the file map saw signing, paying, holding secrets or executing code, in any language.
+    paths |= set((artifact.raw_metadata or {}).get("file_map_authority") or [])
+    # Example servers and CLIs that use a held key were brought into scope for that reason.
+    examples = tuple(e.rstrip("/") + "/" for e in (artifact.raw_metadata or {}).get("examples_with_keys") or [])
+    return {p for p in paths & _reviewable(artifact) if not _TEST_PATH.search(p) or p.startswith(examples or ("\0",))}
 
 
 def _reviewable(artifact) -> set[str]:
@@ -254,13 +279,32 @@ class DeepReviewResult:
     #: Spend of the whole audit (review and verification) when the review ended. Internal:
     #: logged by the server, never part of the report (no public response carries cost).
     spend: dict = field(default_factory=dict)
+    #: Check-ledger mode: the file map's state (services/file_map.py), the ledger answers by
+    #: check id (services/audit_ledger.py), the groups planned and the agent's capability kinds.
+    map_state: dict = field(default_factory=dict)
+    ledger: dict = field(default_factory=dict)
+    ledger_groups: list = field(default_factory=list)
+    kinds: list = field(default_factory=list)
+    mode: str = "classic"
+
+    def mapped(self) -> set[str]:
+        cards = (self.map_state or {}).get("cards") or {}
+        return set(cards) & self.reviewable if self.reviewable else set(cards)
 
     def coverage(self) -> dict:
-        """Share of reviewable source files the model read (manifests are not counted)."""
-        read = self.files_read & self.reviewable if self.reviewable else self.files_read
-        return {"files_read": sorted(read), "files_total": self.total_files,
-                "ratio": round(min(1.0, len(read) / self.total_files), 3) if self.total_files else 0.0,
-                "not_reviewed": self.not_reviewed[:500], "not_reviewed_count": len(self.not_reviewed)}
+        """Share of reviewable source files the model read (manifests are not counted).
+
+        In check-ledger mode a file counts as read when the model saw all of it, in the file map
+        or in a review pass; ``files_examined`` are the files a review pass opened, which is what
+        a passing decision requires of every file holding authority."""
+        examined = self.files_read & self.reviewable if self.reviewable else set(self.files_read)
+        read = examined | self.mapped()
+        out = {"files_read": sorted(read), "files_total": self.total_files,
+               "ratio": round(min(1.0, len(read) / self.total_files), 3) if self.total_files else 0.0,
+               "not_reviewed": self.not_reviewed[:500], "not_reviewed_count": len(self.not_reviewed)}
+        if self.mode == "ledger":
+            out.update(files_examined=sorted(examined), files_mapped=len(self.mapped()))
+        return out
 
     def report(self) -> dict:
         """The public record of the review. Measured usage and cost stay out of it: they are kept
@@ -271,7 +315,18 @@ class DeepReviewResult:
                 "summary": self.summary, "turns": self.turns, "note": self.note,
                 "passes": self.passes, "stop_reason": self.stop_reason,
                 "coverage": self.coverage(),
+                **(self._ledger_report() if self.mode == "ledger" else {}),
                 "can_remove_findings": False}
+
+    def _ledger_report(self) -> dict:
+        from . import languages
+        from .file_map import FileMap
+        fmap = FileMap.from_state(self.map_state)
+        examined = self.files_read & self.reviewable if self.reviewable else set(self.files_read)
+        return {"mode": "ledger",
+                "file_map": fmap.report(self.reviewable),
+                "ledger": ledger.report(self.ledger, set(self.kinds), self.ledger_groups),
+                "languages": languages.coverage(sorted(self.reviewable), self.mapped(), examined)}
 
     # Saved between the requests of a long audit (services/audit_jobs.py).
     def to_state(self) -> dict:
@@ -280,7 +335,8 @@ class DeepReviewResult:
                 "findings": [f.model_dump(mode="json") for f in self.findings], "rejected": self.rejected,
                 "summary": self.summary, "turns": self.turns, "usage": self.usage, "note": self.note,
                 "files_read": sorted(self.files_read), "passes": self.passes, "stop_reason": self.stop_reason,
-                "not_reviewed": self.not_reviewed}
+                "not_reviewed": self.not_reviewed, "map": self.map_state, "ledger": self.ledger,
+                "ledger_groups": self.ledger_groups, "kinds": self.kinds}
 
     def restore(self, state: dict) -> None:
         self.status = state.get("status", "not_run")
@@ -294,6 +350,10 @@ class DeepReviewResult:
         self.passes = list(state.get("passes") or [])
         self.stop_reason = state.get("stop_reason", "")
         self.not_reviewed = list(state.get("not_reviewed") or [])
+        self.map_state = dict(state.get("map") or {})
+        self.ledger = dict(state.get("ledger") or {})
+        self.ledger_groups = list(state.get("ledger_groups") or [])
+        self.kinds = list(state.get("kinds") or [])
 
 
 @dataclass
@@ -314,6 +374,8 @@ class _Cursor:
     progressed: bool = True
     durations: list = field(default_factory=list)
     done: bool = False
+    #: A ledger pass that tried to finish with checks unanswered was sent back once.
+    reprompted: bool = False
 
     def to_state(self) -> dict:
         return dict(self.__dict__)
@@ -352,7 +414,8 @@ def _unbuilt_contracts(files: dict[str, str]) -> list[str]:
                   and not any(c == "" or path.startswith(c + "/") for c in crates))[:100]
 
 
-def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict | None) -> tuple[str, dict]:
+def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict | None,
+                  file_map: dict | None = None) -> tuple[str, dict]:
     """The grounded context. Returns the JSON text and flow-id -> flow map."""
     profile = artifact.code_profile or {}
     flows = {f"F{i + 1}": flow for i, flow in enumerate(profile.get("flows", []))}
@@ -397,6 +460,10 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
             for f in findings if f.is_risk and f.severity.rank >= Severity.MEDIUM.rank],
         "onchain_authority": without_export_detail(chain) if chain else {"status": "not_supplied"},
     }
+    if file_map:
+        # Every file, in every language, as the model mapped it: role, capabilities, inputs, controls
+        # and entry points with line numbers (quotes checked against the source).
+        pack["file_map"] = file_map
     return json.dumps(pack, ensure_ascii=False, indent=1), flows
 
 
@@ -404,8 +471,14 @@ class DeepReviewer:
     """Agentic review loop over an Anthropic client (injected for tests)."""
 
     def __init__(self, client, *, model: str, effort: str = "high", max_turns: int = 24,
-                 timeout_seconds: float = 240.0, fallbacks: bool = True, passes: int = 1, files_per_pass: int = 10):
+                 timeout_seconds: float = 240.0, fallbacks: bool = True, passes: int = 1, files_per_pass: int = 10,
+                 mode: str = "classic", mapper=None):
         self.client, self.model, self.effort = client, model, effort
+        #: "ledger": map every file (file_map.FileMapper), then investigate, then one check-ledger pass
+        #: per applicable group (audit_ledger), then open any authority file still unexamined.
+        #: "classic": investigate, challenge passes, then coverage passes over every file.
+        self.mode = mode if mode in ("classic", "ledger") else "classic"
+        self.mapper = mapper
         self.max_turns, self.timeout_seconds, self.fallbacks = max_turns, timeout_seconds, fallbacks
         #: Local runs only (no request leg): time.monotonic() value by which the review must stop.
         #: The public demo sets none; it runs as a job of requests and stops only at a spend cap.
@@ -491,33 +564,73 @@ class DeepReviewer:
                 result.rejected.append({"title": str(args.get("title", ""))[:200], "file": args.get("file"),
                                         "line": args.get("line"), "reason": problem})
                 return f"Rejected: {problem}. Cite an exact line and quote it verbatim."
-            dimension, label = CATEGORIES[category]
-            index = len(result.findings) + 1
-            severity = Severity(args["severity"])
-            if category == "functional_defect" and severity.rank > Severity.MEDIUM.rank:
-                # A feature that does not work is reported, but it is not a way to lose funds:
-                # a defect that fails open is a control bypass, and the model files it as one.
-                # Labelled blind, high functional defects were medium in every case.
-                severity = Severity.MEDIUM
-            result.findings.append(Finding(
-                id=f"{dimension.value}-ai-{category.replace('_', '-')}-{index}",
-                dimension=dimension, severity=severity,
-                title=redact(str(args.get("title") or label)[:200]),
-                detail=redact(str(args.get("attack_scenario", ""))[:1500]
-                              + ("\nStellar impact: " + str(args.get("stellar_impact", ""))[:600]
-                                 if args.get("stellar_impact") else "")),
-                # Quotes are verified against source first, then secrets are masked for the report.
-                evidence=redact(f"{args['file']}:{args['line']} `{' '.join(args['evidence_quote'].split())[:240]}`"),
-                evidence_grade=EvidenceGrade.INFERRED,
-                remediation=redact(str(args.get("remediation", ""))[:1200]) or "Fix the cited code path.",
-                references=["Touchmark deep review (model finding, source quote verified)"],
-                auditor="deep-review", confidence=0.7,
-            ))
-            return f"Accepted as {result.findings[-1].id}."
+            return f"Accepted as {self._add_finding(args, category, result).id}."
+        if name == "answer_check":
+            return self._answer_check(args, artifact, result)
         if name == "finish":
             result.summary = redact(str(args.get("summary", ""))[:3000])
             return "Done."
         return "Unknown tool."
+
+    def _add_finding(self, args: dict, category: str, result: DeepReviewResult) -> Finding:
+        dimension, label = CATEGORIES[category]
+        index = len(result.findings) + 1
+        severity = Severity(args["severity"])
+        if category == "functional_defect" and severity.rank > Severity.MEDIUM.rank:
+            # A feature that does not work is reported, but it is not a way to lose funds:
+            # a defect that fails open is a control bypass, and the model files it as one.
+            # Labelled blind, high functional defects were medium in every case.
+            severity = Severity.MEDIUM
+        result.findings.append(Finding(
+            id=f"{dimension.value}-ai-{category.replace('_', '-')}-{index}",
+            dimension=dimension, severity=severity,
+            title=redact(str(args.get("title") or label)[:200]),
+            detail=redact(str(args.get("attack_scenario", ""))[:1500]
+                          + ("\nStellar impact: " + str(args.get("stellar_impact", ""))[:600]
+                             if args.get("stellar_impact") else "")),
+            # Quotes are verified against source first, then secrets are masked for the report.
+            evidence=redact(f"{args['file']}:{args['line']} `{' '.join(args['evidence_quote'].split())[:240]}`"),
+            evidence_grade=EvidenceGrade.INFERRED,
+            remediation=redact(str(args.get("remediation", ""))[:1200]) or "Fix the cited code path.",
+            references=["Touchmark deep review (model finding, source quote verified)"]
+                       + ([f"Check ledger {args['ledger_check']}"] if args.get("ledger_check") else []),
+            auditor="deep-review", confidence=0.7,
+        ))
+        return result.findings[-1]
+
+    def _answer_check(self, args: dict, artifact: AgentArtifact, result: DeepReviewResult) -> str:
+        check = ledger.BY_ID.get(str(args.get("check_id", "")))
+        allowed = getattr(self, "_pass_checks", None) or []
+        if check is None or (allowed and check.id not in allowed):
+            return "Unknown check for this pass. Answer: " + ", ".join(allowed)
+        verdict = args.get("verdict")
+        if verdict not in ledger.VERDICTS:
+            return "Unknown verdict."
+        answer = ledger.Answer(check_id=check.id, verdict=verdict, reason=redact(str(args.get("reason", ""))[:1200]))
+        if verdict in ("holds", "fails"):
+            problem = self._verify_quote(artifact, args.get("file", ""), args.get("line", 0),
+                                         args.get("evidence_quote", ""))
+            if problem:
+                return (f"Not recorded: {problem}. A {verdict} answer must cite the deciding line and quote it "
+                        "verbatim; answer again.")
+            answer.file, answer.line = str(args.get("file", ""))[:300], int(args.get("line") or 0)
+            answer.quote = redact(" ".join(str(args.get("evidence_quote", "")).split())[:240])
+            answer.quote_verified = True
+        if verdict == "fails":
+            known = {f.id for f in result.findings} | set(getattr(self, "_known_ids", ()))
+            existing = str(args.get("existing_finding_id", "")).strip()
+            if existing and existing in known:
+                answer.finding_id = existing
+            else:
+                severity = args.get("severity") if args.get("severity") in SEVERITIES else "low"
+                finding = self._add_finding({**args, "severity": severity, "stellar_impact": "",
+                                             "title": args.get("title") or check.title,
+                                             "ledger_check": f"{check.id} ({check.title})"}, check.category, result)
+                answer.finding_id = finding.id
+        result.ledger[check.id] = answer.as_dict()
+        missing = [c for c in allowed if c not in result.ledger]
+        return (f"Recorded {check.id}: {verdict}" + (f" as {answer.finding_id}" if answer.finding_id else "")
+                + (". Still to answer: " + ", ".join(missing) if missing else ". All checks of this pass are answered."))
 
     # ------------------------------------------------------------------ loop
     async def review(self, artifact: AgentArtifact, findings: list[Finding], chain: dict | None = None) -> DeepReviewResult:
@@ -529,7 +642,7 @@ class DeepReviewer:
         from .progress import emit
         from .review_budget import Budget, LegSuspended, ProviderUnavailable, ReviewCancelled, current_leg
         reviewable = _reviewable(artifact)
-        result = DeepReviewResult(model=self.model, total_files=len(reviewable), reviewable=reviewable)
+        result = DeepReviewResult(model=self.model, total_files=len(reviewable), reviewable=reviewable, mode=self.mode)
         leg = current_leg()
         budget = self.budget or (leg.budget if leg is not None else None) or Budget()
         self._file_cap = budget.max_files
@@ -552,8 +665,12 @@ class DeepReviewer:
                     return result
             # The passes see the same time limit, so an extra pass starts only when it can finish.
             self._review_ends = time.monotonic() + timeout
-        emit("deep_review", files_read=read_count(), files_total=result.total_files)
+        if self.mode != "ledger":
+            emit("deep_review", files_read=read_count(), files_total=result.total_files)
         try:
+            if self.mode == "ledger":
+                await self._prepare_ledger(artifact, findings, result, cursor, budget, leg)
+                emit("deep_review", files_read=read_count(), files_total=result.total_files)
             run = self._passes(artifact, findings, chain, result, cursor, budget, leg)
             if timed:
                 await asyncio.wait_for(run, timeout=timeout)
@@ -584,11 +701,37 @@ class DeepReviewer:
         await self._save(leg, result, cursor)
         return result
 
+    async def _prepare_ledger(self, artifact, findings, result: DeepReviewResult, cursor: _Cursor, budget, leg) -> None:
+        """Map every file (once; resumed across legs), then derive the agent's capability kinds and
+        the ledger groups to answer. Map cards are added to the artifact's metadata so the review
+        order and the set of files a pass must examine (authority_files) include every language."""
+        from .file_map import FileMap
+        if self.mapper is not None and not (result.map_state or {}).get("done"):
+            async def save(state: dict) -> None:
+                result.map_state = state
+                await self._save(leg, result, cursor)
+            fmap = await self.mapper.map(artifact.code_files, _priority(artifact), budget, leg,
+                                         result.map_state, save)
+            result.map_state = {**result.map_state, **fmap.to_state()}
+        fmap = FileMap.from_state(result.map_state)
+        artifact.raw_metadata["file_map_cards"] = fmap.cards
+        artifact.raw_metadata["file_map_authority"] = sorted(fmap.authority_files())
+        kinds = ledger.agent_kinds((artifact.code_profile or {}).get("capabilities"), fmap.kinds())
+        result.kinds = sorted(kinds)
+        result.ledger_groups = [group for group, _ in ledger.plan(kinds)]
+        self._known_ids = [f.id for f in findings]
+        stopped = (result.map_state or {}).get("stopped_by", "")
+        if stopped and stopped != "provider_unavailable":
+            result.stop_reason = result.stop_reason or stopped
+
     def _close(self, artifact, result: DeepReviewResult, budget) -> None:
         """List every file left unread with the reason; a cap that cut the review makes it capped."""
         from .review_budget import STOP_REASONS
         read = result.files_read & result.reviewable if result.reviewable else result.files_read
-        unread = [p for p in _priority(artifact) if p not in result.files_read]
+        seen = result.files_read | (result.mapped() if self.mode == "ledger" else set())
+        if self.mode == "ledger":
+            read = (read | result.mapped())
+        unread = [p for p in _priority(artifact) if p not in seen]
         reason = result.stop_reason
         if unread and not reason:
             reason = "file_cap" if len(read) >= budget.max_files else "not_opened"
@@ -629,6 +772,8 @@ class DeepReviewer:
         the files it was given, or (local runs) when the time limit leaves no room for a pass."""
         number = cur.number + 1
         prior = "\n".join(f"- {f.id}: {f.title} ({f.evidence[:120]})" for f in result.findings) or "- none"
+        if self.mode == "ledger":
+            return self._next_ledger_pass(artifact, result, cur, budget, timed, number, prior)
         if number == 1:
             return ("investigate", "Begin with describe_operating_model, then assess every flow, then investigate "
                     "and record findings, then finish. Read the files in read_first before others: "
@@ -656,10 +801,60 @@ class DeepReviewer:
                 "checks on alternative code paths, controls that can be bypassed, functional defects and Stellar "
                 "protocol misuse. Skip describe_operating_model. Record each real defect, then finish.", batch)
 
+    def _ledger_checks(self, result: DeepReviewResult, kind: str) -> list[str]:
+        if not kind.startswith("ledger:"):
+            return []
+        group = kind.split(":", 1)[1]
+        return [c.id for g, checks in ledger.plan(set(result.kinds)) if g == group for c in checks]
+
+    def _next_ledger_pass(self, artifact, result: DeepReviewResult, cur: _Cursor, budget, timed: bool,
+                          number: int, prior: str):
+        """Pass 1 investigates; then one check-ledger pass per applicable group, in fixed order; then
+        coverage passes that open every authority file no pass has examined yet, and any file the
+        map could not read. Files the map read and that hold no authority are not reopened."""
+        from .file_map import FileMap
+        if number == 1:
+            return ("investigate", "Begin with describe_operating_model, then assess every flow, then investigate "
+                    "and record findings, then finish. The evidence pack's file_map shows every file with its "
+                    "role, capabilities, untrusted inputs and controls (line numbers checked); read the files in "
+                    "read_first before others: they hold the signing, payment, approval and input-handling code. "
+                    "Check ledger passes follow, so concentrate on how the agent works end to end and on defects "
+                    "that span several files.", [])
+        groups = ledger.plan(set(result.kinds))
+        index = number - 2
+        if index < len(groups):
+            group, checks = groups[index]
+            fmap = FileMap.from_state(result.map_state)
+            needs = set().union(*(c.needs for c in checks)) if any(c.needs for c in checks) else set(fmap.kinds())
+            focus = set(fmap.files_with(needs)) | (authority_files(artifact) if not fmap.cards else set())
+            files = [p for p in _priority(artifact) if p in focus]
+            return (f"ledger:{group}", ledger.instruction(group, checks, files, prior), [])
+        required = authority_files(artifact) | (result.reviewable - result.mapped())
+        unread = [p for p in _priority(artifact) if p in required and p not in result.files_read]
+        read = len(result.files_read & result.reviewable) if result.reviewable else len(result.files_read)
+        if not unread or read >= budget.max_files:
+            return None
+        if cur.kind == "coverage" and not cur.progressed:
+            return None
+        if timed and not self._time_for_pass(cur.durations):
+            result.stop_reason = result.stop_reason or "time_limit"
+            return None
+        batch = unread[:max(1, min(self.files_per_pass, budget.max_files - read))]
+        return ("coverage", f"Coverage pass {number}. Earlier passes recorded:\n{prior}\n"
+                "Do not repeat these. These files hold signing, payment, key or execution authority (or could "
+                "not be mapped) and no pass has opened them yet; read each with read_source (all of it, in "
+                "ranges of up to 200 lines), in this order: " + ", ".join(batch) + ". Judge them against the "
+                "evidence pack, the check ledger answers so far and what earlier passes found. Skip "
+                "describe_operating_model. Record each real defect, then finish.", batch)
+
     async def _passes(self, artifact, findings, chain, result: DeepReviewResult, cur: _Cursor, budget, leg) -> None:
         import hashlib
         from .review_budget import STOP_REASONS
-        pack, flows = evidence_pack(artifact, findings, chain)
+        file_map = None
+        if self.mode == "ledger":
+            from .file_map import FileMap
+            file_map = FileMap.from_state(result.map_state).pack() or None
+        pack, flows = evidence_pack(artifact, findings, chain, file_map)
         pack_sha = hashlib.sha256(pack.encode()).hexdigest()
         if cur.open and cur.pack_sha != pack_sha:
             cur.messages, cur.turn, cur.pack_sha = [], 0, pack_sha  # not the saved conversation's source
@@ -671,6 +866,7 @@ class DeepReviewer:
                 cur.kind, cur.instruction, cur.batch = upcoming
                 cur.number += 1
                 cur.messages, cur.turn, cur.open, cur.pack_sha = [], 0, True, pack_sha
+                cur.reprompted = False
                 cur.files_at_start, cur.findings_at_start = len(result.files_read), len(result.findings)
                 await self._save(leg, result, cur)
             started = time.monotonic()
@@ -684,23 +880,34 @@ class DeepReviewer:
             await self._save(leg, result, cur)
             if status in ("refused", "capped"):
                 break
-            if cur.number >= self.passes and status != "completed" and cur.kind != "coverage":
+            if self.mode == "classic" and cur.number >= self.passes and status != "completed" and cur.kind != "coverage":
                 break
-        configured = [p["status"] for p in result.passes if p["pass"] <= self.passes]
-        extra = [p["status"] for p in result.passes if p["pass"] > self.passes]
+        if self.mode == "ledger":
+            # The investigation decides whether the review completed; a ledger or coverage pass that
+            # stops early keeps what it recorded, and its unanswered checks are listed as such.
+            configured = [p["status"] for p in result.passes if p["kind"] == "investigate"]
+            extra = [p["status"] for p in result.passes if p["kind"] != "investigate"]
+        else:
+            configured = [p["status"] for p in result.passes if p["pass"] <= self.passes]
+            extra = [p["status"] for p in result.passes if p["pass"] > self.passes]
         # An extra pass that stops early (turn limit) adds what it found and takes nothing away:
         # the review is complete when every configured pass completed and every file was read.
         result.status = next((s for s in configured if s != "completed"), "completed")
         if result.stop_reason in STOP_REASONS:
             result.status = "capped"
         elif result.status == "completed" and any(s != "completed" for s in extra):
-            result.note = "An extra challenge pass stopped early; its accepted findings are kept."
+            result.note = ("A check-ledger or coverage pass stopped early; its answers and findings are kept."
+                           if self.mode == "ledger" else
+                           "An extra challenge pass stopped early; its accepted findings are kept.")
 
     async def _loop(self, artifact, flows, pack: str, result: DeepReviewResult, cur: _Cursor, budget, leg) -> str:
-        first = {"role": "user", "content": [
-            {"type": "text", "text": "Evidence pack (untrusted material under review):\n" + pack},
-            {"type": "text", "text": cur.instruction},
-        ]}
+        pack_block = {"type": "text", "text": "Evidence pack (untrusted material under review):\n" + pack}
+        if self.mode == "ledger":
+            pack_block["cache_control"] = {"type": "ephemeral"}  # shared by every pass of the review
+        first = {"role": "user", "content": [pack_block, {"type": "text", "text": cur.instruction}]}
+        tools = LEDGER_TOOLS if self.mode == "ledger" else TOOLS
+        self._pass_checks = self._ledger_checks(result, cur.kind)
+        missing = lambda: [c for c in self._pass_checks if c not in result.ledger]  # noqa: E731
         extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.fallbacks else {}
         while cur.turn < self.max_turns:
             reason = await budget.admit(leg)
@@ -713,7 +920,7 @@ class DeepReviewer:
                 model=self.model, max_tokens=16000,
                 system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
                 thinking={"type": "adaptive"}, output_config={"effort": self.effort},
-                tools=TOOLS, messages=messages, cache_control={"type": "ephemeral"}, **extra), leg)
+                tools=tools, messages=messages, cache_control={"type": "ephemeral"}, **extra), leg)
             usage = getattr(response, "usage", None)
             for key in result.usage:
                 result.usage[key] += int(getattr(usage, key, 0) or 0)
@@ -730,17 +937,33 @@ class DeepReviewer:
                     cur.messages.append({"role": "user", "content": "Continue with tool calls."})
                     await self._save(leg, result, cur)
                     continue
+                if missing() and not cur.reprompted:
+                    cur.reprompted = True
+                    cur.messages.append({"role": "user", "content": "These checks are not answered yet: "
+                                         + ", ".join(missing()) + ". Answer each with answer_check, then finish."})
+                    await self._save(leg, result, cur)
+                    continue
                 return "completed"
             results = []
+            finishing = any(_field(b, "name") == "finish" for b in uses)
             for block in uses:
-                output = self._run_tool(_field(block, "name"), dict(_field(block, "input") or {}), artifact, flows, result)
+                name = _field(block, "name")
+                if name == "finish" and missing() and not cur.reprompted:
+                    output = ("Not finished: answer these checks first with answer_check: " + ", ".join(missing())
+                              + ". Then call finish.")
+                else:
+                    output = self._run_tool(name, dict(_field(block, "input") or {}), artifact, flows, result)
                 results.append({"type": "tool_result", "tool_use_id": _field(block, "id"), "content": output})
             cur.messages.append({"role": "user", "content": results})
-            if any(_field(b, "name") == "finish" for b in uses):
+            if finishing and missing() and not cur.reprompted:
+                cur.reprompted = True
+                await self._save(leg, result, cur)
+                continue
+            if finishing:
                 return "completed"
             await self._save(leg, result, cur)
         result.note = "The review reached its turn limit; accepted findings are kept."
-        if cur.number <= self.passes:
+        if (cur.kind == "investigate") if self.mode == "ledger" else (cur.number <= self.passes):
             result.stop_reason = result.stop_reason or "turn_limit"
         return "turn_limit"
 
@@ -756,6 +979,13 @@ def reviewer_from_settings(settings) -> DeepReviewer | None:
     # the SDK timeout is only a backstop behind the per-call timeout.
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=settings.deep_review_call_timeout_seconds + 15,
                             max_retries=0)
+    mode = getattr(settings, "deep_review_mode", "classic")
+    mapper = None
+    if mode == "ledger":
+        from .file_map import FileMapper
+        mapper = FileMapper(client, model=getattr(settings, "deep_review_map_model", "") or settings.deep_review_model,
+                            effort=getattr(settings, "deep_review_map_effort", "low"))
     return DeepReviewer(client, model=settings.deep_review_model, effort=settings.deep_review_effort,
                         max_turns=settings.deep_review_max_turns, timeout_seconds=settings.deep_review_timeout_seconds,
-                        passes=settings.deep_review_passes, files_per_pass=settings.deep_review_files_per_pass)
+                        passes=settings.deep_review_passes, files_per_pass=settings.deep_review_files_per_pass,
+                        mode=mode, mapper=mapper)

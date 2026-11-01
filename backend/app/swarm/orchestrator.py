@@ -356,7 +356,9 @@ class AuditSwarm:
         if not artifact.code_files:
             return verdicts
         needed = authority_files(artifact)
-        read = set((deep_record.get("coverage") or {}).get("files_read") or [])
+        coverage = deep_record.get("coverage") or {}
+        # Check-ledger mode counts mapped files as read; a file holding authority must be examined.
+        read = set(coverage.get("files_examined", coverage.get("files_read")) or [])
         status = deep_record.get("status") or "not_run"
         unread = sorted(needed - read)
         if status == "completed" and not unread:
@@ -452,15 +454,35 @@ class AuditSwarm:
                         "detail": f.detail + " Independent verification could not check this claim (the code that "
                                   "decides it was not available to it); it counts at reduced weight.",
                         "confidence": min(f.confidence, 0.5)})
-                elif refuted:
+                elif refuted and _STRUCTURAL.search(f.id):
+                    # Structural facts (a committed seed, a dependency, on-chain bytecode) are not
+                    # decided by reading the surrounding code: lowered one level, never dismissed.
+                    f = f.model_copy(update={
+                        "severity": f.severity.downgrade(1),
+                        "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"
+                                  f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.5)})
+                elif refuted and (_STRUCTURAL.search(f.id) or _KEEPS_SEVERITY.search(f.id)):
+                    # Structural facts and fund-control rules stay risks when refuted: lowered one level,
+                    # and (fund controls) never below medium, as before.
                     lowered = f.severity.downgrade(1)
                     if lowered.rank > Severity.MEDIUM.rank and not _STRUCTURAL.search(f.id):
-                        lowered = Severity.MEDIUM  # refuted and unconfirmed alike never block on their own
+                        lowered = Severity.MEDIUM
                     f = f.model_copy(update={
                         "severity": lowered,
                         "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"
                                   f"{r.get('line', '')}): {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.5)})
+                elif refuted:
+                    # A pattern rule refuted by a quoted code line (not a comment). On an unseen set of 23
+                    # agents every such finding was also false by hand (docs/EVIDENCE.md), so it is kept
+                    # in the report as a disputed note at no weight, not scored as a defect.
+                    f = f.model_copy(update={
+                        "kind": FindingKind.WARNING, "severity": Severity.INFO,
+                        "title": "Disputed: " + f.title,
+                        "detail": f.detail + f" Independent verification refutes this at {r.get('file', '')}:"
+                                  f"{r.get('line', '')}: {str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.3)})
                 findings.append(f)
             out.append(AuditSwarm._rescore(verdict, findings) if findings != verdict.findings
                        else verdict.model_copy(update={"findings": findings}))

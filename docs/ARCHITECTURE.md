@@ -136,6 +136,41 @@ Nothing submitted is imported or executed.
    its fix, are audited and compared: closed, remaining and introduced risks, and the
    score change (`audit_agent.py --compare`, `POST /api/v1/demo/compare`).
 
+### Model review: file map and check ledger
+
+The rules read Python, JavaScript/TypeScript (data flow), Rust, Go and Solidity (patterns).
+Agents are also written in Java, Kotlin, C#, Swift, PHP, Ruby, Dart and other languages; their
+source is selected like any other (`services/languages.py`) and the model review does the work
+the rules cannot. With consent, the review (`DEEP_REVIEW_MODE=ledger`) runs in four steps:
+
+1. **File map** (`services/file_map.py`). Every reviewable file, split into segments when large,
+   is placed in the prompt with line numbers. The model returns one card per segment in a fixed
+   schema: role, capabilities (signs, signs raw bytes, submits, moves value, holds secrets,
+   changes authority, invokes contracts, decodes external XDR, network, execution, files, LLM,
+   shared state), untrusted inputs, enforced controls and exposed tools or routes. Each item
+   quotes its line; an item whose quote is not on (or within three lines of) the cited line is
+   dropped and counted. Every file is read by construction, not when the model chooses to open
+   it. Files whose cards show authority join the set a passing decision requires the review to
+   examine (`deep_review.authority_files`), in every language.
+2. **Investigation.** As before: operating model, every data-flow flow, cross-file defects,
+   with the cards in the evidence pack.
+3. **Check ledger** (`services/audit_ledger.py`). A fixed catalog of 26 checks in four groups
+   (value movement; signing, network and submission; access, secrets and entry points; model
+   behaviour and intent). Which checks apply follows from the capabilities the rules and the
+   map observed, never from the model's choice. One pass per group answers every applicable
+   check with `holds` (quoting the enforcing line), `fails` (quoting the defective line; it
+   becomes a finding and is verified like any other), `not_applicable` or `cannot_determine`.
+   A pass that tries to finish with checks open is sent back once; checks still open are
+   reported as `unanswered`. An answer never removes or lowers a finding.
+4. **Coverage.** Authority files no pass has opened, and files the map could not read, are
+   opened in batches. Files the map read that hold no authority are not reopened.
+
+The report's `deep_review` carries `file_map` (cards), `ledger` (every applicable check and
+its answer), `languages` (files per language, rule coverage, mapped and examined) and
+`coverage.files_examined`. The same checks are asked of every agent, so two runs can be
+compared check by check; `research/benchmark/` holds planted-defect agents in six languages
+and a scorer for recall, decoy false positives and run-to-run agreement.
+
 ## 3. On-chain layer
 
 No contract has an upgrade function: deployed code cannot be changed by anyone,
@@ -212,12 +247,14 @@ Configuration:
 |---|---|
 | `DEMO_OPERATOR_SECRET` | Testnet key that admins the demo registry and acts as its validator. Created by `scripts/deploy_demo_testnet.py` and stored in gitignored `data/`. |
 | `ANTHROPIC_API_KEY` | With `ENABLE_DEEP_REVIEW` and `ENABLE_FINDING_VERIFICATION`, the demo adds the model review and verification, only when the visitor consents (`model_review_consent`). No clock stops the review: it reads every source file, over several requests when one cannot hold it (an audit job, `services/audit_jobs.py`), and only a spend cap can end it early. Without consent or past the allowance, audits run the rules only and say why. |
-| `DEEP_REVIEW_MAX_TOKENS_PER_AUDIT`, `DEEP_REVIEW_MAX_COST_USD_PER_AUDIT`, `DEEP_REVIEW_MAX_FILES_PER_AUDIT` | Per-audit spend caps (60,000,000 tokens, $30, 400 files), shared by the review and the verifier and measured from each response's `usage` (input, cache writes, cache reads and output). A cap that is reached ends the review cleanly; the report lists every unread file with the cap (`deep_review.coverage.not_reviewed`). |
+| `DEEP_REVIEW_MAX_TOKENS_PER_AUDIT`, `DEEP_REVIEW_MAX_COST_USD_PER_AUDIT`, `DEEP_REVIEW_MAX_FILES_PER_AUDIT` | Per-audit spend caps (200,000,000 tokens, $30, 400 files; the cost cap is the one that binds), shared by the review and the verifier and measured from each response's `usage` (input, cache writes, cache reads and output). A cap that is reached ends the review cleanly; the report lists every unread file with the cap (`deep_review.coverage.not_reviewed`). |
 | `DEEP_REVIEW_DAILY_COST_USD` | Hard cap on what all model reviews together may cost per UTC day (100 USD), on top of `DEEP_REVIEW_DAILY_LIMIT`. Claimed in 0.25 USD create-only chunks (`touchmark-limits/deep-review/<day>/cost/NNN`) in the allowance store, priced from each response's measured usage at the `DEEP_REVIEW_PRICE_*` settings, so it holds across serverless invocations. Before each model call an audit holds chunks for what it spent plus what the call should cost (as much as its last one), so the claimed chunks never pass the cap and the day's spend passes it by at most one chunk per request leg running when it is reached (provided no call costs more than one chunk above its estimate; one turn adds at most 16,000 output tokens and its tool results, well under a chunk at the default prices). Once it is reached, no model review starts until the next UTC day (rules only; `/api/v1/demo/config` reports `allowance.used_up` with reason `daily_cost`, `daily_cost_available: false` and `resets_at`, never an amount), and running reviews stop at it like at a per-audit cap (`capped`, stop reason `daily_cost_cap`, unread files listed). |
 | `DEEP_REVIEW_DAILY_TOKEN_BUDGET` | Secondary safety net: tokens all audits together may use per UTC day (600,000,000); claimed in 1M-token create-only chunks in the allowance store. |
 | `DEEP_REVIEW_PRICE_INPUT_PER_MTOK`, `..._OUTPUT_...`, `..._CACHE_WRITE_...`, `..._CACHE_READ_...` | USD per million tokens used to turn measured usage into cost (Claude Sonnet 5.5: 2, 10, 2.5, 0.2). |
 | `DEEP_REVIEW_CALL_TIMEOUT_SECONDS`, `DEEP_REVIEW_CALL_RETRIES` | One model request counts as hung after 120 s and is retried twice with backoff; the review stops as unavailable only when every attempt fails. |
-| `DEEP_REVIEW_FILES_PER_PASS` | Files each coverage pass is asked to read (10); coverage passes follow until every file is read. |
+| `DEEP_REVIEW_MODE` | `ledger` (default) or `classic`. Ledger: the file map, the investigation, one check-ledger pass per applicable group, then coverage passes over authority files no pass opened (see "Model review" in section 2). Classic: investigation, challenge passes, then coverage passes over every file. |
+| `DEEP_REVIEW_MAP_MODEL`, `DEEP_REVIEW_MAP_EFFORT` | Model and effort of the file map (default: the review model at `low`); it records structure, not judgements. |
+| `DEEP_REVIEW_FILES_PER_PASS` | Files each coverage pass is asked to read (10). |
 | `DEMO_LEG_SECONDS`, `DEMO_JOB_TTL_HOURS` | A request leg stops starting model calls 240 s after it began (inside the 300 s function limit) and saves its place; the page continues the job. Jobs expire after 24 h. |
 
 Spend is never public: no demo response or report carries measured tokens or cost. Each request leg logs its spend (calls, tokens, USD, the cap that stopped it) to the server log without the job id, and the job's internal state keeps it for the caps. A job id is the job's only credential (continue, cancel), so the HTTP client loggers (`httpx`, `httpcore`), whose INFO lines name Vercel Blob paths, log warnings only and drop any line naming a store path.

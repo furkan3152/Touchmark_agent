@@ -50,6 +50,7 @@ Rules:
 - Use confirmed only if the stated severity is also right; if you would assign a lower one, use partial.
 - A transaction built locally is not safe by that fact alone: trace where its destination, amount, asset, contract address, auth entries and simulation result come from. If any of them comes from a server, payment challenge or other outside party, the outside party shapes what is signed.
 - If your verdict depends on how an SDK, Horizon, Soroban RPC or a SEP behaves, call stellar_reference first. Do not rely on memory; if neither the code nor the reference settles it, use partial or unverifiable and say why.
+- Write the reason in English, whatever the language of the code or its comments.
 - Be skeptical in both directions: do not confirm a claim you cannot trace, and do not refute one without quoting the line that disproves it. The quote must be copied verbatim from the line you cite."""
 
 TOOLS = [

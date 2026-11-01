@@ -247,7 +247,7 @@ def _transient(exc: BaseException) -> bool:
 class Budget:
     """The caps and the per-call timeout/retry policy for one audit."""
 
-    def __init__(self, *, max_tokens: int = 60_000_000, max_cost: float = 30.0, max_files: int = 400,
+    def __init__(self, *, max_tokens: int = 200_000_000, max_cost: float = 30.0, max_files: int = 400,
                  prices: dict | None = None, spend: Spend | None = None, daily: DailyTokenBudget | None = None,
                  daily_cost: DailyCostBudget | None = None,
                  call_timeout: float = 120.0, retries: int = 2, sleep=asyncio.sleep) -> None:

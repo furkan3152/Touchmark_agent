@@ -1,0 +1,229 @@
+"""The file map and the check ledger (services/file_map.py, services/audit_ledger.py), with a
+scripted model client: every file in any language is mapped, quotes are checked, the same
+checks are asked of every agent and each must be answered from the code."""
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+from backend.app.models import AgentArtifact, SourceKind
+from backend.app.services import audit_ledger as ledger
+from backend.app.services import languages
+from backend.app.services.deep_review import DeepReviewer, authority_files
+from backend.app.services.file_map import FileMap, FileMapper, batches, segments
+from backend.app.services.review_budget import Budget
+
+KOTLIN = """package agent
+
+import org.stellar.sdk.KeyPair
+import org.stellar.sdk.Transaction
+
+class PayoutService(private val server: Server, private val seed: String) {
+    fun pay(destination: String, amount: String): String {
+        val signer = KeyPair.fromSecretSeed(seed)
+        val tx = buildPayment(signer, destination, amount)
+        tx.sign(signer)
+        return server.submitTransaction(tx).hash
+    }
+}
+"""
+ROUTES = """package agent
+
+fun Application.routes(service: PayoutService) {
+    routing {
+        post("/pay") {
+            val body = call.receive<PayRequest>()
+            call.respond(service.pay(body.destination, body.amount))
+        }
+    }
+}
+"""
+README = "# Payout agent\nPays contractors.\n"
+
+
+def artifact() -> AgentArtifact:
+    return AgentArtifact(name="payout", description="Pays contractors in XLM.", source_kind=SourceKind.REPO,
+                         code_files={"src/main/kotlin/PayoutService.kt": KOTLIN, "src/main/kotlin/Routes.kt": ROUTES,
+                                     "README.md": README})
+
+
+def call(name, **args):
+    return SimpleNamespace(type="tool_use", id=f"tu_{name}_{id(args)}", name=name, input=args)
+
+
+def reply(*blocks, stop="tool_use"):
+    return SimpleNamespace(content=list(blocks), stop_reason=stop,
+                           usage=SimpleNamespace(input_tokens=100, output_tokens=50,
+                                                 cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+
+CARDS = [
+    {"path": "src/main/kotlin/PayoutService.kt", "role": "payment", "summary": "Signs and submits payments.",
+     "capabilities": [
+         {"kind": "signs_transactions", "line": 10, "quote": "tx.sign(signer)"},
+         {"kind": "submits_transactions", "line": 11, "quote": "server.submitTransaction(tx)"},
+         {"kind": "holds_or_loads_secret", "line": 8, "quote": "KeyPair.fromSecretSeed(seed)"},
+         # A quote that is not in the file: dropped and counted.
+         {"kind": "moves_value", "line": 9, "quote": "Operation.payment(unbounded)"},
+     ],
+     "untrusted_inputs": [], "controls": [], "exposes": []},
+    {"path": "src/main/kotlin/Routes.kt", "role": "http_route", "summary": "Exposes POST /pay.",
+     "capabilities": [], "controls": [], "exposes": [{"name": "POST /pay", "line": 5, "quote": 'post("/pay") {'}],
+     "untrusted_inputs": [{"source": "http_request", "line": 6, "quote": "call.receive<PayRequest>()"}]},
+    {"path": "README.md", "role": "other", "summary": "Docs.", "capabilities": [], "untrusted_inputs": [],
+     "controls": [], "exposes": []},
+]
+
+
+class RoutingClient:
+    """Answers map requests with CARDS and review requests from a script per pass kind."""
+
+    def __init__(self, review_turns):
+        self.review_turns = list(review_turns)
+        self.requests = []
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+
+    async def create(self, **kwargs):
+        self.requests.append(kwargs)
+        names = [t["name"] for t in kwargs["tools"]]
+        if names == ["submit_file_cards"]:
+            text = kwargs["messages"][0]["content"]
+            cards = [c for c in CARDS if f"=== FILE {c['path']} " in text]
+            return reply(call("submit_file_cards", cards=cards))
+        if not self.review_turns:
+            return reply(call("finish", summary="done"))
+        return self.review_turns.pop(0)
+
+
+def run(reviewer, art):
+    return asyncio.run(reviewer.review(art, [], None))
+
+
+def test_languages_are_named_and_rule_coverage_is_honest():
+    rows = languages.coverage(["a/App.kt", "a/B.kt", "x.py", "Main.java", "lib.rs"])
+    by = {r["language"]: r for r in rows}
+    assert by["Kotlin"]["files"] == 2 and by["Kotlin"]["rules"] == "none"
+    assert by["Python"]["rules"] == "data_flow" and by["Rust"]["rules"] == "patterns"
+    assert languages.language_of("server.py.hbs") == "Python"
+    assert languages.rules_blind_share(["a.kt", "b.py"]) == 0.5
+
+
+def test_large_files_are_split_into_segments_and_every_segment_is_batched():
+    big = "\n".join("x = 1  # " + "y" * 100 for _ in range(1500))
+    files = {"big.py": big, "small.py": "a = 1\n"}
+    segs = segments(files, ["big.py", "small.py"])
+    assert [s for s in segs if s[0] == "big.py"][0][1] == 1 and len([s for s in segs if s[0] == "big.py"]) >= 2
+    assert sum(len(b) for b in batches(files, segs)) == len(segs)
+
+
+def test_file_map_keeps_only_quotes_found_in_the_source():
+    art = artifact()
+    client = RoutingClient([])
+    mapper = FileMapper(client, model="claude-sonnet-5-5")
+    saved = []
+
+    async def save(state):
+        saved.append(state)
+
+    fmap = asyncio.run(mapper.map(art.code_files, sorted(art.code_files), Budget(), None, {}, save))
+    service = fmap.cards["src/main/kotlin/PayoutService.kt"]
+    assert {c["kind"] for c in service["capabilities"]} == {"signs_transactions", "submits_transactions",
+                                                            "holds_or_loads_secret"}
+    assert fmap.dropped_items == 1
+    assert fmap.authority_files() == {"src/main/kotlin/PayoutService.kt"}
+    assert fmap.done and saved and saved[-1]["done"]
+    # The map request asks for the tool without forcing it (forced tool choice is a 400 on this model).
+    assert client.requests[0]["tool_choice"] == {"type": "auto"}
+    # Restored from saved state, the map is not run again.
+    again = asyncio.run(mapper.map(art.code_files, sorted(art.code_files), Budget(), None, saved[-1], save))
+    assert again.cards == fmap.cards and len(client.requests) == 1
+
+
+def test_applicable_checks_follow_capabilities_not_the_model():
+    assert {c.id for c in ledger.applicable(set())} == {"M4", "M5"}
+    paying = {c.id for c in ledger.applicable({"moves_value", "signs_transactions"})}
+    assert {"V1", "V4", "S1", "S3", "A1"} <= paying and "V7" not in paying
+    assert [g for g, _ in ledger.plan({"calls_llm"})] == ["model"]
+    assert ledger.agent_kinds({"payment": ["a.py:3"], "llm_call": []}, {"calls_network"}) == {"moves_value",
+                                                                                            "calls_network"}
+
+
+def test_ledger_review_maps_kotlin_answers_checks_and_files_failures_as_findings():
+    art = artifact()
+    operating = call("describe_operating_model", purpose="Pays contractors", triggers="HTTP POST /pay",
+                     example_run="Client posts destination and amount; the service signs and submits.",
+                     trust_boundaries=["HTTP client"], assets_at_risk=["XLM balance"])
+    read = call("read_source", path="src/main/kotlin/PayoutService.kt", start_line=1, end_line=14)
+    read_routes = call("read_source", path="src/main/kotlin/Routes.kt", start_line=1, end_line=10)
+    fails = call("answer_check", check_id="V1", verdict="fails", file="src/main/kotlin/PayoutService.kt", line=7,
+                 evidence_quote="fun pay(destination: String, amount: String): String {",
+                 reason="The amount from the request is signed as is.", severity="high",
+                 title="Payment amount is unbounded", attack_scenario="POST /pay with any amount drains the account.",
+                 remediation="Enforce a maximum before signing.", existing_finding_id="")
+    bad_quote = call("answer_check", check_id="V4", verdict="holds", file="src/main/kotlin/PayoutService.kt",
+                     line=7, evidence_quote="require(destination in allowlist)", reason="allowlisted", severity="none",
+                     title="", attack_scenario="", remediation="", existing_finding_id="")
+    na = lambda cid: call("answer_check", check_id=cid, verdict="cannot_determine", file="", line=0,  # noqa: E731
+                          evidence_quote="", reason="not in the files", severity="none", title="",
+                          attack_scenario="", remediation="", existing_finding_id="")
+    finish = call("finish", summary="done")
+    value_checks = [c.id for g, cs in ledger.plan({"signs_transactions", "submits_transactions",
+                                                    "holds_or_loads_secret"}) if g == "value" for c in cs]
+    client = RoutingClient([
+        reply(operating, read, read_routes), reply(finish),                        # investigate
+        reply(fails, bad_quote), reply(finish),                                    # value: sent back once
+        reply(*[na(c) for c in value_checks if c != "V1"]), reply(finish),
+    ])
+    reviewer = DeepReviewer(client, model="claude-sonnet-5-5", mode="ledger",
+                            mapper=FileMapper(client, model="claude-sonnet-5-5"))
+    result = run(reviewer, art)
+    report = result.report()
+
+    assert report["mode"] == "ledger"
+    assert report["file_map"]["files_mapped"] == 3
+    kotlin = next(r for r in report["languages"] if r["language"] == "Kotlin")
+    assert kotlin == {"language": "Kotlin", "files": 2, "rules": "none", "mapped": 2, "examined": 2}
+    # The map makes the Kotlin signer an authority file a passing decision requires to be examined.
+    assert "src/main/kotlin/PayoutService.kt" in authority_files(art)
+
+    rows = {r["id"]: r for r in report["ledger"]["checks"]}
+    assert rows["V1"]["verdict"] == "fails" and rows["V1"]["quote_verified"]
+    finding = next(f for f in result.findings if f.id == rows["V1"]["finding_id"])
+    assert finding.severity.value == "high" and any("Check ledger V1" in r for r in finding.references)
+    assert rows["V4"]["verdict"] != "holds"           # an unquoted "holds" is never recorded
+    # The value pass tried to finish with checks open and was sent back to answer them.
+    value_requests = [r for r in client.requests if r["tools"][0]["name"] != "submit_file_cards"
+                      and "Check-ledger pass: Value movement" in r["messages"][0]["content"][1]["text"]]
+    assert any("not answered" in str(r["messages"][-1]) or "Not finished" in str(r["messages"][-1])
+               for r in value_requests)
+    # Groups that were planned but whose checks got no answer are listed as unanswered, never dropped.
+    assert report["ledger"]["applicable"] == len(rows)
+    assert all(r["verdict"] in (*ledger.VERDICTS, "unanswered") for r in rows.values())
+    # The evidence pack carries the file map and is cached across passes.
+    pack_block = next(r for r in client.requests if r["tools"][0]["name"] != "submit_file_cards")["messages"][0]["content"][0]
+    assert '"file_map"' in pack_block["text"] and pack_block.get("cache_control")
+    assert report["coverage"]["files_examined"] == ["src/main/kotlin/PayoutService.kt", "src/main/kotlin/Routes.kt"]
+
+
+def test_authority_file_the_review_never_opened_gets_a_coverage_pass():
+    art = artifact()
+    operating = call("describe_operating_model", purpose="p", triggers="t", example_run="e",
+                     trust_boundaries=[], assets_at_risk=[])
+    client = RoutingClient([reply(operating), reply(call("finish", summary="done"))])
+    reviewer = DeepReviewer(client, model="claude-sonnet-5-5", mode="ledger",
+                            mapper=FileMapper(client, model="claude-sonnet-5-5"))
+    result = run(reviewer, art)
+    coverage = [p for p in result.passes if p["kind"] == "coverage"]
+    assert coverage, result.passes
+    asked = [r for r in client.requests if r["tools"][0]["name"] != "submit_file_cards"
+             and r["messages"][0]["content"][1]["text"].startswith("Coverage pass")]
+    assert "src/main/kotlin/PayoutService.kt" in asked[0]["messages"][0]["content"][1]["text"]
+    # Files the map read and that hold no authority are not reopened, and are not "not reviewed".
+    assert "README.md" not in asked[0]["messages"][0]["content"][1]["text"]
+    assert not any(n["path"] == "README.md" for n in result.not_reviewed)
+
+
+def test_file_map_state_round_trips():
+    fmap = FileMap(cards={"a.kt": CARDS[0]}, dropped_items=2, failed=["b.kt"], calls=3, done=True)
+    assert FileMap.from_state(fmap.to_state()).to_state() == fmap.to_state()
