@@ -654,7 +654,7 @@
       + `${n.holds || 0} hold, ${n.fails || 0} fail${serious(ledger.checks)}, ${n.not_applicable || 0} not applicable, ${(n.cannot_determine || 0) + (n.unanswered || 0) + (n.not_run || 0)} open.`;
     const langs = (ai.languages || []).map((l) => `${l.language} ${l.files} (${RULES_WORDS[l.rules] || l.rules})`).join(" · ");
     $("ledger-langs").textContent = `The model mapped ${plural(ai.files_mapped || 0, "file")} line by line and examined ${ai.files_examined || 0} in depth, `
-      + `including every one of the ${plural(ai.authority_files || 0, "file")} that holds keys, payments or signing.${langs ? " Languages: " + langs + "." : ""}`;
+      + `including every one of the ${plural(ai.authority_files || 0, "file")} that ${(ai.authority_files || 0) === 1 ? "holds" : "hold"} keys, payments or signing.${langs ? " Languages: " + langs + "." : ""}`;
     const groups = $("ledger-groups"); groups.textContent = "";
     for (const [key, title] of Object.entries(LEDGER_GROUPS)) {
       const rows = ledger.checks.filter((c) => c.group === key);
