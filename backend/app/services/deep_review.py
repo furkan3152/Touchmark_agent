@@ -649,8 +649,13 @@ class DeepReviewer:
             return "Recorded." if not problem else f"Recorded without a verified quote ({problem})."
         if name == "record_finding":
             if "asset" in args:
+                from .file_map import FileMap
+                card = FileMap.from_state(result.map_state).cards.get(str(args.get("file", ""))) \
+                    if result.map_state else None
+                args, notes = severity_table.ground(args, card)
                 args = {**args, "severity": severity_table.compute(args.get("asset"), args.get("trigger"),
-                                                                   args.get("network"), args.get("location"))}
+                                                                   args.get("network"), args.get("location")),
+                        **({"grounding": "; ".join(notes)} if notes else {})}
             problem = self._verify_quote(artifact, args.get("file", ""), args.get("line", 0), args.get("evidence_quote", ""))
             category = args.get("category")
             if not problem and category not in CATEGORIES:
@@ -685,7 +690,8 @@ class DeepReviewer:
             detail=redact(str(args.get("attack_scenario", ""))[:1500]
                           + ("\nStellar impact: " + str(args.get("stellar_impact", ""))[:600]
                              if args.get("stellar_impact") else "")
-                          + ("\n" + severity_table.basis(args) if "asset" in args else "")),
+                          + ("\n" + severity_table.basis(args) if "asset" in args else "")
+                          + (f" Held to the evidence: {args['grounding']}." if args.get("grounding") else "")),
             # Quotes are verified against source first, then secrets are masked for the report.
             evidence=redact(f"{args['file']}:{args['line']} `{' '.join(args['evidence_quote'].split())[:240]}`"),
             evidence_grade=EvidenceGrade.INFERRED,

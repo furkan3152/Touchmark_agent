@@ -520,3 +520,25 @@ def test_a_tool_call_with_parameters_leaked_into_one_field_is_repaired():
     assert fixed["triggers"] == "A buyer LLM calling a tool"
     assert fixed["example_run"] == "A buyer pays 0.01 USDC"   # a real value is never overwritten
     assert _repair_leaked_params({"purpose": "plain"}) == {"purpose": "plain"}
+
+
+def test_severity_facts_are_held_to_the_file_map_evidence():
+    from backend.app.services import severity
+    ui = {"capabilities": [{"kind": "calls_network"}]}
+    payer = {"capabilities": [{"kind": "moves_value"}]}
+    # A UI component that moves nothing cannot lose funds; a payment file can.
+    args, notes = severity.ground({"asset": "funds", "file": "web/approval-card.tsx", "location": "shipped"}, ui)
+    assert args["asset"] == "correctness" and notes
+    args, notes = severity.ground({"asset": "funds", "file": "src/pay.ts", "location": "shipped"}, payer)
+    assert args["asset"] == "funds" and not notes
+    # A web login is not Stellar account control; a file the map never carded is left as stated.
+    assert severity.ground({"asset": "account_control", "file": "auth.ts"}, {"capabilities": [
+        {"kind": "authenticates_callers"}]})[0]["asset"] == "data_exposure"
+    assert severity.ground({"asset": "funds", "file": "x.ts"}, None)[0]["asset"] == "funds"
+    # Mock and test paths are not shipped code; example paths are examples.
+    assert severity.ground({"asset": "funds", "file": "src/mock/mock-service.ts", "location": "shipped"},
+                           payer)[0]["location"] == "test_or_dev_tool"
+    assert severity.ground({"asset": "funds", "file": "examples/pay.ts", "location": "shipped"},
+                           payer)[0]["location"] == "example_or_quickstart"
+    # A payer charged for a call that failed is not value someone takes.
+    assert severity.compute("paid_service_not_delivered", "anyone", "mainnet_or_configurable", "shipped") == "medium"

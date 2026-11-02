@@ -20,10 +20,13 @@ the same severity on every run and every agent.
 """
 from __future__ import annotations
 
+import re
+
 LEVELS = ["low", "medium", "high", "critical"]
 
 ASSETS = {
     "funds": "critical", "keys_or_secrets": "critical", "account_control": "critical", "service_credential": "high",
+    "paid_service_not_delivered": "medium",
     "host_code_execution": "critical", "funds_locked_or_delayed": "high",
     "operator_spend": "medium", "service_availability": "medium", "data_exposure": "medium", "correctness": "medium",
     "none": "low",
@@ -44,7 +47,9 @@ FACTOR_SCHEMA = {
                              "an application user account or an email that can be claimed is data_exposure); "
                              "host_code_execution = commands or code the service itself runs on its host (text a "
                              "person might copy and paste is not); "
-                             "funds_locked_or_delayed = value stuck or settlement blocked; service_availability; "
+                             "funds_locked_or_delayed = value stuck or settlement blocked; paid_service_not_delivered = a payer is "
+                             "charged but the paid service fails or is not delivered, with no refund (the payer's own "
+                             "payment for a failed call, not value someone takes); service_availability; "
                              "data_exposure = non-secret data leaked; correctness = wrong behaviour without loss; "
                              "none."},
     "trigger": {"type": "string", "enum": sorted(TRIGGERS),
@@ -61,6 +66,47 @@ FACTOR_SCHEMA = {
                                 "quickstarts a user is told to run; test_or_dev_tool = tests, fixtures, mocks and mock "
                                 "modes, seeded demo data, build or maintenance scripts."},
 }
+
+
+#: What a file must be able to do, by the file map's quoted capabilities, for a finding in it to put this at risk.
+ASSET_NEEDS = {
+    "funds": {"moves_value", "signs_transactions", "submits_transactions", "verifies_incoming_payment",
+              "invokes_contract", "builds_from_external_xdr", "signs_raw_bytes", "authenticates_callers",
+              "stores_shared_state"},
+    "account_control": {"changes_account_authority", "invokes_contract", "signs_transactions", "signs_raw_bytes",
+                        "builds_from_external_xdr"},
+    "keys_or_secrets": {"holds_or_loads_secret", "signs_transactions", "signs_raw_bytes"},
+    "host_code_execution": {"executes_code", "reads_writes_files"},
+}
+ASSET_NEEDS["funds_locked_or_delayed"] = ASSET_NEEDS["funds"]
+#: The asset a claim falls back to when the cited file can do none of the above.
+UNSUPPORTED = {"funds": "correctness", "funds_locked_or_delayed": "correctness", "account_control": "data_exposure",
+               "keys_or_secrets": "data_exposure", "host_code_execution": "data_exposure"}
+_TEST_PATH = re.compile(r"(?:^|/)(?:tests?|__tests__|spec|fixtures?|e2e|mocks?|__mocks__)/|\.(?:test|spec)\.\w+$|"
+                        r"(?:^|/)test_[^/]*$|_test\.\w+$|(?:^|/)tests?\.rs$|(?:^|/)mock[-_.][^/]*$", re.I)
+_EXAMPLE_PATH = re.compile(r"(?:^|/)(?:examples?|demos?|samples?|quickstarts?)/", re.I)
+
+
+def ground(args: dict, card: dict | None) -> tuple[dict, list[str]]:
+    """Hold a model's stated severity facts to the evidence. The model chooses what is at risk; a claim of funds,
+    keys, account control or host execution must be backed by a capability the file map quoted in the cited file,
+    and code under test, mock or example paths is not shipped code whatever the model says. On never-audited
+    agents most critical findings were a UI component, a web login or a demo mock rated as a loss of funds."""
+    out, notes = dict(args), []
+    path = str(args.get("file") or "")
+    asset = out.get("asset")
+    kinds = {c.get("kind") for c in (card or {}).get("capabilities", []) if isinstance(c, dict)}
+    if card is not None and asset in ASSET_NEEDS and not kinds & ASSET_NEEDS[asset]:
+        out["asset"] = UNSUPPORTED[asset]
+        notes.append(f"{path} has no quoted capability that puts {asset} at risk, so it is rated as {out['asset']}")
+    if out.get("location") == "shipped" or out.get("location") not in LOCATIONS:
+        if _TEST_PATH.search(path):
+            out["location"] = "test_or_dev_tool"
+            notes.append(f"{path} is test or mock code")
+        elif _EXAMPLE_PATH.search(path):
+            out["location"] = "example_or_quickstart"
+            notes.append(f"{path} is example code")
+    return out, notes
 
 
 def compute(asset: str, trigger: str, network: str, location: str) -> str:
