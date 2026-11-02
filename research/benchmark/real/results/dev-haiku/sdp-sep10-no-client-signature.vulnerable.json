@@ -1,0 +1,432 @@
+{
+ "case": "sdp-sep10-no-client-signature",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "05fc5bc2417f8bc6e46c9e29b031b250ab07a7e0",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/05fc5bc2417f8bc6e46c9e29b031b250ab07a7e0/internal/services",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "sep10_service.go",
+   "line_start": 500,
+   "line_end": 549
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-account-takeover-2",
+   "cited": "sep10_service.go:547",
+   "title": "SEP-10 login skips the client signature for accounts with med threshold 0"
+  },
+  {
+   "source": "ledger",
+   "id": "A7",
+   "cited": "sep10_service.go:547",
+   "title": "Verification of incoming authentication"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-account-takeover-19",
+   "severity": "critical",
+   "title": "SEP-45 validation accepts the client-domain authorization entry by presence only, with the signer taken from the request",
+   "file": "sep45_service.go",
+   "line": 359,
+   "evidence": "sep45_service.go:359 `} else if parsedArgs != nil && parsedArgs.clientDomainAccount != \"\" && accountAddress == parsedArgs.clientDomainAccount {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-account-takeover-2",
+   "severity": "critical",
+   "title": "SEP-10 login skips the client signature for accounts with med threshold 0",
+   "file": "sep10_service.go",
+   "line": 547,
+   "evidence": "sep10_service.go:547 `if totalWeight < threshold {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-account-takeover-5",
+   "severity": "critical",
+   "title": "Embedded wallet invitation token can overwrite the registered public key repeatedly while pending",
+   "file": "embedded_wallet_service.go",
+   "line": 146,
+   "evidence": "embedded_wallet_service.go:146 `if err := e.sdpModels.EmbeddedWallets.Update(ctx, sdpTx, embeddedWallet.Token, embeddedWalletUpdate); err != nil {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-14",
+   "severity": "critical",
+   "title": "Direct payment does not check the caller's membership on the source wallet",
+   "file": "direct_payment_service.go",
+   "line": 201,
+   "evidence": "direct_payment_service.go:201 `SourceWalletID: req.SourceWalletID,` \u00b7 disbursement_management_service.go:211 `// 0. Wallet-scoped authorization: an Approver/FC on wallet A cannot start a` \u00b7 direct_payment_service.go:373 `requiredAmount := requestedAmount.Add(totalPending)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-cross-user-access-16",
+   "severity": "critical",
+   "title": "Direct payment does not check the caller's membership on the source wallet",
+   "file": "direct_payment_service.go",
+   "line": 201,
+   "evidence": "direct_payment_service.go:201 `SourceWalletID: req.SourceWalletID,`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "critical",
+   "title": "Sponsorship signs caller-chosen invoke-contract operations with the distribution account as source",
+   "file": "embedded_wallet_service.go",
+   "line": 318,
+   "evidence": "embedded_wallet_service.go:320 `Auth: operation.Auth,` \u00b7 embedded_wallet_service.go:240 `func (e *EmbeddedWalletService) SponsorTransaction(ctx context.Context, account, operationXDR string) (string, error) {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-23",
+   "severity": "critical",
+   "title": "Concurrent disbursement starts can both emit disbursement.submitted",
+   "file": null,
+   "line": null,
+   "evidence": "disbursement_management_service.go:202 `disbursement, err := s.Models.Disbursements.GetWithStatistics(ctx, disbursementID)`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-3",
+   "severity": "critical",
+   "title": "Balance check for direct payments is not serialized, so concurrent requests overcommit the source wallet",
+   "file": "direct_payment_service.go",
+   "line": 374,
+   "evidence": "direct_payment_service.go:374 `if availableBalance.LessThan(requiredAmount) {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-11",
+   "severity": "high",
+   "title": "SEP-45 challenge signs every simulated auth entry without checking its invocation tree",
+   "file": "sep45_service.go",
+   "line": 561,
+   "evidence": "sep45_service.go:561 `signedEntry, err := utils.SignAuthEntry(entry, validUntil, s.signingKP, s.networkPassphrase)`",
+   "verifier": "confirmed",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "medium",
+   "title": "Simulation response error is discarded, so failing sponsored transactions are stored as pending",
+   "file": null,
+   "line": null,
+   "evidence": "embedded_wallet_service.go:345 `if _, simErr := e.rpcClient.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-functional-defect-24",
+   "severity": "medium",
+   "title": "Direct payment accepts zero or negative amounts, which reduce pending totals and bypass the balance check",
+   "file": null,
+   "line": null,
+   "evidence": "direct_payment_service.go:334 `requestedAmount, err := decimal.NewFromString(amount)`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-functional-defect-30",
+   "severity": "medium",
+   "title": "Circle transfer dispatch sends the asset code only and never checks the issuer",
+   "file": null,
+   "line": null,
+   "evidence": "paymentdispatchers/circle_payment_transfer_dispatcher.go:79 `StellarAssetCode: payment.Asset.Code,`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-reliability-failure-28",
+   "severity": "medium",
+   "title": "One payment with more than 7 decimals blocks the whole ready-to-pay batch",
+   "file": null,
+   "line": null,
+   "evidence": "paymentdispatchers/stellar_payment_dispatcher.go:68 `if !amount.Equal(amount.Truncate(stellarMaxDecimalPlaces)) {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-reliability-failure-7",
+   "severity": "medium",
+   "title": "Wallet provisioning deletes the only copy of a funded account's key on failure after funding",
+   "file": "distribution_wallet_management_service.go",
+   "line": 169,
+   "evidence": "distribution_wallet_management_service.go:169 `if err = tssSvc.CreateAndFundAccount(ctx, s.SubmitterEngine, s.NativeAssetBootstrapAmount, hostAccount.Address, kp.Address()); err != nil {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-20",
+   "severity": "medium",
+   "title": "AllowHTTPRetry falls back to plain HTTP for client_domain stellar.toml, so an on-path attacker can substitute the attribution signing key",
+   "file": "sep10_service.go",
+   "line": 712,
+   "evidence": "sep10_service.go:712 `if err != nil && s.AllowHTTPRetry {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-22",
+   "severity": "medium",
+   "title": "Disbursement list is not scoped to the caller's wallets",
+   "file": null,
+   "line": null,
+   "evidence": "disbursement_management_service.go:139 `func (s *DisbursementManagementService) GetDisbursementsWithCount(ctx context.Context, queryParams *data.QueryParams) (*utils.ResultWithTotal, error) {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-ssrf-15",
+   "severity": "medium",
+   "title": "Unauthenticated SEP-45 challenge makes the server fetch an attacker-chosen client_domain stellar.toml (sibling of security-ai-ssrf-4)",
+   "file": "sep45_service.go",
+   "line": 206,
+   "evidence": "sep45_service.go:206 `key, err := s.fetchSigningKeyFromClientDomain(clientDomain)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-ssrf-4",
+   "severity": "medium",
+   "title": "Unauthenticated client_domain makes the server fetch arbitrary stellar.toml URLs",
+   "file": "sep10_service.go",
+   "line": 711,
+   "evidence": "sep10_service.go:711 `stellarToml, err := client.GetStellarToml(clientDomain)` \u00b7 sep45_service.go:206 `key, err := s.fetchSigningKeyFromClientDomain(clientDomain)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-8",
+   "severity": "medium",
+   "title": "Disbursement start balance check is not serialized, so concurrent starts overcommit the source wallet",
+   "file": "disbursement_management_service.go",
+   "line": 359,
+   "evidence": "disbursement_management_service.go:359 `if availableBalance.LessThan(requiredAmount) {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-9",
+   "severity": "medium",
+   "title": "Stellar dispatch commits TSS transactions before the SDP ready-to-pay transaction commits, so a commit failure re-queues paid payments",
+   "file": null,
+   "line": null,
+   "evidence": "paymentdispatchers/stellar_payment_dispatcher.go:48 `return db.RunInTransaction(ctx, s.tssModel.DBConnectionPool, nil, func(tssDBTx db.DBTransaction) error {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "low",
+   "title": "Circle payout dispatcher sends by asset code only and ignores the stored issuer",
+   "file": null,
+   "line": null,
+   "evidence": "paymentdispatchers/circle_payment_payout_dispatcher.go:100 `StellarAssetCode: payment.Asset.Code,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-26",
+   "severity": "low",
+   "title": "Invitation body is rendered with html/template, so organization names with &, quotes or < are sent HTML-escaped to receivers",
+   "file": null,
+   "line": null,
+   "evidence": "send_receiver_wallets_invite_service.go:196 `OrganizationName: organization.Name,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-27",
+   "severity": "low",
+   "title": "Circle recipient error is written into the response body as unescaped JSON, which can block the attempt-count update",
+   "file": null,
+   "line": null,
+   "evidence": "paymentdispatchers/circle_payment_payout_dispatcher.go:262 `ResponseBody: []byte(fmt.Sprintf(`{\"error\": \"%s\"}`, err.Error())),`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "low",
+   "title": "Circle reconciliation dereferences a nil object when a transfer request has no Circle ID",
+   "file": null,
+   "line": null,
+   "evidence": "circle_reconciliation_service.go:128 `return fmt.Errorf(\"getting Circle %s by ID %q: %w\", cObjData.Type, cObjData.ID, err)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-12",
+   "severity": "low",
+   "title": "Circle payout error marks the payment FAILED with no Circle ID, so an accepted payout is never reconciled",
+   "file": null,
+   "line": null,
+   "evidence": "paymentdispatchers/circle_payment_payout_dispatcher.go:117 `err = c.sdpModels.Payment.UpdateStatus(ctx, sdpDBTx, payment.ID, data.FailedPaymentStatus, utils.Ptr(err.Error()), \"\")`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-13",
+   "severity": "low",
+   "title": "Circle transfer error marks the payment FAILED with no Circle ID, so an accepted transfer is never reconciled",
+   "file": null,
+   "line": null,
+   "evidence": "paymentdispatchers/circle_payment_transfer_dispatcher.go:86 `err = c.sdpModels.Payment.UpdateStatus(ctx, sdpDBTx, payment.ID, data.FailedPaymentStatus, utils.StringPtr(err.Error()), \"\")`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-18",
+   "severity": "low",
+   "title": "Activation failure after on-chain funding deletes the seed of a funded distribution wallet",
+   "file": null,
+   "line": null,
+   "evidence": "distribution_wallet_management_service.go:180 `s.cleanupWallet(ctx, wallet.ID, kp.Address())`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-cross-user-access-21",
+   "severity": "low",
+   "title": "Disbursement receiver listing has no caller or wallet authorization",
+   "file": "disbursement_management_service.go",
+   "line": 168,
+   "evidence": "disbursement_management_service.go:168 `func (s *DisbursementManagementService) GetDisbursementReceiversWithCount(ctx context.Context, disbursementID string, queryParams *data.QueryParams) (*utils.ResultWithTotal, error) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-25",
+   "severity": "low",
+   "title": "Receiver invitations are sent before their state is recorded, so a failed commit causes the same invitation to be sent again",
+   "file": null,
+   "line": null,
+   "evidence": "send_receiver_wallets_invite_service.go:165 `return db.RunInTransaction(ctx, s.Models.DBConnectionPool, nil, func(dbTx db.DBTransaction) error {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "send_receiver_wallets_invite_service_test.go:37 (SCTOV\u2026redacted); send_receiver_wallets_invite_service_test.go:50 (SCTOV\u2026redacted); send_receiver_wallets_invite_service_test.go:74 (SBUSP\u2026redacted); send_receiver_wallets_invite_service_test.go:1333 (SBUSP\u2026redacted); send_receiver_wallets_invite_service_test.go:2044 (SBUSP\u2026redacted); send_receiver_wallets_invite_service_test.go:37: GCWSYSAY\u2026 has no ",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "direct_payment_service.go",
+   "line": 373,
+   "reason": "The only cumulative control is the wallet balance minus in-progress payments (lines 395-400 and 373). There is no per-caller, per-day or per-session budget. Once the balance is consumed, the check blocks further payments, but every authorised caller on the wallet can spend the whole balance in many "
+  },
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "direct_payment_service.go",
+   "line": 374,
+   "reason": "The balance and pending sum are read in a READ COMMITTED transaction with no row lock or advisory lock on the source wallet, so two concurrent direct payments both pass this check before either payment row is committed. The same defect exists on the disbursement path at disbursement_management_servi"
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "paymentdispatchers/circle_payment_payout_dispatcher.go",
+   "line": 100,
+   "reason": "The Stellar path checks code and issuer: the stellar dispatcher passes AssetIssuer (stellar_payment_dispatcher.go:82), direct-payment trustline checks compare code and issuer (direct_payment_service.go:449), and asset lookups use GetByCodeAndIssuer (direct_payment_resolvers.go:268). The Circle payou"
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "paymentdispatchers/stellar_payment_dispatcher.go",
+   "line": 48,
+   "reason": "The Circle paths are protected: the transfer and payout dispatchers pass a per-payment idempotency key from GetOrInsert (circle_payment_transfer_dispatcher.go:80, circle_payment_payout_dispatcher.go:101). The Stellar path is not. The TSS insert commits before the SDP READY-to-PENDING update, so a fa"
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "embedded_wallet_service.go",
+   "line": 320,
+   "reason": "SponsorTransaction decodes the caller's InvokeHostFunctionOp and only checks that the host function type is invoke-contract. It never checks the target contract, the function name, the arguments, or the auth sub-invocations. The operation is then rebuilt with the distribution account as source and t"
+  },
+  {
+   "id": "S5",
+   "title": "Submission outcome",
+   "file": "paymentdispatchers/circle_payment_payout_dispatcher.go",
+   "line": 117,
+   "reason": "After SendPayout, any error marks the payment FAILED. The payout is never checked by idempotency key. A request that Circle accepted but whose response was lost is recorded as failed, and no Circle ID is stored to reconcile it. The transfer dispatcher does the same at line 86. The Stellar TSS submis"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "distribution_wallet_management_service.go",
+   "line": 169,
+   "reason": "On a funding error, cleanupWallet deletes the key and the wallet row at line 170, even if the funding transaction may have landed on chain. That leaves a funded account with no key. The Circle payout and transfer dispatchers also mark payments FAILED after an ambiguous error (circle_payment_payout_d"
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "embedded_wallet_service.go",
+   "line": 240,
+   "reason": "SponsorTransaction is an exposed signing-path entry point that takes an account string and an operation XDR from the caller and enqueues them for the distribution account to sign. No caller identity or ownership check exists in the submitted code. The HTTP route layer that might add authentication i"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "direct_payment_service.go",
+   "line": 201,
+   "reason": "CORRECTION: this supersedes the earlier A3 entry with verdict holds, which was recorded in error and has no valid basis. CreateDirectPayment takes a user and a request-supplied source wallet and debits that wallet without a membership check, unlike the disbursement start, pause and cancel paths that"
+  },
+  {
+   "id": "A6",
+   "title": "Outbound requests and file paths",
+   "file": "sep45_service.go",
+   "line": 206,
+   "reason": "The requester controls client_domain, which reaches fetchSigningKeyFromClientDomain (sep45_service.go:572 GetStellarToml, with an HTTP fallback) with no allowlist. The SEP-10 sibling at sep10_service.go:711 is the already-recorded security-ai-ssrf-4. The SEP-45 path is recorded as a separate finding"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "sep10_service.go",
+   "line": 547,
+   "reason": "For an existing account, verifyThreshold accepts when the sum of matched signer weights is at least MedThreshold. A zero threshold passes with no client signature, because the loop never requires a signature and 0 < 0 is false. Matching is per signer with a used-signer set, so duplicates are not dou"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "direct_payment_service.go",
+   "line": 201,
+   "reason": "Safety rules for funds are partly in code, but the wallet-scope rule is not enforced on the direct-payment path. The disbursement path calls EnsureUserCanActOnWallet (disbursement_management_service.go:213) and the wallet_authorization.go helpers exist, yet CreateDirectPayment resolves req.Wallet an"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "disbursement_management_service.go",
+   "line": 211,
+   "reason": "The code states and enforces a policy that wallet-scoped roles bound every wallet action (Owners tenant-wide, others only on their wallet). Disbursement start follows it through EnsureUserCanActOnWallet at line 213, but the direct-payment path, which also moves funds from SourceWalletID, does not. S"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "paymentdispatchers/circle_payment_payout_dispatcher.go",
+   "line": 100,
+   "reason": "The core payout path does not work correctly for multi-issuer assets. The Circle payout request sends only the asset code and drops the issuer that is stored on the payment, so a payment for a code with more than one issuer can settle in a different asset. Other core calls checked (SEP-10 threshold "
+  }
+ ]
+}

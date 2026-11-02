@@ -1,0 +1,395 @@
+{
+ "case": "x402-paywall-retry-resigns",
+ "side": "vulnerable",
+ "repo": "stellar/x402-stellar",
+ "commit": "a769bc99f8077d342edefbc586971a64154c83bb",
+ "audited": "https://github.com/stellar/x402-stellar/tree/a769bc99f8077d342edefbc586971a64154c83bb/packages/paywall",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/browser/useStellarPayment.ts",
+   "line_start": 88,
+   "line_end": 106
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-1",
+   "cited": "src/browser/useStellarPayment.ts:99",
+   "title": "402 retry signs server-supplied requirements the user never approved"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-reliability-failure-14",
+   "cited": "src/browser/useStellarPayment.ts:99",
+   "title": "402 retry signs a second payment without reconciling the first"
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-ai-replay-or-idempotency-12",
+   "cited": "src/browser/useStellarPayment.ts:99",
+   "title": "402 retry signs and sends a second payment without checking whether the first settled"
+  },
+  {
+   "source": "ledger",
+   "id": "V1",
+   "cited": "src/browser/useStellarPayment.ts:99",
+   "title": "Per-action amount bound"
+  },
+  {
+   "source": "ledger",
+   "id": "V4",
+   "cited": "src/browser/useStellarPayment.ts:95",
+   "title": "Recipient binding"
+  },
+  {
+   "source": "ledger",
+   "id": "V6",
+   "cited": "src/browser/useStellarPayment.ts:99",
+   "title": "Replay and double payment"
+  },
+  {
+   "source": "ledger",
+   "id": "S8",
+   "cited": "src/browser/useStellarPayment.ts:99",
+   "title": "Failure and rollback paths"
+  },
+  {
+   "source": "ledger",
+   "id": "A4",
+   "cited": "src/browser/useStellarPayment.ts:99",
+   "title": "Approvals fail closed"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "src/browser/useStellarPayment.ts:99",
+   "title": "Controls outside the prompt"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-2",
+   "severity": "high",
+   "title": "Signed auth entry is never checked against the requested payment",
+   "file": "src/browser/useSWKSigner.ts",
+   "line": 41,
+   "evidence": "src/browser/useSWKSigner.ts:41 `const signingResult = await StellarWalletsKit.signAuthEntry(authEntry, {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-15",
+   "severity": "high",
+   "title": "Counterparty-chosen network passphrase overrides the configured network when signing auth entries",
+   "file": "src/browser/useSWKSigner.ts",
+   "line": 43,
+   "evidence": "src/browser/useSWKSigner.ts:43 `networkPassphrase: opts?.networkPassphrase || getNetworkPassphrase(network),`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-21",
+   "severity": "high",
+   "title": "Wallet connection pinned to the network at connect time, not when signing",
+   "file": "src/browser/useSWKConnection.ts",
+   "line": 83,
+   "evidence": "src/browser/useSWKConnection.ts:38 `const [address, setAddress] = useState<string | null>(null);`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "high",
+   "title": "402 retry signs server-supplied requirements the user never approved",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 99,
+   "evidence": "src/browser/useStellarPayment.ts:99 `const retryPayload = await client.createPaymentPayload(freshRequirements);` \u00b7 src/browser/useStellarPayment.ts:95 `const freshRequirements = freshHeader`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-11",
+   "severity": "high",
+   "title": "Buyer signs auth entries simulated by a seller-chosen RPC URL and network",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 60,
+   "evidence": "src/browser/useStellarPayment.ts:60 `client.register(\"stellar:*\", new ExactStellarScheme(walletSigner, { url: runtimeRpcUrl }));`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-5",
+   "severity": "medium",
+   "title": "Any Stellar asset is labelled and scaled as USDC at 7 decimals",
+   "file": "src/browser/StellarPaywall.tsx",
+   "line": 83,
+   "evidence": "src/browser/StellarPaywall.tsx:83 `const assetCode = chainConfig?.[networkKey]?.usdcName || \"USDC\";`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "medium",
+   "title": "Displayed amount comes from a separate server field, not the signed requirement",
+   "file": null,
+   "line": null,
+   "evidence": "src/browser/StellarPaywall.tsx:120 `typeof x402.amount === \"number\"`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-reliability-failure-14",
+   "severity": "medium",
+   "title": "402 retry signs a second payment without reconciling the first",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 99,
+   "evidence": "src/browser/useStellarPayment.ts:99 `const retryPayload = await client.createPaymentPayload(freshRequirements);`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "low",
+   "title": "Unpinned dependencies",
+   "file": "package.json",
+   "line": 32,
+   "evidence": "",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "provenance-floating-dependencies",
+   "severity": "low",
+   "title": "Mutable build inputs",
+   "file": "package.json",
+   "line": 32,
+   "evidence": "\"@x402-stellar/shared\": \"workspace:*\"",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "provenance-ai-dependency-risk-8",
+   "severity": "low",
+   "title": "Wallet-signing and SDK dependencies are floating ranges with no lockfile",
+   "file": null,
+   "line": null,
+   "evidence": "package.json:31 `\"@creit.tech/stellar-wallets-kit\": \"^2.0.0\",`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-16",
+   "severity": "low",
+   "title": "Decimals from the seller-chosen RPC are trusted without a range check and scale the balance gate",
+   "file": null,
+   "line": null,
+   "evidence": "src/browser/useStellarBalance.ts:137 `const decimals = scValToNative(decimalsTx.result) as number;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-19",
+   "severity": "low",
+   "title": "Explicit undefined in runtime config erases builder-configured stellarRpcUrl",
+   "file": null,
+   "line": null,
+   "evidence": "src/builder.ts:28 `const finalConfig = { ...builderConfig, ...runtimeConfig };`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-20",
+   "severity": "low",
+   "title": "Unknown or non-testnet network references are labelled as Stellar Mainnet",
+   "file": null,
+   "line": null,
+   "evidence": "src/browser/utils.ts:17 `return ref === \"testnet\" ? \"Stellar Testnet\" : \"Stellar Mainnet\";`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "Pre-payment balance check is skipped once any balance has loaded",
+   "file": "src/browser/StellarPaywall.tsx",
+   "line": 150,
+   "evidence": "src/browser/StellarPaywall.tsx:150 `if (tokenBalanceFormatted === \"\") {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "low",
+   "title": "Paid HTML is written with innerHTML, so its scripts never run",
+   "file": null,
+   "line": null,
+   "evidence": "src/browser/entry.tsx:45 `document.documentElement.innerHTML = await response.text();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-7",
+   "severity": "low",
+   "title": "String replace of the template interprets $ patterns in the injected config",
+   "file": null,
+   "line": null,
+   "evidence": "src/stellar-handler.ts:70 `return STELLAR_PAYWALL_TEMPLATE.replace(\"</head>\", `${configScript}\\n</head>`);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "testnet flag is read only for console logging and never constrains the signed network",
+   "file": null,
+   "line": null,
+   "evidence": "src/stellar-handler.ts:101 `testnet: config.testnet ?? true,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-12",
+   "severity": "low",
+   "title": "402 retry signs and sends a second payment without checking whether the first settled",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 99,
+   "evidence": "src/browser/useStellarPayment.ts:99 `const retryPayload = await client.createPaymentPayload(freshRequirements);` \u00b7 src/browser/useStellarPayment.ts:146 `inFlightRef.current = false;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-18",
+   "severity": "low",
+   "title": "Overlapping balance refreshes have no sequencing, so a stale account balance can overwrite the current one",
+   "file": "src/browser/useStellarBalance.ts",
+   "line": 143,
+   "evidence": "src/browser/useStellarBalance.ts:143 `setTokenBalanceFormatted(balanceFormatted);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 99,
+   "reason": "The only amount gate is the balance floor at StellarPaywall.tsx:153, which is a minimum-balance check and not a maximum. The 402-retry path signs whatever amount and asset the second server response declares, with no cap against the amount the user approved. The first-attempt path has no cap either,"
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "src/browser/StellarPaywall.tsx",
+   "line": 153,
+   "reason": "This is a per-call balance floor. No cumulative total, daily limit, rate limit or persisted spend record exists in the submitted files. Each Pay click, and each 402 retry, pays again with no running budget. The only other control is the human clicking Pay each time."
+  },
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 146,
+   "reason": "The earlier answer is right that no budget is kept, but the question also covers whether a payment that was already sent can be sent again. The in-flight guard is released in finally (line 146) on every exit, including the catch path after a fetch or retry that may already have settled on-chain. Not"
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 95,
+   "reason": "The original payTo is fixed by the first 402, but the retry takes payTo, asset, network and amount from a second response served by the same counterparty. Nothing binds the destination to the requirement the user saw, so the recipient is set by server content."
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "src/browser/StellarPaywall.tsx",
+   "line": 120,
+   "reason": "Asset identity holds on the pay path: the balance check and the payment both use the contract id from the requirement (useStellarBalance.ts:106, useStellarPayment.ts:62). The amount does not hold. The value compared against the balance and shown to the user comes from the separate x402.amount field,"
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 99,
+   "reason": "A 402 after the first PAYMENT-SIGNATURE triggers an automatic second signed payload, with no idempotency key and no check whether the first payment settled. The x402 exact scheme signs auth entries that the facilitator submits later, so the first payload may still land, and the retry then pays twice"
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "src/browser/useSWKSigner.ts",
+   "line": 41,
+   "reason": "The auth entry from the 402 challenge and from the seller-chosen RPC is passed straight to the wallet. There is no decode of the operations, contract, function, arguments, sub-invocations, destination or amount, so the buyer signs an unseen authorization. The same applies to the payment payload crea"
+  },
+  {
+   "id": "S2",
+   "title": "Raw byte signing",
+   "file": "src/browser/useSWKSigner.ts",
+   "line": 41,
+   "reason": "No raw keypair.sign of bytes exists in the submitted code, and the agent key is not in this browser. But this path does pass requester-supplied bytes (an auth entry XDR from the server challenge or the RPC) to a wallet for signing without decoding them. Soroban auth entries are signed over a hash th"
+  },
+  {
+   "id": "S3",
+   "title": "Network and endpoint pinning",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 60,
+   "reason": "The signing path takes its RPC URL from window.x402.config.rpcUrl, which the server writes into the page, and it takes the network from the 402 accepts[].network. The client is registered for \"stellar:*\", so any network the challenge names is used. The wallet connection check at useSWKConnection.ts:"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 99,
+   "reason": "The failure paths do release the in-flight flag (finally, lines 145-148), so no lock blocks later requests. But the 402 retry path does not reconcile the first attempt. A non-ok first response that has a 402 body with x402Version triggers a second signed payment without checking whether the first on"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/browser/useSWKSigner.ts",
+   "line": 41,
+   "reason": "The earlier answer checked only that each visitor has separate React state and a per-request HTML template. That covers cross-visitor isolation on the server, but it misses the case where a different principal acts on the buyer's funds. The seller is a separate party. Its challenge (network, RPC URL"
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 99,
+   "reason": "The only gate on a payment is the user's click on Pay. A 402 response then triggers a second signature over server-supplied requirements, with no further user approval and no check against the amount the user saw. The gate does not hold for that second signature, so the approval is not enforced on t"
+  },
+  {
+   "id": "A6",
+   "title": "Outbound requests and file paths",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 60,
+   "reason": "The RPC URL that the buyer's browser contacts comes from window.x402.config.rpcUrl, which the seller's page injects (src/stellar-handler.ts:53, rpcUrl from config.stellarRpcUrl). Nothing restricts it to an allowlisted host. The seller can point the buyer's browser at any URL, including local or inte"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/browser/useSWKSigner.ts",
+   "line": 41,
+   "reason": "No verification happens on the incoming auth entry. useSWKSigner passes the server-supplied authEntry straight to the wallet and returns whatever it signs. No decode checks the invoked contract, function, arguments, sub-invocations, amount, payee or expiry. A grep for verify, signature checks, JWT o"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/browser/useStellarPayment.ts",
+   "line": 99,
+   "reason": "The only spending limit in code is the pre-payment balance check at StellarPaywall.tsx:153, and it compares against the amount from window.x402 (server-injected), not the amount in the requirement that gets signed. The 402 retry signs whatever requirements the server sends in PAYMENT-REQUIRED or the"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/browser/StellarPaywall.tsx",
+   "line": 120,
+   "reason": "The UI promises to pay the displayed amount, and the balance check uses that amount. At line 120 the displayed amount is the server-injected x402.amount, but the signed amount is stellarRequirement.amount, so the buyer sees and approves a number the signed payment does not have to match. The display"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/browser/entry.tsx",
+   "line": 45,
+   "reason": "The core success path replaces the page with the paid HTML using innerHTML. Scripts inserted this way do not execute, so a paid HTML page that depends on JavaScript does not work as shipped. The balance and payment SDK calls (AssembledTransaction.build, scValToNative, formatUnits, ExactStellarScheme"
+  }
+ ]
+}

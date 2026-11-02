@@ -1,0 +1,400 @@
+{
+ "case": "mpp-charge-verify-fail-open",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-mpp-sdk",
+ "commit": "06a65f543d245a064cf9804dcd4283b2e61f6ed2",
+ "audited": "https://github.com/stellar/stellar-mpp-sdk/tree/06a65f543d245a064cf9804dcd4283b2e61f6ed2/sdk",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/server/Charge.ts",
+   "line_start": 264,
+   "line_end": 289
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-1",
+   "cited": "src/server/Charge.ts:283",
+   "title": "Hash-mode payment verification fails open: any successful transaction grants the resource"
+  },
+  {
+   "source": "ledger",
+   "id": "V7",
+   "cited": "src/server/Charge.ts:264",
+   "title": "Incoming payment verification"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "src/server/Charge.ts:264",
+   "title": "Controls outside the prompt"
+  }
+ ],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-18",
+   "severity": "critical",
+   "title": "Channel verification never checks that the commitment is covered by the channel deposit",
+   "file": "src/channel/server/Channel.ts",
+   "line": 148,
+   "evidence": "src/channel/server/Channel.ts:148 `if (commitmentAmount < previousCumulative + requestedAmount) {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "economic-ai-economic-loss-7",
+   "severity": "critical",
+   "title": "Server fee-bumps and signs any client XDR, with fee bid taken from the client and no check on other operations",
+   "file": "src/server/Charge.ts",
+   "line": 145,
+   "evidence": "src/server/Charge.ts:145 `(Number(tx.fee) * 10).toString(),` \u00b7 src/server/Charge.ts:149 `txToSubmit.sign(feePayerKeypair)` \u00b7 src/server/Charge.ts:203 `verifyFromRawOps(tx, expected)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "critical",
+   "title": "Hash-mode payment verification fails open: any successful transaction grants the resource",
+   "file": "src/server/Charge.ts",
+   "line": 283,
+   "evidence": "src/server/Charge.ts:283 `verifyFromRawOps(innerTx, expected)` \u00b7 src/server/Charge.ts:264 `if (txResult.envelopeXdr) {`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-19",
+   "severity": "critical",
+   "title": "Channel client lets a caller override the cumulative amount with no bound, so a model or tool argument can sign a commitment for the whole deposit",
+   "file": "src/channel/client/Channel.ts",
+   "line": 73,
+   "evidence": "src/channel/client/Channel.ts:73 `context?.cumulativeAmount !== undefined ? BigInt(context.cumulativeAmount)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-2",
+   "severity": "critical",
+   "title": "Payment proof is not bound to the challenge, so one payment is reused across challenges and third-party payments are accepted",
+   "file": "src/server/Charge.ts",
+   "line": 87,
+   "evidence": "src/server/Charge.ts:66 `const key = `stellar:challenge:${challenge.id}`` \u00b7 src/server/Charge.ts:65 `if (store) {` \u00b7 src/server/Charge.ts:87 `let txResult = await server.getTransaction(hash)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-22",
+   "severity": "critical",
+   "title": "Channel challenge replay check is a non-atomic get-then-put, so one credential can be redeemed by concurrent requests",
+   "file": "src/channel/server/Channel.ts",
+   "line": 100,
+   "evidence": "src/channel/server/Channel.ts:100 `const existing = await store.get(replayKey)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-3",
+   "severity": "critical",
+   "title": "Channel commitment is replayable without a store, since the cumulative baseline is zero",
+   "file": "src/channel/server/Channel.ts",
+   "line": 127,
+   "evidence": "src/channel/server/Channel.ts:127 `let previousCumulative = 0n` \u00b7 src/channel/server/Channel.ts:204 `const valid = commitmentKeypair.verify(` \u00b7 src/channel/server/Channel.ts:98 `if (store) {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-4",
+   "severity": "critical",
+   "title": "Concurrent channel verifications both pass the cumulative check (read-then-write race)",
+   "file": "src/channel/server/Channel.ts",
+   "line": 129,
+   "evidence": "src/channel/server/Channel.ts:221 `await store.put(cumulativeKey, {` \u00b7 src/channel/server/Channel.ts:129 `const stored = await store.get(cumulativeKey)` \u00b7 src/channel/server/Channel.ts:66 `const cumulativeKey = `stellar:channel:cumulative:${channelAddress}``",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-8",
+   "severity": "high",
+   "title": "Client signs whatever amount, recipient and currency a 402 challenge demands, with no spend cap",
+   "file": "src/client/Charge.ts",
+   "line": 64,
+   "evidence": "src/client/Charge.ts:64 `const { amount, currency, recipient } = request` \u00b7 src/client/Charge.ts:86 `const contract = new Contract(currency)` \u00b7 src/client/Charge.ts:92 `new Address(recipient).toScVal(),`",
+   "verifier": "confirmed",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-9",
+   "severity": "high",
+   "title": "Channel client takes its cumulative baseline from the server, so a server can make it sign an inflated commitment",
+   "file": "src/channel/client/Channel.ts",
+   "line": 70,
+   "evidence": "src/channel/client/Channel.ts:70 `request.methodDetails?.cumulativeAmount ?? '0'`",
+   "verifier": "confirmed",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-account-takeover-10",
+   "severity": "high",
+   "title": "Channel client ed25519 commitment key signs whatever bytes the challenge's channel contract returns",
+   "file": "src/channel/client/Channel.ts",
+   "line": 129,
+   "evidence": "src/channel/client/Channel.ts:129 `const signature = commitmentKey.sign(Buffer.from(commitmentBytes))`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-14",
+   "severity": "high",
+   "title": "Client takes the signing network and RPC from the server's 402 challenge, so a counterparty can move a test-configured client onto mainnet",
+   "file": "src/client/Charge.ts",
+   "line": 66,
+   "evidence": "src/client/Charge.ts:66 `(request.methodDetails?.network as NetworkId) ?? 'testnet'`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-5",
+   "severity": "medium",
+   "title": "Challenge is consumed before payment is verified; a transient failure burns a paid challenge",
+   "file": "src/server/Charge.ts",
+   "line": 73,
+   "evidence": "src/server/Charge.ts:73 `await store.put(key, { usedAt: new Date().toISOString() })` \u00b7 src/channel/server/Channel.ts:101 `if (existing) {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-6",
+   "severity": "medium",
+   "title": "Pull-mode broadcast polls NOT_FOUND forever and never checks the sendTransaction status",
+   "file": "src/server/Charge.ts",
+   "line": 155,
+   "evidence": "src/server/Charge.ts:155 `while (txResult.status === 'NOT_FOUND') {` \u00b7 src/server/Charge.ts:152 `const sendResult = await server.sendTransaction(txToSubmit)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-21",
+   "severity": "medium",
+   "title": "Push-mode submission has no outcome handling, so a timed-out sendTransaction leads the caller to pay the same challenge twice",
+   "file": "src/client/Charge.ts",
+   "line": 123,
+   "evidence": "src/client/Charge.ts:123 `const result = await server.sendTransaction(prepared)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-strkey-invalid-d6036422",
+   "severity": "low",
+   "title": "An account or contract id in the code is not a valid StrKey",
+   "file": null,
+   "line": null,
+   "evidence": "src/constants.ts:34 `'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI'` (54 characters); src/constants.ts:42 `'CAS3J7GYLGVE45MR3HPSFG352DAANEV5GGMFTO3IZIE4JMCDALQO57Y'` (55 characters)",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-path-untrusted-to-financial-sink",
+   "severity": "low",
+   "title": "External input reaches a Stellar transaction boundary",
+   "file": null,
+   "line": null,
+   "evidence": "src/channel/server/Channel.ts:291 `const result = await server.sendTransaction(prepared)` [caller -> close]",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-path-untrusted-ledger-endpoint",
+   "severity": "low",
+   "title": "Input chooses the Stellar RPC or Horizon server the agent trusts",
+   "file": null,
+   "line": null,
+   "evidence": "src/channel/server/Channel.ts:55 `const server = new rpc.Server(resolvedRpcUrl)` [caller -> channel]; src/channel/server/Channel.ts:270 `const server = new rpc.Server(resolvedRpcUrl)` [caller -> close]; src/channel/server/Channel.ts:280 `const tx = new TransactionBuilder(account, {` [caller -> close]; src/server/Charge.ts:33 `const server = new rpc.Server(resolvedRpcUrl)` [caller -> charge]",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-11",
+   "severity": "low",
+   "title": "toBaseUnits mis-converts negative amounts (sign applied to whole part only)",
+   "file": null,
+   "line": null,
+   "evidence": "src/Methods.ts:75 `return (BigInt(whole) * BigInt(10 ** decimals) + BigInt(paddedFrac)).toString()`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-16",
+   "severity": "low",
+   "title": "Client charge hardcodes 7 decimals in the challenge progress event instead of the challenge's or configured decimals",
+   "file": null,
+   "line": null,
+   "evidence": "src/client/Charge.ts:73 `amount: fromBaseUnits(amount, 7),`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-13",
+   "severity": "low",
+   "title": "Client push mode never checks sendTransaction status and polls NOT_FOUND without a bound",
+   "file": null,
+   "line": null,
+   "evidence": "src/client/Charge.ts:128 `while (txResult.status === 'NOT_FOUND') {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-15",
+   "severity": "low",
+   "title": "Channel close never checks the sendTransaction status and reports a landed close as an error after 60 polls, inviting a retry",
+   "file": null,
+   "line": null,
+   "evidence": "src/channel/server/Channel.ts:291 `const result = await server.sendTransaction(prepared)`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "src/client/Charge.ts",
+   "line": 64,
+   "reason": "The client pays whatever amount the 402 challenge states. No maximum is checked before buildTransfer, signing, or push at lines 87-116. The channel client also has no ceiling. Its context.cumulativeAmount override at src/channel/client/Channel.ts:72-75 sets any cumulative value to sign, and the serv"
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "src/client/Charge.ts",
+   "line": 86,
+   "reason": "No cumulative budget exists on the client side. Nothing per day, session or caller tracks spend, so many 402 challenges can each be paid. The only cumulative tracking in the submitted code is the per-channel store entry (src/channel/server/Channel.ts:66, 221), which is per channel, not per caller, a"
+  },
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "src/channel/server/Channel.ts",
+   "line": 129,
+   "reason": "The cumulative check reads the store at line 129, then writes it at line 221 after several awaits (signature simulation and verification). Two concurrent verifications both read the old baseline and both pass the check. The charge replay check has the same get-then-put shape at src/server/Charge.ts:"
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "src/client/Charge.ts",
+   "line": 92,
+   "reason": "The client transfer destination is the recipient from the server's 402 challenge (line 64). The client has no allowlist and no binding to a configured payee, so the paying side trusts server-chosen destinations. The server-side verifier does bind recipient to its own configured recipient (src/server"
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "src/Methods.ts",
+   "line": 75,
+   "reason": "Asset identity holds on the server: the SAC contract id is compared against expected.currency at src/server/Charge.ts:235, and the amount is an exact bigint match at line 242. The amount conversion does not hold. toBaseUnits applies the sign to the whole part only, so a negative amount is mis-conver"
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "src/server/Charge.ts",
+   "line": 65,
+   "reason": "Replay protection only runs when a store is passed (line 65). Without one, the same signed proof can be reused across challenges. The reuse of a payment hash across challenges is existing finding 2. The get-then-put race is recorded as a new finding above. The client push path also lacks a bounded p"
+  },
+  {
+   "id": "V7",
+   "title": "Incoming payment verification",
+   "file": "src/server/Charge.ts",
+   "line": 264,
+   "reason": "Destination (line 239), asset contract (line 235), exact amount (line 242) and final SUCCESS status (lines 95, 160) are enforced on the transaction path. The hash path fails open: when envelopeXdr is absent, or the envelope does not decode under either passphrase, verifySacTransfer returns without a"
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "src/server/Charge.ts",
+   "line": 203,
+   "reason": "On the transaction path, the server inspects operations only to find one matching SAC transfer (contract, function, recipient, amount). verifyFromRawOps loops over all ops and sets found on the first match, but never rejects the other operations. verifySacInvocation (line 203) then leaves the fee-bu"
+  },
+  {
+   "id": "S2",
+   "title": "Raw byte signing",
+   "file": "src/server/Charge.ts",
+   "line": 149,
+   "reason": "The fee-payer key signs the fee-bump transaction's hash. The requester controls the entire inner transaction and the fee (line 145) through the submitted XDR, so the requester chooses the bytes the key signs. The fee bump authorises only the fee, but the signature is still over requester-chosen cont"
+  },
+  {
+   "id": "S3",
+   "title": "Network and endpoint pinning",
+   "file": "src/client/Charge.ts",
+   "line": 66,
+   "reason": "On the client charge and channel client paths, the network that selects the passphrase and the default RPC (SOROBAN_RPC_URLS / NETWORK_PASSPHRASE) comes from the server's challenge (client Charge.ts:66 and 78-79; channel client Channel.ts:65 and 85-86). The server chooses it, not operator configurat"
+  },
+  {
+   "id": "S4",
+   "title": "Expiry and fees",
+   "file": "src/server/Charge.ts",
+   "line": 145,
+   "reason": "Client-side timeouts are bounded (src/client/Charge.ts:101 setTimeout(timeout), default 180) and channel transactions use setTimeout(30) or (180). The server's fee-bump is set from the client's XDR: Number(tx.fee)*10, with no cap, so the sponsor's fee bid is chosen by the requester. Number() on larg"
+  },
+  {
+   "id": "S5",
+   "title": "Submission outcome",
+   "file": "src/server/Charge.ts",
+   "line": 152,
+   "reason": "The server never checks sendResult.status (ERROR, TRY_AGAIN_LATER, DUPLICATE). It goes straight to an unbounded NOT_FOUND loop (lines 154-158), so a rejected submission can hang the request. On the client push path (src/client/Charge.ts:123-131) and channel close (src/channel/server/Channel.ts:291-3"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "src/server/Charge.ts",
+   "line": 73,
+   "reason": "The server writes the replay marker (line 73) before verifying the payment, so any failure after that point (RPC error, FAILED transaction, verification throw, or send failure) leaves the challenge consumed with no refund or reconciliation. The channel server does the same at src/channel/server/Chan"
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/channel/server/Channel.ts",
+   "line": 273,
+   "reason": "Duplicate of the signing-reach check for the channel path. The on-chain close moves value and is signed with closeKey, but it is exported with no caller, so it is not wired (latent). The reachable verify path does not authenticate the payer beyond the commitment signature, and the sending path reach"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/channel/server/Channel.ts",
+   "line": 66,
+   "reason": "The cumulative baseline is keyed by channel contract address only, not by payer or challenge. Any request against a channel address reads and advances the shared cumulative. One payer's commitments therefore affect another payer's baseline if two payers share a channel contract, and nothing in code "
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "src/channel/server/Channel.ts",
+   "line": 101,
+   "reason": "The replay gate writes the challenge as used before the signature and payment are checked (line 104, store.put). A verification that throws later (bad signature, simulation failure) leaves the challenge marked used. This is a fail-closed approval that blocks later retries, the reliability pattern S8"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/channel/server/Channel.ts",
+   "line": 204,
+   "reason": "The commitment signature is checked correctly: a single expected ed25519 key, exact 128-hex-char length, and verify over the contract's commitment bytes (lines 112-123, 204-217). Unmatched or missing signatures are rejected. The failure is elsewhere in the verification. Replay protection is absent w"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/server/Charge.ts",
+   "line": 264,
+   "reason": "The rules that matter for funds are in code, not in prompts. Some are still not enforced. Hash-mode verification returns without error when the envelope is missing or cannot be parsed, so the payment check fails open (existing finding security-ai-unauthorized-payment-1). The client has no spend cap "
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/channel/server/Channel.ts",
+   "line": 98,
+   "reason": "The code comments promise \"Replay protection\" (line 97). That protection exists only when a store is passed, because the check is wrapped in if (store). Without a store the same commitment can be redeemed again, since the cumulative baseline is zero (existing finding stellar_native-ai-replay-or-idem"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/server/Charge.ts",
+   "line": 152,
+   "reason": "The SDK calls and types are valid: getTransaction and sendTransaction exist, buildFeeBumpTransaction takes the documented arguments, and the status strings match the SDK enums. The core broadcast path still ignores sendResult.status, so a rejected send is handled only by polling an unbounded NOT_FOU"
+  }
+ ]
+}

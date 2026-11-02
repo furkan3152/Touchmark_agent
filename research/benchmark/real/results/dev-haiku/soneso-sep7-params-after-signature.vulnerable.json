@@ -1,0 +1,205 @@
+{
+ "case": "soneso-sep7-params-after-signature",
+ "side": "vulnerable",
+ "repo": "Soneso/stellar-agent-wallet",
+ "commit": "12fb13459f53150a5b669ac55a33cb448a556754",
+ "audited": "https://github.com/Soneso/stellar-agent-wallet/tree/12fb13459f53150a5b669ac55a33cb448a556754/crates/stellar-agent-sep7",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/parse.rs",
+   "line_start": 226,
+   "line_end": 250
+  },
+  {
+   "path": "src/parse.rs",
+   "line_start": 844,
+   "line_end": 854
+  },
+  {
+   "path": "src/verify.rs",
+   "line_start": 278,
+   "line_end": 282
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-1",
+   "cited": "src/parse.rs:846",
+   "title": "Parameters after &signature= are not covered by the origin signature but are reported as verified"
+  },
+  {
+   "source": "ledger",
+   "id": "A7",
+   "cited": "src/parse.rs:846",
+   "title": "Verification of incoming authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "src/parse.rs:846",
+   "title": "Controls outside the prompt"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "Parameters after &signature= are not covered by the origin signature but are reported as verified",
+   "file": "src/parse.rs",
+   "line": 846,
+   "evidence": "src/parse.rs:846 `if let Some(idx) = uri.find(\"&signature=\") {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-2",
+   "severity": "medium",
+   "title": "tx preview shows only the opaque XDR and never decodes its operations",
+   "file": "src/preview.rs",
+   "line": 159,
+   "evidence": "src/preview.rs:159 `\"xdr\": tx.xdr_canonical,`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-ssrf-6",
+   "severity": "medium",
+   "title": "origin_domain fetch reaches any multi-label host, including names that resolve to private or metadata addresses",
+   "file": "src/verify.rs",
+   "line": 244,
+   "evidence": "src/verify.rs:244 `let body = fetch_stellar_toml(domain).await.map_err(|e| {`",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "medium",
+   "title": "Unpinned dependencies",
+   "file": "Cargo.toml",
+   "line": 16,
+   "evidence": "",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-7",
+   "severity": "low",
+   "title": "network_passphrase is accepted and shown without any check against the wallet network",
+   "file": "src/parse.rs",
+   "line": 418,
+   "evidence": "src/parse.rs:418 `let network_passphrase = params.remove(\"network_passphrase\");`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-9",
+   "severity": "low",
+   "title": "Strict-validation claim does not match behaviour for unknown and network parameters",
+   "file": "src/parse.rs",
+   "line": 429,
+   "evidence": "src/parse.rs:429 `Ok(Sep7PayParams {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "low",
+   "title": "asset_issuer accepted without asset_code, shown in preview as if it qualifies an asset",
+   "file": "src/parse.rs",
+   "line": 394,
+   "evidence": "src/parse.rs:394 `validate_asset_coherence(asset_code.as_deref(), asset_issuer.as_deref())?;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-11",
+   "severity": "low",
+   "title": "memo values are not checked against memo_type (MEMO_ID, MEMO_TEXT length, MEMO_HASH size)",
+   "file": "src/parse.rs",
+   "line": 406,
+   "evidence": "src/parse.rs:406 `validate_memo_coherence(memo.as_deref(), memo_type.as_ref())?;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "Query decoder turns '+' into a space, breaking unencoded base64 signature and xdr values",
+   "file": "src/parse.rs",
+   "line": 261,
+   "evidence": "src/parse.rs:261 `let replaced = s.replace('+', \" \");`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "Amount validator accepts '.' and other non-numeric forms and returns the untrimmed string",
+   "file": "src/parse.rs",
+   "line": 745,
+   "evidence": "src/parse.rs:722 `// Allow digits, exactly one optional '.', no sign.`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "low",
+   "title": "Federation destinations containing '*' bypass all validation",
+   "file": "src/parse.rs",
+   "line": 373,
+   "evidence": "src/parse.rs:373 `if !destination.contains('*') {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "Unknown query parameters are silently dropped although the parser claims to reject unvalidated input",
+   "file": "src/parse.rs",
+   "line": 429,
+   "evidence": "src/parse.rs:429 `Ok(Sep7PayParams {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "A6",
+   "title": "Outbound requests and file paths",
+   "file": "src/verify.rs",
+   "line": 244,
+   "reason": "The requester controls origin_domain, which is passed to fetch_stellar_toml(domain) after only FQDN syntax validation (parse.rs:336-339 validate_origin_domain_syntax). Any multi-label name that resolves to a private, loopback or metadata address is fetched, so the agent can be used as an SSRF probe."
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/parse.rs",
+   "line": 846,
+   "reason": "The signed artifact is the SEP-7 URI. The verifier correctly uses a single expected signer (the stellar.toml URI_REQUEST_SIGNING_KEY, verify.rs:191 verifying_key.verify), requires a 64-byte signature, and returns Failed on mismatch. The gap is that the payload is everything before the first &signatu"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/parse.rs",
+   "line": 846,
+   "reason": "The prior answer holds only for the absence of signing, POST and submit code: a search of the submitted files finds no Keypair, sign, reqwest or submit path, so the no-sign/no-submit/no-POST rules hold in code. The rule that does matter for the user's trust, the origin_verified anti-phishing status,"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/parse.rs",
+   "line": 429,
+   "reason": "The README and crate doc claim strict validation and reject-never-ignore. The code removes known keys and returns without checking the rest, so unknown parameters pass silently. network_passphrase is also passed through with no check (parse.rs:418), and it is shown in the preview as if it were check"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/parse.rs",
+   "line": 261,
+   "reason": "The core path fails for standard base64 values. '+' is turned into a space before base64 decode, so a standard-base64 xdr or signature containing '+' is rejected or verified wrongly. Other SDK and type uses look correct: TransactionEnvelope::from_xdr with Limits, to_xdr_base64, stellar_strkey, ed255"
+  }
+ ]
+}

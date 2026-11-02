@@ -1,0 +1,269 @@
+{
+ "case": "oz-delegated-signer-invoker-bypass",
+ "side": "vulnerable",
+ "repo": "OpenZeppelin/stellar-contracts",
+ "commit": "9cfddbb5b0d158f5ec948d0ad6767383d629d1c4",
+ "audited": "https://github.com/OpenZeppelin/stellar-contracts/tree/9cfddbb5b0d158f5ec948d0ad6767383d629d1c4/packages/accounts",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/smart_account/storage.rs",
+   "line_start": 394,
+   "line_end": 397
+  },
+  {
+   "path": "src/smart_account/storage.rs",
+   "line_start": 537,
+   "line_end": 545
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-3",
+   "cited": "src/smart_account/storage.rs:548",
+   "title": "Auth payload chooses the context rule, so a spending limit can be bypassed by routing a transfer through an unlimited ru"
+  },
+  {
+   "source": "ledger",
+   "id": "V1",
+   "cited": "src/smart_account/storage.rs:548",
+   "title": "Per-action amount bound"
+  }
+ ],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-1",
+   "severity": "critical",
+   "title": "Spending limit budget addition is unchecked and can wrap",
+   "file": "src/policies/spending_limit.rs",
+   "line": 285,
+   "evidence": "src/policies/spending_limit.rs:285 `if data.cached_total_spent + amount > data.spending_limit {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-14",
+   "severity": "critical",
+   "title": "Ed25519 canonicalization is identity, so one key can be registered twice and satisfy an M-of-N threshold",
+   "file": "src/smart_account/storage.rs",
+   "line": 617,
+   "evidence": "src/verifiers/ed25519.rs:53 `Bytes::from_slice(e, &public_key.to_array())`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-ai-control-bypass-3",
+   "severity": "critical",
+   "title": "Auth payload chooses the context rule, so a spending limit can be bypassed by routing a transfer through an unlimited rule for the same signer",
+   "file": "src/smart_account/storage.rs",
+   "line": 548,
+   "evidence": "src/smart_account/storage.rs:548 `for (rule, context, matched_signers) in validated_contexts.iter() {` \u00b7 src/policies/spending_limit.rs:285 `if data.cached_total_spent + amount > data.spending_limit {` \u00b7 src/policies/spending_limit.rs:253 `if fn_name == &symbol_short!(\"transfer\") {` \u00b7 src/smart_account/storage.rs:340 `context_rule.context_type == ContextRuleType::Default`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-7",
+   "severity": "critical",
+   "title": "ExecutionEntryPoint::execute lets an authorized signer bypass policies and self-escalate via nested self-invocation",
+   "file": "src/smart_account/mod.rs",
+   "line": 562,
+   "evidence": "src/smart_account/mod.rs:562 `e.invoke_contract::<Val>(&target, &target_fn, target_args);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-4",
+   "severity": "critical",
+   "title": "Transfer recipient not constrained by any policy",
+   "file": "src/policies/spending_limit.rs",
+   "line": 253,
+   "evidence": "src/policies/spending_limit.rs:253 `if fn_name == &symbol_short!(\"transfer\") {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "medium",
+   "title": "Unpinned dependencies",
+   "file": "Cargo.toml",
+   "line": 18,
+   "evidence": "",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-soroban-overflow-unchecked",
+   "severity": "low",
+   "title": "Soroban contract arithmetic can wrap around in release builds",
+   "file": "src/policies/spending_limit.rs",
+   "line": 285,
+   "evidence": "Cargo.toml",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-11",
+   "severity": "low",
+   "title": "Removing signers from a rule does not re-validate or notify the threshold policy, so the rule can become permanently unsatisfiable",
+   "file": null,
+   "line": null,
+   "evidence": "src/smart_account/storage.rs:1042 `validate_signers_and_policies(e, &entry.signer_ids, &entry.policy_ids);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-12",
+   "severity": "low",
+   "title": "set_threshold writes a threshold without checking the policy is installed for that rule, which blocks a later install",
+   "file": null,
+   "line": null,
+   "evidence": "src/policies/simple_threshold.rs:362 `e.storage().persistent().set(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-13",
+   "severity": "low",
+   "title": "Failed policy uninstall is silently discarded while the rule and registry entry are removed",
+   "file": null,
+   "line": null,
+   "evidence": "src/smart_account/storage.rs:912 `let _ = PolicyClient::new(e, &policy) .try_uninstall(&context_rule, &e.current_contract_address());`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-2",
+   "severity": "low",
+   "title": "Weighted threshold feasibility check counts weights of signers outside the context rule",
+   "file": null,
+   "line": null,
+   "evidence": "src/policies/weighted_threshold.rs:465 `if params.threshold > total_weight {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-10",
+   "severity": "low",
+   "title": "Threshold record is never TTL-extended on install or set, so a rarely used rule can lock after archival",
+   "file": "src/policies/simple_threshold.rs",
+   "line": 362,
+   "evidence": "src/policies/simple_threshold.rs:362 `e.storage().persistent().set(`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-5",
+   "severity": "low",
+   "title": "Smart account instance storage and new rule entries never have their TTL extended",
+   "file": null,
+   "line": null,
+   "evidence": "src/smart_account/storage.rs:741 `e.storage().instance().set(&SmartAccountStorageKey::NextId, &next_id);` \u00b7 src/smart_account/mod.rs:391 `e.current_contract_address().require_auth();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-8",
+   "severity": "low",
+   "title": "Weighted policy entry is read without TTL extension before the install check, so an archived entry blocks every authorization through the rule",
+   "file": "src/policies/weighted_threshold.rs",
+   "line": 327,
+   "evidence": "src/policies/weighted_threshold.rs:327 `e.storage().persistent().get(&key).unwrap_or_else(|| {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-9",
+   "severity": "low",
+   "title": "Spending-limit history cap lets one authorized signer block a context rule for a full window",
+   "file": "src/policies/spending_limit.rs",
+   "line": 289,
+   "evidence": "src/policies/spending_limit.rs:289 `if data.spending_history.len() >= MAX_HISTORY_ENTRIES {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-6",
+   "severity": "low",
+   "title": "Public batch_add_signer helper mutates context-rule signers with no authorization check",
+   "file": null,
+   "line": null,
+   "evidence": "src/smart_account/storage.rs:1095 `pub fn batch_add_signer(e: &Env, id: u32, signers: &Vec<Signer>) {`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "src/smart_account/storage.rs",
+   "line": 548,
+   "reason": "Per-action bound holds on the spending-limit path: spending_limit.rs enforces amount <= remaining budget for transfer calls under a CallContract rule (line 285-287). It fails on a reachable path. The auth payload selects the rule per context, so a transfer can be validated under an unrestricted rule"
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "src/policies/spending_limit.rs",
+   "line": 285,
+   "reason": "The cumulative budget is real: it is stored per (account, rule) in persistent storage with a rolling window (spending_limit.rs:186-202, 273-296), so many small transfers under the same rule cannot exceed the limit, and it survives across ledgers. It is not enforced on every path, because the same si"
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "src/policies/spending_limit.rs",
+   "line": 253,
+   "reason": "The spending-limit policy reads only args[2] (the amount). It never reads args[1] (the recipient) and no allowlist exists in the submitted files. Any signer in a matching rule can pay any destination within the budget. This is consistent with a spending limit being a budget, not a destination contro"
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "src/policies/spending_limit.rs",
+   "line": 285,
+   "reason": "Asset identity holds: spending limits install only on CallContract rules (spending_limit.rs:402-404), and get_validated_context_by_id compares the rule's contract with the context's contract (storage.rs:324-345), so the budget applies to the pinned token. The amount is parsed once and the same Val i"
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "src/smart_account/storage.rs",
+   "line": 340,
+   "reason": "The library signs nothing, so the signing half does not apply. On the inbound side, the auth payload picks the rule per context (storage.rs:516). A Default rule matches any context (line 340) and, without policies, only needs its signers present (line 353-357). A context such as a transfer on any co"
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "src/smart_account/storage.rs",
+   "line": 741,
+   "reason": "State-changing trait functions all call require_auth for the account (mod.rs 280-523), and policy writes are gated by smart_account.require_auth(). Per-user records (ContextRuleData, SignerData, PolicyData, policy AccountContext) are in persistent storage, not instance storage. The instance storage "
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/smart_account/storage.rs",
+   "line": 1095,
+   "reason": "Every public management and signing entry point in the shipped trait requires account auth: add_context_rule (mod.rs:280), update_context_rule_name (mod.rs:310), update_context_rule_valid_until (mod.rs:355), remove_context_rule (mod.rs:391), add_signer (mod.rs:424), remove_signer (mod.rs:455), add_p"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/policies/spending_limit.rs",
+   "line": 253,
+   "reason": "Safety rules are enforced in code, not in prompts: do_check_auth rejects unlisted signers (storage.rs:541), policies run enforce on every selected rule (storage.rs:550), and spending_limit.rs:241 requires smart account auth. However the spending limit can be routed around by the auth payload choosin"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/policies/spending_limit.rs",
+   "line": 285,
+   "reason": "The README and policy docs claim the spending limit enforces a rolling-window cap. The cap is applied only on the rule the auth payload selects (storage.rs:548 loops over validated contexts, which the payload chooses) and the addition at line 285 is unchecked, so the claimed limit does not hold for "
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/smart_account/mod.rs",
+   "line": 391,
+   "reason": "The core path is real Soroban SDK usage: require_auth, PolicyClient and VerifierClient calls, secp256r1_verify and sha256 on the host. The shipped account can, however, lose its core function: TTL on instance storage and new rule entries is never extended, so the account can expire (already recorded"
+  }
+ ]
+}

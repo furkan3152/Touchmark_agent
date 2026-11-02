@@ -63,7 +63,9 @@ Fixed commits were audited for the eight critical and high-impact cases: 6 are c
 
 **Development set (16 cases): 11 detected** with Claude Sonnet 5.5 before the lessons were added
 ([`results/dev`](results/dev)). These cases were used to find and fix weaknesses, so they are not a measure of
-accuracy on unseen code.
+accuracy on unseen code. Re-run with Claude Haiku and the lessons, 8 of the 16 so far, including the two Sonnet had
+missed (`sdp-tss-feebump-replaced-double-pay`, `oz-delegated-signer-invoker-bypass`): 8 detected
+([`results/dev-haiku`](results/dev-haiku)).
 
 **Cost.** About $0.45 of model usage per audit on the Anthropic bill, with prompt caching (97% cache hits).
 
