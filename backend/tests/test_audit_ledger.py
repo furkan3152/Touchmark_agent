@@ -453,3 +453,15 @@ def test_each_focused_file_review_carries_the_lessons_and_criteria_for_what_the_
     # Every lesson names capability kinds the file map can produce.
     from backend.app.services.file_map import CAPABILITY_KINDS
     assert all(lesson.kinds <= set(CAPABILITY_KINDS) for lesson in lessons.LESSONS)
+
+
+def test_a_file_review_cut_off_by_the_end_of_a_leg_is_started_again():
+    units = {
+        "done.go": {"status": "completed"},
+        "cut.go": {"status": "partial", "attempts": 1},
+        "died.go": {"status": "running", "attempts": 1},
+        "never_fits.go": {"status": "partial", "attempts": DeepReviewer.unit_attempts},
+        "failed.go": {"status": "failed", "attempts": 1},
+    }
+    targets = ["done.go", "cut.go", "died.go", "never_fits.go", "failed.go", "new.go"]
+    assert DeepReviewer._unit_todo(targets, units) == ["cut.go", "died.go", "new.go"]

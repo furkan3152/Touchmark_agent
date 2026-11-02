@@ -994,7 +994,7 @@ class DeepReviewer:
         from .progress import emit
         from .review_budget import LegSuspended, ReviewCancelled
         targets = self._unit_targets(artifact, result)
-        todo = [p for p in targets if p not in result.units]
+        todo = self._unit_todo(targets, result.units)
         cards = FileMap.from_state(result.map_state).cards
         sem = asyncio.Semaphore(self.unit_concurrency)
         lock = asyncio.Lock()
@@ -1006,7 +1006,9 @@ class DeepReviewer:
             async with sem:
                 if stops or suspended or cancelled:
                     return
-                result.units[path] = {"status": "running", "invariants": [], "findings": []}
+                prev = result.units.get(path) or {}
+                result.units[path] = {"status": "running", "invariants": prev.get("invariants", []),
+                                      "findings": prev.get("findings", []), "attempts": prev.get("attempts", 0) + 1}
                 try:
                     status = await self._unit_loop(artifact, flows, pack, result, path, cards.get(path) or {},
                                                    budget, leg)
@@ -1036,6 +1038,22 @@ class DeepReviewer:
             raise suspended[0]
         result.units_done = True
         return "capped" if stops else "completed"
+
+    #: How many legs one file review may start in. A review cut off by the end of a leg is started again in
+    #: the next leg; a file that never fits is left partial instead of looping.
+    unit_attempts = 3
+
+    @classmethod
+    def _unit_todo(cls, targets: list[str], units: dict) -> list[str]:
+        """Files still to review: never started, or cut off by the end of a leg (partial, or running when the
+        request died) with attempts left. Without this, a file interrupted mid-review was never reviewed."""
+        out = []
+        for path in targets:
+            unit = units.get(path)
+            if unit is None or (unit.get("status") in ("partial", "running")
+                                and unit.get("attempts", 1) < cls.unit_attempts):
+                out.append(path)
+        return out
 
     async def _unit_loop(self, artifact, flows, pack: str, result: DeepReviewResult, path: str, card: dict,
                          budget, leg) -> str:
