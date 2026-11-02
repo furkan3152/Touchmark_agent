@@ -395,9 +395,9 @@ class AuditSwarm:
     @staticmethod
     def _apply_disputes(verdicts, verification: dict):
         """Record each verdict on its finding. A rule finding that independent verification
-        refutes, quoting the code that contradicts it, is lowered one level and marked as disputed. It is never removed;
-        a candidate-rule finding (policy.CANDIDATE_RULES) is dismissed to a zero-weight note instead. A refutation never
-        touches a model-review finding. A confirmed or partial verdict with a lower reviewed severity lowers rule and
+        refutes, quoting the code that contradicts it, is lowered one level and marked as disputed.
+        A refuted model finding counts at reduced weight, and a refuted critical one becomes high. It is never removed;
+        a candidate-rule finding (policy.CANDIDATE_RULES) is dismissed to a zero-weight note instead. A confirmed or partial verdict with a lower reviewed severity lowers rule and
         model findings alike, except the fund, signing and access categories (_KEEPS_SEVERITY); a critical model
         finding goes down at most one level, to high, so it still blocks a pass; rule and on-chain criticals keep
         their severity."""
@@ -518,6 +518,17 @@ class AuditSwarm:
                         "detail": f.detail + f" Independent verification refutes this at {r.get('file', '')}:"
                                   f"{r.get('line', '')}: {str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.3)})
+                elif (r is not None and r.get("verdict") == "refuted" and "-ai-" in f.id and f.is_risk
+                      and r.get("quote_verified")):
+                    # A model finding the verifier refutes at a quoted code line (not a comment): two model
+                    # passes disagree. It is never talked away: a critical goes down to high, which still blocks
+                    # a pass, and every level counts at reduced weight. On never-audited agents refuted
+                    # criticals otherwise kept their full weight.
+                    f = f.model_copy(update={
+                        "severity": Severity.HIGH if f.severity is Severity.CRITICAL else f.severity,
+                        "detail": f.detail + f" Independent verification disputes this at {r.get('file', '')}:"
+                                  f"{r.get('line', '')}: {str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.5)})
                 findings.append(f)
             out.append(AuditSwarm._rescore(verdict, findings) if findings != verdict.findings
                        else verdict.model_copy(update={"findings": findings}))

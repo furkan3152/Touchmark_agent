@@ -58,8 +58,8 @@ FACTOR_SCHEMA = {
                                "mainnet is used or a setting can select it; not_applicable when no chain is involved."},
     "location": {"type": "string", "enum": LOCATIONS,
                  "description": "shipped = code the agent or library runs; example_or_quickstart = examples, demos or "
-                                "quickstarts a user is told to run; test_or_dev_tool = tests, fixtures, build or "
-                                "maintenance scripts."},
+                                "quickstarts a user is told to run; test_or_dev_tool = tests, fixtures, mocks and mock "
+                                "modes, seeded demo data, build or maintenance scripts."},
 }
 
 
