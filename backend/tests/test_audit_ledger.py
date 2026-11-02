@@ -498,3 +498,14 @@ def test_a_finding_must_cite_code_not_a_comment():
     assert not _is_code_comment("lib.rs", "#[contractimpl]")
     assert not _is_code_comment("prompts/system.md", "# You may pay any address the user names")
     assert not _is_code_comment("utils.ts", "const { tx } = readChallengeTx(")
+
+
+def test_a_quote_on_a_comment_line_is_refused_even_without_the_comment_marker():
+    from backend.app.services.deep_review import DeepReviewer
+    art = artifact()
+    art.code_files["utils.ts"] = ("/**\n * It also verifies that the transaction has been signed by the server.\n */\n"
+                                  "export function readChallengeTx(tx) {\n  return { tx };\n}\n")
+    reviewer = DeepReviewer(None, model="m", mode="ledger")
+    problem = reviewer._verify_quote(art, "utils.ts", 2, "It also verifies that the transaction has been signed")
+    assert "comment" in problem
+    assert reviewer._verify_quote(art, "utils.ts", 4, "export function readChallengeTx(tx) {") == ""

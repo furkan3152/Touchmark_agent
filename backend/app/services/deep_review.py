@@ -572,6 +572,10 @@ class DeepReviewer:
         squash = lambda s: " ".join(s.split())
         if quote not in window and squash(quote) not in squash(window):
             return "quote not found at the cited line"
+        if _is_code_comment(path, lines[line - 1]):
+            # Judged by the source line, not the quote: a quote can leave out the comment marker.
+            return ("the cited line is a code comment. Cite the code line that decides it: for a comment that "
+                    "promises a check, the code that should make it")
         return ""
 
     def _run_tool(self, name: str, args: dict, artifact: AgentArtifact, flows: dict, result: DeepReviewResult) -> str:
@@ -623,9 +627,6 @@ class DeepReviewer:
                 args = {**args, "severity": severity_table.compute(args.get("asset"), args.get("trigger"),
                                                                    args.get("network"), args.get("location"))}
             problem = self._verify_quote(artifact, args.get("file", ""), args.get("line", 0), args.get("evidence_quote", ""))
-            if not problem and _is_code_comment(args.get("file", ""), args.get("evidence_quote", "")):
-                problem = ("the quote is a code comment. Cite the code line where the defect is: for a comment that "
-                           "promises a check the code does not make, quote the code that should make it")
             category = args.get("category")
             if not problem and category not in CATEGORIES:
                 problem = "unknown category"
