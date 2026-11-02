@@ -6,7 +6,10 @@ states four facts, and the severity follows from them by a fixed table, so the s
 the same severity on every run and every agent.
 
 * what is at risk (``asset``): funds, keys, account control, the host (code execution) -> critical;
-  funds locked or delayed -> high; availability, data exposure, correctness -> medium; nothing -> low;
+  funds locked or delayed -> high; the operator's own provider spend (model or API bills, quotas),
+  availability, data exposure, correctness -> medium; nothing -> low. A read-only agent whose chat quota
+  can be raced was rated critical as "funds"; the operator paying more for a model is not value taken
+  from an account, so it has its own, lower, asset;
 * who can trigger it (``trigger``): anyone, including content the agent reads, or any user -> as is;
   a counterparty the agent talks to (payment server, RPC, facilitator) -> one level lower; only the
   operator -> two lower; nobody yet (no caller, not wired) -> low;
@@ -21,7 +24,8 @@ LEVELS = ["low", "medium", "high", "critical"]
 ASSETS = {
     "funds": "critical", "keys_or_secrets": "critical", "account_control": "critical",
     "host_code_execution": "critical", "funds_locked_or_delayed": "high",
-    "service_availability": "medium", "data_exposure": "medium", "correctness": "medium", "none": "low",
+    "operator_spend": "medium", "service_availability": "medium", "data_exposure": "medium", "correctness": "medium",
+    "none": "low",
 }
 TRIGGERS = {"anyone": 0, "any_user": 0, "counterparty": -1, "operator_only": -2, "nobody_yet": None}
 NETWORKS = ["mainnet_or_configurable", "testnet_only", "not_applicable"]
@@ -29,7 +33,9 @@ LOCATIONS = ["shipped", "example_or_quickstart", "test_or_dev_tool"]
 
 FACTOR_SCHEMA = {
     "asset": {"type": "string", "enum": sorted(ASSETS),
-              "description": "What an exploit or failure costs: funds = value taken or lost; keys_or_secrets = a "
+              "description": "What an exploit or failure costs: funds = on-chain value or users' money taken or lost "
+                             "(not the operator's own model or API bills); operator_spend = higher model, API or "
+                             "provider bills, quotas or rate limits bypassed; keys_or_secrets = a "
                              "key, seed or credential exposed; account_control = signers, thresholds, merge, "
                              "contract admin or upgrade; host_code_execution = commands or code run on the host; "
                              "funds_locked_or_delayed = value stuck or settlement blocked; service_availability; "

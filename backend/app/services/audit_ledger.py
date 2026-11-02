@@ -77,11 +77,14 @@ CATALOG: tuple[Check, ...] = (
        "Is every amount the agent pays, transfers, swaps or approves bounded by a code-enforced maximum "
        "before signing, on every path that moves value (each tool, route and retry)?", "unauthorized_payment", VALUE),
     _c("V2", "value", "Cumulative budget",
-       "Is there a cumulative (per day, per session or per caller) limit that many small requests cannot "
-       "exceed, stored somewhere that survives restarts and is shared by every instance?", "economic_loss", VALUE),
+       "Is there a cumulative (per day, per session or per caller) limit on the value the agent pays or "
+       "transfers that many small requests cannot exceed, stored somewhere that survives restarts and is shared "
+       "by every instance? Quotas on model or API usage are not value movement: answer not_applicable when "
+       "the agent moves no value.", "economic_loss", VALUE),
     _c("V3", "value", "Atomic budget accounting",
-       "Are budget or balance checks and their recording atomic, so two concurrent requests cannot both pass "
-       "before either is counted, and is spend recorded before (not after) the payment is sent?",
+       "Are budget or balance checks on value the agent pays and their recording atomic, so two concurrent "
+       "requests cannot both pass before either is counted, and is spend recorded before (not after) the payment "
+       "is sent? Model or API quotas do not count: answer not_applicable when the agent moves no value.",
        "economic_loss", VALUE),
     _c("V4", "value", "Recipient binding",
        "Is the destination of every payment or transfer fixed by the operator, checked against an allowlist, "

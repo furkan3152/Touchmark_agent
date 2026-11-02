@@ -13,6 +13,8 @@
     needs_fixes: "Do not give this agent the keys yet.",
     needs_evidence: "No actionable risk, but part of the agent could not be reviewed.",
   };
+  const KEY_KINDS = new Set(["moves_value", "verifies_incoming_payment", "signs_transactions", "submits_transactions",
+    "builds_from_external_xdr", "signs_raw_bytes", "changes_account_authority", "invokes_contract"]);
   const DECISION_WORDS = { pass: "pass", needs_fixes: "needs fixes", needs_evidence: "needs evidence" };
 
   function el(tag, attrs = {}, ...children) {
@@ -693,7 +695,11 @@
     const decision = $("decision");
     decision.className = "decision " + data.decision;
     decision.textContent = DECISION_WORDS[data.decision] || data.decision;
-    $("headline").textContent = HEADLINES[data.decision] || data.decision;
+    // "Keys" fits an agent that signs, pays or holds a secret; a read-only agent is told to fix before relying on it.
+    const kinds = ((data.ai || {}).ledger || {}).agent_kinds;
+    const holdsAuthority = !Array.isArray(kinds) || kinds.some((k) => KEY_KINDS.has(k));
+    $("headline").textContent = data.decision === "needs_fixes" && !holdsAuthority
+      ? "Fix these before you rely on this agent." : HEADLINES[data.decision] || data.decision;
 
     const source = $("source"); source.textContent = "";
     const src = data.source || {};

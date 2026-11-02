@@ -468,3 +468,11 @@ def test_a_file_review_cut_off_by_the_end_of_a_leg_is_started_again():
     }
     targets = ["done.go", "cut.go", "died.go", "never_fits.go", "failed.go", "new.go"]
     assert DeepReviewer._unit_todo(targets, units) == ["cut.go", "died.go", "new.go"]
+
+
+def test_the_operators_own_model_or_api_bill_is_not_funds():
+    from backend.app.services import severity
+    # A read-only agent whose chat quota can be raced costs its operator money, not an account its value.
+    assert severity.compute("operator_spend", "anyone", "not_applicable", "shipped") == "medium"
+    assert severity.compute("funds", "anyone", "not_applicable", "shipped") == "critical"
+    assert "operator_spend" in severity.FACTOR_SCHEMA["asset"]["enum"]
