@@ -84,7 +84,8 @@ LESSONS: tuple[Lesson, ...] = (
        "Fees, shares and swap amounts must round in the protocol's favour",
        "Integer division truncates. A fee computed as floor(amount * rate / base) is zero for small amounts, so a "
        "swap split into small pieces pays no fee; shares minted with floor() can be zero while the deposit is "
-       "taken. Check the rounding direction of every fee, share, price and invariant calculation, and that a "
+       "taken, which is the depositor's loss even though the pool keeps the tokens (a first depositor can donate "
+       "to the pool so that the next deposit mints nothing). Check the rounding direction of every fee, share, price and invariant calculation, and that a "
        "result of zero is rejected where it would give value away."),
     _l("cross-tenant-lookup", {"authenticates_callers", "moves_value"},
        "Every lookup is scoped to the caller",
