@@ -80,6 +80,12 @@ LESSONS: tuple[Lesson, ...] = (
        "Every failure path must leave state consistent",
        "After a rejection, a FAILED result or an exception, check what each branch leaves: a debit with no refund, "
        "a 'pending' or 'settling' marker that blocks all later requests, a record marked paid that was not."),
+    _l("rounding-direction", {"moves_value", "invokes_contract"},
+       "Fees, shares and swap amounts must round in the protocol's favour",
+       "Integer division truncates. A fee computed as floor(amount * rate / base) is zero for small amounts, so a "
+       "swap split into small pieces pays no fee; shares minted with floor() can be zero while the deposit is "
+       "taken. Check the rounding direction of every fee, share, price and invariant calculation, and that a "
+       "result of zero is rejected where it would give value away."),
     _l("cross-tenant-lookup", {"authenticates_callers", "moves_value"},
        "Every lookup is scoped to the caller",
        "A transaction, account or API key read by id must be checked against the authenticated caller and tenant; "

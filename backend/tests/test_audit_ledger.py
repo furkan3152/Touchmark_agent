@@ -446,6 +446,9 @@ def test_each_focused_file_review_carries_the_lessons_and_criteria_for_what_the_
     assert "sep10-client-signature" in {x.id for x in lessons.for_card(verify)[1]}
     assert "SEP-10 / SEP-45 web authentication" in lessons.prompt_block(verify)
     assert lessons.prompt_block({"capabilities": [{"kind": "calls_llm"}]}) == ""
+    # A contract that moves value is told to check rounding direction, and the lesson survives the size cap.
+    contract = {"capabilities": [{"kind": "moves_value"}, {"kind": "invokes_contract"}]}
+    assert "round in the protocol's favour" in lessons.prompt_block(contract)
     reviewer = DeepReviewer(None, model="m", mode="ledger")
     text = reviewer._unit_instruction(artifact(), "src/main/kotlin/PayoutService.kt",
                                       {"capabilities": [{"kind": "submits_transactions"}]}, "- none")
