@@ -535,6 +535,9 @@ def test_severity_facts_are_held_to_the_file_map_evidence():
     assert severity.ground({"asset": "account_control", "file": "auth.ts"}, {"capabilities": [
         {"kind": "authenticates_callers"}]})[0]["asset"] == "data_exposure"
     assert severity.ground({"asset": "funds", "file": "x.ts"}, None)[0]["asset"] == "funds"
+    # A contract's admin is authority in itself: an initialize anyone can call first stays account control.
+    oracle = {"role": "contract", "capabilities": [{"kind": "stores_shared_state"}]}
+    assert severity.ground({"asset": "account_control", "file": "oracle/lib.rs"}, oracle)[0]["asset"] == "account_control"
     # Mock and test paths are not shipped code; example paths are examples.
     assert severity.ground({"asset": "funds", "file": "src/mock/mock-service.ts", "location": "shipped"},
                            payer)[0]["location"] == "test_or_dev_tool"

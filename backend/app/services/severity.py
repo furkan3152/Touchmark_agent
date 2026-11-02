@@ -96,7 +96,8 @@ def ground(args: dict, card: dict | None) -> tuple[dict, list[str]]:
     path = str(args.get("file") or "")
     asset = out.get("asset")
     kinds = {c.get("kind") for c in (card or {}).get("capabilities", []) if isinstance(c, dict)}
-    if card is not None and asset in ASSET_NEEDS and not kinds & ASSET_NEEDS[asset]:
+    # A smart contract holds authority itself: its admin, storage and calls decide prices, limits and funds.
+    if card is not None and card.get("role") != "contract" and asset in ASSET_NEEDS and not kinds & ASSET_NEEDS[asset]:
         out["asset"] = UNSUPPORTED[asset]
         notes.append(f"{path} has no quoted capability that puts {asset} at risk, so it is rated as {out['asset']}")
     if out.get("location") == "shipped" or out.get("location") not in LOCATIONS:
