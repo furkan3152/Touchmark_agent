@@ -36,7 +36,7 @@ MAX_CARD_BYTES = 256_000
 MAX_ARCHIVE_BYTES = 60_000_000
 MAX_EXTRACTED_BYTES = 200_000_000
 _GITHUB = re.compile(r"^(?:https://github\.com/|github:)([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?"
-                     r"(?:/(?:tree|commit|blob)/([A-Za-z0-9_./-]+))?/?$")
+                     r"(?:/(?:tree|commit|blob)/([A-Za-z0-9_.@/-]+))?/?$")
 _SHA = re.compile(r"^[a-f0-9]{40}$")
 
 

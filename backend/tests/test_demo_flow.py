@@ -72,6 +72,10 @@ def test_github_folder_links():
     assert github_subpath(url) == "examples/demo/safe-treasury-agent"
     assert github_subpath("https://github.com/o/r") == ""
     assert github_subpath("https://github.com/o/r/tree/main/../secret") == ""
+    # JavaScript monorepos keep packages in scoped folders such as @scope/name.
+    scoped = "https://github.com/stellar/typescript-wallet-sdk/tree/41d1cba/@stellar/typescript-wallet-sdk/src"
+    assert parse_github(scoped) == ("stellar", "typescript-wallet-sdk", "41d1cba")
+    assert github_subpath(scoped) == "@stellar/typescript-wallet-sdk/src"
 
 
 def test_the_result_says_which_ai_checks_ran(monkeypatch):
