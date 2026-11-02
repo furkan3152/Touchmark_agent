@@ -476,3 +476,13 @@ def test_the_operators_own_model_or_api_bill_is_not_funds():
     assert severity.compute("operator_spend", "anyone", "not_applicable", "shipped") == "medium"
     assert severity.compute("funds", "anyone", "not_applicable", "shipped") == "critical"
     assert "operator_spend" in severity.FACTOR_SCHEMA["asset"]["enum"]
+
+
+def test_a_service_api_key_is_rated_below_a_signing_key_and_capabilities_are_stellar_scoped():
+    from backend.app.services import severity
+    from backend.app.services.file_map import SYSTEM_PROMPT as MAP_PROMPT
+    assert severity.compute("service_credential", "anyone", "not_applicable", "shipped") == "high"
+    assert severity.compute("service_credential", "counterparty", "not_applicable", "shipped") == "medium"
+    assert severity.compute("keys_or_secrets", "anyone", "mainnet_or_configurable", "shipped") == "critical"
+    # HMAC cookies and app accounts are not Stellar signing or account authority.
+    assert "HMAC, JWT, cookie or webhook" in MAP_PROMPT and "application user accounts" in MAP_PROMPT

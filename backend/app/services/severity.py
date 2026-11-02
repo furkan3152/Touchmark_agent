@@ -9,7 +9,8 @@ the same severity on every run and every agent.
   funds locked or delayed -> high; the operator's own provider spend (model or API bills, quotas),
   availability, data exposure, correctness -> medium; nothing -> low. A read-only agent whose chat quota
   can be raced was rated critical as "funds"; the operator paying more for a model is not value taken
-  from an account, so it has its own, lower, asset;
+  from an account, so it has its own, lower, asset. Likewise an API key for a search or model provider
+  (``service_credential``) is high, not the critical of a signing key;
 * who can trigger it (``trigger``): anyone, including content the agent reads, or any user -> as is;
   a counterparty the agent talks to (payment server, RPC, facilitator) -> one level lower; only the
   operator -> two lower; nobody yet (no caller, not wired) -> low;
@@ -22,7 +23,7 @@ from __future__ import annotations
 LEVELS = ["low", "medium", "high", "critical"]
 
 ASSETS = {
-    "funds": "critical", "keys_or_secrets": "critical", "account_control": "critical",
+    "funds": "critical", "keys_or_secrets": "critical", "account_control": "critical", "service_credential": "high",
     "host_code_execution": "critical", "funds_locked_or_delayed": "high",
     "operator_spend": "medium", "service_availability": "medium", "data_exposure": "medium", "correctness": "medium",
     "none": "low",
@@ -36,7 +37,9 @@ FACTOR_SCHEMA = {
               "description": "What an exploit or failure costs: funds = on-chain value or users' money taken or lost "
                              "(not the operator's own model or API bills); operator_spend = higher model, API or "
                              "provider bills, quotas or rate limits bypassed; keys_or_secrets = a "
-                             "key, seed or credential exposed; account_control = signers, thresholds, merge, "
+                             "Stellar or wallet signing key, seed, or a credential that controls funds or the host, "
+                             "exposed; service_credential = an API key or token for a third-party service (search, "
+                             "model provider, analytics) exposed; account_control = signers, thresholds, merge, "
                              "contract admin or upgrade; host_code_execution = commands or code run on the host; "
                              "funds_locked_or_delayed = value stuck or settlement blocked; service_availability; "
                              "data_exposure = non-secret data leaked; correctness = wrong behaviour without loss; "
