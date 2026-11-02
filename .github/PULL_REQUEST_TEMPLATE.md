@@ -24,10 +24,10 @@ Please describe the tests that you ran to verify your changes. Provide instructi
 
 ## Checklist:
 
-- [ ] My code follows the style guidelines of this project (PEP 8 for Python, `cargo fmt` for Rust)
+- [ ] My code follows the style of this project (PEP 8 and the surrounding code for Python, `cargo fmt` for Rust)
 - [ ] I have performed a self-review of my own code
 - [ ] I have commented my code, particularly in hard-to-understand areas
 - [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings (checked with `flake8` and `cargo clippy`)
+- [ ] My changes generate no new warnings (`cargo clippy --workspace --all-targets -- -D warnings`)
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests pass locally with my changes

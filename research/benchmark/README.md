@@ -64,7 +64,8 @@ numbers by hand.
 
 1. Audit each agent folder with the Touchmark live demo, using a GitHub reference
    to the folder, for example
-   `https://github.com/furkan3152/Touchmark_agent/tree/main/research/benchmark/agents/invoice-settler`.
+   `https://github.com/furkan3152/Touchmark_agent/tree/<commit>/research/benchmark/agents/invoice-settler`,
+   pinned to a commit so every run audits the same code.
    Use the same tier and settings for every agent.
 2. Save the report JSON (the downloaded report, or the job result that nests it
    under `report`) as e.g. `results/<date>/invoice-settler-run1.json`. For

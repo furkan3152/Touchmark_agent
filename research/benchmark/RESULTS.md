@@ -1,4 +1,8 @@
-# Benchmark results
+# Benchmark results (historical)
+
+These runs are kept for the record. They used Claude Sonnet 5.5, before the review's lessons were added and before
+the demo moved to Claude Haiku 5.5, and have not been repeated with the current configuration. Current results on
+real defects are in [real/README.md](real/README.md).
 
 Live demo (touchmark-stellar.vercel.app, check-ledger mode, Claude Sonnet 5.5), 2026-11-01. Each agent
 was audited by its GitHub tree URL with the model review consented; three agents were audited
@@ -13,7 +17,7 @@ and line (within 5 lines).
 | escrow-agent | Java | 1 | 3/4 | 0.75 | 0 |
 | swap-desk | Kotlin | 2 | 2/3, 3/3 | 1.00 | 0 |
 | payroll-agent | C# | 1 | 3/3 | 1.00 | 0 |
-| **all 9 runs** | | | **0.92** | **0.95** | **1 of 15 decoys, 0.05** |
+| **all 9 runs** | | | **0.92** | **0.95** | **1 hit in 22 decoy checks (0.05)** |
 
 Notes from reading every miss and false positive:
 
@@ -22,7 +26,7 @@ Notes from reading every miss and false positive:
   cited the debit line; Java JV-D4 (unauthenticated delivery webhook) was a failing check A1 at
   `ApiKeyFilter.java:33`, linked to the LLM-recipient finding. Since then a failing check adds its
   own line to the finding it links to, so both are reported at the planted location.
-- **The one decoy hit is not a false claim.** The finding on payout-relay's receipts route does not
+- **The one decoy hit is not a false claim.** It is 1 of the 15 distinct decoys, hit in one run. The finding on payout-relay's receipts route does not
   claim path traversal (the decoy); it says the route needs no authentication and returns creator
   ids and amounts, which is true and was noted as an unlabelled real issue when the agent was
   written. It is rated low.

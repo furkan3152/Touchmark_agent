@@ -1,10 +1,12 @@
 # Real-world fix benchmark
 
-This benchmark holds 16 security or money defects that were fixed in public Stellar-ecosystem repositories.
-For each case we audit two commits. The vulnerable commit is the parent of the fix, and the
-report should flag the defect there. The fixed commit is the fix itself, and the report
-should no longer flag the defect there. The repositories' own fixes are the ground truth: a
-case only counts what the maintainers changed, never what we think is wrong.
+This benchmark holds 38 security or money defects that were fixed in public Stellar-ecosystem repositories:
+16 development cases (`cases.json`) and 22 held-out cases (`test_cases.json`). Each case has two commits. The
+vulnerable commit is the parent of the fix, and the report should flag the defect there. The fixed commit is the fix
+itself, and the report should no longer flag the defect there. So far fixed commits have been audited for eight
+held-out cases, the eight run first, chosen for impact before any result was known; the development set's fixed
+commits have not been audited. The repositories' own fixes are the ground truth: a case only counts what the
+maintainers changed, never what we think is wrong.
 
 `../agents/` and `../labels/` hold the synthetic benchmark, which has planted defects and
 decoys. This folder complements it with code that nobody wrote for us.
@@ -77,7 +79,10 @@ missed (`sdp-tss-feebump-replaced-double-pay`, `oz-delegated-signer-invoker-bypa
 | `test_cases.json` | the held-out set (below) |
 | `run_live.py` | audits cases through a deployment's public API and saves the reports |
 | `score_real.py` | scores report JSON files against `cases.json` (stdlib only; `--selftest`) |
-| `results/` | compact reports of every audit above and `summary.json` |
+| `results/heldout/` | held-out set: vulnerable and fixed commits (Claude Haiku 5.5, medium effort) |
+| `results/dev/` | development set with Claude Sonnet 5.5, before the lessons were added |
+| `results/dev-haiku/` | development set re-run with Claude Haiku 5.5 and the lessons |
+| `results/summary.json` | the scores |
 
 ## Cases
 
@@ -101,14 +106,14 @@ missed (`sdp-tss-feebump-replaced-double-pay`, `oz-delegated-signer-invoker-bypa
 | `polaris-trustline-stuck-execution` | stellar/django-polaris | python | reliability_failure | medium | medium | [vulnerable](https://github.com/stellar/django-polaris/tree/fb462ab62fb9f7bfdef4dca24c34af2526ce2ebd/polaris/polaris) / [fixed](https://github.com/stellar/django-polaris/tree/a0770a12518ec386aedd81963873951ddc578276/polaris/polaris) |
 
 The 16 cases come from 9 repositories and 4 languages: TypeScript 5, Rust 6, Go 4 and Python 1.
-11 are high confidence and 5 are medium. Every audited subdir has at most 73 non-test source files and at most 156 files in total
+12 are high confidence and 4 are medium. Every audited subdir has at most 73 non-test source files and at most 156 files in total
 (the largest is django-polaris).
 
 ## How the cases were found
 
 1. We cloned the candidate repositories with `git clone --filter=blob:none`. These were
    stellar/x402-stellar, stellar/stellar-mpp-sdk, kalepail/passkey-kit,
-   kalepail/stellar-mcp-server, syronlabs/stellar-mcp, JoseCToscano/stellar-mcp,
+   kalepail/stellar-mcp-server, JoseCToscano/stellar-mcp,
    ASGCompute/asgcard-public, stellar-experimental/stellar-raven, Soneso/stellar-agent-wallet,
    OpenZeppelin/stellar-contracts, theahaco/scaffold-stellar and coinbase/x402. We also cloned
    repositories that their READMEs or a GitHub search pointed to:

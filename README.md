@@ -2,12 +2,13 @@
   <img src="frontend/brand/mark.svg" width="88" alt="Touchmark">
 </p>
 
-<h1 align="center">touchmark</h1>
+<h1 align="center">Touchmark</h1>
 
 <p align="center">
   <strong>Security audits for AI agents that hold Stellar authority.</strong><br>
   Touchmark reads an agent's code in any language, checks it against Stellar-specific criteria, has a second
-  model re-check every finding, and records a passing result on Stellar as a non-transferable credential.
+  model re-check each medium-or-higher finding, and records a passing result on Stellar as a non-transferable
+  credential.
 </p>
 
 <p align="center">
@@ -24,8 +25,8 @@
 
 ## Why Stellar needs this
 
-AI agents on Stellar now hold keys, sign XDR, pay x402 and MPP invoices, authenticate with SEP-10 and drive
-Soroban contracts. The defects that lose money there are Stellar-specific: a fee bump that lets a payment land
+AI agents on Stellar now hold keys, sign XDR, pay x402 and MPP (Machine Payments Protocol) invoices,
+authenticate with SEP-10 and drive Soroban contracts. The defects that lose money there are Stellar-specific: a fee bump that lets a payment land
 twice, an asset matched by code without its issuer, a path payment credited with the amount sent instead of the
 amount received, a SEP-10 verifier that counts the server's own signature, a delegated `__check_auth` signer
 satisfied by the invoker. General code scanners do not know these rules. Touchmark is built around them, and
@@ -35,16 +36,18 @@ keys?*
 ## Measured on real Stellar defects
 
 Every case is a security defect that maintainers **fixed upstream** in a public Stellar repository. The audit runs
-on the vulnerable commit through the public demo, exactly as a user would, and must cite the defective lines
-(within 10 lines). Ground truth is the maintainers' fix, not our opinion.
+on the vulnerable commit through the public demo, exactly as a user would. It counts as detected when a risk
+finding or failing check cites the defective lines (within 10 lines); the category need not match. Ground truth is
+the maintainers' fix, not our opinion.
 
 | Set | Repositories | Detected |
 |---|---|---|
-| **Held-out: kept out of development** | stellar-disbursement-platform, stellar/go, java-stellar-anchor-sdk, Blend, Soroswap, soroban-examples, OpenZeppelin stellar-contracts, Reflector, js-stellar-sdk, typescript-wallet-sdk, django-polaris | **20 of 22** |
-| Development: used to find and fix weaknesses | stellar-mpp-sdk, x402-stellar, asgcard, passkey-kit, OpenZeppelin stellar-contracts, one-way-channel, stellar-disbursement-platform, django-polaris, soneso | 11 of 16 |
+| **Held-out: kept out of development** (Claude Haiku 5.5, medium effort) | stellar-disbursement-platform-backend, stellar/go, java-stellar-anchor-sdk, blend-contracts, soroswap/core, soroban-examples, OpenZeppelin stellar-contracts, reflector-contract, js-stellar-sdk, typescript-wallet-sdk, django-polaris | **20 of 22** |
+| Development: used to find and fix weaknesses | stellar-mpp-sdk, x402-stellar, asgcard-public, passkey-kit, OpenZeppelin stellar-contracts, one-way-channel, stellar-disbursement-platform-backend, django-polaris, Soneso stellar-agent-wallet | 11 of 16 with Sonnet 5.5 before the lessons; 16 of 16 re-run with Haiku 5.5 and the lessons |
 
-- **On the fixed commits** of the eight most severe held-out cases, 6 reports no longer flag the defect's lines; the
-  other two flag a different issue next to them.
+- **Fixed commits** were audited for the eight cases that were run first, chosen for impact before any result was
+  known: 6 reports no longer flag the defect's lines; the other two flag a different issue next to them
+  ([table](research/benchmark/real/README.md#results)).
 - Seven held-out cases are covered by lessons written with that set in view; on the other 15, **13 were detected**.
   Every caveat is listed with the results.
 - **Cost:** about **$0.45 of model usage per audit** (Claude Haiku at medium effort, with prompt caching).
@@ -61,7 +64,7 @@ pinned to a commit, a `C…` contract, a `G…` account or a registry agent id, 
 |---|---|
 | <img src="docs/media/demo-unsafe.png" alt="Unsafe treasury agent: not yet" width="420"> | <img src="docs/media/demo-credential.png" alt="Fixed treasury agent: credential on testnet" width="420"> |
 
-Each finding shows the line it cites and whether the second model confirmed it, plus a **check ledger** that
+Each finding shows the line it cites and whether the verifier confirmed it, plus a **check ledger** that
 answers, question by question, what the code protects and what it does not. Fix, re-audit, and the owner signs
 the credential in Freighter.
 
@@ -70,30 +73,32 @@ the credential in Freighter.
 ```mermaid
 flowchart LR
     R["Reference"] --> P["Pin the commit"]
-    P --> MAP["Map every file<br/>any language"]
-    MAP --> LEDGER["Check ledger<br/>28 Stellar questions"]
-    LEDGER --> CH["Challenge every<br/>'holds' answer"] --> UNIT["Focused review of each<br/>file that signs, pays or verifies"]
+    P --> MAP["Map each selected file<br/>any language"]
+    MAP --> LEDGER["Check ledger<br/>28 questions"]
+    LEDGER --> CH["Challenge<br/>'holds' answers"] --> UNIT["Focused review of each<br/>file that signs, pays or verifies"]
     UNIT --> VER["Independent verifier"]
     VER --> DEC["pass · needs_fixes ·<br/>needs_evidence"]
     DEC -->|pass| CHAIN["Credential on Stellar"]
 ```
 
-1. **File map.** Every file is read and recorded with what it does: where it signs, pays, holds secrets or
-   verifies signatures. Every claim quotes its line; a quote not in the source is dropped.
-2. **Check ledger.** The same 28 Stellar questions are asked of every agent with the same capabilities, in four
-   groups: value movement; signing, network and submission; access and secrets; model behaviour. *Holds* and
-   *fails* must quote the deciding line.
-3. **Challenge.** Each fund, signing or access check answered *holds* is re-examined by a pass whose only job is
-   to find one path where it does not hold.
+1. **File map.** Every selected source file is read and recorded with what it does: where it signs, pays, holds
+   secrets or verifies signatures. Every claim quotes its line; a quote not in the source is dropped.
+2. **Check ledger.** The same 28 questions, most of them Stellar-specific, are asked of every agent with the same
+   capabilities, in four groups: value movement; signing, network and submission; access, secrets and entry points;
+   model behaviour and intent. *Holds* and *fails* must quote the deciding line.
+3. **Challenge.** Twenty of the checks, on funds, signing, access and model behaviour, are re-examined when
+   answered *holds*, by a pass whose only job is to find one path where the check does not hold.
 4. **Focused file review.** Each file that signs, pays, holds keys or verifies signed input gets its own review,
    with the Stellar criteria and the lessons learned from real defects that match what the file does. The model
    states each function's security invariants and checks them one by one.
-5. **Verification.** A second model re-checks each finding at the cited line without seeing why it was raised.
-   Severity is computed from facts (what is at risk, who can trigger it, which network, whether the code ships),
-   not chosen by the model. Comments in the audited code never count as controls.
+5. **Verifier.** A separate pass by a second model re-checks each medium-or-higher finding (up to 60 per audit)
+   at the cited line without seeing why it was raised. Model-review findings get their severity from facts (what
+   is at risk, who can trigger it, which network, whether the code ships), not from the model's choice; rule
+   findings carry the rule's severity, which the verifier may lower. Comments in the audited code never count as
+   controls.
 
 Data-flow rules for Python and JavaScript/TypeScript and pattern rules for Rust, Go and Solidity run alongside.
-Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Details, limits and the decision rule: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## What it checks on Stellar
 
@@ -136,19 +141,26 @@ an agent session keys limited by recipient, asset, per-call maximum and budget.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/audit_agent.py https://github.com/owner/repo --no-deep      # rules only, no key
-ENABLE_DEEP_REVIEW=1 ENABLE_FINDING_VERIFICATION=1 ANTHROPIC_API_KEY=... \
-  .venv/bin/python scripts/audit_agent.py <ref>                                       # full review
+ENABLE_DEEP_REVIEW=1 DEEP_REVIEW_MODEL=claude-haiku-5-5 VERIFIER_MODEL=claude-haiku-5-5 ANTHROPIC_API_KEY=... \
+  .venv/bin/python scripts/audit_agent.py <ref>                                       # full review, as on the demo
 .venv/bin/uvicorn app:app --port 8000                                               # demo at /
 .venv/bin/python -m pytest -q && cargo test --workspace
 ```
+
+Run locally, the model review stops after `DEEP_REVIEW_TIMEOUT_SECONDS` (240 s by default, at most 900); raise it
+for large repositories.
 
 In CI, the composite action ([`action.yml`](action.yml)) runs the deterministic analysis on every push, validates
 the `.tmark` and annotates the cited lines:
 
 ```yaml
-- uses: furkan3152/Touchmark_agent@main   # pin a commit SHA in production
+- uses: actions/checkout@<commit-sha>
+- uses: furkan3152/Touchmark_agent@<commit-sha>
   with: { fail-on: needs_fixes, annotate: medium }
 ```
+
+The rules alone never give a pass, so the action's decision is `needs_fixes` or `needs_evidence`: CI never shows a
+result that could earn a credential.
 
 ## Limits
 

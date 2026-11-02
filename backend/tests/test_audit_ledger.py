@@ -350,7 +350,7 @@ def test_a_ledger_pass_carries_the_stellar_criteria_and_on_chain_facts_of_its_ch
 
 def test_severity_follows_from_stated_facts():
     from backend.app.services.severity import compute
-    # syronlabs: shell injection through MCP tool arguments, any content the model reads can steer it.
+    # A shell injection through MCP tool arguments: any content the model reads can steer it.
     assert compute("host_code_execution", "anyone", "mainnet_or_configurable", "shipped") == "critical"
     # kalepail: a committed token for a testnet service.
     assert compute("keys_or_secrets", "anyone", "testnet_only", "shipped") == "medium"

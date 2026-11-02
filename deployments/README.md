@@ -8,7 +8,9 @@ hashes and transaction hashes only; no keys.
 | [`demo-testnet.json`](demo-testnet.json) | The demo's AgentRegistry and AuditCredential. Every credential issued from the demo links its transactions. `owner_flow_example` records a credential issued to an owner who signed the registration in their own wallet. |
 | [`testnet-audit-delivery-2026-10-15.json`](testnet-audit-delivery-2026-10-15.json) | Registry-bound escrow, report delivery and credential: 20 transactions, read-backs and rejected mismatches. |
 | [`agent-account-testnet-2026-10-15.json`](agent-account-testnet-2026-10-15.json) | AgentAccount session limits: an authorized transfer; a forbidden recipient, an over-budget transfer and a revoked key all rejected. |
+| [`agent-account-local-2026-10-15.json`](agent-account-local-2026-10-15.json) | A local rehearsal of the session account contract (`AgentSessionAccount`): test, lint and WASM build results only; not deployed (`deployed: false`). |
 | [`stellar-testnet.json`](stellar-testnet.json) | The first registry and escrow deployment (2026-08-30). |
+| [`reports/`](reports) | The report from the testnet audit delivery above, named by its SHA-256: JSON, HTML, credential metadata and SVG badge. |
 
 The remaining `*-2026-10-15.json` files record earlier pilots (official orders, runtime
 sampling, private report storage). They are kept for the record, and the code reads some

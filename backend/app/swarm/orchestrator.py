@@ -396,8 +396,9 @@ class AuditSwarm:
     def _apply_disputes(verdicts, verification: dict):
         """Record each verdict on its finding. A rule finding that independent verification
         refutes, quoting the code that contradicts it, is lowered one level and marked as disputed. It is never removed;
-        a candidate-rule finding (policy.CANDIDATE_RULES) is dismissed to a zero-weight note instead. Model-review findings are not lowered: the verifier is a second opinion on the
-        pattern rules, which cannot read intent, not a way to talk a risk away."""
+        a candidate-rule finding (policy.CANDIDATE_RULES) is dismissed to a zero-weight note instead. A refutation never
+        touches a model-review finding. A confirmed or partial verdict with a lower reviewed severity lowers rule and
+        model findings alike, except critical findings and the fund, signing and access categories (_KEEPS_SEVERITY)."""
         results = {r["finding_id"]: r for r in verification.get("results", []) if r.get("quote_verified")
                    and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
         # "unverifiable" needs no quote: the verifier could not find the code that makes the

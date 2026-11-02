@@ -48,7 +48,7 @@ def _f(fid: str, evidence: str, severity=Severity.HIGH) -> Finding:
 
 
 def test_one_defect_reported_per_line_or_per_rule_becomes_one_finding():
-    # syronlabs: one shell injection reported at three nearby lines; asgcard: one committed
+    # One shell injection reported at three nearby lines; one committed
     # secret reported by three rules on the same line.
     out = consolidate([
         _f("security-ai-code-execution-1", "src/core.ts:45 `exec(cmd)`", Severity.CRITICAL),
@@ -67,7 +67,7 @@ def test_one_defect_reported_per_line_or_per_rule_becomes_one_finding():
 
 
 def test_a_rule_finding_absorbs_the_model_finding_of_the_same_defect_nearby():
-    # syronlabs: the payment rule cites the sign call, the model the payment operation nine lines up.
+    # The payment rule cites the sign call, the model the payment operation nine lines up.
     out = consolidate([
         _f("security-path-untrusted-to-financial-sink", "src/classic.ts:117 `transaction.sign(sourceKeypair);`"),
         _f("security-ai-unauthorized-payment-3", "src/classic.ts:108 `Operation.payment({` · src/classic.ts:183 `x`"),

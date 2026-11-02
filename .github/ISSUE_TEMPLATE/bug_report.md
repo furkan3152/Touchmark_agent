@@ -22,9 +22,9 @@ A clear and concise description of what you expected to happen.
 
 **Environment (please complete the following information):**
  - OS: [e.g. Ubuntu 22.04, macOS]
- - Python version: [e.g. 3.11]
- - Rust version: [e.g. 1.75.0]
- - Soroban CLI version: [e.g. 20.0.0]
+ - Python version: [e.g. 3.12]
+ - Rust version: [output of `rustc --version`]
+ - Stellar CLI version, if relevant: [output of `stellar --version`]
 
 **Additional context**
 Add any other context about the problem here, such as logs, network information, or screenshots.
