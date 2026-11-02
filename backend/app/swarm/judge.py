@@ -48,6 +48,14 @@ ROOT_CAUSES: dict[str, frozenset[str]] = {
     }),
 }
 RESTATEMENT_SHARE = 0.3
+#: A further model finding of a category already charged (another unauthorized payment, another replay): it may be
+#: the same defect in another file or language, or a second one of the same kind. It counts half.
+SAME_CATEGORY_SHARE = 0.5
+#: A model finding counts by how far the independent verifier upheld it at the cited line. Unchecked findings (the
+#: verifier reads at most 60 per audit) and partly upheld ones count less than confirmed ones; refuted and
+#: unverifiable ones already carry a reduced confidence.
+VERIFIED_WEIGHT = {"confirmed": 1.0, "partial": 0.8, "": 0.75}
+_AI_CATEGORY = re.compile(r"-ai-([a-z-]+?)-\d+$")
 RISK_SCALE = 100.0
 SQUEEZE = 10.0
 _LOCATION = re.compile(r"[\w./-]+\.[A-Za-z]{1,5}:\d+")
@@ -64,8 +72,10 @@ def score_breakdown(findings: list[Finding]) -> dict:
 
     cost = severity weight (critical 30, high 14, medium 6, low 2) x evidence grade
     (confirmed 1, inferred 0.6) x confidence x scope (number of affected places).
-    Repeats of one root cause add 30%; further findings of the same severity have
-    mildly diminishing returns. Evidence gaps cost nothing: they limit the decision,
+    Repeats of one root cause add 30%; a further model finding of a category already
+    charged counts half; further findings of the same severity have mildly diminishing
+    returns. A model finding counts by how far the verifier upheld it (confirmed 1,
+    partly 0.8, unchecked 0.75). Evidence gaps cost nothing: they limit the decision,
     not the risk score.
     """
     items = []
@@ -74,11 +84,15 @@ def score_breakdown(findings: list[Finding]) -> dict:
             continue
         scope, places = _scope(f)
         group = next((name for name, ids in ROOT_CAUSES.items() if f.id in ids), f.id)
+        category = _AI_CATEGORY.search(f.id)
+        weight = VERIFIED_WEIGHT.get(getattr(f, "verified", ""), 1.0) if category else 1.0
         items.append({"id": f.id, "title": f.title, "severity": f.severity.value, "kind": f.kind.value,
                       "evidence_grade": f.evidence_grade.value, "confidence": round(f.confidence, 2),
-                      "places": places, "group": group, "base": round(f.penalty * scope, 2)})
+                      "places": places, "group": group, "category": category.group(1) if category else "",
+                      "base": round(f.penalty * scope * weight, 2)})
     items.sort(key=lambda i: -i["base"])
     seen_groups: set[str] = set()
+    seen_categories: set[str] = set()
     per_severity: dict[str, int] = {}
     total = 0.0
     for item in items:
@@ -88,6 +102,10 @@ def score_breakdown(findings: list[Finding]) -> dict:
             factor = 1.0 / (1.0 + 0.25 * n)
             per_severity[item["severity"]] = n + 1
             seen_groups.add(item["group"])
+            if item["category"] and item["category"] in seen_categories:
+                factor *= SAME_CATEGORY_SHARE
+                item["same_category"] = item["category"]
+            seen_categories.add(item["category"])
         else:
             item["restates"] = item["group"]
         item["deduction"] = round(item["base"] * factor, 2)

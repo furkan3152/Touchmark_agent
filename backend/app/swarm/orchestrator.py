@@ -444,6 +444,15 @@ class AuditSwarm:
                         "severity": Severity.HIGH,
                         "detail": f.detail + f" Independent verification rates this {reviewed.value}; lowered one "
                                   f"level to high: {str(r.get('reason', ''))[:240]}"})
+                elif (r is not None and r.get("verdict") in {"confirmed", "partial"} and reviewed is not None
+                      and reviewed.rank < f.severity.rank and f.is_risk and "-ai-" in f.id):
+                    # A fund, signing or access finding keeps its severity whatever the verifier says (it once
+                    # lowered real ones), so it still decides the verdict; rated lower at the quoted code, it
+                    # weighs less in the score.
+                    f = f.model_copy(update={
+                        "detail": f.detail + f" Independent verification rates this {reviewed.value}; the severity "
+                                  f"is kept, at reduced weight: {str(r.get('reason', ''))[:240]}",
+                        "confidence": min(f.confidence, 0.5)})
                 refuted = (r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk
                            and not f.id.startswith("stellar_native-onchain-contract-"))  # a source quote cannot refute bytecode
                 no_issue = (r is not None and r.get("verdict") in {"confirmed", "partial"} and f.is_risk

@@ -48,6 +48,9 @@ Nothing submitted is imported or executed.
 1. **Selection** (`repo_audit.select_repository`). Up to 1,500 files or 12 MB are
    selected, with files that decide authority (auth, routing, middleware, policy,
    keys, webhooks) taken first. Source left out keeps the analysis-incomplete gap open.
+   Dependencies and build output committed with the code (`node_modules`, `vendor`,
+   `site-packages`, `dist-packages`, `dist`, `build`, `target`) are not the agent and are
+   skipped (`repo_audit.SKIP_DIRS`).
 2. **Data flow.** `swarm/codeflow.py` handles Python (AST) and `swarm/jsflow.py` handles
    JavaScript and TypeScript (tree-sitter). The analysis is project-wide, follows imports
    and is context-insensitive.
@@ -111,7 +114,10 @@ Nothing submitted is imported or executed.
      - a high or critical pattern-rule finding that the verifier rates partial or
        unverifiable is capped at medium (structural facts excepted);
      - a confirmed or partial verdict with a lower severity applies that severity to rule
-       and model findings alike, except to critical findings and fund-control categories;
+       and model findings alike, except that a critical model finding goes down one level
+       only, to high (still blocking a pass), rule and on-chain criticals keep theirs, and a
+       fund, signing or access model finding keeps its severity at reduced weight;
+     - a refuted model finding counts at reduced weight, and a refuted critical becomes high;
      - a finding the verifier could not check counts at reduced confidence.
 
      Model-review findings are never refuted away. Verdicts also feed the decision: a
@@ -134,8 +140,11 @@ Nothing submitted is imported or executed.
      evidence grade (confirmed 1, for direct evidence such as a code match; inferred 0.6,
      for a missing defence) × confidence × scope (×1 for one cited place, rising on a log
      scale to ×1.75 for many). Findings are counted from the costliest down: a
-     restatement of a root cause already counted costs 30% (`judge.ROOT_CAUSES`), and a
-     finding whose severity has already been counted n times costs 1/(1 + 0.25n). The
+     restatement of a root cause already counted costs 30% (`judge.ROOT_CAUSES`), a further
+     model finding of a category already counted costs half (the same defect is often filed
+     once per file or language), and a finding whose severity has already been counted n
+     times costs 1/(1 + 0.25n). A model finding counts by how far the verifier upheld it:
+     confirmed ×1, partly ×0.8, unchecked ×0.75. The
      score is `100 × e^(−points/100)`.
      With an actionable risk it is held under a ceiling, 39 when a critical risk has
      confirmed evidence and 64 otherwise; scores above ten points below the ceiling are
@@ -242,10 +251,15 @@ instead.
 for its findings: for each defect it states what is at risk, who can trigger it, the network and
 where the code is, and a fixed table gives the level. Funds, keys, account control or code
 execution on the host are critical; funds locked or delayed, or a third-party service credential,
-high; the operator's own provider spend, availability, data exposure or correctness, medium. A
+high; the operator's own provider spend, a payer charged for a call that then failed,
+availability, data exposure or correctness, medium. A
 counterparty trigger lowers the level one step and an operator-only trigger two; testnet-only
 code is at most medium, example code one lower and at most high, and tests, developer tools and
-unwired paths low. The facts are written into the finding. Rule findings keep the rule's
+unwired paths low. The facts are held to the evidence (`severity.ground`): a claim of funds,
+keys, account control or host execution needs a capability the file map quoted in the cited file
+(a contract's own file always qualifies), else it falls to correctness or data exposure; code
+under test, mock or example paths is never rated as shipped. The facts, and any change the
+evidence made to them, are written into the finding. Rule findings keep the rule's
 severity, which the verifier may change (item 5 above).
 
 The report's `deep_review` carries `file_map` (cards), `ledger` (every applicable check and
