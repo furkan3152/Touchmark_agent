@@ -42,11 +42,12 @@ the maintainers' fix, not our opinion.
 
 | Set | Repositories | Detected |
 |---|---|---|
-| **Held-out: kept out of development** (Claude Haiku 5.5, medium effort) | stellar-disbursement-platform-backend, stellar/go, java-stellar-anchor-sdk, blend-contracts, soroswap/core, soroban-examples, OpenZeppelin stellar-contracts, reflector-contract, js-stellar-sdk, typescript-wallet-sdk, django-polaris | **20 of 22** in run 1, **19 of 21** with the final auditor; **21 of 22** found in at least one run |
+| **Held-out: kept out of development** (Claude Haiku 5.5, medium effort) | stellar-disbursement-platform-backend, stellar/go, java-stellar-anchor-sdk, blend-contracts, soroswap/core, soroban-examples, OpenZeppelin stellar-contracts, reflector-contract, js-stellar-sdk, typescript-wallet-sdk, django-polaris | **20 of 22** in run 1, **19 of 22** with the final auditor; **21 of 22** found in at least one run |
 | Development: used to find and fix weaknesses | stellar-mpp-sdk, x402-stellar, asgcard-public, passkey-kit, OpenZeppelin stellar-contracts, one-way-channel, stellar-disbursement-platform-backend, django-polaris, Soneso stellar-agent-wallet | 11 of 16 with Sonnet 5.5 before the lessons; 16 of 16 re-run with Haiku 5.5 and the lessons |
 
-- A single run is not deterministic: the two cases the final auditor missed were found in run 1. Seven held-out
-  cases are covered by lessons written with that set in view; without them, 13 of 15 (run 1) and 11 of 13 (final
+- A single run is not deterministic: two of the three cases the final auditor missed were found in run 1; the
+  third is a near miss in both runs (the right root cause, 32 lines from the fixed lines). Seven held-out
+  cases are covered by lessons written with that set in view; without them, 13 of 15 (run 1) and 11 of 14 (final
   auditor) were detected.
 - **Fixed commits** were audited for eight cases: 6 reports no longer flag the defect's lines; the other two flag a
   different issue next to them. Every result and caveat is in the [results](research/benchmark/real/README.md#results).

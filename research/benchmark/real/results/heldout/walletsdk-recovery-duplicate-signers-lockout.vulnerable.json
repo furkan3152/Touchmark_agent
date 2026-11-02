@@ -1,0 +1,949 @@
+{
+ "case": "walletsdk-recovery-duplicate-signers-lockout",
+ "side": "vulnerable",
+ "repo": "stellar/typescript-wallet-sdk",
+ "commit": "0ddb6d0d81be9b96acad4beb1a327e2f60d00e4c",
+ "audited": "https://github.com/stellar/typescript-wallet-sdk/tree/0ddb6d0d81be9b96acad4beb1a327e2f60d00e4c/@stellar/typescript-wallet-sdk/src",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "walletSdk/Recovery/index.ts",
+   "line_start": 96,
+   "line_end": 130
+  },
+  {
+   "path": "walletSdk/Recovery/index.ts",
+   "line_start": 190,
+   "line_end": 249
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "security-ai-unauthorized-payment-2",
+   "severity": "critical",
+   "title": "Path-payment slippage bound accepts zero (or any non-undefined value), so swaps can execute at any rate",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 174,
+   "evidence": "walletSdk/Horizon/Transaction/TransactionBuilder.ts:174 `if (destMin === undefined) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-35",
+   "severity": "critical",
+   "title": "SEP-7 tx URI envelope returned for signing without timebounds check",
+   "file": "walletSdk/Uri/Sep7Tx.ts",
+   "line": 191,
+   "evidence": "walletSdk/Uri/Sep7Tx.ts:191 `return new Transaction(this.xdr, this.networkPassphrase || Networks.PUBLIC);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-15",
+   "severity": "critical",
+   "title": "SEP-7 tx URI without network_passphrase is rebuilt for mainnet, not the configured network",
+   "file": "walletSdk/Uri/Sep7Base.ts",
+   "line": 141,
+   "evidence": "walletSdk/Uri/Sep7Tx.ts:191 `return new Transaction(this.xdr, this.networkPassphrase || Networks.PUBLIC);` \u00b7 walletSdk/Uri/Sep7Base.ts:141 `return (this.getParam(\"network_passphrase\") ?? Networks.PUBLIC) as Networks;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-account-takeover-16",
+   "severity": "high",
+   "title": "Recovery server's response chooses the on-chain signer added to the user's account, with no check",
+   "file": "walletSdk/Recovery/index.ts",
+   "line": 312,
+   "evidence": "walletSdk/Recovery/index.ts:312 `return signers[0].key;`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-40",
+   "severity": "high",
+   "title": "Recovery path adds server-chosen signers with server-chosen weights via unchecked addAccountSigner",
+   "file": "walletSdk/Recovery/AccountRecover.ts",
+   "line": 134,
+   "evidence": "walletSdk/Horizon/Transaction/CommonTransactionBuilder.ts:52 `ed25519PublicKey: signerAddress.publicKey,`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-ai-account-takeover-79",
+   "severity": "high",
+   "title": "AuthToken.from takes the token subject without binding it to the account that authenticated",
+   "file": "walletSdk/Types/auth.ts",
+   "line": 47,
+   "evidence": "walletSdk/Types/auth.ts:47 `authToken.principalAccount = payload.sub;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-81",
+   "severity": "high",
+   "title": "AuthToken.from trusts the iss claim without checking it against the anchor's signing key or home domain",
+   "file": "walletSdk/Types/auth.ts",
+   "line": 46,
+   "evidence": "walletSdk/Types/auth.ts:46 `authToken.issuer = payload.iss;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-3",
+   "severity": "high",
+   "title": "SEP-10 client sign() never checks the challenge's client account against the signing keypair",
+   "file": "walletSdk/Auth/index.ts",
+   "line": 217,
+   "evidence": "walletSdk/Auth/index.ts:217 `walletSigner.signWithClientAccount({ transaction, accountKp });`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-58",
+   "severity": "high",
+   "title": "DomainSigner returns the domain server's transaction without checking it matches the submitted one",
+   "file": "walletSdk/Auth/index.ts",
+   "line": 210,
+   "evidence": "walletSdk/Auth/WalletSigner.ts:106 `return StellarTransactionBuilder.fromXdr(`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-61",
+   "severity": "high",
+   "title": "DefaultSigner and DomainSigner sign any transaction with the client keypair without checking its source or operations",
+   "file": "walletSdk/Auth/WalletSigner.ts",
+   "line": 50,
+   "evidence": "walletSdk/Auth/WalletSigner.ts:50 `transaction.sign(accountKp.keypair);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-10",
+   "severity": "high",
+   "title": "Withdrawal transfer pays anchor-supplied destination and amount with no check against the caller's intent or an allowlist",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 298,
+   "evidence": "walletSdk/Horizon/Transaction/TransactionBuilder.ts:299 `transaction.withdraw_anchor_account,`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-25",
+   "severity": "high",
+   "title": "Fee-increase rebuild on tx_too_late can pay twice after an earlier 504 attempt landed",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 234,
+   "evidence": "walletSdk/Horizon/Stellar.ts:234 `if (resultCode === \"tx_too_late\") {`",
+   "verifier": "confirmed",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "economic-ai-economic-loss-8",
+   "severity": "medium",
+   "title": "makeFeeBump accepts any inner transaction and any fee with no cap, so the fee account pays for transactions it did not check",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 121,
+   "evidence": "walletSdk/Horizon/Stellar.ts:121 `(baseFee || this.cfg.stellar.baseFee).toString(),`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "economic-ai-economic-loss-9",
+   "severity": "medium",
+   "title": "Payment builders have no amount bound and no cumulative spend limit; the only caps in the SDK are history page size and fee ceilings",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 134,
+   "evidence": "walletSdk/Horizon/Transaction/TransactionBuilder.ts:134 `amount,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-1",
+   "severity": "medium",
+   "title": "Fee-increase retry feeds the total transaction fee back in as the per-operation base fee",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 235,
+   "evidence": "walletSdk/Horizon/Stellar.ts:235 `const newFee = parseInt(transaction.fee) + baseFeeIncrease;`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-38",
+   "severity": "medium",
+   "title": "Replace entries and hints containing ':' are silently truncated",
+   "file": "walletSdk/Uri/sep7Parser.ts",
+   "line": 191,
+   "evidence": "walletSdk/Uri/sep7Parser.ts:191 `const parts = item.split(ID_DELIMITER);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-68",
+   "severity": "medium",
+   "title": "Sep12 binary uploads are sent as a JSON body labelled multipart/form-data",
+   "file": "walletSdk/Customer/index.ts",
+   "line": 121,
+   "evidence": "walletSdk/Customer/index.ts:121 `? { ...this.headers, \"Content-Type\": \"multipart/form-data\" }`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-ai-account-takeover-19",
+   "severity": "medium",
+   "title": "Watcher keeps polling and registry state keyed by asset code only, so one caller's stop() cancels another caller's watch",
+   "file": "walletSdk/Watcher/index.ts",
+   "line": 268,
+   "evidence": "walletSdk/Watcher/index.ts:268 `this._watchAllTransactionsRegistry[assetCode] = false;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-account-takeover-43",
+   "severity": "medium",
+   "title": "Local JWT signer signs caller-chosen claims and exp with the agent secret, with no account binding or lifetime cap",
+   "file": "walletSdk/Auth/AuthHeaderSigner.ts",
+   "line": 57,
+   "evidence": "walletSdk/Auth/AuthHeaderSigner.ts:57 `claims.exp || Math.floor(Date.now() / 1000) + this.expiration;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-29",
+   "severity": "medium",
+   "title": "SEP-6 deposit and withdraw do not bind the caller-supplied account to the authenticated token's account",
+   "file": "walletSdk/Anchor/Sep6.ts",
+   "line": 188,
+   "evidence": "walletSdk/Anchor/Sep6.ts:188 ``${transferServer}/${type}?${queryString.stringify(params)}`,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-33",
+   "severity": "medium",
+   "title": "SEP-7 request-signature verification is opt-in; parsing accepts origin_domain URIs with no verified flag",
+   "file": "walletSdk/Uri/sep7Parser.ts",
+   "line": 107,
+   "evidence": "walletSdk/Uri/sep7Parser.ts:107 `if (originDomain && !isValidFullyQualifiedDomainName(originDomain)) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-4",
+   "severity": "medium",
+   "title": "SEP-24 asset allowlist check is bypassed by extraFields spread after asset_code",
+   "file": "walletSdk/Anchor/Sep24.ts",
+   "line": 201,
+   "evidence": "walletSdk/Anchor/Sep24.ts:201 `...extraFields,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-20",
+   "severity": "medium",
+   "title": "Network-failure error text serializes the HTTP request, which can carry a bearer token into error messages",
+   "file": "walletSdk/Utils/extractAxiosErrorData.ts",
+   "line": 20,
+   "evidence": "walletSdk/Utils/extractAxiosErrorData.ts:20 ``No response received from request: ${JSON.stringify(`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-28",
+   "severity": "medium",
+   "title": "SEP-6 bearer token is sent to a transfer server taken from an unauthenticated HTTP TOML when allowHttp is set on testnet",
+   "file": "walletSdk/Anchor/Sep6.ts",
+   "line": 192,
+   "evidence": "walletSdk/Anchor/Sep6.ts:192 `Authorization: `Bearer ${authToken.token}`,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-51",
+   "severity": "medium",
+   "title": "SEP-38 bearer token is sent to a TOML-chosen quote server that can be reached over HTTP on testnet",
+   "file": "walletSdk/Anchor/Sep38.ts",
+   "line": 56,
+   "evidence": "walletSdk/Anchor/Sep38.ts:56 `Authorization: `Bearer ${this.authToken.token}`,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-14",
+   "severity": "medium",
+   "title": "Submit retry reports a landed transaction as failed (tx_bad_seq), inviting a second payment",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 157,
+   "evidence": "walletSdk/Horizon/Stellar.ts:157 `if (e?.response?.status !== 504) {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-11",
+   "severity": "low",
+   "title": "SEP-24 asset allowlist compares asset code only, so a look-alike asset from another issuer passes",
+   "file": "walletSdk/Anchor/Sep24.ts",
+   "line": 184,
+   "evidence": "walletSdk/Anchor/Sep24.ts:184 `if (!assets.includes(assetCode)) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-56",
+   "severity": "low",
+   "title": "SEP-10 client never checks that the returned challenge carries the requested memo",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Auth/index.ts:176 `WebAuth.readChallengeTx(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "intent-ai-intent-mismatch-6",
+   "severity": "low",
+   "title": "SEP-10 challenge URL built with unencoded memo and client_domain values",
+   "file": "walletSdk/Auth/index.ts",
+   "line": 122,
+   "evidence": "walletSdk/Auth/index.ts:122 `&memo=${memoId}`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-63",
+   "severity": "low",
+   "title": "SEP-7 pay asset_code is not paired with asset_issuer",
+   "file": "walletSdk/Uri/Sep7Pay.ts",
+   "line": 92,
+   "evidence": "walletSdk/Uri/Sep7Pay.ts:92 `return this.getParam(\"asset_code\");`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-22",
+   "severity": "low",
+   "title": "getHistory checks only the upper bound of limit; zero, negative, fractional or NaN values pass",
+   "file": "walletSdk/Horizon/AccountService.ts",
+   "line": 95,
+   "evidence": "walletSdk/Horizon/AccountService.ts:95 `if (limit > HORIZON_LIMIT_MAX) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-24",
+   "severity": "low",
+   "title": "createAccount minimum-balance guard passes NaN and has no upper bound",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Horizon/Transaction/TransactionBuilder.ts:104 `if (startingBalance < 1) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-26",
+   "severity": "low",
+   "title": "fundTestnetAccount has no network guard and does not encode the address in the friendbot query",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Horizon/Stellar.ts:282 `await axios.get(`https://friendbot.stellar.org/?addr=${address}`);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-27",
+   "severity": "low",
+   "title": "Any Horizon error while loading the source account is reported as AccountDoesNotExistError",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Horizon/Stellar.ts:84 `throw new AccountDoesNotExistError(this.cfg.stellar.network);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-30",
+   "severity": "low",
+   "title": "SEP-6 info() cache ignores the requested language and returns English-cached info for other languages",
+   "file": "walletSdk/Anchor/Sep6.ts",
+   "line": 71,
+   "evidence": "walletSdk/Anchor/Sep6.ts:71 `if (this.anchorInfo && !shouldRefresh) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-31",
+   "severity": "low",
+   "title": "SEP-24 info cache ignores requested language",
+   "file": "walletSdk/Anchor/Sep24.ts",
+   "line": 74,
+   "evidence": "walletSdk/Anchor/Sep24.ts:74 `if (this.anchorInfo && !shouldRefresh) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-34",
+   "severity": "low",
+   "title": "lockAccountMasterKey zeroes master weight with no check that remaining signers can authorize",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Horizon/Transaction/CommonTransactionBuilder.ts:80 `masterWeight: 0,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-36",
+   "severity": "low",
+   "title": "SEP-7 replace directives are parsed but never applied in getTransaction",
+   "file": "walletSdk/Uri/Sep7Tx.ts",
+   "line": 191,
+   "evidence": "walletSdk/Uri/Sep7Tx.ts:191 `return new Transaction(this.xdr, this.networkPassphrase || Networks.PUBLIC);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-37",
+   "severity": "low",
+   "title": "parseAnchorTransaction throws a raw TypeError on a JSON null body",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Server/index.ts:129 `if (parsed.kind === \"withdrawal\") {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-41",
+   "severity": "low",
+   "title": "setThreshold accepts unbounded and unachievable thresholds, so the account can be locked by its own set_options",
+   "file": "walletSdk/Horizon/Transaction/CommonTransactionBuilder.ts",
+   "line": 107,
+   "evidence": "walletSdk/Horizon/Transaction/CommonTransactionBuilder.ts:107 `lowThreshold: low,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-42",
+   "severity": "low",
+   "title": "Remote domain signer's response token is returned without a presence check",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Auth/AuthHeaderSigner.ts:164 `return resp.data.token;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-45",
+   "severity": "low",
+   "title": "replaceDeviceKey returns a transaction with no recovery signatures when serverAuth is empty or incomplete",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Recovery/AccountRecover.ts:67 `await Promise.all(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-46",
+   "severity": "low",
+   "title": "deduceKey treats any recovery signer missing from the caller's serverAuth map as the lost device key",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Recovery/AccountRecover.ts:178 `({ key, weight }) => !recoveryAddresses.includes(key) && weight > 0,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-47",
+   "severity": "low",
+   "title": "signerAddress is interpolated unencoded into the recovery-server route, and the bearer token is sent to that route",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Recovery/AccountRecover.ts:227 `const requestUrl = `${server.endpoint}/accounts/${accountAddress}/sign/${auth.signerAddress}`;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-48",
+   "severity": "low",
+   "title": "Missing recovery signature is rewrapped as ServerRequestFailedError, so the documented NotAllSignaturesFetchedError never reaches callers",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Recovery/AccountRecover.ts:250 `throw new ServerRequestFailedError(e);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-49",
+   "severity": "low",
+   "title": "getServicesInfo builds info URL from unchecked TOML field and unencoded lang",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Anchor/index.ts:207 ``${transferServerEndpoint}/info?lang=${lang}`,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-53",
+   "severity": "low",
+   "title": "SEP-38 requestQuote does not enforce the exactly-one-amount rule that price() enforces",
+   "file": "walletSdk/Anchor/Sep38.ts",
+   "line": 154,
+   "evidence": "walletSdk/Anchor/Sep38.ts:154 ``${anchorQuoteServer}/quote`, params,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-54",
+   "severity": "low",
+   "title": "Configured defaultClientDomain makes every memo-based SEP-10 login throw",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Auth/index.ts:116 `if (clientDomain && memoId) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-59",
+   "severity": "low",
+   "title": "Domain signer request is not bound to the client account, and accountKp is unused",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Auth/WalletSigner.ts:95 `accountKp,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-60",
+   "severity": "low",
+   "title": "Domain signer parses response body without checking status or the transaction field",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Auth/WalletSigner.ts:107 `response.data.transaction,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-62",
+   "severity": "low",
+   "title": "SEP-7 pay amount is never validated",
+   "file": "walletSdk/Uri/Sep7Pay.ts",
+   "line": 72,
+   "evidence": "walletSdk/Uri/Sep7Pay.ts:72 `return this.getParam(\"amount\");`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-64",
+   "severity": "low",
+   "title": "Sep7Pay destination setter and forDestination accept any string",
+   "file": "walletSdk/Uri/Sep7Pay.ts",
+   "line": 63,
+   "evidence": "walletSdk/Uri/Sep7Pay.ts:63 `this.setParam(\"destination\", destination);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-65",
+   "severity": "low",
+   "title": "SEP-7 pay memo_type is cast without validation",
+   "file": "walletSdk/Uri/Sep7Pay.ts",
+   "line": 156,
+   "evidence": "walletSdk/Uri/Sep7Pay.ts:156 `return this.getParam(\"memo_type\") as MemoType | undefined;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-67",
+   "severity": "low",
+   "title": "Sep12.update lets sep9Info override the id, memo and transaction_id it was given as arguments",
+   "file": "walletSdk/Customer/index.ts",
+   "line": 168,
+   "evidence": "walletSdk/Customer/index.ts:168 `customerMap = { ...customerMap, ...sep9Info, ...sep9BinaryInfo };`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-69",
+   "severity": "low",
+   "title": "Sep12.add lets sep9Info.type override the type argument",
+   "file": "walletSdk/Customer/index.ts",
+   "line": 105,
+   "evidence": "walletSdk/Customer/index.ts:105 `customerMap = { type, ...customerMap };`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-70",
+   "severity": "low",
+   "title": "Sep7Pay constructor accepts an unvalidated pay URI",
+   "file": "walletSdk/Uri/Sep7Pay.ts",
+   "line": 32,
+   "evidence": "walletSdk/Uri/Sep7Pay.ts:32 `super(uri ?? new URL(`${WEB_STELLAR_SCHEME}${Sep7OperationType.pay}`));`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-71",
+   "severity": "low",
+   "title": "Sponsorship sandwich is not atomic: begin op is pushed into the caller's shared operations before the callback, and startSponsoring is public",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Horizon/Transaction/SponsoringBuilder.ts:32 `this.startSponsoring();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-72",
+   "severity": "low",
+   "title": "JSON.stringify of a Node ClientRequest throws and masks the original network error",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Utils/extractAxiosErrorData.ts:20 `statusText: `No response received from request: ${JSON.stringify(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-77",
+   "severity": "low",
+   "title": "FQDN regex rejects punycode (IDN) TLDs, so valid signed SEP-7 origin_domains fail verification",
+   "file": "walletSdk/Types/sep7.ts",
+   "line": 32,
+   "evidence": "walletSdk/Types/sep7.ts:32 `[a-zA-Z]{2,63}$/;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-78",
+   "severity": "low",
+   "title": "AuthToken.from accepts a JWT with no sub claim, and the account getter then throws at use",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Types/auth.ts:25 `return this.principalAccount.split(\":\")[0];`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-80",
+   "severity": "low",
+   "title": "AuthToken.from stores exp without requiring it, so a token with no expiry is accepted",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Types/auth.ts:49 `authToken.expiresAt = payload.exp;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-82",
+   "severity": "low",
+   "title": "camelToSnakeCaseObject sets the prototype for a \"__proto__\" key instead of copying it",
+   "file": "walletSdk/Utils/camelToSnakeCase.ts",
+   "line": 13,
+   "evidence": "walletSdk/Utils/camelToSnakeCase.ts:13 `snakeCasedObj[snakeCaseKey] = obj[key];`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-57",
+   "severity": "low",
+   "title": "SEP-10 token expiry is only checked when exp is a number, so tokens without exp are accepted as valid",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Auth/index.ts:253 `if (typeof exp === \"number\" && exp < Math.floor(Date.now() / 1000)) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-73",
+   "severity": "low",
+   "title": "parseToml throws TypeError when stellar.toml has no DOCUMENTATION table",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Utils/toml.ts:8 `orgName: tomlDocumentation[\"ORG_NAME\"],`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-76",
+   "severity": "low",
+   "title": "parseToml crashes on non-array or null-element PRINCIPALS, CURRENCIES or VALIDATORS sections",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Utils/toml.ts:30 `const principals = tomlPrincipals.map((tp) => {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-18",
+   "severity": "low",
+   "title": "SEP-10 JWT returned by the anchor is accepted without signature verification or binding to the authenticated account",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Auth/index.ts:230 `validateToken(resp.data.token);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-23",
+   "severity": "low",
+   "title": "getInfo lets the caller replace the configured Horizon server, so account data can come from an untrusted source",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Horizon/AccountService.ts:61 `serverInstance = this.server,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-44",
+   "severity": "low",
+   "title": "Claims spread after server-set expiration, issuedAt and clientDomain lets untyped input override the remote-signing request",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Auth/AuthHeaderSigner.ts:161 `...claims,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-cross-user-access-5",
+   "severity": "low",
+   "title": "SEP-12 customer delete targets any account address while sending the caller's bearer token",
+   "file": "walletSdk/Customer/index.ts",
+   "line": 191,
+   "evidence": "walletSdk/Customer/index.ts:191 `${accountAddress || this.authToken.account}` \u00b7 walletSdk/Watcher/index.ts:268 `this._watchAllTransactionsRegistry[assetCode] = false;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-path-traversal-66",
+   "severity": "low",
+   "title": "Sep12.delete interpolates the account address into the URL path unencoded, so the bearer token can be sent to other anchor routes",
+   "file": "walletSdk/Customer/index.ts",
+   "line": 191,
+   "evidence": "walletSdk/Customer/index.ts:191 ``${this.baseUrl}/customer/${accountAddress || this.authToken.account}`,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-ssrf-50",
+   "severity": "low",
+   "title": "With allowHttp on testnet, SEP-10 trust anchor TOML is fetched over plain HTTP",
+   "file": "walletSdk/Anchor/index.ts",
+   "line": 68,
+   "evidence": "walletSdk/Anchor/index.ts:68 `const stellarToml = await StellarToml.Resolver.resolve(this.homeDomain, { allowHttp: this.allowHttp, });`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-ssrf-52",
+   "severity": "low",
+   "title": "SEP-38 getQuote interpolates quoteId into the URL path without encoding, so the bearer token can be sent to other quote-server paths",
+   "file": "walletSdk/Anchor/Sep38.ts",
+   "line": 175,
+   "evidence": "walletSdk/Anchor/Sep38.ts:175 ``${anchorQuoteServer}/quote/${quoteId}`,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-21",
+   "severity": "low",
+   "title": "accountMerge accepts any destination with no allowlist or confirmation",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/Horizon/Transaction/TransactionBuilder.ts:315 `this.operations.push(Operation.accountMerge({ destination, source }));`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-7",
+   "severity": "low",
+   "title": "TransactionBuilder.build() appends operations to the underlying builder on every call, duplicating payments on a second build",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 324,
+   "evidence": "walletSdk/Horizon/Transaction/TransactionBuilder.ts:324 `this.operations.forEach((op) => {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-13",
+   "severity": "low",
+   "title": "SEP-24 asset check matches code without issuer",
+   "file": "walletSdk/Anchor/Sep24.ts",
+   "line": 184,
+   "evidence": "walletSdk/Anchor/Sep24.ts:184 `if (!assets.includes(assetCode)) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-17",
+   "severity": "low",
+   "title": "Fee-increase ceiling is optional and the timebounds object is not defaulted",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 237,
+   "evidence": "walletSdk/Horizon/Stellar.ts:237 `if (maxFee && newFee > maxFee) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-32",
+   "severity": "low",
+   "title": "SEP-7 URI without network_passphrase defaults to public network with no check against configured network",
+   "file": "walletSdk/Uri/Sep7Base.ts",
+   "line": 141,
+   "evidence": "walletSdk/Uri/Sep7Base.ts:141 `return (this.getParam(\"network_passphrase\") ?? Networks.PUBLIC) as Networks;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-39",
+   "severity": "low",
+   "title": "SEP-7 tx URI XDR is validated against a network passphrase taken from the URI itself",
+   "file": "walletSdk/Uri/sep7Parser.ts",
+   "line": 43,
+   "evidence": "walletSdk/Uri/sep7Parser.ts:43 `url.searchParams.get(\"network_passphrase\") || Networks.PUBLIC;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-74",
+   "severity": "low",
+   "title": "Horizon URL and network passphrase are not checked against each other",
+   "file": null,
+   "line": null,
+   "evidence": "walletSdk/index.ts:170 `this.server = new Horizon.Server(horizonUrl);`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 134,
+   "reason": "transfer() pushes the caller's amount string into Operation.payment with no maximum before signing. createAccount only has a minimum (startingBalance < 1). pathPay has no amount cap. The only caps are the history page limit (AccountService.ts:95) and the fee ceiling (Stellar.ts:237), so no per-actio"
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 237,
+   "reason": "The only numeric controls are a fee ceiling per submit call and the history page limit. There is no running total of value paid per day, session or caller, and nothing persisted, so many small payments can each pass per-call checks. Value movement is in scope, so this is not not_applicable."
+  },
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 151,
+   "reason": "No budget or balance check exists to make atomic, and no spend is recorded before submission. Two concurrent submitWithFeeIncrease calls each pass with no shared state. Concurrent calls on one source account collide only at the sequence number (tx_bad_seq), which prevents double spend only by accide"
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 299,
+   "reason": "transfer() takes destinationAddress from its caller with no allowlist or binding to the authenticated user, and transferWithdrawalTransaction takes the destination from the anchor's transaction response (fetched content). Neither is operator-fixed or allowlisted in the submitted code. The payment pa"
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "walletSdk/Anchor/Sep24.ts",
+   "line": 184,
+   "reason": "Asset identity is code only in the SEP-24 allowlist, so an issuer-less code passes. Amounts are otherwise passed as strings to the SDK without a 7-decimal or sign check, and transferWithdrawalTransaction pays the anchor's amount_in in the caller-supplied assetId without comparing the anchor's asset."
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 324,
+   "reason": "build() appends this.operations to the underlying builder on every call, so a second build of the same TransactionBuilder yields a transaction with duplicated payments. The 504 retry in submitTransaction (Stellar.ts:151-176) reuses the same signed envelope, and the sequence number prevents double ex"
+  },
+  {
+   "id": "V8",
+   "title": "Slippage and quoted prices",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 174,
+   "reason": "The slippage bound is required only to be non-undefined. destMin \"0\" or \"0.0000001\" passes, and sendMax is checked the same way, so a path payment can execute at any rate. The price is not computed from requester fields, but the bound itself is not meaningful."
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "walletSdk/Auth/index.ts",
+   "line": 217,
+   "reason": "Sep10.sign validates the challenge with WebAuth.readChallengeTx (lines 176-182), which checks the server signature and home domain, then signs whatever the anchor sent. It never compares the challenge's client account to accountKp. readChallengeTx returns clientAccountID and the code discards it. Th"
+  },
+  {
+   "id": "S3",
+   "title": "Network and endpoint pinning",
+   "file": "walletSdk/Uri/Sep7Base.ts",
+   "line": 141,
+   "reason": "On the main signing and submitting paths the passphrase and Horizon URL come from configuration: Stellar.ts:50 takes cfg.stellar.server, TransactionBuilder.ts:63 uses cfg.stellar.network, and Sep10.sign uses cfg.stellar.network with the challenge passphrase compared at lines 163-171. The SEP-7 trans"
+  },
+  {
+   "id": "S4",
+   "title": "Expiry and fees",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 237,
+   "reason": "Default timeouts are applied: TransactionBuilder.ts:65-67 calls setTimeout(defaultTimeout) when no timebounds are given, and the number form at Stellar.ts:89-92 sets maxTime from now. Fees are not bounded. The fee-increase ceiling is optional, so the check is skipped whenever maxFee is omitted or 0."
+  },
+  {
+   "id": "S5",
+   "title": "Submission outcome",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 157,
+   "reason": "The success check is correct: Stellar.ts:152 tests response.successful, and a failed submit throws TransactionSubmitFailedError. After a 504, the retry is not reconciled with the hash. A retry that finds the transaction already applied returns tx_bad_seq, which line 157 rethrows as a failure. The ca"
+  },
+  {
+   "id": "S6",
+   "title": "Account authority changes",
+   "file": "walletSdk/Recovery/index.ts",
+   "line": 312,
+   "reason": "Signer, threshold and master-key changes are built from data the recovery server returns, with no pinned key or allowlist. The generic builders (CommonTransactionBuilder.ts:47-113, TransactionBuilder.ts:314-317 accountMerge) also add setOptions and merge operations with no gate. In shipped code thes"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 157,
+   "reason": "After a 504 that exhausts the retries (lines 161-163, 179), the code throws the raw error and writes no state, so the failure path itself leaves nothing stuck. The rollback gap is on the status branch: a retry that returns tx_bad_seq after the original landed is reported as a rejection, and submitWi"
+  },
+  {
+   "id": "A2",
+   "title": "Secret handling",
+   "file": "walletSdk/Utils/extractAxiosErrorData.ts",
+   "line": 20,
+   "reason": "The Stellar secret seed is kept out of errors. Every path was checked: SigningKeypair.secretKey (Horizon/Account.ts:41-43) is a getter with no logging, and AuthHeaderSigner.createToken (Auth/AuthHeaderSigner.ts:60) uses the seed only locally. The leak is a secondary credential. When an axios request"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "walletSdk/Watcher/index.ts",
+   "line": 268,
+   "reason": "Watcher state (the registries, the single _allTransactionsWatcher timer and the stop flags) is keyed by assetCode and not by caller. One caller's stop() or refresh affects other callers of the same instance. Each poll does use its own authToken, so data does not cross users. The other tenant paths ("
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "walletSdk/Auth/index.ts",
+   "line": 217,
+   "reason": "The client-side SEP-10 path signs whatever client account the challenge names, without comparing it to accountKp. The server-side path (Server/index.ts:100-105) does compare. The server-signature and structure checks rely on the stellar-sdk readChallengeTx call, which requires the server signature, "
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "walletSdk/Anchor/Sep24.ts",
+   "line": 201,
+   "reason": "Funds-relevant rules are enforced in code, not in prompts, but several are not robust. The SEP-24 asset allowlist at Sep24.ts:184 is an exact string match on asset code, and the request object is built with extraFields spread after asset_code at line 201, so a caller can override the allowlisted ass"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "walletSdk/Horizon/Transaction/TransactionBuilder.ts",
+   "line": 174,
+   "reason": "The pathPay doc at TransactionBuilder.ts:150-152 says destMin is the slippage limit and that the payment fails if it would deliver less. The only enforcement is an undefined check at line 174, so destMin of \"0\" or any other string passes and the swap can execute at any rate. The documented protectio"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "walletSdk/Horizon/Stellar.ts",
+   "line": 235,
+   "reason": "The core submit-with-fee-increase path does not work as documented. transaction.fee is the total transaction fee in stroops, and line 235 adds the per-increase value to it, then passes the result to the next build as the per-operation base fee at line 247. Each retry therefore multiplies the total f"
+  }
+ ]
+}

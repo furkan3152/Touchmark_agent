@@ -3,7 +3,7 @@
   "summary": {
    "detection": [
     19,
-    21
+    22
    ],
    "detection_high_confidence": [
     13,
@@ -11,7 +11,7 @@
    ],
    "detection_critical_high": [
     12,
-    13
+    14
    ],
    "clear": [
     2,
@@ -44,7 +44,6 @@
     "anchor-server-withdraw-any-payment-completes.fixed.json",
     "polaris-multisig-deposit-stuck-pending-signatures.fixed.json",
     "walletsdk-sep10-domain-signer-swaps-tx.fixed.json",
-    "walletsdk-recovery-duplicate-signers-lockout.vulnerable.json",
     "walletsdk-recovery-duplicate-signers-lockout.fixed.json"
    ]
   },
@@ -244,7 +243,7 @@
     "language": "typescript",
     "category": "reliability_failure",
     "severity": "high",
-    "detected": null,
+    "detected": false,
     "cleared": null
    }
   ]

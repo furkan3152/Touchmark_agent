@@ -29,13 +29,13 @@ Stellar ones only, to cite the call site rather than a helper, and to refuse cod
 
 | | Run 1 | Run 2 (final auditor) |
 |---|---|---|
-| Detected | **20 of 22** | **19 of 21** (one case not run: the deployment's daily token budget ran out) |
-| Detected, without the 7 cases marked † | 13 of 15 | 11 of 13 (also without ◊) |
+| Detected | **20 of 22** | **19 of 22** |
+| Detected, without the 7 cases marked † | 13 of 15 | 11 of 14 (also without ◊) |
 | Fixed commit clean | 6 of 8 | 2 of 3 |
 
-Detected in at least one of the two runs: **21 of 22**. The two cases run 2 missed were found in run 1, and the
-one run 1 missed besides ◊ was a near miss (¶): a single Haiku run is not deterministic, so a defect found once can
-be missed the next time, and the other way round.
+Detected in at least one of the two runs: **21 of 22**. Run 2 missed two cases that run 1 found; the case both runs
+missed was a near miss each time (¶). A single Haiku run is not deterministic, so a defect found once can be missed
+the next time, and the other way round.
 
 | Case | Repository | Run 1 | Run 2 | Fixed commit clean |
 |---|---|---|---|---|
@@ -60,7 +60,7 @@ be missed the next time, and the other way round.
 | `jssdk-readchallengetx-no-server-signature` | js-stellar-sdk | yes | yes | yes (both runs) |
 | `jssdk-redirect-leaks-custom-auth-headers` | js-stellar-sdk | yes | yes | no (both runs) § |
 | `walletsdk-sep10-domain-signer-swaps-tx` ‡ | typescript-wallet-sdk | yes | yes | yes |
-| `walletsdk-recovery-duplicate-signers-lockout` | typescript-wallet-sdk | **no** ¶ | not run ¶ |  |
+| `walletsdk-recovery-duplicate-signers-lockout` | typescript-wallet-sdk | **no** ¶ | **no** ¶ |  |
 
 - † **Not fully independent.** Three of the review's lessons (`unknown-outcome-unlock`, `cross-tenant-lookup`,
   `issuer-and-amount-received` in `backend/app/stellar/lessons.py`) were written with the held-out set in view after
@@ -71,13 +71,13 @@ be missed the next time, and the other way round.
   run 1 holds the re-runs.
 - ◊ Missed in run 1: the fee is floored, so a small swap pays none. The rounding-direction lesson written after
   that miss is in the run 2 auditor, so run 2's detection of this case is not independent either.
-- ¶ The report flags the same root cause (signer keys returned by recovery servers are added without validation) in
+- ¶ Both runs flag the same root cause (signer keys returned by recovery servers are added without validation) in
   the same file, 32 lines from the fixed range, outside the 10-line window.
 - § The defect itself is no longer reported on the fixed commit, but a different finding sits within 10 lines and
   counts against clearing: for the anchor, deposits are still exempt from the asset check the fix added for
   withdrawals and SEP-31; for js-stellar-sdk, redirect hops are not checked against private addresses (SSRF).
 - Fixed commits were audited for the eight cases run first in run 1, chosen for impact before any result was
-  known; run 2 re-ran three of them before the budget ran out.
+  known; run 2 re-ran three of them before the deployment's daily token budget ran out.
 
 **Development set (16 cases).** 11 detected with Claude Sonnet 5.5 before the lessons were added
 ([`results/dev`](results/dev)); **16 of 16** re-run with Claude Haiku 5.5 and the lessons
