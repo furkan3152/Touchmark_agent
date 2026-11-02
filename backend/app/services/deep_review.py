@@ -652,7 +652,7 @@ class DeepReviewer:
                 from .file_map import FileMap
                 card = FileMap.from_state(result.map_state).cards.get(str(args.get("file", ""))) \
                     if result.map_state else None
-                args, notes = severity_table.ground(args, card)
+                args, notes = severity_table.ground(args, card, set(result.kinds or ()))
                 args = {**args, "severity": severity_table.compute(args.get("asset"), args.get("trigger"),
                                                                    args.get("network"), args.get("location")),
                         **({"grounding": "; ".join(notes)} if notes else {})}

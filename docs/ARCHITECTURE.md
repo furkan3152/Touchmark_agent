@@ -255,10 +255,12 @@ high; the operator's own provider spend, a payer charged for a call that then fa
 availability, data exposure or correctness, medium. A
 counterparty trigger lowers the level one step and an operator-only trigger two; testnet-only
 code is at most medium, example code one lower and at most high, and tests, developer tools and
-unwired paths low. The facts are held to the evidence (`severity.ground`): a claim of funds,
-keys, account control or host execution needs a capability the file map quoted in the cited file
-(a contract's own file always qualifies), else it falls to correctness or data exposure; code
-under test, mock or example paths is never rated as shipped. The facts, and any change the
+unwired paths low. The facts are held to positive evidence (`severity.ground`): a claim of
+funds, keys or account control is lowered when the audited agent holds no Stellar authority at
+all (unless the cited file authenticates callers, which may gate a system outside the audit), or
+when the cited file is front-end view code with no authority of its own; a capability the file
+map did not record is never taken as proof of absence, and a contract's own file always holds
+authority. Code under test, mock or example paths is never rated as shipped. The facts, and any change the
 evidence made to them, are written into the finding. Rule findings keep the rule's
 severity, which the verifier may change (item 5 above).
 

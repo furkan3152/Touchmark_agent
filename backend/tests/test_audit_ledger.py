@@ -522,29 +522,38 @@ def test_a_tool_call_with_parameters_leaked_into_one_field_is_repaired():
     assert _repair_leaked_params({"purpose": "plain"}) == {"purpose": "plain"}
 
 
-def test_severity_facts_are_held_to_the_file_map_evidence():
+def test_severity_facts_are_held_to_positive_evidence_only():
     from backend.app.services import severity
-    ui = {"capabilities": [{"kind": "calls_network"}]}
     payer = {"capabilities": [{"kind": "moves_value"}]}
-    # A UI component that moves nothing cannot lose funds; a payment file can.
-    args, notes = severity.ground({"asset": "funds", "file": "web/approval-card.tsx", "location": "shipped"}, ui)
-    assert args["asset"] == "correctness" and notes
-    args, notes = severity.ground({"asset": "funds", "file": "src/pay.ts", "location": "shipped"}, payer)
-    assert args["asset"] == "funds" and not notes
-    # A web login is not Stellar account control; a file the map never carded is left as stated.
-    assert severity.ground({"asset": "account_control", "file": "auth.ts"}, {"capabilities": [
-        {"kind": "authenticates_callers"}]})[0]["asset"] == "data_exposure"
-    assert severity.ground({"asset": "funds", "file": "x.ts"}, None)[0]["asset"] == "funds"
-    # A contract's admin is authority in itself: an initialize anyone can call first stays account control.
-    oracle = {"role": "contract", "capabilities": [{"kind": "stores_shared_state"}]}
-    assert severity.ground({"asset": "account_control", "file": "oracle/lib.rs"}, oracle)[0]["asset"] == "account_control"
+    net = {"capabilities": [{"kind": "calls_network"}]}
+    signer = {"signs_transactions", "moves_value"}
+    # A UI component with no authority of its own cannot lose funds; one that signs can.
+    assert severity.ground({"asset": "funds", "file": "web/approval-card.tsx"}, net, signer)[0]["asset"] == "correctness"
+    assert severity.ground({"asset": "funds", "file": "web/Pay.tsx"}, {"capabilities": [
+        {"kind": "signs_transactions"}]}, signer)[0]["asset"] == "funds"
+    # A capability the map did not record is not proof of absence: a backend file keeps the claim.
+    assert severity.ground({"asset": "funds", "file": "withdraw/tasks.py"}, net, signer)[0]["asset"] == "funds"
+    assert severity.ground({"asset": "account_control", "file": "auth/firebase.go"}, {"capabilities": [
+        {"kind": "authenticates_callers"}]}, signer)[0]["asset"] == "account_control"
+    # An agent with no Stellar authority at all cannot lose funds, Stellar accounts or signing keys.
+    assert severity.ground({"asset": "account_control", "file": "cache.ts"}, net,
+                           {"calls_network", "authenticates_callers"})[0]["asset"] == "data_exposure"
+    # Authentication code may gate a system outside the audited folder: its claims are kept.
+    assert severity.ground({"asset": "account_control", "file": "api_keys_middleware.go"}, {"capabilities": [
+        {"kind": "authenticates_callers"}]}, {"authenticates_callers"})[0]["asset"] == "account_control"
+    assert severity.ground({"asset": "keys_or_secrets", "file": "redact.ts"}, None,
+                           {"calls_network"})[0]["asset"] == "service_credential"
+    # A contract's own file always holds authority.
+    assert severity.ground({"asset": "account_control", "file": "oracle/lib.rs"}, {"role": "contract"},
+                           set())[0]["asset"] == "account_control"
     # Mock and test paths are not shipped code; example paths are examples.
     assert severity.ground({"asset": "funds", "file": "src/mock/mock-service.ts", "location": "shipped"},
-                           payer)[0]["location"] == "test_or_dev_tool"
+                           payer, signer)[0]["location"] == "test_or_dev_tool"
     assert severity.ground({"asset": "funds", "file": "examples/pay.ts", "location": "shipped"},
-                           payer)[0]["location"] == "example_or_quickstart"
+                           payer, signer)[0]["location"] == "example_or_quickstart"
     # A payer charged for a call that failed is not value someone takes.
     assert severity.compute("paid_service_not_delivered", "anyone", "mainnet_or_configurable", "shipped") == "medium"
+
 
 
 def test_installed_third_party_packages_committed_with_the_code_are_not_the_agent():

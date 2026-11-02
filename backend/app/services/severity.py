@@ -68,38 +68,42 @@ FACTOR_SCHEMA = {
 }
 
 
-#: What a file must be able to do, by the file map's quoted capabilities, for a finding in it to put this at risk.
-ASSET_NEEDS = {
-    "funds": {"moves_value", "signs_transactions", "submits_transactions", "verifies_incoming_payment",
-              "invokes_contract", "builds_from_external_xdr", "signs_raw_bytes", "authenticates_callers",
-              "stores_shared_state"},
-    "account_control": {"changes_account_authority", "invokes_contract", "signs_transactions", "signs_raw_bytes",
-                        "builds_from_external_xdr"},
-    "keys_or_secrets": {"holds_or_loads_secret", "signs_transactions", "signs_raw_bytes"},
-    "host_code_execution": {"executes_code", "reads_writes_files"},
-}
-ASSET_NEEDS["funds_locked_or_delayed"] = ASSET_NEEDS["funds"]
-#: The asset a claim falls back to when the cited file can do none of the above.
-UNSUPPORTED = {"funds": "correctness", "funds_locked_or_delayed": "correctness", "account_control": "data_exposure",
-               "keys_or_secrets": "data_exposure", "host_code_execution": "data_exposure"}
+#: An agent that can do any of these holds Stellar authority.
+AUTHORITY_KINDS = {"moves_value", "signs_transactions", "submits_transactions", "signs_raw_bytes",
+                   "builds_from_external_xdr", "changes_account_authority", "invokes_contract",
+                   "verifies_incoming_payment"}
+#: Claims that need Stellar authority somewhere in the agent, and what each falls to without it.
+AUTHORITY_ASSETS = {"funds": "correctness", "funds_locked_or_delayed": "correctness",
+                    "account_control": "data_exposure", "keys_or_secrets": "service_credential"}
 _TEST_PATH = re.compile(r"(?:^|/)(?:tests?|__tests__|spec|fixtures?|e2e|mocks?|__mocks__)/|\.(?:test|spec)\.\w+$|"
                         r"(?:^|/)test_[^/]*$|_test\.\w+$|(?:^|/)tests?\.rs$|(?:^|/)mock[-_.][^/]*$", re.I)
 _EXAMPLE_PATH = re.compile(r"(?:^|/)(?:examples?|demos?|samples?|quickstarts?)/", re.I)
+#: Front-end view code: components, pages and views rendered in a browser.
+_UI_PATH = re.compile(r"\.(?:tsx|jsx|vue|svelte)$|(?:^|/)(?:components|pages|views)/[^/]+\.(?:js|ts)$", re.I)
 
 
-def ground(args: dict, card: dict | None) -> tuple[dict, list[str]]:
-    """Hold a model's stated severity facts to the evidence. The model chooses what is at risk; a claim of funds,
-    keys, account control or host execution must be backed by a capability the file map quoted in the cited file,
-    and code under test, mock or example paths is not shipped code whatever the model says. On never-audited
-    agents most critical findings were a UI component, a web login or a demo mock rated as a loss of funds."""
+def ground(args: dict, card: dict | None, agent_kinds: set | None = None) -> tuple[dict, list[str]]:
+    """Hold a model's stated severity facts to positive evidence. On never-audited agents most critical findings
+    were a UI component, a web login or a demo mock rated as a loss of funds. A claim of funds, keys or account
+    control is lowered only when the evidence shows it cannot hold: the agent has no Stellar authority at all, or
+    the cited file is front-end view code with no authority capability of its own. A capability the file map did
+    not record is never taken as proof of absence (the map misses some, and real defects sat in such files).
+    Code under test, mock or example paths is not shipped code whatever the model says."""
     out, notes = dict(args), []
     path = str(args.get("file") or "")
     asset = out.get("asset")
     kinds = {c.get("kind") for c in (card or {}).get("capabilities", []) if isinstance(c, dict)}
-    # A smart contract holds authority itself: its admin, storage and calls decide prices, limits and funds.
-    if card is not None and card.get("role") != "contract" and asset in ASSET_NEEDS and not kinds & ASSET_NEEDS[asset]:
-        out["asset"] = UNSUPPORTED[asset]
-        notes.append(f"{path} has no quoted capability that puts {asset} at risk, so it is rated as {out['asset']}")
+    if asset in AUTHORITY_ASSETS and (card or {}).get("role") != "contract":
+        # Code that authenticates callers may gate a system outside what was audited (a middleware folder of a
+        # payment platform), so a claim made there is kept even when the audited code holds no authority.
+        if agent_kinds is not None and not set(agent_kinds) & AUTHORITY_KINDS \
+                and "authenticates_callers" not in kinds:
+            out["asset"] = AUTHORITY_ASSETS[asset]
+            notes.append(f"the agent holds no Stellar authority, so {asset} is rated as {out['asset']}")
+        elif _UI_PATH.search(path) and not kinds & AUTHORITY_KINDS:
+            out["asset"] = AUTHORITY_ASSETS[asset]
+            notes.append(f"{path} is front-end view code with no authority of its own, so {asset} is rated as "
+                         f"{out['asset']}")
     if out.get("location") == "shipped" or out.get("location") not in LOCATIONS:
         if _TEST_PATH.search(path):
             out["location"] = "test_or_dev_tool"
