@@ -1,0 +1,110 @@
+{
+ "case": "sdp-apikey-cache-cross-tenant",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "6f900c18f357366e854c9aa9c0b2512bbd9ced58",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/6f900c18f357366e854c9aa9c0b2512bbd9ced58/internal/serve/middleware",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "api_keys_middleware.go",
+   "line_start": 45,
+   "line_end": 71
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-4",
+   "cited": "api_keys_middleware.go:54",
+   "title": "Cached API key keeps authenticating for up to 3 minutes after revocation or permission change"
+  },
+  {
+   "source": "finding",
+   "id": "security-ai-cross-user-access-1",
+   "cited": "api_keys_middleware.go:54",
+   "title": "API-key validation cache ignores tenant, so a key from one tenant authenticates on another"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-reliability-failure-5",
+   "cited": "api_keys_middleware.go:61",
+   "title": "No throttling of failed API key validations, so each guess costs a database lookup"
+  },
+  {
+   "source": "ledger",
+   "id": "A3",
+   "cited": "api_keys_middleware.go:54",
+   "title": "Tenant isolation"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-2",
+   "severity": "critical",
+   "title": "API-key IP allowlist trusts client-supplied X-Forwarded-For and X-Real-IP headers",
+   "file": "api_keys_middleware.go",
+   "line": 83,
+   "evidence": "api_keys_middleware.go:83 `for _, header := range []string{\"X-Forwarded-For\", \"X-Real-IP\"} {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-4",
+   "severity": "critical",
+   "title": "Cached API key keeps authenticating for up to 3 minutes after revocation or permission change",
+   "file": "api_keys_middleware.go",
+   "line": 54,
+   "evidence": "api_keys_middleware.go:54 `if cached, found := a.cache.Get(rawKey); found {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-cross-user-access-1",
+   "severity": "critical",
+   "title": "API-key validation cache ignores tenant, so a key from one tenant authenticates on another",
+   "file": "api_keys_middleware.go",
+   "line": 54,
+   "evidence": "api_keys_middleware.go:54 `if cached, found := a.cache.Get(rawKey); found {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-5",
+   "severity": "low",
+   "title": "No throttling of failed API key validations, so each guess costs a database lookup",
+   "file": "api_keys_middleware.go",
+   "line": 61,
+   "evidence": "api_keys_middleware.go:61 `apiKey, err := a.model.ValidateRawKeyAndUpdateLastUsed(ctx, rawKey)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-3",
+   "severity": "low",
+   "title": "Tenant-less JWT inherits the tenant chosen by the SDP-Tenant-Name header",
+   "file": "middleware.go",
+   "line": 120,
+   "evidence": "middleware.go:120 `if err == nil && tenantID != \"\" {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "api_keys_middleware.go",
+   "line": 54,
+   "reason": "The API-key validation cache is keyed only by the raw key and stores the APIKey with no tenant binding. A key validated for one tenant is returned from cache for any request, so the caller is not bound to the tenant of the key. This is the defect already recorded as security-ai-cross-user-access-1. "
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "api_keys_middleware.go",
+   "line": 83,
+   "reason": "The file summary and API-key design present the IP allowlist as a control (\"checks client IP allowlists\"). On line 118 the allowlist is applied to extractClientIP, which takes the client-supplied X-Forwarded-For or X-Real-IP header before RemoteAddr. The advertised restriction therefore does not hol"
+  }
+ ]
+}

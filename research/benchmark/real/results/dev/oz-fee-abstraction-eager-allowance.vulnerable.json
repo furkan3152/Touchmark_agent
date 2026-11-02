@@ -1,0 +1,69 @@
+{
+ "case": "oz-fee-abstraction-eager-allowance",
+ "side": "vulnerable",
+ "repo": "OpenZeppelin/stellar-contracts",
+ "commit": "7485b449ba0771204b6c0fb3f09f731b499e9580",
+ "audited": "https://github.com/OpenZeppelin/stellar-contracts/tree/7485b449ba0771204b6c0fb3f09f731b499e9580/packages/fee-abstraction",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_evidence",
+ "defect_lines": [
+  {
+   "path": "src/storage.rs",
+   "line_start": 179,
+   "line_end": 205
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "security-unpinned-deps",
+   "severity": "medium",
+   "title": "Unpinned dependencies",
+   "file": "Cargo.toml",
+   "line": 18,
+   "evidence": "",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-1",
+   "severity": "low",
+   "title": "User authorization does not bind fee_recipient or fee_amount",
+   "file": "src/storage.rs",
+   "line": 99,
+   "evidence": "src/storage.rs:99 `user.require_auth_for_args(user_args_for_auth);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "src/storage.rs",
+   "line": 99,
+   "reason": "The signed args omit fee_recipient. The recipient is caller-chosen and is not checked against any allowlist, so a relayer can redirect the fee up to max_fee_amount."
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "src/storage.rs",
+   "line": 99,
+   "reason": "The user's auth covers only fee_token, max_fee_amount, expiration_ledger and the target call. It does not cover fee_recipient or fee_amount. Per-token records are in persistent storage and their TTL is extended in is_allowed_fee_token. The set_allowed_fee_token and sweep_token helpers have no requir"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/storage.rs",
+   "line": 99,
+   "reason": "The user's signed auth payload covers fee_token, max_fee_amount, expiration, target and args. It leaves out fee_recipient. A relayer can therefore pick any recipient, up to max_fee_amount, and the signature still verifies."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/storage.rs",
+   "line": 99,
+   "reason": "The README says the user signs the authorization and that the relayer verifies the fee recipient. The authorized args cover fee_token, max_fee_amount, expiration and the target call, but not fee_recipient. The signed payload also does not bind fee_amount, though the cap does bound it. In the permiss"
+  }
+ ]
+}

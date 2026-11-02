@@ -1,0 +1,65 @@
+{
+ "case": "sdp-auth-tenant-header-fallback",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "5d51e03cd493b7f07a78e8d9b9f40268dbab2d2f",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/5d51e03cd493b7f07a78e8d9b9f40268dbab2d2f/internal/serve/middleware",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "middleware.go",
+   "line_start": 118,
+   "line_end": 125
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "API key IP allowlist bypassed by client-supplied X-Forwarded-For / X-Real-IP header",
+   "file": "api_keys_middleware.go",
+   "line": 157,
+   "evidence": "api_keys_middleware.go:157 `for _, header := range []string{\"X-Forwarded-For\", \"X-Real-IP\"} {` \u00b7 api_keys_middleware.go:190 `if clientIP := extractClientIP(r); !apiKey.IsAllowedIP(clientIP) {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-3",
+   "severity": "critical",
+   "title": "API key cache invalidation is asynchronous and can be overwritten by a stale in-flight validation",
+   "file": "api_keys_middleware.go",
+   "line": 141,
+   "evidence": "api_keys_middleware.go:141 `a.cache.SetWithTTL(cacheKey, apiKey, 1, apiKeyCacheTTL)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "Synchronous invalidation assumed by the API key cache is not guaranteed",
+   "file": "api_keys_middleware.go",
+   "line": 91,
+   "evidence": "api_keys_middleware.go:91 `a.cache.Del(cacheKey)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "api_keys_middleware.go",
+   "line": 190,
+   "reason": "The code comments and the Middleware docs present the API key IP allowlist as a security control. In extractClientIP (line 157-158) the client IP is read from the client-supplied X-Forwarded-For and X-Real-IP headers before RemoteAddr, so the stated restriction can be defeated by any client that sen"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "api_keys_middleware.go",
+   "line": 91,
+   "reason": "Core authentication calls match their signatures: ristretto NewCache, Wait, Get, SetWithTTL(key, value, cost, ttl), and Del are used correctly, and the secret is verified on every hit. The failing part is the documented contract that Invalidate evicts synchronously within the instance. ristretto Del"
+  }
+ ]
+}

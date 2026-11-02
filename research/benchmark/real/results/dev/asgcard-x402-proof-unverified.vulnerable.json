@@ -1,0 +1,281 @@
+{
+ "case": "asgcard-x402-proof-unverified",
+ "side": "vulnerable",
+ "repo": "ASGCompute/asgcard-public",
+ "commit": "d65ed2c8b3c362c3d585b065634a7f1f314fe602",
+ "audited": "https://github.com/ASGCompute/asgcard-public/tree/d65ed2c8b3c362c3d585b065634a7f1f314fe602/api",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/middleware/x402.ts",
+   "line_start": 59,
+   "line_end": 96
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-1",
+   "cited": "src/middleware/x402.ts:87",
+   "title": "x402 payment proof accepted at face value; no on-chain or facilitator verification"
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-ai-replay-or-idempotency-2",
+   "cited": "src/middleware/x402.ts:89",
+   "title": "Wallet auth signature covers only a timestamp, so it is replayable and not bound to the request"
+  },
+  {
+   "source": "ledger",
+   "id": "V5",
+   "cited": "src/middleware/x402.ts:76",
+   "title": "Asset identity and units"
+  },
+  {
+   "source": "ledger",
+   "id": "V6",
+   "cited": "src/middleware/x402.ts:88",
+   "title": "Replay and double payment"
+  },
+  {
+   "source": "ledger",
+   "id": "V7",
+   "cited": "src/middleware/x402.ts:87",
+   "title": "Incoming payment verification"
+  },
+  {
+   "source": "ledger",
+   "id": "A1",
+   "cited": "src/middleware/x402.ts:87",
+   "title": "Caller authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "A3",
+   "cited": "src/middleware/x402.ts:89",
+   "title": "Tenant isolation"
+  },
+  {
+   "source": "ledger",
+   "id": "A4",
+   "cited": "src/middleware/x402.ts:86",
+   "title": "Approvals fail closed"
+  },
+  {
+   "source": "ledger",
+   "id": "A7",
+   "cited": "src/middleware/x402.ts:87",
+   "title": "Verification of incoming authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "src/middleware/x402.ts:87",
+   "title": "Controls outside the prompt"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "src/middleware/x402.ts:87",
+   "title": "Stated purpose versus behaviour"
+  },
+  {
+   "source": "ledger",
+   "id": "M5",
+   "cited": "src/middleware/x402.ts:87",
+   "title": "Core function works"
+  }
+ ],
+ "findings": [
+  {
+   "id": "reliability-ai-reliability-failure-4",
+   "severity": "critical",
+   "title": "Settlement failure not reconciled; no refund on post-payment failure",
+   "file": "src/services/paymentService.ts",
+   "line": 90,
+   "evidence": "src/services/paymentService.ts:90 `facilitatorClient.settle(settleId).catch((error) => {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "critical",
+   "title": "x402 payment proof accepted at face value; no on-chain or facilitator verification",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "evidence": "src/middleware/x402.ts:87 `// For PLAT-001, payment proof is accepted at face value.` \u00b7 src/middleware/x402.ts:76 `if (proof.payload.authorization.value !== requiredAtomic) {` \u00b7 src/middleware/x402.ts:88 `req.paymentContext = {` \u00b7 src/middleware/x402.ts:86 `// TODO [PAY-002]: Verify txHash via facilitator or Horizon.`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-2",
+   "severity": "critical",
+   "title": "Wallet auth signature covers only a timestamp, so it is replayable and not bound to the request",
+   "file": "src/middleware/walletAuth.ts",
+   "line": 64,
+   "evidence": "src/middleware/walletAuth.ts:64 `const message = new TextEncoder().encode(`asgcard-auth:${timestamp}`);` \u00b7 src/middleware/x402.ts:89 `payer: proof.payload.authorization.from,`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-6",
+   "severity": "critical",
+   "title": "Replay check is not atomic (check-then-add around an await), and the store is in-memory only",
+   "file": "src/services/paymentService.ts",
+   "line": 61,
+   "evidence": "src/services/paymentService.ts:61 `this.txHashStore.add(proof.txHash);`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-7",
+   "severity": "critical",
+   "title": "Paid routes never dedupe txHash; one fabricated proof can mint unlimited cards or funding",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "evidence": "src/routes/paid.ts:36 `txHash: req.paymentContext.txHash`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-8",
+   "severity": "medium",
+   "title": "Settle response body (settled flag) never checked; settled:false treated as success",
+   "file": "src/services/facilitatorClient.ts",
+   "line": 175,
+   "evidence": "src/services/facilitatorClient.ts:175 `return (await response.json()) as SettleResponse;`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "low",
+   "title": "Unpinned dependencies",
+   "file": "package.json",
+   "line": 17,
+   "evidence": "",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "low",
+   "title": "STELLAR_NETWORK and numeric settings are unvalidated free-form values",
+   "file": null,
+   "line": null,
+   "evidence": "src/config/env.ts:19 `STELLAR_NETWORK: z.string().default(\"stellar:pubnet\"),`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Unwired card repository: unvalidated float balance and 32-bit card IDs",
+   "file": null,
+   "line": null,
+   "evidence": "src/repositories/inMemoryCardRepo.ts:47 `card.balance += amount;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-3",
+   "severity": "low",
+   "title": "Webhook HMAC compare throws on length mismatch, giving a 500 instead of 401",
+   "file": "src/routes/webhook.ts",
+   "line": 44,
+   "evidence": "src/routes/webhook.ts:44 `if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signatureHeader))) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-5",
+   "severity": "low",
+   "title": "Webhook replay protection is in-memory only, with no timestamp freshness check and a random fallback key",
+   "file": "src/routes/webhook.ts",
+   "line": 98,
+   "evidence": "src/routes/webhook.ts:98 `idempotencyKey: parsed.idempotency_key ?? parsed.id ?? crypto.randomUUID(),`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "src/middleware/x402.ts",
+   "line": 76,
+   "reason": "The check compares a string the payer supplies. It never checks the asset or issuer in the proof, and nothing on the ledger confirms the amount."
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "src/middleware/x402.ts",
+   "line": 88,
+   "reason": "The middleware never calls the paymentService replay store, so the same txHash can be reused indefinitely. The store is also in memory and is only marked after verification."
+  },
+  {
+   "id": "V7",
+   "title": "Incoming payment verification",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "reason": "The payment is not verified on-chain or through the facilitator. paymentService.verifyAndAccept has no caller."
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "src/services/paymentService.ts",
+   "line": 90,
+   "reason": "Settlement failure is only logged (TODO to mark settle_failed); the txHash is already marked used and the service already delivered, so a failed settlement leaves a paid-looking order with no reconciliation. Additionally, in paid.ts the payment is accepted by middleware before body validation, so a "
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "reason": "Paid routes that create and fund cards rely on an unverified X-Payment header; PaymentService.verifyAndAccept has no caller."
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/middleware/x402.ts",
+   "line": 89,
+   "reason": "The payer wallet comes from the unauthenticated proof. A caller can create or fund cards under another wallet's address. Card reads and freezes are bound to the authenticated wallet, but the wallet signature covers only a timestamp and can be replayed."
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "src/middleware/x402.ts",
+   "line": 86,
+   "reason": "The payment gate approves from a requester-supplied header with no verification step, so it is not a fail-closed approval."
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "reason": "The payment proof carries no verified signature. The wallet auth signature is replayable. The webhook HMAC compare throws on a length mismatch."
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "reason": "The payment gate checks only the fields in the client-supplied proof. It never verifies the txHash. PaymentService.verifyAndAccept has no caller, so the facilitator is never invoked."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "reason": "The service presents itself as a paid card-issuing service with facilitator verification and settlement. The shipped path verifies nothing, and cards are mock objects."
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "reason": "The core paid path does not work as intended: the facilitator verify and settle code is dead, and state is kept only in memory."
+  }
+ ]
+}

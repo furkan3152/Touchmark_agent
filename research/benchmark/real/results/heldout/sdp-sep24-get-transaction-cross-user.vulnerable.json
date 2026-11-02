@@ -1,0 +1,508 @@
+{
+ "case": "sdp-sep24-get-transaction-cross-user",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "5c697f3d3d6b3dafbf11babbe402ed582afd5991",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/5c697f3d3d6b3dafbf11babbe402ed582afd5991/internal/serve/httphandler",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "sep24_handler.go",
+   "line_start": 127,
+   "line_end": 165
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-cross-user-access-2",
+   "cited": "sep24_handler.go:161",
+   "title": "SEP-24 transaction status endpoint returns another user's receiver Stellar address and memo"
+  },
+  {
+   "source": "ledger",
+   "id": "A3",
+   "cited": "sep24_handler.go:161",
+   "title": "Tenant isolation"
+  }
+ ],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-4",
+   "severity": "critical",
+   "title": "Sponsored-transaction allowlist checks only the contract address, not the function or arguments, and has no per-wallet fee budget in the handler",
+   "file": "sponsored_transaction_handler.go",
+   "line": 232,
+   "evidence": "sponsored_transaction_handler.go:109 `transactionID, err := h.EmbeddedWalletService.SponsorTransaction(ctx, account, reqBody.OperationXDR)` \u00b7 sponsored_transaction_handler.go:104 `if !allowed { httperror.BadRequest(\"operation_xdr contract address is not supported for this tenant\", nil, nil).Render(w)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-26",
+   "severity": "critical",
+   "title": "Token refresh never re-checks wallet state when the JWT already carries a contract address",
+   "file": "passkey_handler.go",
+   "line": 256,
+   "evidence": "passkey_handler.go:256 `if contractAddress == \"\" {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-27",
+   "severity": "critical",
+   "title": "Wallet JWT can be refreshed indefinitely with no absolute session lifetime or re-authentication",
+   "file": "passkey_handler.go",
+   "line": 270,
+   "evidence": "passkey_handler.go:270 `expiresAt := time.Now().Add(WalletTokenExpiration)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "SEP-24 deposit accepts a caller-chosen Stellar account instead of the SEP-10 authenticated one",
+   "file": "sep24_handler.go",
+   "line": 256,
+   "evidence": "sep24_handler.go:256 `account = r.FormValue(\"account\")`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-10",
+   "severity": "critical",
+   "title": "Any authenticated user can disable MFA and CAPTCHA org-wide via organization profile PATCH",
+   "file": "profile_handler.go",
+   "line": 194,
+   "evidence": "profile_handler.go:194 `MFADisabled: reqBody.MFADisabled,` \u00b7 profile_handler.go:195 `CAPTCHADisabled: reqBody.CAPTCHADisabled,`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "economic-ai-economic-loss-34",
+   "severity": "medium",
+   "title": "Unlimited OTP SMS and email sends with no per-caller or per-contact rate limit",
+   "file": "receiver_send_otp_handler.go",
+   "line": 257,
+   "evidence": "receiver_send_otp_handler.go:257 `_, err = h.MessageDispatcher.SendMessage(ctx, msg, organization.MessageChannelPriority)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-22",
+   "severity": "medium",
+   "title": "Empty api_key string passes validation and overwrites the stored encrypted Circle key with the encryption of \"\"",
+   "file": "circle_config_handler.go",
+   "line": 96,
+   "evidence": "circle_config_handler.go:96 `encryptedAPIKey, encryptErr := h.Encrypter.Encrypt(*patchRequest.APIKey, kp.Seed())`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-29",
+   "severity": "medium",
+   "title": "SEP-10 POST /auth reads an unbounded request body on both form and JSON paths",
+   "file": "sep10_handler.go",
+   "line": 74,
+   "evidence": "sep10_handler.go:74 `if err := json.NewDecoder(r.Body).Decode(&req); err != nil {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-30",
+   "severity": "medium",
+   "title": "Forgot-password endpoint decodes an unbounded anonymous request body",
+   "file": "forgot_password_handler.go",
+   "line": 74,
+   "evidence": "forgot_password_handler.go:74 `err = json.NewDecoder(r.Body).Decode(&forgotPasswordRequest)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-32",
+   "severity": "medium",
+   "title": "External email send runs inside the open reset-token DB transaction",
+   "file": "forgot_password_handler.go",
+   "line": 106,
+   "evidence": "forgot_password_handler.go:106 `err = db.RunInTransaction(ctx, h.Models.DBConnectionPool, nil, func(tx db.DBTransaction) error {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-36",
+   "severity": "medium",
+   "title": "Send-OTP request body is decoded without a size limit before authentication",
+   "file": "receiver_send_otp_handler.go",
+   "line": 81,
+   "evidence": "receiver_send_otp_handler.go:81 `err := json.NewDecoder(r.Body).Decode(&receiverSendOTPRequest)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-37",
+   "severity": "medium",
+   "title": "Anonymous reset-password endpoint decodes an unbounded request body",
+   "file": "reset_password_handler.go",
+   "line": 53,
+   "evidence": "reset_password_handler.go:53 `err := json.NewDecoder(r.Body).Decode(&resetPasswordRequest)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-35",
+   "severity": "medium",
+   "title": "Send-OTP response reveals whether a contact is registered, its verification type, and the provider error text",
+   "file": "receiver_send_otp_handler.go",
+   "line": 207,
+   "evidence": "receiver_send_otp_handler.go:207 `return receiverVerification.VerificationField, nil`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-11",
+   "severity": "medium",
+   "title": "RPC proxy forwards any JSON-RPC method with the operator's RPC credential injected and no caller check",
+   "file": "rpc_proxy_handler.go",
+   "line": 81,
+   "evidence": "rpc_proxy_handler.go:81 `req.Header.Set(h.RPCAuthHeaderKey, h.RPCAuthHeaderValue)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-18",
+   "severity": "medium",
+   "title": "SEP-45 POST /sep45/auth reads an unbounded request body (no MaxBytesReader)",
+   "file": "sep45_handler.go",
+   "line": 79,
+   "evidence": "sep45_handler.go:79 `if err := json.NewDecoder(r.Body).Decode(&req); err != nil {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-3",
+   "severity": "medium",
+   "title": "Multipart disbursement creation skips request validation (HTML template check, contact type and verification enums)",
+   "file": "disbursement_handler.go",
+   "line": 628,
+   "evidence": "disbursement_handler.go:628 `disbursement, httpErr := d.createNewDisbursement(ctx, tx, user.ID, req)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-31",
+   "severity": "medium",
+   "title": "Forgot-password response timing reveals whether an email has a staff account",
+   "file": "forgot_password_handler.go",
+   "line": 112,
+   "evidence": "forgot_password_handler.go:112 `sendErr := h.SendForgotPasswordMessage(ctx, *tnt.SDPUIBaseURL, forgotPasswordRequest.Email, resetToken)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-cross-user-access-38",
+   "severity": "medium",
+   "title": "SEP-24 registration page leaks truncated OTP contact of any receiver whose account and memo the caller names",
+   "file": null,
+   "line": null,
+   "evidence": "receiver_registration_handler.go:102 `response.TruncatedContactInfo = utils.TruncateString(rw.OTPConfirmedWith, 3)`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-secret-exposure-12",
+   "severity": "medium",
+   "title": "Password reset handler logs a prefix of the live reset token",
+   "file": "reset_password_handler.go",
+   "line": 77,
+   "evidence": "reset_password_handler.go:77 `truncatedToken := utils.TruncateString(resetPasswordRequest.ResetToken, len(resetPasswordRequest.ResetToken)/4)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-28",
+   "severity": "medium",
+   "title": "Passkey registration token is accepted in the URL query string, where access logs can capture it",
+   "file": "passkey_handler.go",
+   "line": 92,
+   "evidence": "passkey_handler.go:92 `token := req.URL.Query().Get(\"token\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-5",
+   "severity": "medium",
+   "title": "Unauthenticated receiver deletion route, gated only by testnet passphrase",
+   "file": "delete_contact_info_handler.go",
+   "line": 25,
+   "evidence": "delete_contact_info_handler.go:48 `err := d.Models.Receiver.DeleteByContactInfo(ctx, d.Models.DBConnectionPool, contactInfo)` \u00b7 delete_contact_info_handler.go:25 `if d.NetworkPassphrase != network.TestNetworkPassphrase {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-13",
+   "severity": "low",
+   "title": "OTP message template is stored without content validation and sent to receivers",
+   "file": "profile_handler.go",
+   "line": 190,
+   "evidence": "profile_handler.go:190 `OTPMessageTemplate: reqBody.OTPMessageTemplate,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "provenance-ai-dependency-risk-7",
+   "severity": "low",
+   "title": "stellar.toml fallback endpoints are built from the request Host header",
+   "file": "stellar_toml_handler.go",
+   "line": 66,
+   "evidence": "stellar_toml_handler.go:66 `webAuthEndpoint = fmt.Sprintf(\"%s://%s/sep10/auth\", parsedBaseURL.Scheme, req.Host)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-14",
+   "severity": "low",
+   "title": "CreateUser reports first_name validation errors under the misspelled key \"fist_name\"",
+   "file": "user_handler.go",
+   "line": 73,
+   "evidence": "user_handler.go:73 `validator.CheckError(utils.ValidateStringLength(cur.FirstName, \"first_name\", namesMaxLength), \"fist_name\", \"\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "GetAssets silently drops assets from the enabled filter when a balance lookup fails",
+   "file": null,
+   "line": null,
+   "evidence": "assets_handler.go:93 `log.Ctx(ctx).Warnf(\"Error getting balance for asset %s:%s: %v\", asset.Code, asset.Issuer, err)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-19",
+   "severity": "low",
+   "title": "GetDisbursement continues after writing an error and can panic or write two responses",
+   "file": "disbursement_handler.go",
+   "line": 462,
+   "evidence": "disbursement_handler.go:462 `httperror.NotFound(\"disbursement user metadata not found\", err, nil).Render(w)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-20",
+   "severity": "low",
+   "title": "Uploaded CSV filename is echoed unescaped into Content-Disposition",
+   "file": "disbursement_handler.go",
+   "line": 611,
+   "evidence": "disbursement_handler.go:611 `w.Header().Set(\"Content-Disposition\", fmt.Sprintf(`attachment; filename=\"%s\"`, filename))`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-21",
+   "severity": "low",
+   "title": "Changing only the Circle API key never re-checks the stored wallet ID against the new key's account",
+   "file": "circle_config_handler.go",
+   "line": 186,
+   "evidence": "circle_config_handler.go:186 `if patchRequest.WalletID != nil { accountConfig, err := circleClient.GetAccountConfiguration(ctx)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-23",
+   "severity": "low",
+   "title": "Empty wallet_id string passes validation and blanks the stored Circle master wallet ID",
+   "file": "circle_config_handler.go",
+   "line": 107,
+   "evidence": "circle_config_handler.go:107 `clientConfigUpdate.WalletID = patchRequest.WalletID`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-25",
+   "severity": "low",
+   "title": "Logo upload stores bytes that were never decoded, so the public logo endpoint returns 500 until replaced",
+   "file": "profile_handler.go",
+   "line": 134,
+   "evidence": "profile_handler.go:134 `validator.Check(strings.Contains(expectedContentTypes, fileContentType), \"logo\", \"invalid file type provided. Expected png or jpeg.\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "low",
+   "title": "OTP and invitation message templates are parsed with html/template, so org names and values are HTML-escaped in SMS and email",
+   "file": null,
+   "line": null,
+   "evidence": "receiver_send_otp_handler.go:223 `sendOTPMessageTpl, err := template.New(\"\").Parse(otpMessageTemplate)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "Asset code \"XLM\" bypasses issuer validation and trustline creation in CreateAsset",
+   "file": null,
+   "line": null,
+   "evidence": "assets_handler.go:155 `if !isNativeAssetCode(assetCode) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-15",
+   "severity": "low",
+   "title": "PATCH payment status decodes an unbounded request body",
+   "file": "payments_handler.go",
+   "line": 236,
+   "evidence": "payments_handler.go:236 `err := json.NewDecoder(r.Body).Decode(&patchRequest)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-16",
+   "severity": "low",
+   "title": "Asset create and delete read the distribution account sequence without a lock, so concurrent transactions collide",
+   "file": "assets_handler.go",
+   "line": 366,
+   "evidence": "assets_handler.go:366 `Sequence: acc.Sequence,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-24",
+   "severity": "low",
+   "title": "Circle config PATCH decodes an unbounded request body",
+   "file": "circle_config_handler.go",
+   "line": 70,
+   "evidence": "circle_config_handler.go:70 `err = json.NewDecoder(r.Body).Decode(&patchRequest)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-2",
+   "severity": "low",
+   "title": "SEP-24 transaction status endpoint returns another user's receiver Stellar address and memo",
+   "file": "sep24_handler.go",
+   "line": 161,
+   "evidence": "sep24_handler.go:161 `transaction[\"to\"] = receiverWallet.StellarAddress`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-33",
+   "severity": "low",
+   "title": "OTP rotation and send are not bound to the caller's wallet, so any SEP-24 holder on the same client domain can target another receiver",
+   "file": "receiver_send_otp_handler.go",
+   "line": 191,
+   "evidence": "receiver_send_otp_handler.go:191 `numberOfUpdatedRows, err := h.Models.ReceiverWallet.UpdateOTPByReceiverContactInfoAndWalletDomain(ctx, contactInfo, sep24ClientDomain, newOTP)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-9",
+   "severity": "low",
+   "title": "Asset code \"XLM\" bypasses issuer validation and trustline creation in CreateAsset",
+   "file": null,
+   "line": null,
+   "evidence": "assets_handler.go:155 `if !isNativeAssetCode(assetCode) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "circle_config_handler_test.go:218 (SCW5I\u2026redacted); circle_config_handler_test.go:218: GBFL6FHG\u2026 has no account on mainnet or testnet (testnet resets erase accounts); ledger checked 2026-11-01T22:50:51+00:00 (mainnet and testnet Horizon)",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "sponsored_transaction_handler.go",
+   "line": 109,
+   "reason": "The sponsorship route is the only fee-paying route in the submitted handlers that the agent drives. The handler checks only the contract address (lines 93-107). It has no bound on the resource fee, no check on the function name or argument amounts (for example a SAC transfer amount), and no check of"
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "sponsored_transaction_handler.go",
+   "line": 109,
+   "reason": "No cumulative, per-day or per-wallet fee budget is checked in the handler before SponsorTransaction, and no rate limit or idempotency key is applied. Each POST spends sponsored fees, so many small calls can exceed any intended total. The service layer is not in the submitted set, so a budget there c"
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "assets_handler.go",
+   "line": 155,
+   "reason": "The trustline comparison at assets_handler.go:275 and :314 matches code and issuer together, and the sponsorship check at sponsored_transaction_handler.go:223-232 compares contract IDs derived from code and issuer. Both hold. But isNativeAssetCode at line 155 (and line 273 and 311) decides nativenes"
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "sponsored_transaction_handler.go",
+   "line": 109,
+   "reason": "The handler decodes the operation XDR, but the only inspection before the sponsor call is the invoked contract address (getInvokeContractAddress at line 93, isContractAllowed at line 99). The function name and arguments are never checked, so an allowlisted SAC contract can be invoked with a transfer"
+  },
+  {
+   "id": "S4",
+   "title": "Expiry and fees",
+   "file": "sponsored_transaction_handler.go",
+   "line": 109,
+   "reason": "The sponsorship path passes an unbounded, requester-chosen operation to the sponsor without a per-wallet fee or resource budget in the handler, so the sponsor pays whatever fees the requester's operation incurs. Timeout and fee for the sponsored envelope are set in the service, which is not in the s"
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "delete_contact_info_handler.go",
+   "line": 25,
+   "reason": "DeleteContactInfoHandler.ServeHTTP performs no caller authentication. Its only gate is the testnet passphrase check, and it deletes a receiver by URL parameter. This is the already-recorded unauthenticated deletion path. Other sensitive handlers do check the caller: SponsoredTransaction (sponsored_t"
+  },
+  {
+   "id": "A2",
+   "title": "Secret handling",
+   "file": "reset_password_handler.go",
+   "line": 77,
+   "reason": "Partial reset token written to logs (recorded as security-ai-secret-exposure-12). Other secret handling holds: the Circle API key is encrypted before storage (circle_config_handler.go:96 `encryptedAPIKey, encryptErr := h.Encrypter.Encrypt(*patchRequest.APIKey, kp.Seed())`), and the org-update log ex"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "sep24_handler.go",
+   "line": 161,
+   "reason": "Several multi-caller paths fail. The SEP-24 status endpoint returns another receiver's stellar address and memo (recorded as security-ai-cross-user-access-2). The SEP-24 deposit flow accepts a caller-chosen account (security-ai-control-bypass-1). The sponsored-transaction path binds the wallet via J"
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "profile_handler.go",
+   "line": 195,
+   "reason": "The MFA gate fails closed on DB error and on device-check error (login_handler.go:155-158 returns an internal error, not a bypass). But the MFA and CAPTCHA skip is driven by an org flag that any authenticated requester can set through PatchOrganizationProfile (profile_handler.go:194-195), recorded a"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "sponsored_transaction_handler.go",
+   "line": 104,
+   "reason": "Most safety rules are enforced in code, not in prompts: there are no request-text keyword filters in the submitted code (the only strings.Contains calls test content types, a template placeholder and a logo MIME type). The sponsored-transaction rule, however, is only partly enforced in code. isContr"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "profile_handler.go",
+   "line": 194,
+   "reason": "The product presents MFA and CAPTCHA as security controls, but the organization profile PATCH writes reqBody.MFADisabled and CAPTCHADisabled straight into the organization record. The code shows no admin-role check on that field in the lines read, so any authenticated user can turn off MFA for the w"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "assets_handler.go",
+   "line": 155,
+   "reason": "The core asset path does not work as intended for a code such as \"XLM\" used with a non-native issuer. isNativeAssetCode skips the issuer validation and the trustline creation branch, so a CreditAsset with code XLM is stored without an issuer check. This is the already recorded reliability-ai-functio"
+  }
+ ]
+}

@@ -1,0 +1,119 @@
+{
+ "case": "sdp-tss-feebump-replaced-double-pay",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "b86bb22d469c9a6197ed11f6900ed4bc5104572c",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/b86bb22d469c9a6197ed11f6900ed4bc5104572c/internal/transactionsubmission",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "transaction_worker.go",
+   "line_start": 385,
+   "line_end": 413
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-2",
+   "severity": "medium",
+   "title": "No cumulative spend budget",
+   "file": "payment_transaction_handler.go",
+   "line": 69,
+   "evidence": "payment_transaction_handler.go:69 `operation = &txnbuild.Payment{`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-4",
+   "severity": "medium",
+   "title": "Sponsored invoke runs with distribution account as op source and no contract/function allowlist; auth check skipped when Auth empty",
+   "file": "sponsored_transaction_handler.go",
+   "line": 87,
+   "evidence": "sponsored_transaction_handler.go:87 `if len(operation.Auth) != 0 {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "medium",
+   "title": "No amount cap in the submitter before signing",
+   "file": "payment_transaction_handler.go",
+   "line": 60,
+   "evidence": "payment_transaction_handler.go:60 `amount := txJob.Transaction.Amount.StringFixed(7)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-3",
+   "severity": "medium",
+   "title": "Payment destination unchecked beyond format",
+   "file": "payment_transaction_handler.go",
+   "line": 72,
+   "evidence": "payment_transaction_handler.go:72 `Destination: txJob.Transaction.Destination,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "low",
+   "title": "Status updates to SUCCESS/ERROR do not guard on current DB status",
+   "file": null,
+   "line": null,
+   "evidence": "store/transactions.go:370 `WHERE id = $2 RETURNING`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-5",
+   "severity": "low",
+   "title": "Simulation auth entries and Soroban data applied without validation",
+   "file": null,
+   "line": null,
+   "evidence": "wallet_creation_transaction_handler.go:178 `err := xdr.SafeUnmarshalBase64(b64, &a)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "engine/signing/channel_account_db_signature_client_test.go:68 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:77 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:120 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:130 (SCPGN\u2026redacted); engine/signing/distribution_account_db_vault_signature_client_test.go:66 (SCPG",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "payment_transaction_handler.go",
+   "line": 60,
+   "reason": "The TSS pays whatever amount the queued DB row holds. It applies no maximum before signing. Any cap would have to be in the upstream SDP, which was not reviewed."
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "payment_transaction_handler.go",
+   "line": 69,
+   "reason": "No cumulative or daily spend limit exists in the submitted files. The only throttle, the tx processing limiter, limits throughput after congestion errors, not value."
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "payment_transaction_handler.go",
+   "line": 72,
+   "reason": "The destination comes straight from the DB row. It is checked only for a valid format, with no allowlist."
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "payment_transaction_handler.go",
+   "line": 60,
+   "reason": "The submitter signs whatever amount, destination and asset the database row holds. It has no cap, no cumulative budget and no destination check beyond format. Any such control would have to live in the SDP upstream, which is not in the submitted files."
+  }
+ ]
+}

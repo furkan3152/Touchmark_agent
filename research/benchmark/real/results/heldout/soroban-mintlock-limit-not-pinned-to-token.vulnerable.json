@@ -1,0 +1,270 @@
+{
+ "case": "soroban-mintlock-limit-not-pinned-to-token",
+ "side": "vulnerable",
+ "repo": "stellar/soroban-examples",
+ "commit": "92b43359d7afbd8691baef2b14a3715c35bd189f",
+ "audited": "https://github.com/stellar/soroban-examples/tree/92b43359d7afbd8691baef2b14a3715c35bd189f/mint-lock",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/lib.rs",
+   "line_start": 21,
+   "line_end": 30
+  },
+  {
+   "path": "src/lib.rs",
+   "line_start": 70,
+   "line_end": 76
+  },
+  {
+   "path": "src/lib.rs",
+   "line_start": 117,
+   "line_end": 153
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-1",
+   "cited": "src/lib.rs:148",
+   "title": "Minter epoch limit resets when temporary stats expire, letting a minter exceed its limit"
+  },
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-5",
+   "cited": "src/lib.rs:119",
+   "title": "Admin mint path has no per-action or cumulative amount bound"
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-persistent-ttl",
+   "cited": "src/lib.rs:71",
+   "title": "Persistent storage TTL renewal missing"
+  },
+  {
+   "source": "finding",
+   "id": "intent-ai-intent-mismatch-7",
+   "cited": "src/lib.rs:110",
+   "title": "Minter limit is not bound to the target token contract"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-3",
+   "cited": "src/lib.rs:75",
+   "title": "set_minter accepts epoch_length 0, so every mint by that minter panics on division by zero"
+  },
+  {
+   "source": "ledger",
+   "id": "V1",
+   "cited": "src/lib.rs:119",
+   "title": "Per-action amount bound"
+  },
+  {
+   "source": "ledger",
+   "id": "V2",
+   "cited": "src/lib.rs:148",
+   "title": "Cumulative budget"
+  },
+  {
+   "source": "ledger",
+   "id": "V3",
+   "cited": "src/lib.rs:148",
+   "title": "Atomic budget accounting"
+  },
+  {
+   "source": "ledger",
+   "id": "V6",
+   "cited": "src/lib.rs:148",
+   "title": "Replay and double payment"
+  },
+  {
+   "source": "ledger",
+   "id": "S7",
+   "cited": "src/lib.rs:75",
+   "title": "Soroban contract checks"
+  },
+  {
+   "source": "ledger",
+   "id": "A4",
+   "cited": "src/lib.rs:148",
+   "title": "Approvals fail closed"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "src/lib.rs:119",
+   "title": "Controls outside the prompt"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "src/lib.rs:119",
+   "title": "Stated purpose versus behaviour"
+  },
+  {
+   "source": "ledger",
+   "id": "M5",
+   "cited": "src/lib.rs:129",
+   "title": "Core function works"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-account-takeover-2",
+   "severity": "high",
+   "title": "set_admin has no initialization guard, so anyone can claim admin before the contract is configured",
+   "file": "src/lib.rs",
+   "line": 52,
+   "evidence": "src/lib.rs:52 `if let Some(admin) = env`",
+   "verifier": "confirmed",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "high",
+   "title": "Minter epoch limit resets when temporary stats expire, letting a minter exceed its limit",
+   "file": "src/lib.rs",
+   "line": 148,
+   "evidence": "src/lib.rs:148 `.extend_ttl(&minter_stats_key, 0, epoch * config.epoch_length);` \u00b7 src/lib.rs:119 `if admin != minter {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-5",
+   "severity": "medium",
+   "title": "Admin mint path has no per-action or cumulative amount bound",
+   "file": "src/lib.rs",
+   "line": 119,
+   "evidence": "src/lib.rs:119 `if admin != minter {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-persistent-ttl",
+   "severity": "low",
+   "title": "Persistent storage TTL renewal missing",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:71 set_minter; src/lib.rs:102 mint; src/lib.rs:80 minter",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "intent-ai-intent-mismatch-7",
+   "severity": "low",
+   "title": "Minter limit is not bound to the target token contract",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:110 `minter.require_auth_for_args((&contract, &to, amount).into_val(&env));`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "set_minter accepts epoch_length 0, so every mint by that minter panics on division by zero",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:75 `.set(&StorageKey::Minter(minter), &config);` \u00b7 src/lib.rs:129 `let epoch = env.ledger().sequence() / config.epoch_length;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-6",
+   "severity": "low",
+   "title": "Admin key in instance storage has no TTL extension, so the whole limiter can be archived",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:59 `env.storage().instance().set(&StorageKey::Admin, &new_admin);`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "src/lib.rs",
+   "line": 119,
+   "reason": "Non-admin minters are bounded per epoch by config.limit (line 140: \"if new_minter_stats.consumed_limit > config.limit\"). The admin is exempt from every amount bound: when minter == admin the whole limit block is skipped and client.mint runs for any i128 amount (lines 152-153). Only the amount sign i"
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "src/lib.rs",
+   "line": 148,
+   "reason": "The budget is a per-minter, per-epoch counter on chain (temporary storage keyed by minter, epoch_length and epoch, lines 130-145), so it is shared by every instance and survives restarts. However, the TTL extension at line 148 sets extend_to to epoch * epoch_length, which is a ledger-count value far"
+  },
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "src/lib.rs",
+   "line": 148,
+   "reason": "Serial execution makes the read (134-136), comparison (140) and write (145) atomic within one invocation, and the spend is recorded before the cross-contract mint (153). That part holds. The budget itself is not durable: the record lives in temporary storage keyed by epoch, and extend_ttl(key, thres"
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "src/lib.rs",
+   "line": 148,
+   "reason": "The claim that replays are bounded by the cumulative per-epoch limit does not hold, because that limit is stored in temporary storage that expires before the epoch ends. Auth entries are host-protected by nonce and expiration, and failed invocations do revert, so those parts hold. But the cumulative"
+  },
+  {
+   "id": "S6",
+   "title": "Account authority changes",
+   "file": "src/lib.rs",
+   "line": 52,
+   "reason": "Contract-admin change is gated by require_auth only when an admin is already stored. Before initialization, any caller can set the admin. set_minter is gated by admin auth (line 72), so minter changes are controlled once an admin exists. Admin takeover before setup is already recorded."
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "src/lib.rs",
+   "line": 75,
+   "reason": "State-changing functions do require auth: set_minter requires admin (line 72) and mint requires the minter (line 110). Per-minter config is correctly in persistent storage. However, the persistent Minter entry is never TTL-extended, and the admin key in instance storage is never TTL-extended either "
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/lib.rs",
+   "line": 52,
+   "reason": "set_admin is a public entry point that reaches admin authority (set_minter, which configures minters). Auth is required only when an admin is already stored (line 57). Before the first call, no caller is authenticated and any address is written as admin (line 59). The other routes are authenticated:"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/lib.rs",
+   "line": 52,
+   "reason": "Per-minter limiter state is bound to the caller: the stats key includes the authenticated minter address (lines 130-131, 145), and mint requires that minter's auth (line 110), so one minter cannot consume another minter's quota. However, the admin role over the shared limiter can be taken by any cal"
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "src/lib.rs",
+   "line": 148,
+   "reason": "The limit gate denies on excess (lines 140-142) and on a missing minter config (lines 124-126), so it fails closed on those paths. The limit state itself is stored in temporary storage with a TTL that is not extended correctly (threshold 0, extend_to set to an absolute-ledger-derived value). When th"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/lib.rs",
+   "line": 119,
+   "reason": "The limit and auth rules are enforced in contract code, not in a prompt: minter.require_auth_for_args at line 110 and the consumed_limit check at line 140. There are no keyword filters or prompts. But the limit is skipped entirely when the caller is the admin (line 119), and the daily window is stor"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/lib.rs",
+   "line": 119,
+   "reason": "The contract describes itself as a minter-limit contract where admin sets per-minter epoch limits and minters are capped. The code claims a limit, but the admin path (line 119) skips it, and the target contract is not bound to the limit either (line 110 signs (contract, to, amount) with no function "
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/lib.rs",
+   "line": 129,
+   "reason": "The SDK calls look valid: the contractclient MintClient, require_auth_for_args with a tuple IntoVal, and the temporary-storage get/set/extend_ttl usage. But the core path panics when epoch_length is 0 (division by zero at line 129, and also at line 86 in minter()), so a minter configured with 0 can "
+  }
+ ]
+}

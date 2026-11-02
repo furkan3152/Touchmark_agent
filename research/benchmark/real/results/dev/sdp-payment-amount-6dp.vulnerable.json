@@ -1,0 +1,183 @@
+{
+ "case": "sdp-payment-amount-6dp",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "b860c4d58d0091a9ea2170870322088f5417dcdd",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/b860c4d58d0091a9ea2170870322088f5417dcdd/internal/transactionsubmission",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "payment_transaction_handler.go",
+   "line_start": 60,
+   "line_end": 60
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "economic-ai-economic-loss-2",
+   "cited": "payment_transaction_handler.go:69",
+   "title": "No cumulative spend limit in TSS"
+  },
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-1",
+   "cited": "payment_transaction_handler.go:60",
+   "title": "No amount bound in the TSS payment builder"
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-ai-stellar-protocol-misuse-4",
+   "cited": "payment_transaction_handler.go:60",
+   "title": "Amount silently rounded to 6 decimals"
+  },
+  {
+   "source": "ledger",
+   "id": "V1",
+   "cited": "payment_transaction_handler.go:60",
+   "title": "Per-action amount bound"
+  },
+  {
+   "source": "ledger",
+   "id": "V2",
+   "cited": "payment_transaction_handler.go:69",
+   "title": "Cumulative budget"
+  },
+  {
+   "source": "ledger",
+   "id": "V5",
+   "cited": "payment_transaction_handler.go:60",
+   "title": "Asset identity and units"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "payment_transaction_handler.go:69",
+   "title": "Controls outside the prompt"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-foreign-transaction-signing-5",
+   "severity": "critical",
+   "title": "Sponsored invoke-host-function XDR signed with distribution account without contract/function/argument allowlist",
+   "file": "sponsored_transaction_handler.go",
+   "line": 134,
+   "evidence": "sponsored_transaction_handler.go:134 `sponsoredOperation := &txnbuild.InvokeHostFunction{ SourceAccount: distributionAccount,`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-7",
+   "severity": "high",
+   "title": "Simulation auth entries and Soroban data from RPC applied without inspection before distribution-account signing",
+   "file": "wallet_creation_transaction_handler.go",
+   "line": 182,
+   "evidence": "wallet_creation_transaction_handler.go:182 `auth = append(auth, a)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "economic-ai-economic-loss-2",
+   "severity": "medium",
+   "title": "No cumulative spend limit in TSS",
+   "file": "payment_transaction_handler.go",
+   "line": 69,
+   "evidence": "payment_transaction_handler.go:69 `operation = &txnbuild.Payment{`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "medium",
+   "title": "No amount bound in the TSS payment builder",
+   "file": "payment_transaction_handler.go",
+   "line": 60,
+   "evidence": "payment_transaction_handler.go:60 `amount := txJob.Transaction.Amount.StringFixed(6)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-3",
+   "severity": "medium",
+   "title": "TSS pays any destination in the queue row",
+   "file": "payment_transaction_handler.go",
+   "line": 72,
+   "evidence": "payment_transaction_handler.go:72 `Destination: txJob.Transaction.Destination,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-4",
+   "severity": "low",
+   "title": "Amount silently rounded to 6 decimals",
+   "file": null,
+   "line": null,
+   "evidence": "payment_transaction_handler.go:60 `amount := txJob.Transaction.Amount.StringFixed(6)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "engine/signing/channel_account_db_signature_client_test.go:68 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:77 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:120 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:130 (SCPGN\u2026redacted); engine/signing/distribution_account_db_vault_signature_client_test.go:66 (SCPG",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "payment_transaction_handler.go",
+   "line": 60,
+   "reason": "The handler signs whatever amount the queue row holds. It has no maximum, and no positive-amount check is visible. Any cap would have to live in the upstream SDP code, which was not reviewed."
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "payment_transaction_handler.go",
+   "line": 69,
+   "reason": "No cumulative or daily budget exists in the submitter. It pays every queued row. The only limiter, tx_processing_limiter, throttles batch size and does not cap value."
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "payment_transaction_handler.go",
+   "line": 72,
+   "reason": "The destination comes straight from the DB row. It is checked only for a valid G or C address format. It is not checked against an allowlist."
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "payment_transaction_handler.go",
+   "line": 60,
+   "reason": "Assets use code plus issuer. The amount is rounded to 6 decimals, although Stellar allows 7. A value such as 0.1234567 is silently paid as 0.123457. Rounding up overpays, and any amount below 0.0000005 becomes 0.000000, which is a zero-amount payment."
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "sponsored_transaction_handler.go",
+   "line": 134,
+   "reason": "Externally supplied XDR is only checked for host function type and auth address; contract, function and args are not inspected, and the op is sourced from the distribution account."
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "payment_transaction_handler.go",
+   "line": 69,
+   "reason": "TSS has no amount cap, cumulative budget or destination allowlist; it pays whatever is in the queue row. Controls are assumed to live upstream in the SDP."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "sponsored_transaction_handler.go",
+   "line": 134,
+   "reason": "The sponsored handler signs externally supplied invoke-host-function XDR with the distribution account as source. It only rejects auth from infrastructure accounts. It does not allowlist the contract, function or arguments."
+  }
+ ]
+}

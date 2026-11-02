@@ -1,0 +1,505 @@
+{
+ "case": "sdp-tss-unknown-outcome-unlock-double-pay",
+ "side": "fixed",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "bc26006c7d8429939c671fd879754ae7e8c863cc",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/bc26006c7d8429939c671fd879754ae7e8c863cc/internal/transactionsubmission",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "transaction_worker.go",
+   "line_start": 248,
+   "line_end": 272
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "intent-ai-intent-mismatch-3",
+   "severity": "critical",
+   "title": "Sponsored invoke is not bound to its declared contract and accepts contract-credential auth without checks",
+   "file": "sponsored_transaction_handler.go",
+   "line": 127,
+   "evidence": "sponsored_transaction_handler.go:127 `case xdr.ScAddressTypeScAddressTypeContract:`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-40",
+   "severity": "critical",
+   "title": "Sponsored row stored without binding the invoked contract, function or auth entries to SponsoredAccount",
+   "file": "store/transactions.go",
+   "line": 200,
+   "evidence": "store/transactions.go:200 `if err := xdr.SafeUnmarshalBase64(s.SponsoredOperationXDR, &operation); err != nil {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-26",
+   "severity": "critical",
+   "title": "Env distribution signer signs any envelope it is given without checking its operations",
+   "file": "engine/signing/account_env_signature_client.go",
+   "line": 101,
+   "evidence": "engine/signing/account_env_signature_client.go:101 `signedStellarTx, err = stellarTx.Sign(c.NetworkPassphrase(), c.distributionKP)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-30",
+   "severity": "critical",
+   "title": "Signer router signs whatever transaction it is given, including sponsored XDR that makes the distribution account the operation source",
+   "file": "engine/signing/signer_router.go",
+   "line": 169,
+   "evidence": "engine/signing/signer_router.go:169 `signedStellarTx, err = sigClient.SignStellarTransaction(ctx, signedStellarTx, publicKeys...)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-10",
+   "severity": "critical",
+   "title": "Payment source wallet is not bound to the transaction's tenant",
+   "file": null,
+   "line": null,
+   "evidence": "engine/signing/distribution_account_resolver.go:110 `wallet, err := (&data.DistributionWalletModel{}).Get(ctx, r.mtnDBConnectionPool, walletID)`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-unauthorized-payment-39",
+   "severity": "critical",
+   "title": "BulkInsert stores a wallet_id without checking the tenant owns that distribution wallet",
+   "file": "store/transactions.go",
+   "line": 300,
+   "evidence": "store/transactions.go:300 `transaction.WalletID,`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-1",
+   "severity": "high",
+   "title": "Wallet-creation handler signs RPC-supplied auth entries without validating them, unlike the sponsored handler",
+   "file": "wallet_creation_transaction_handler.go",
+   "line": 156,
+   "evidence": "wallet_creation_transaction_handler.go:156 `operation.Auth, err = h.extractAuthEntries(simulationResponse)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-33",
+   "severity": "high",
+   "title": "Reprocessing erases the submitted hash and envelope, so a landed payment is rebuilt and paid again",
+   "file": "transaction_worker.go",
+   "line": 410,
+   "evidence": "store/transactions.go:653 `stellar_transaction_hash = NULL,`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "reliability-ai-functional-defect-13",
+   "severity": "medium",
+   "title": "Lowercase 'xlm' asset code passes validation but is built as a credit asset and stalls the payment job",
+   "file": null,
+   "line": null,
+   "evidence": "store/transactions.go:170 `if strings.ToLower(p.AssetCode) != \"xlm\" {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-functional-defect-25",
+   "severity": "medium",
+   "title": "Wallet-creation fee is the classic max base fee and omits the Soroban resource fee",
+   "file": "wallet_creation_transaction_handler.go",
+   "line": 130,
+   "evidence": "wallet_creation_transaction_handler.go:130 `BaseFee: int64(h.engine.MaxBaseFee),`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-9",
+   "severity": "medium",
+   "title": "No fail-closed per-payment amount cap before the distribution account signs",
+   "file": "store/transactions.go",
+   "line": 179,
+   "evidence": "store/transactions.go:179 `if p.Amount.LessThanOrEqual(decimal.Zero) {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-2",
+   "severity": "medium",
+   "title": "Reconciliation identifies a submission by the fee-bump outer hash, so a payment that landed under another wrapper is paid again",
+   "file": "transaction_worker.go",
+   "line": 386,
+   "evidence": "transaction_worker.go:386 `txDetail, err := tw.engine.HorizonClient.TransactionDetail(txHash)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-8",
+   "severity": "medium",
+   "title": "Every payment is submitted with the SEP-29 memo-required check disabled",
+   "file": "transaction_worker.go",
+   "line": 576,
+   "evidence": "transaction_worker.go:576 `resp, err := tw.engine.HorizonClient.SubmitFeeBumpTransactionWithOptions(feeBumpTx, horizonclient.SubmitTxOpts{SkipMemoRequiredCheck: true})`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-12",
+   "severity": "low",
+   "title": "Channel-account creation deletes signing keys after a submit that may have landed",
+   "file": "services/horizon.go",
+   "line": 62,
+   "evidence": "services/horizon.go:62 `deleteErr := submiterEngine.SignerRouter.Delete(ctx, chAccToDelete)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-15",
+   "severity": "low",
+   "title": "Sponsored Soroban invocations are built with the classic base fee and no resource fee, so they are rejected as insufficient fee",
+   "file": "sponsored_transaction_handler.go",
+   "line": 146,
+   "evidence": "sponsored_transaction_handler.go:146 `BaseFee: int64(h.engine.MaxBaseFee),`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-16",
+   "severity": "low",
+   "title": "CreateAndFundAccount accepts an unbounded, possibly negative native amount from the host account",
+   "file": null,
+   "line": null,
+   "evidence": "services/horizon.go:340 `Amount: strconv.Itoa(amountNativeAssetToSend),`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "CreateAndFundAccount signs with the host key while the transaction source is sourceAcc",
+   "file": null,
+   "line": null,
+   "evidence": "services/horizon.go:353 `tx, err = submitterEngine.SignStellarTransaction(ctx, tx, hostAccount)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-19",
+   "severity": "low",
+   "title": "StoreKey stores a secret without checking it matches the public key or is a valid seed",
+   "file": null,
+   "line": null,
+   "evidence": "services/distribution_wallet_key_service.go:50 `ciphertext, encryptedDEK, err := s.encrypter.EncryptWithNewDEK(privateKey, s.kek)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-21",
+   "severity": "low",
+   "title": "Channel-account rollback delete fails when the ledger has advanced, leaving unfunded channel-account rows",
+   "file": null,
+   "line": null,
+   "evidence": "engine/signing/channel_account_db_signature_client.go:196 `lockedToLedgerNumber := currentLedgerNumber + preconditions.IncrementForMaxLedgerBounds`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-23",
+   "severity": "low",
+   "title": "Batch deletion treats an empty result as an error, so the clean-exit branch is dead and a partial delete returns failure",
+   "file": null,
+   "line": null,
+   "evidence": "services/channel_accounts_service.go:193 `if len(accounts) == 0 {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-24",
+   "severity": "low",
+   "title": "Simulation error response is ignored, so an empty transaction is built and submitted",
+   "file": null,
+   "line": null,
+   "evidence": "wallet_creation_transaction_handler.go:154 `simulationResponse := simulationResult.Response`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-27",
+   "severity": "low",
+   "title": "Decrypted distribution secret is not checked against the requested public key before signing",
+   "file": null,
+   "line": null,
+   "evidence": "engine/signing/distribution_account_db_vault_signature_client.go:116 `kp, err := keypair.ParseFull(sigPrivateKey)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-31",
+   "severity": "low",
+   "title": "Wallet key row is written without binding its public key to the ciphertext it protects",
+   "file": null,
+   "line": null,
+   "evidence": "store/distribution_wallet_keys.go:50 `distribution_wallet_keys (public_key, encrypted_private_key, encrypted_dek)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-34",
+   "severity": "low",
+   "title": "Terminal status writes are not conditioned on PROCESSING in the database",
+   "file": null,
+   "line": null,
+   "evidence": "store/transactions.go:371 `id = $2`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-38",
+   "severity": "low",
+   "title": "Wallet-creation row stored without the required public key and wasm hash length",
+   "file": "store/transactions.go",
+   "line": 149,
+   "evidence": "store/transactions.go:149 `_, err := hex.DecodeString(wc.PublicKey)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "Deterministic preparation errors are never terminal: the job stays locked, is reselected and retried forever while reporting to the crash tracker",
+   "file": null,
+   "line": null,
+   "evidence": "transaction_worker.go:715 `return err`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "low",
+   "title": "Any Horizon error not on the terminal list is retried indefinitely, including permanent rejections such as op_malformed or tx_malformed",
+   "file": null,
+   "line": null,
+   "evidence": "utils/errors.go:407 `return !e.IsHorizonError() || !e.ShouldMarkAsError()`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "low",
+   "title": "CreateAndFundAccount retries after non-Horizon errors and treats op_already_exists as retriable, so a landed funding is reported as failed",
+   "file": null,
+   "line": null,
+   "evidence": "services/horizon.go:373 `if !hError.IsHorizonError() {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-7",
+   "severity": "low",
+   "title": "Simulation error field is ignored; the handler builds and submits a transaction with no Soroban data after the RPC reports a failure",
+   "file": null,
+   "line": null,
+   "evidence": "sponsored_transaction_handler.go:170 `simulationResponse := simulationResult.Response`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-22",
+   "severity": "low",
+   "title": "VerifyChannelAccounts deletes DB rows without checking the lock, so in-use channel accounts can be removed",
+   "file": null,
+   "line": null,
+   "evidence": "services/channel_accounts_service.go:357 `if err = s.GetChannelAccountStore().Delete(ctx, s.TSSDBConnectionPool, account.PublicKey); err != nil {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-28",
+   "severity": "low",
+   "title": "GetAndLockAll locks accounts one by one outside a transaction and leaks partial locks on error",
+   "file": null,
+   "line": null,
+   "evidence": "store/channel_account.go:231 `lockedAccount, err := ca.Lock(ctx, ca.DBConnectionPool, channelAccount.PublicKey, int32(currentLedger), int32(nextLedgerLock))`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-36",
+   "severity": "low",
+   "title": "Dispatch failure leaves locked bundles stuck and reselected every cycle",
+   "file": null,
+   "line": null,
+   "evidence": "manager.go:191 `m.crashTrackerClient.LogAndReportErrors(ctx, err, \"\") continue`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-37",
+   "severity": "low",
+   "title": "Adaptive back-off raises the bundle limit instead of lowering it",
+   "file": null,
+   "line": null,
+   "evidence": "engine/tx_processing_limiter.go:83 `tpl.limitValue = DefaultBundlesSelectionLimit`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-18",
+   "severity": "low",
+   "title": "AddTrustlines sets an empty trustline limit, which means the maximum limit",
+   "file": null,
+   "line": null,
+   "evidence": "services/horizon.go:278 `Limit: \"\",`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-20",
+   "severity": "low",
+   "title": "DeleteKey enforces none of the documented guard for active or funded wallets",
+   "file": null,
+   "line": null,
+   "evidence": "services/distribution_wallet_key_service.go:107 `if err := s.keyModel.Delete(ctx, publicKey); err != nil {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-32",
+   "severity": "low",
+   "title": "Wallet key row can be deleted with no tenant, state or balance check",
+   "file": null,
+   "line": null,
+   "evidence": "store/distribution_wallet_keys.go:114 `const q = `DELETE FROM distribution_wallet_keys WHERE public_key = $1``",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-cross-user-access-35",
+   "severity": "low",
+   "title": "GetAllByExternalIDs returns submitter transactions across all tenants",
+   "file": null,
+   "line": null,
+   "evidence": "store/transactions.go:345 `t.external_id = ANY($1)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-14",
+   "severity": "low",
+   "title": "Archived-entry restore submission has no outcome tracking and releases the channel account on an unknown result",
+   "file": null,
+   "line": null,
+   "evidence": "transaction_worker.go:683 `_, err = tw.engine.HorizonClient.SubmitFeeBumpTransactionWithOptions(feeBumpTx, horizonclient.SubmitTxOpts{SkipMemoRequiredCheck: true})`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-11",
+   "severity": "low",
+   "title": "Amount checked unrounded but signed rounded to 7 decimals",
+   "file": null,
+   "line": null,
+   "evidence": "payment_transaction_handler.go:60 `amount := txJob.Transaction.Amount.StringFixed(7)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "engine/signing/channel_account_db_signature_client_test.go:68 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:77 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:120 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:130 (SCPGN\u2026redacted); engine/signing/distribution_account_db_vault_signature_client_test.go:66 (SCPG",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "store/transactions.go",
+   "line": 179,
+   "reason": "The only amount check on the payment path is a positivity check. No maximum per payment, per asset or per tenant exists in validate() (store/transactions.go:166-186), in BuildInnerTransaction (payment_transaction_handler.go:43-118) or in the worker (transaction_worker.go:512-569). The amount is sign"
+  },
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "store/transactions.go",
+   "line": 179,
+   "reason": "The lock and ordering parts hold: LoadAndLockTuples selects with FOR UPDATE SKIP LOCKED and the UPDATE in TransactionModel.Lock (store/transactions.go:591-619) re-checks the lock filter, and prepareForSubmission persists hash and xdr_sent (transaction_worker.go:503) before SubmitFeeBumpTransactionWi"
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "engine/signing/distribution_account_resolver.go",
+   "line": 110,
+   "reason": "Destinations are checked: store/transactions.go:182 requires a valid ed25519 or contract address and the payment is built from that record, not from a model or memo. The source account is not bound to the caller's tenant, though. DistributionAccountForWallet takes tenantID, uses it only to load the "
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "payment_transaction_handler.go",
+   "line": 60,
+   "reason": "Asset identity holds: store/transactions.go:171-177 requires a valid issuer for non-XLM codes, and payment_transaction_handler.go:49-55 re-checks the issuer and builds a CreditAsset with code and issuer. The amount does not hold. The positivity check runs on the unrounded decimal (store/transactions"
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "transaction_worker.go",
+   "line": 386,
+   "reason": "Reconciliation after a timeout looks up the fee-bump outer hash only. A fee-bump can be rewrapped under a new outer hash by anyone holding the inner envelope, so a 404 does not show the payment did not land and the worker rebuilds and pays again. Sequence-number reconciliation is not used here. This"
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "wallet_creation_transaction_handler.go",
+   "line": 156,
+   "reason": "The wallet-creation handler copies RPC-supplied auth entries straight into the operation with no checks on contract, function or arguments. The worker then signs the envelope (transaction_worker.go:545 and 563). The sponsored handler inspects only credential types and the distribution/channel accoun"
+  },
+  {
+   "id": "S5",
+   "title": "Submission outcome",
+   "file": "transaction_worker.go",
+   "line": 386,
+   "reason": "After a send, the worker checks the real result. The synchronous response is checked for Successful (transaction_worker.go:346) and a Horizon error is classified. Reconciliation, however, looks up the stored fee-bump outer hash, and a 404 sends the transaction back to the queue (transaction_worker.g"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "transaction_worker.go",
+   "line": 715,
+   "reason": "Failure paths leave state stuck or inconsistent. Deterministic preparation errors keep the job locked and are reselected forever, which is the existing stuck-loop finding. Separately, the channel-account creation cleanup deletes keys after a submit that may have landed (services/horizon.go:62), so o"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "engine/signing/distribution_account_resolver.go",
+   "line": 110,
+   "reason": "The wallet is looked up by walletID alone, and the tenant from the job is never compared with the wallet's tenant. The distribution account for a wallet owned by another tenant can therefore be resolved and used to sign a payment for this tenant's job. The channel-account signer is bound to its own "
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "store/transactions.go",
+   "line": 179,
+   "reason": "The only code-level amount rule is positivity. No per-payment cap, daily budget, or rate limit exists in the submitter, so a payment amount is never bounded by code before the distribution account signs it. Wallet-to-tenant binding is also not enforced in code: DistributionAccountForWallet (engine/s"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "utils/errors.go",
+   "line": 407,
+   "reason": "The README says Horizon errors are retriable only for 429, 504, and 400 with tx_insufficient_fee, tx_too_late, or tx_bad_seq, and that the rest are terminal. The code instead makes every error that is not marked as an error retriable, including permanent rejections such as op_malformed and tx_malfor"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "sponsored_transaction_handler.go",
+   "line": 170,
+   "reason": "The sponsored path does not work as shipped. The simulation error field is never checked, and simulationErr only covers transport failure. A failed simulation therefore yields a transaction with no Soroban data, which is then signed and submitted. The payment path also fails for lowercase 'xlm' (sto"
+  }
+ ]
+}

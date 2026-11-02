@@ -1,0 +1,113 @@
+{
+ "case": "passkey-sample-policy-per-tx-cap",
+ "side": "vulnerable",
+ "repo": "kalepail/passkey-kit",
+ "commit": "73807666f073f08117b0f403f5ded8b846309f9c",
+ "audited": "https://github.com/kalepail/passkey-kit/tree/73807666f073f08117b0f403f5ded8b846309f9c/contracts",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "sample-policy/src/lib.rs",
+   "line_start": 113,
+   "line_end": 146
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "economic-ai-economic-loss-1",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "Sample policy caps each transfer but keeps no running total"
+  },
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-3",
+   "cited": "sample-policy/src/lib.rs:134",
+   "title": "Sample policy does not bind recipient"
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-soroban-policy-per-call-cap-2ae7cd9e",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "The on-chain amount limit is per call, with no running total"
+  },
+  {
+   "source": "ledger",
+   "id": "V2",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "Cumulative budget"
+  },
+  {
+   "source": "ledger",
+   "id": "V4",
+   "cited": "sample-policy/src/lib.rs:134",
+   "title": "Recipient binding"
+  }
+ ],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-1",
+   "severity": "high",
+   "title": "Sample policy caps each transfer but keeps no running total",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "evidence": "sample-policy/src/lib.rs:139 `if amount <= 0 || amount > TRANSFER_LIMIT {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-3",
+   "severity": "high",
+   "title": "Sample policy does not bind recipient",
+   "file": "sample-policy/src/lib.rs",
+   "line": 134,
+   "evidence": "sample-policy/src/lib.rs:134 `let amount = match args.get(2).and_then(|v| i128::try_from_val(&env, &v).ok()) {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-soroban-policy-per-call-cap-2ae7cd9e",
+   "severity": "medium",
+   "title": "The on-chain amount limit is per call, with no running total",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "evidence": "sample-policy/src/lib.rs:139 policy__: amount > TRANSFER_LIMIT",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-2",
+   "severity": "medium",
+   "title": "Unlimited signers have no amount bound",
+   "file": "smart-wallet/src/context.rs",
+   "line": 33,
+   "evidence": "smart-wallet/src/context.rs:33 `None => return true,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "smart-wallet/src/context.rs",
+   "line": 33,
+   "reason": "A signer with no limits can authorize any amount. Bounds exist only if a policy is attached, and the sample policy caps transfer only."
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "reason": "The cap is per call. The policy keeps no running total, so many transfers can each pass."
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "sample-policy/src/lib.rs",
+   "line": 134,
+   "reason": "The policy checks only the amount. It never checks the transfer recipient (args[1]), so the signer chooses any destination."
+  }
+ ]
+}

@@ -1,0 +1,58 @@
+{
+ "case": "sdp-sponsored-tx-foreign-authorizer",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "e8fab3882c7605758d5ac3ee16aea0488c0998d9",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/e8fab3882c7605758d5ac3ee16aea0488c0998d9/internal/transactionsubmission",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "sponsored_transaction_handler.go",
+   "line_start": 87,
+   "line_end": 132
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-2",
+   "severity": "high",
+   "title": "Unbounded Soroban resource fee from RPC simulation applied to signed sponsored transaction",
+   "file": "sponsored_transaction_handler.go",
+   "line": 200,
+   "evidence": "sponsored_transaction_handler.go:198 `operation.Ext = xdr.TransactionExt{`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-1",
+   "severity": "high",
+   "title": "Wallet-creation handler signs RPC-supplied auth entries without inspection",
+   "file": "wallet_creation_transaction_handler.go",
+   "line": 156,
+   "evidence": "wallet_creation_transaction_handler.go:156 `operation.Auth, err = h.extractAuthEntries(simulationResponse)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "engine/signing/channel_account_db_signature_client_test.go:68 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:77 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:120 (SCPGN\u2026redacted); engine/signing/channel_account_db_signature_client_test.go:130 (SCPGN\u2026redacted); engine/signing/distribution_account_db_vault_signature_client_test.go:66 (SCPG",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "wallet_creation_transaction_handler.go",
+   "line": 156,
+   "reason": "Auth entries returned by the Soroban RPC simulation are copied into the invoke op without inspecting credentials type, invoked contract, function or sub-invocations. The inner transaction is then signed by the channel account and the distribution account (SignStellarTransaction with distributionAcco"
+  }
+ ]
+}

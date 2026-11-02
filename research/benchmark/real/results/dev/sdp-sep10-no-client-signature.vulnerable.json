@@ -1,0 +1,149 @@
+{
+ "case": "sdp-sep10-no-client-signature",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "05fc5bc2417f8bc6e46c9e29b031b250ab07a7e0",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/05fc5bc2417f8bc6e46c9e29b031b250ab07a7e0/internal/services",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "sep10_service.go",
+   "line_start": 500,
+   "line_end": 549
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-4",
+   "cited": "sep10_service.go:547",
+   "title": "SEP-10 threshold check passes with zero client signatures when medium threshold is 0"
+  },
+  {
+   "source": "ledger",
+   "id": "A7",
+   "cited": "sep10_service.go:547",
+   "title": "Verification of incoming authentication"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-4",
+   "severity": "critical",
+   "title": "SEP-10 threshold check passes with zero client signatures when medium threshold is 0",
+   "file": "sep10_service.go",
+   "line": 547,
+   "evidence": "sep10_service.go:547 `if totalWeight < threshold {`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-2",
+   "severity": "critical",
+   "title": "Sponsored transaction accepts any contract invocation with the distribution account as source",
+   "file": "embedded_wallet_service.go",
+   "line": 310,
+   "evidence": "embedded_wallet_service.go:310 `if operation.HostFunction.Type != xdr.HostFunctionTypeHostFunctionTypeInvokeContract {`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "economic-ai-economic-loss-1",
+   "severity": "high",
+   "title": "Non-atomic balance check for concurrent direct payments",
+   "file": "direct_payment_service.go",
+   "line": 368,
+   "evidence": "direct_payment_service.go:368 `totalPending, err := s.calculatePendingAmountForAsset(ctx, dbTx, *asset, sourceWalletID)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-ssrf-5",
+   "severity": "medium",
+   "title": "SEP-10 client_domain fetch is steerable (SSRF)",
+   "file": "sep10_service.go",
+   "line": 711,
+   "evidence": "sep10_service.go:711 `stellarToml, err := client.GetStellarToml(clientDomain)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-7",
+   "severity": "low",
+   "title": "Key deleted after on-chain funding when later step fails, stranding bootstrap funds",
+   "file": null,
+   "line": null,
+   "evidence": "distribution_wallet_management_service.go:180 `s.cleanupWallet(ctx, wallet.ID, kp.Address())`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-8",
+   "severity": "low",
+   "title": "Nil pointer dereference in reconciliation error path when request has no Circle ID",
+   "file": null,
+   "line": null,
+   "evidence": "circle_reconciliation_service.go:128 `return fmt.Errorf(\"getting Circle %s by ID %q: %w\", cObjData.Type, cObjData.ID, err)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-ssrf-6",
+   "severity": "low",
+   "title": "SEP-45 client_domain fetch is requester-controlled (SSRF), with HTTP fallback",
+   "file": "sep45_service.go",
+   "line": 572,
+   "evidence": "sep45_service.go:572 `resp, err := s.tomlClient.GetStellarToml(clientDomain)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "send_receiver_wallets_invite_service_test.go:37 (SCTOV\u2026redacted); send_receiver_wallets_invite_service_test.go:50 (SCTOV\u2026redacted); send_receiver_wallets_invite_service_test.go:74 (SBUSP\u2026redacted); send_receiver_wallets_invite_service_test.go:1333 (SBUSP\u2026redacted); send_receiver_wallets_invite_service_test.go:2044 (SBUSP\u2026redacted); send_receiver_wallets_invite_service_test.go:37: GCWSYSAY\u2026 has no ",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "direct_payment_service.go",
+   "line": 368,
+   "reason": "The balance check reads pending payments with a plain SELECT inside a transaction. It takes no lock and the check is not atomic with the insert, so concurrent requests can both pass. The overcommitted payments then fail at submission with insufficient funds. The result is failed or delayed payments,"
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "embedded_wallet_service.go",
+   "line": 310,
+   "reason": "Only the host function type is checked. The contract, function, arguments and auth credentials are not inspected before the operation is queued for signing with the distribution account as source."
+  },
+  {
+   "id": "A6",
+   "title": "Outbound requests and file paths",
+   "file": "sep10_service.go",
+   "line": 711,
+   "reason": "The server fetches stellar.toml from a client_domain taken from the challenge, which the requester supplies. The only SSRF protection could be the injected HTTPClient, and it is not shown. AllowHTTPRetry also permits plain HTTP fallback."
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "sep10_service.go",
+   "line": 547,
+   "reason": "With medium threshold 0 and no client signature, the check passes."
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "embedded_wallet_service.go",
+   "line": 310,
+   "reason": "The only control on sponsored operations is the host function type. Contract, function and arguments are not allowlisted, and the distribution account is set as the operation source."
+  }
+ ]
+}

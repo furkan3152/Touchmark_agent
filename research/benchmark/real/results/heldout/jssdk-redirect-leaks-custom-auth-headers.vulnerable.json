@@ -1,0 +1,182 @@
+{
+ "case": "jssdk-redirect-leaks-custom-auth-headers",
+ "side": "vulnerable",
+ "repo": "stellar/js-stellar-sdk",
+ "commit": "07b687ff3fce8950cc7835ae12fd7b4b301e0de4",
+ "audited": "https://github.com/stellar/js-stellar-sdk/tree/07b687ff3fce8950cc7835ae12fd7b4b301e0de4/src/http-client",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "fetch-client.ts",
+   "line_start": 283,
+   "line_end": 298
+  },
+  {
+   "path": "fetch-client.ts",
+   "line_start": 425,
+   "line_end": 430
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-secret-exposure-7",
+   "cited": "fetch-client.ts:294",
+   "title": "Cross-origin redirect strips only three credential headers"
+  },
+  {
+   "source": "finding",
+   "id": "security-ai-ssrf-8",
+   "cited": "fetch-client.ts:418",
+   "title": "SSRF: redirect hops followed to any host, including internal addresses"
+  },
+  {
+   "source": "ledger",
+   "id": "A6",
+   "cited": "fetch-client.ts:418",
+   "title": "Outbound requests and file paths"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "fetch-client.ts:421",
+   "title": "Stated purpose versus behaviour"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-secret-exposure-7",
+   "severity": "high",
+   "title": "Cross-origin redirect strips only three credential headers",
+   "file": "fetch-client.ts",
+   "line": 294,
+   "evidence": "fetch-client.ts:294 `headers.delete(\"authorization\");`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-2",
+   "severity": "low",
+   "title": "postForm/putForm/patchForm send JSON labelled as form-urlencoded on the bounded path",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:77 `formConfig.headers.set(\"Content-Type\", \"application/x-www-form-urlencoded\");`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "Timeout during body read is not mapped to the SDK timeout error",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:394 `if (err?.name === \"TimeoutError\") {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "makeRequest silently replaces the caller's AbortSignal",
+   "file": "fetch-client.ts",
+   "line": 599,
+   "evidence": "fetch-client.ts:599 `config.signal = abortController.signal;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "low",
+   "title": "Bounded path returns a Headers instance where the axios path returns a plain object",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:474 `headers: response.headers as any,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Bounded adapter serialises undefined query params as the string \"undefined\"",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:111 `const qs = new URLSearchParams(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-10",
+   "severity": "low",
+   "title": "Intermediate 3xx response bodies are never consumed or cancelled before the next hop",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:392 `response = await fetch(current?.href ?? startUrl, currentInit);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-11",
+   "severity": "low",
+   "title": "Fallback timeout timer is never cleared after a request completes",
+   "file": "fetch-client.ts",
+   "line": 213,
+   "evidence": "fetch-client.ts:213 `setTimeout(() => {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-5",
+   "severity": "low",
+   "title": "Error bodies are read unbounded when only maxRedirects is set",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:441 `const errBytes = await readBodyBounded(response, maxContentLength);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "low",
+   "title": "Redirect protocol-downgrade and hop controls skipped when only maxContentLength is set",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:359 `redirect = \"follow\";`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-ssrf-8",
+   "severity": "low",
+   "title": "SSRF: redirect hops followed to any host, including internal addresses",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:418 `const target = new URL(location, from);` \u00b7 fetch-client.ts:421 `if (target.protocol !== \"http:\" && target.protocol !== \"https:\") {`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "A6",
+   "title": "Outbound requests and file paths",
+   "file": "fetch-client.ts",
+   "line": 418,
+   "reason": "The client has no host or address restriction on outbound requests. The start URL is built from caller input (buildBoundedUrl, line 384) and goes to fetch (line 392) or the feaxios path (line 526) with no check of hostname, IP range or port. On the bounded path, each Location header is resolved and "
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "fetch-client.ts",
+   "line": 421,
+   "reason": "The comments (lines 329-332) say the bounded path prevents \"redirect-based SSRF\", and the file map lists \"allowlist@421\" and \"network_pinning@424\" as controls. The code at 421 only rejects non-http(s) schemes, and 424 only blocks https-to-http downgrades. No host, IP or private-range allowlist exist"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "fetch-client.ts",
+   "line": 77,
+   "reason": "The core path is a fetch-based HTTP client. Several parts do not work as shipped: postForm, putForm and patchForm label JSON as form-urlencoded (line 77). Timeout errors during body read are not mapped (line 394). makeRequest overwrites the caller's AbortSignal (line 599). Error bodies are read unbo"
+  }
+ ]
+}

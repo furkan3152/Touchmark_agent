@@ -1,0 +1,139 @@
+{
+ "case": "passkey-update-signer-no-auth",
+ "side": "vulnerable",
+ "repo": "kalepail/passkey-kit",
+ "commit": "528926c32675900ec89c19d22934a33fa597ed1f",
+ "audited": "https://github.com/kalepail/passkey-kit/tree/528926c32675900ec89c19d22934a33fa597ed1f/contracts/smart-wallet",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/lib.rs",
+   "line_start": 66,
+   "line_end": 77
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-1",
+   "cited": "src/lib.rs:66",
+   "title": "update_signer has no authorization check, so anyone can overwrite an existing signer"
+  },
+  {
+   "source": "ledger",
+   "id": "S6",
+   "cited": "src/lib.rs:66",
+   "title": "Account authority changes"
+  },
+  {
+   "source": "ledger",
+   "id": "S7",
+   "cited": "src/lib.rs:66",
+   "title": "Soroban contract checks"
+  },
+  {
+   "source": "ledger",
+   "id": "A1",
+   "cited": "src/lib.rs:66",
+   "title": "Caller authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "A3",
+   "cited": "src/lib.rs:69",
+   "title": "Tenant isolation"
+  },
+  {
+   "source": "ledger",
+   "id": "A4",
+   "cited": "src/lib.rs:66",
+   "title": "Approvals fail closed"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "src/lib.rs:66",
+   "title": "Controls outside the prompt"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "src/lib.rs:66",
+   "title": "Stated purpose versus behaviour"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "update_signer has no authorization check, so anyone can overwrite an existing signer",
+   "file": "src/lib.rs",
+   "line": 66,
+   "evidence": "src/lib.rs:66 `fn update_signer(env: Env, signer: Signer) {` \u00b7 src/lib.rs:69 `store_signer(&env, &signer_key, &signer_val, &signer_storage, true);`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "medium",
+   "title": "Unpinned dependencies",
+   "file": "Cargo.toml",
+   "line": 17,
+   "evidence": "",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "S6",
+   "title": "Account authority changes",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "update_signer has no require_auth. Anyone can overwrite an existing signer's key value, for example a Secp256r1 signer's public key, expiry or limits. The attacker then signs as that signer, which is an account takeover. add_signer, remove_signer and update_contract_code do require the wallet's own "
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "This state-changing function has no require_auth. Signers are kept in persistent or temporary storage with TTL extension, so the storage and TTL parts hold. The missing auth on update_signer is the failure."
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "update_signer has no require_auth, unlike add_signer, remove_signer and update_contract_code. Anyone can overwrite an existing signer's key, limits and expiry."
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/lib.rs",
+   "line": 69,
+   "reason": "Any caller can modify another signer's record in the wallet because update_signer is unauthenticated. This is the same defect as the earlier finding."
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "__check_auth fails closed, but the signer-limit policy store can be rewritten by anyone through the unauthenticated update_signer. A signer's limits and expiry can be removed or replaced, so the gate is bypassable."
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "update_signer has no require_auth, unlike add_signer and remove_signer. Anyone can overwrite an existing signer's limits and expiry, and can replace a signer's key with a different SignerVal. That lets them grant themselves admin rights."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "The wallet is meant to enforce per-signer limits and admin-only signer management. update_signer bypasses that."
+  }
+ ]
+}

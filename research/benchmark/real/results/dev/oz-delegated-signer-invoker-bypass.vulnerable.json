@@ -1,0 +1,45 @@
+{
+ "case": "oz-delegated-signer-invoker-bypass",
+ "side": "vulnerable",
+ "repo": "OpenZeppelin/stellar-contracts",
+ "commit": "9cfddbb5b0d158f5ec948d0ad6767383d629d1c4",
+ "audited": "https://github.com/OpenZeppelin/stellar-contracts/tree/9cfddbb5b0d158f5ec948d0ad6767383d629d1c4/packages/accounts",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_evidence",
+ "defect_lines": [
+  {
+   "path": "src/smart_account/storage.rs",
+   "line_start": 394,
+   "line_end": 397
+  },
+  {
+   "path": "src/smart_account/storage.rs",
+   "line_start": 537,
+   "line_end": 545
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "security-unpinned-deps",
+   "severity": "medium",
+   "title": "Unpinned dependencies",
+   "file": "Cargo.toml",
+   "line": 18,
+   "evidence": "",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-soroban-overflow-unchecked",
+   "severity": "low",
+   "title": "Soroban contract arithmetic can wrap around in release builds",
+   "file": "src/policies/spending_limit.rs",
+   "line": 285,
+   "evidence": "Cargo.toml",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": []
+}

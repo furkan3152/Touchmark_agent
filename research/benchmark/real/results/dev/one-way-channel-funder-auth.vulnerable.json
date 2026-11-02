@@ -1,0 +1,71 @@
+{
+ "case": "one-way-channel-funder-auth",
+ "side": "vulnerable",
+ "repo": "stellar-experimental/one-way-channel",
+ "commit": "15485466954db234901044f6fcaf3b91d25c0408",
+ "audited": "https://github.com/stellar-experimental/one-way-channel/tree/15485466954db234901044f6fcaf3b91d25c0408/contracts",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_evidence",
+ "defect_lines": [
+  {
+   "path": "channel-factory/src/lib.rs",
+   "line_start": 87,
+   "line_end": 92
+  },
+  {
+   "path": "channel/src/lib.rs",
+   "line_start": 283,
+   "line_end": 294
+  },
+  {
+   "path": "channel/src/lib.rs",
+   "line_start": 316,
+   "line_end": 323
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "stellar_native-ai-stellar-protocol-misuse-1",
+   "cited": "channel/src/lib.rs:287",
+   "title": "No TTL extension for channel or factory instance storage"
+  },
+  {
+   "source": "ledger",
+   "id": "S7",
+   "cited": "channel/src/lib.rs:287",
+   "title": "Soroban contract checks"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-soroban-overflow-unchecked",
+   "severity": "medium",
+   "title": "Soroban contract arithmetic can wrap around in release builds",
+   "file": "channel/src/lib.rs",
+   "line": 387,
+   "evidence": "channel/Cargo.toml; channel-factory/Cargo.toml",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-1",
+   "severity": "low",
+   "title": "No TTL extension for channel or factory instance storage",
+   "file": "channel/src/lib.rs",
+   "line": 287,
+   "evidence": "channel/src/lib.rs:287 `env.storage().instance().set(&DataKey::Token, &token);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "channel/src/lib.rs",
+   "line": 287,
+   "reason": "All state-changing functions require auth correctly, and there is one channel per contract, so instance storage is acceptable. However, no extend_ttl is called anywhere in either contract. The channel's instance, which holds the token, funder, recipient and commitment key, can expire and be archived"
+  }
+ ]
+}

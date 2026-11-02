@@ -1,0 +1,333 @@
+{
+ "case": "polaris-trustline-stuck-execution",
+ "side": "vulnerable",
+ "repo": "stellar/django-polaris",
+ "commit": "fb462ab62fb9f7bfdef4dca24c34af2526ce2ebd",
+ "audited": "https://github.com/stellar/django-polaris/tree/fb462ab62fb9f7bfdef4dca24c34af2526ce2ebd/polaris/polaris",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "management/commands/check_trustlines.py",
+   "line_start": 104,
+   "line_end": 113
+  },
+  {
+   "path": "management/commands/check_trustlines.py",
+   "line_start": 125,
+   "line_end": 147
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-3",
+   "severity": "critical",
+   "title": "No cumulative payout limit",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 165,
+   "evidence": "management/commands/poll_pending_deposits.py:165 `transaction.status = Transaction.STATUS.pending_anchor`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "economic-ai-economic-loss-4",
+   "severity": "critical",
+   "title": "No budget to account atomically",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 44,
+   "evidence": "management/commands/poll_pending_deposits.py:43 `).select_for_update()`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-ai-control-bypass-13",
+   "severity": "critical",
+   "title": "Interactive-complete endpoint forces any status to pending_user_transfer_start without a state check",
+   "file": "sep24/deposit.py",
+   "line": 208,
+   "evidence": "sep24/deposit.py:208 `Transaction.objects.filter(id=transaction_id).update( status=Transaction.STATUS.pending_user_transfer_start )`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-5",
+   "severity": "critical",
+   "title": "Incoming payment matched by memo only; amount not compared, duplicate memos take the first row",
+   "file": "management/commands/watch_transactions.py",
+   "line": 127,
+   "evidence": "management/commands/watch_transactions.py:126 `withdraw_filters | send_filters, memo=memo, receiving_anchor_account=account`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "medium",
+   "title": "pending_trust deposits are locked after the first check and never retried",
+   "file": "management/commands/check_trustlines.py",
+   "line": 89,
+   "evidence": "management/commands/check_trustlines.py:89 `Transaction.objects.filter(id__in=[t.id for t in transactions]).update(`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-7",
+   "severity": "medium",
+   "title": "Submission errors treated as failure without hash recheck",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 476,
+   "evidence": "management/commands/poll_pending_deposits.py:476 `except Exception as e:`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-14",
+   "severity": "medium",
+   "title": "complete_interactive_withdraw force-sets pending_user_transfer_start with no state, kind or memo guard",
+   "file": "sep24/withdraw.py",
+   "line": 218,
+   "evidence": "sep24/withdraw.py:218 `Transaction.objects.filter(id=transaction_id).update(`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-11",
+   "severity": "medium",
+   "title": "SEP-31 PATCH does not bind transaction to the authenticated sending account",
+   "file": "sep31/transactions.py",
+   "line": 65,
+   "evidence": "sep31/transactions.py:65 `transaction = Transaction.objects.filter(id=transaction_id).first()`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-cross-user-access-12",
+   "severity": "medium",
+   "title": "SEP-9 customer data saved for a body-supplied account, not the SEP-10 authenticated account",
+   "file": "sep24/deposit.py",
+   "line": 386,
+   "evidence": "sep24/deposit.py:386 `rdi.save_sep9_fields( stellar_account, sep9_fields, lang, )`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-ssrf-9",
+   "severity": "medium",
+   "title": "SSRF via on_change_callback",
+   "file": "utils.py",
+   "line": 252,
+   "evidence": "utils.py:252 `return post( url=transaction.on_change_callback,`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-2",
+   "severity": "medium",
+   "title": "No code-enforced maximum on deposit payout amount at signing time",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 221,
+   "evidence": "management/commands/poll_pending_deposits.py:221 `payment_amount = round( Decimal(transaction.amount_in) - Decimal(transaction.amount_fee),` \u00b7 management/commands/poll_pending_deposits.py:476 `except Exception as e:`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-path-secret-to-exfiltration",
+   "severity": "medium",
+   "title": "A signing secret reaches a logging or network boundary",
+   "file": "management/commands/testnet.py",
+   "line": 148,
+   "evidence": "management/commands/testnet.py:148 `print(f\"secret key: {issuer.secret}\\n\")` [secret -> issue]; management/commands/testnet.py:151 `print(f\"secret key: {distributor.secret}\\n\")` [secret -> issue]; management/commands/testnet.py:156 `print(f\"secret key: {client.secret}\\n\")` [secret -> issue]",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-path-untrusted-account-control",
+   "severity": "medium",
+   "title": "Untrusted input changes account authority",
+   "file": "management/commands/testnet.py",
+   "line": 192,
+   "evidence": "management/commands/testnet.py:196 `envelope.sign(issuer)` [external -> set_home_domain]; management/commands/testnet.py:198 `self.server.submit_transaction(envelope)` [external -> set_home_domain]",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-transaction-never-expires",
+   "severity": "low",
+   "title": "Signed transactions are built without an expiry",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/poll_pending_deposits.py:119 (built without time bounds)",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-15",
+   "severity": "low",
+   "title": "Completion update is not constrained to pending_external withdrawal/send rows",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/poll_outgoing_transactions.py:88 `num_completed = Transaction.objects.filter(id__in=ids).update(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-16",
+   "severity": "low",
+   "title": "Out-of-range amount error reports min_amount as both bounds",
+   "file": "sep6/deposit.py",
+   "line": 192,
+   "evidence": "sep6/deposit.py:192 `_(\"'amount' must be within [%s, %s]\") % (min_amount, min_amount)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "Untranslatable error message from interpolation before gettext",
+   "file": "locale/utils.py",
+   "line": 19,
+   "evidence": "locale/utils.py:19 `_(\"unsupported language: %s\" % lang), content_type=content_type`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-18",
+   "severity": "low",
+   "title": "Withdraw amount error message shows min twice instead of the max bound",
+   "file": "sep6/withdraw.py",
+   "line": 150,
+   "evidence": "sep6/withdraw.py:150 `_(\"'amount' must be within [%s, %s]\") % (min_amount, min_amount)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-19",
+   "severity": "low",
+   "title": "SEP-6 info validation crashes when integration returns 'fields' without 'types'",
+   "file": null,
+   "line": null,
+   "evidence": "sep6/info.py:70 `for t, val in types.items():`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-8",
+   "severity": "low",
+   "title": "Failure paths leave the execution marker set or state unreconciled",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/poll_pending_deposits.py:455 `transaction.status = Transaction.STATUS.error`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-per-call-cap-only",
+   "severity": "low",
+   "title": "Payments are capped per call, with no total or rate limit",
+   "file": "sep31/transactions.py",
+   "line": 163,
+   "evidence": "caps at integrations/forms.py:153 `elif amount > self.max_amount:`; utils.py:88 `elif not (min_amount <= amount <= max_amount):`; sep31/transactions.py:163 `if asset.send_min_amount > amount or amount > asset.send_max_amount:` \u00b7 no running total in management/commands/poll_pending_deposits.py, management/commands/testnet.py",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-6",
+   "severity": "low",
+   "title": "Deposit transactions signed without timebounds",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 259,
+   "evidence": "management/commands/poll_pending_deposits.py:259 `return builder.build()`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "tests/auth_test.py:18 (SDKWS\u2026redacted); tests/commands/test_watch_transactions.py:30 (SADPW\u2026redacted); tests/commands/test_watch_transactions.py:33 (SBYMI\u2026redacted); tests/conftest.py:15 (SBB57\u2026redacted); tests/conftest.py:17 (SAAND\u2026redacted); tests/auth_test.py:18: GDKFNRUA\u2026 has no account on mainnet or testnet (testnet resets erase accounts); tests/commands/test_watch_transactions.py:30: GC6Z5AI",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 221,
+   "reason": "The deposit payment amount is amount_in minus amount_fee. Both come from the rails integration or the DB. No maximum is checked before signing. Asset min/max is enforced only at the request-time form or API. The watch_transactions path overwrites amount_in with the on-chain amount, so an overpayment"
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 165,
+   "reason": "No cumulative per-day, per-account or per-asset budget exists on any payout path. Only per-transaction min/max is enforced."
+  },
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 43,
+   "reason": "Claiming rows via select_for_update plus pending_execution_attempt prevents double processing of the same transaction. No budget exists to account atomically, so the check fails."
+  },
+  {
+   "id": "V7",
+   "title": "Incoming payment verification",
+   "file": "management/commands/watch_transactions.py",
+   "line": 126,
+   "reason": "The checks are good: it requires successful, a destination equal to the distribution account, and code plus issuer. The weak points are that the match is by memo alone, with the first row taken if memos collide. The amount is not compared with the expected amount, because amount_in is overwritten wi"
+  },
+  {
+   "id": "S4",
+   "title": "Expiry and fees",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 259,
+   "reason": "The deposit payment envelope and the create-account envelope (line 129) are built with no set_timeout and no timebounds. The envelope is also persisted as envelope_xdr and can be submitted later. testnet.py does use set_timeout(30)."
+  },
+  {
+   "id": "S5",
+   "title": "Submission outcome",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 476,
+   "reason": "submit() checks response[\"successful\"], but only BaseHorizonError is caught around the submit. A connection error, timeout or post-send KeyError (for example response[\"paging_token\"]) is caught by this generic handler. It marks the transaction error although the payment may have landed. There is no "
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 455,
+   "reason": "The account-creation failure path sets error but does not reset pending_execution_attempt, which the other error paths do. It can leave a lock marker set. The pending_trust and multisig early returns (lines 466, 471) also leave the marker set. A submit that throws after the send is set to error with"
+  },
+  {
+   "id": "A2",
+   "title": "Secret handling",
+   "file": "management/commands/testnet.py",
+   "line": 148,
+   "reason": "Testnet command prints issuer, distributor and client seeds to stdout, where logs may capture them."
+  },
+  {
+   "id": "A6",
+   "title": "Outbound requests and file paths",
+   "file": "utils.py",
+   "line": 252,
+   "reason": "The client-supplied on_change_callback only gets a URLValidator check and a substring denylist (sep24/utils.py:205). There is no private-IP or resolved-address check, so internal hosts can be targeted."
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 476,
+   "reason": "Payout limits and submission reconciliation are not enforced in code. This is already recorded in earlier findings."
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 476,
+   "reason": "A submit exception sets the transaction to error without rechecking whether the transaction landed on the ledger. The status can then be wrong."
+  }
+ ]
+}

@@ -1,0 +1,283 @@
+{
+ "case": "anchor-observer-asset-mismatch-credited",
+ "side": "fixed",
+ "repo": "stellar/java-stellar-anchor-sdk",
+ "commit": "2ede9d7a52176c76306dd74379797d47dc3c0883",
+ "audited": "https://github.com/stellar/java-stellar-anchor-sdk/tree/2ede9d7a52176c76306dd74379797d47dc3c0883/platform/src/main/java/org/stellar/anchor/platform/observer",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "stellar/DefaultPaymentListener.java",
+   "line_start": 444,
+   "line_end": 468
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-6",
+   "cited": "stellar/DefaultPaymentListener.java:450",
+   "title": "Deposit completion skips the asset check, so a worthless token paid to the anchor marks a deposit as funds sent"
+  },
+  {
+   "source": "ledger",
+   "id": "V7",
+   "cited": "stellar/DefaultPaymentListener.java:450",
+   "title": "Incoming payment verification"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-unauthorized-payment-6",
+   "severity": "critical",
+   "title": "Deposit completion skips the asset check, so a worthless token paid to the anchor marks a deposit as funds sent",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 450,
+   "evidence": "stellar/DefaultPaymentListener.java:450 `if (!sepTransaction.getAmountInAsset().equals(paymentAssetName)) {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-13",
+   "severity": "high",
+   "title": "SAC-to-asset mapping trusts the RPC entry without binding it to the requested contract ID, and caches the result forever",
+   "file": "stellar/SacToAssetMapper.java",
+   "line": 76,
+   "evidence": "stellar/SacToAssetMapper.java:76 `LedgerEntry.LedgerEntryData.fromXdrBase64(response.getEntries().get(0).getXdr())`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-1",
+   "severity": "medium",
+   "title": "Soroban RPC payment observer cannot restart after a stream or silence error and stops for good",
+   "file": "stellar/StellarRpcPaymentObserver.java",
+   "line": 87,
+   "evidence": "stellar/StellarRpcPaymentObserver.java:87 `executorService.shutdownNow();`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-11",
+   "severity": "medium",
+   "title": "Soroban RPC observer advances cursor past events whose listener notification failed, so they are never retried",
+   "file": "stellar/StellarRpcPaymentObserver.java",
+   "line": 135,
+   "evidence": "stellar/StellarRpcPaymentObserver.java:135 `saveCursor(response.getCursor());`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-15",
+   "severity": "medium",
+   "title": "Contract-call transfer detection only inspects the first asset balance change, so deposits at later indexes are missed",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 269,
+   "evidence": "stellar/HorizonPaymentObserver.java:269 `invokeOp.getAssetBalanceChanges().get(0);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-19",
+   "severity": "medium",
+   "title": "Ambiguous memo matches drop the payment with no retry, hold or refund",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 154,
+   "evidence": "stellar/DefaultPaymentListener.java:154 `if (sep31Txns.size() > 1) {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-2",
+   "severity": "medium",
+   "title": "Horizon observer skips observed payments when restarted more than 200 network payments behind",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 167,
+   "evidence": "stellar/HorizonPaymentObserver.java:167 `return String.valueOf(Math.max(lastStored, latest - MAX_RESULTS));`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "medium",
+   "title": "Payment listeners swallow failures, then the cursor advances, so failed notifications are never retried",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 219,
+   "evidence": "stellar/HorizonPaymentObserver.java:219 `saveHorizonCursor(operationResponse.getPagingToken());`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-12",
+   "severity": "medium",
+   "title": "Soroban SAC lookups are not negatively cached, so any contract's transfer-shaped event costs the observer RPC calls on every event",
+   "file": "stellar/SacToAssetMapper.java",
+   "line": 57,
+   "evidence": "stellar/SacToAssetMapper.java:57 `sacToAssetMap.put(sac, asset);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-16",
+   "severity": "medium",
+   "title": "Observer gate uses event topic addresses that are not bound to the credited ledger operation",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/StellarRpcPaymentObserver.java:296 `if (!paymentObservingAccountsManager.lookupAndUpdate(fromAddr) && !paymentObservingAccountsManager.lookupAndUpdate(toAddr)) {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "low",
+   "title": "Amount and asset cross-check is not independent on the Soroban RPC path",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/StellarRpcPaymentObserver.java:384 `.amount(paymentOp.getAmount())` \u00b7 stellar/DefaultPaymentListener.java:126 `if (!Objects.equals(eventAsset, ledgerAsset) || !Objects.equals(eventAmount, ledgerAmount)) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "IOException from the platform notify falls through to SEP-24 and SEP-6 routing with the same memo",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/DefaultPaymentListener.java:173 `} catch (AnchorException aex) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-18",
+   "severity": "low",
+   "title": "Memo lookup ignores memo type, so a text memo can match an ID-memo transaction",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 142,
+   "evidence": "stellar/DefaultPaymentListener.java:142 `String memo = xdrMemoToString(ledgerTransaction.getMemo());`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "Horizon restart crashes with NumberFormatException when the latest cursor fetch fails",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/HorizonPaymentObserver.java:160 `long latest = Long.parseLong(strLatestFromNetwork);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "SAC metadata lookup assumes a ledger entry exists and throws an unchecked exception",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/SacToAssetMapper.java:76 `LedgerEntry.LedgerEntryData.fromXdrBase64(response.getEntries().get(0).getXdr())`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Reloaded observed accounts lose RESIDENTIAL status and can be evicted, including distribution accounts",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/PaymentObservingAccountsManager.java:37 `account.getAccount(), account.getLastObserved(), AccountType.TRANSIENT);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-20",
+   "severity": "low",
+   "title": "Status watcher dies on any non-Transaction exception during observer restart, leaving the observer in an error state for good",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/AbstractPaymentObserver.java:130 `} catch (TransactionException tex) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-21",
+   "severity": "low",
+   "title": "Soroban RPC silence watchdog is reset by any successful getEvents response, so a stalled ledger feed is never detected",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/StellarRpcPaymentObserver.java:126 `lastActivityTime = Instant.now();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-5",
+   "severity": "low",
+   "title": "Any network user can stall the Horizon observer with a transfer-named contract call that has no asset balance changes",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 269,
+   "evidence": "stellar/HorizonPaymentObserver.java:269 `invokeOp.getAssetBalanceChanges().get(0);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-7",
+   "severity": "low",
+   "title": "Shared SAC-to-asset HashMap is accessed from two observer threads without synchronization",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/SacToAssetMapper.java:18 `HashMap<String, Asset> sacToAssetMap = new HashMap<>();`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V7",
+   "title": "Incoming payment verification",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 450,
+   "reason": "Destination: holds in part. Routing queries are keyed by the payment's destination account (ledgerPayment.getTo(), or the muxed base account) plus memo and PENDING status (lines 144-145, 200-203, 242-245), so a payment to a non-anchor account is not matched to a transaction. Finality: holds by Horiz"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 219,
+   "reason": "The failure path does not reconcile state. In HorizonPaymentObserver.processOperation, any failure in handleEvent (EventPublishException, TransactionException, or Throwable) sets an error status, and the finally block at line 219 still saves the cursor past the operation, so the notification is neve"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 450,
+   "reason": "The listener routes a payment to a pending transaction using only the destination account and memo (lines 143-145, 199-203, 241-245). It does not check that the payer is the transaction's owner. For deposits, the asset check is not enforced (enforceAssetMatch is false), so a third party who knows an"
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 450,
+   "reason": "The asset gate fails open. When enforceAssetMatch is false (every deposit), a mismatch only logs at debug level (lines 464-467) and the flow continues to notifyOnchainFundsSent. The flag is derived from the SEP kind, which the payer does not control, but the gate still approves on a mismatch. Amount"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 450,
+   "reason": "Safety rules are enforced in code, not in prompts. The asset-match control, however, is enforced only when enforceAssetMatch is true. checkAssetAmountSufficient is called with false for SEP-24 and SEP-6 deposits (lines 319-322 and 362-365 pass isWithdrawal, which is false for deposits), so a mismatc"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 126,
+   "reason": "The comment at lines 116-121 says the event's amount and asset are computed independently by the observer backend and that the listener refuses to process on disagreement. On the Soroban path, processOperation (StellarRpcPaymentObserver.java:374-417) builds the event from the same LedgerTransaction "
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "stellar/StellarRpcPaymentObserver.java",
+   "line": 135,
+   "reason": "The core path does not deliver events reliably. Soroban per-event failures are logged and the cursor advances (new finding). The Horizon path saves the cursor in a finally block even after a failed publish (HorizonPaymentObserver.java:219, reliability-ai-functional-defect-3). Horizon startup also pa"
+  }
+ ]
+}

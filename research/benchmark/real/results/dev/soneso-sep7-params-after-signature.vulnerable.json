@@ -1,0 +1,84 @@
+{
+ "case": "soneso-sep7-params-after-signature",
+ "side": "vulnerable",
+ "repo": "Soneso/stellar-agent-wallet",
+ "commit": "12fb13459f53150a5b669ac55a33cb448a556754",
+ "audited": "https://github.com/Soneso/stellar-agent-wallet/tree/12fb13459f53150a5b669ac55a33cb448a556754/crates/stellar-agent-sep7",
+ "model": "claude-sonnet-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/parse.rs",
+   "line_start": 226,
+   "line_end": 250
+  },
+  {
+   "path": "src/parse.rs",
+   "line_start": 844,
+   "line_end": 854
+  },
+  {
+   "path": "src/verify.rs",
+   "line_start": 278,
+   "line_end": 282
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-1",
+   "cited": "src/parse.rs:846",
+   "title": "SEP-7 signature verification does not require signature to be last; params appended after it are unsigned but shown as V"
+  },
+  {
+   "source": "ledger",
+   "id": "A7",
+   "cited": "src/parse.rs:846",
+   "title": "Verification of incoming authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "src/parse.rs:846",
+   "title": "Stated purpose versus behaviour"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "SEP-7 signature verification does not require signature to be last; params appended after it are unsigned but shown as Verified",
+   "file": "src/parse.rs",
+   "line": 846,
+   "evidence": "src/parse.rs:846 `if let Some(idx) = uri.find(\"&signature=\") {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "medium",
+   "title": "Unpinned dependencies",
+   "file": "Cargo.toml",
+   "line": 20,
+   "evidence": "",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/parse.rs",
+   "line": 846,
+   "reason": "The signature is not required to be the last parameter. Parameters appended after it are excluded from the signed payload, but the parsed request still includes them and the status is Verified."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/parse.rs",
+   "line": 846,
+   "reason": "The README says the signature protects integrity. The stripping logic cuts everything from the first \"&signature=\" to the end of the URI. Parameters placed after the signature are therefore not covered by the signed payload, yet they are still parsed and shown as Verified."
+  }
+ ]
+}

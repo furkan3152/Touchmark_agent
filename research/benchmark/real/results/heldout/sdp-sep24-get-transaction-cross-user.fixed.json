@@ -1,0 +1,514 @@
+{
+ "case": "sdp-sep24-get-transaction-cross-user",
+ "side": "fixed",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "dd0e73c23338bf94e5a7a9e13857e843bd0ebd17",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/dd0e73c23338bf94e5a7a9e13857e843bd0ebd17/internal/serve/httphandler",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "sep24_handler.go",
+   "line_start": 127,
+   "line_end": 166
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-13",
+   "severity": "critical",
+   "title": "Sponsorship has no per-wallet or per-tenant budget, so each valid request spends platform fee XLM",
+   "file": "sponsored_transaction_handler.go",
+   "line": 109,
+   "evidence": "sponsored_transaction_handler.go:109 `transactionID, err := h.EmbeddedWalletService.SponsorTransaction(ctx, account, reqBody.OperationXDR)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-account-takeover-26",
+   "severity": "critical",
+   "title": "Token refresh never re-checks wallet status and renews sessions without an absolute cap",
+   "file": null,
+   "line": null,
+   "evidence": "passkey_handler.go:256 `if contractAddress == \"\" {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-account-takeover-35",
+   "severity": "critical",
+   "title": "Email change needs no password re-auth or new-address proof, enabling reset-link takeover with a stolen session token",
+   "file": null,
+   "line": null,
+   "evidence": "profile_handler.go:255 `err := h.AuthManager.UpdateUser(ctx, token, reqBody.FirstName, reqBody.LastName, reqBody.Email, \"\")`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "OTP and PII attempt limits are lost-update races, allowing parallel guessing and receiver wallet hijack",
+   "file": null,
+   "line": null,
+   "evidence": "verify_receiver_registration_handler.go:384 `receiverWallet.OTPAttempts++`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-control-bypass-2",
+   "severity": "critical",
+   "title": "SEP-24 interactive deposit lets the request body override the SEP-10 authenticated account",
+   "file": "sep24_handler.go",
+   "line": 253,
+   "evidence": "sep24_handler.go:253 `account = req[\"account\"]`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-28",
+   "severity": "critical",
+   "title": "MFA-skip for remembered devices keyed on a client-supplied, non-secret Device-ID header",
+   "file": "login_handler.go",
+   "line": 154,
+   "evidence": "login_handler.go:155 `if isRemembered, err := h.AuthManager.MFADeviceRemembered(ctx, deviceID, user.ID); err != nil {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-41",
+   "severity": "critical",
+   "title": "MFA step takes remember_me and a client-supplied Device-ID header as trust inputs",
+   "file": "mfa_handler.go",
+   "line": 92,
+   "evidence": "mfa_handler.go:92 `token, err := h.AuthManager.AuthenticateMFA(ctx, deviceID, reqBody.MFACode, reqBody.RememberMe)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-10",
+   "severity": "critical",
+   "title": "Full bearer token written to error log when the user record is missing",
+   "file": "profile_handler.go",
+   "line": 480,
+   "evidence": "profile_handler.go:480 `err = fmt.Errorf(\"user from token %s not found: %w\", token, err)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-8",
+   "severity": "critical",
+   "title": "Sponsorship accepts any invoke-host-function XDR on an allowed SAC without checking function, arguments, auth entries or resource fee",
+   "file": "sponsored_transaction_handler.go",
+   "line": 109,
+   "evidence": "sponsored_transaction_handler.go:109 `transactionID, err := h.EmbeddedWalletService.SponsorTransaction(ctx, account, reqBody.OperationXDR)` \u00b7 sponsored_transaction_handler.go:104 `if !allowed {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-25",
+   "severity": "critical",
+   "title": "Any authenticated user can mint or widen an API key with permissions they do not hold",
+   "file": "api_key_handler.go",
+   "line": 48,
+   "evidence": "api_key_handler.go:48 `if err := data.ValidatePermissions(req.Permissions); err != nil {`",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-ai-secret-exposure-6",
+   "severity": "high",
+   "title": "RPC proxy forwards the caller's Authorization and Cookie headers to the upstream RPC host",
+   "file": "rpc_proxy_handler.go",
+   "line": 71,
+   "evidence": "rpc_proxy_handler.go:71 `originalDirector(req)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-37",
+   "severity": "medium",
+   "title": "Forgot-password response timing reveals whether a staff email is registered",
+   "file": "forgot_password_handler.go",
+   "line": 112,
+   "evidence": "forgot_password_handler.go:112 `sendErr := h.SendForgotPasswordMessage(ctx, *tnt.SDPUIBaseURL, forgotPasswordRequest.Email, resetToken)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-15",
+   "severity": "medium",
+   "title": "Multipart disbursement creation skips validateRequest, so contact type, verification field, wallet and HTML checks are bypassed",
+   "file": null,
+   "line": null,
+   "evidence": "disbursement_handler.go:628 `disbursement, httpErr := d.createNewDisbursement(ctx, tx, user.ID, req)`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-reliability-failure-16",
+   "severity": "medium",
+   "title": "JSON disbursement create path has no request body size limit",
+   "file": "disbursement_handler.go",
+   "line": 348,
+   "evidence": "disbursement_handler.go:348 `if !utils.IsMultipartFormData(r) { return nil }`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-24",
+   "severity": "medium",
+   "title": "Unauthenticated password-reset route decodes an unbounded JSON body",
+   "file": "reset_password_handler.go",
+   "line": 53,
+   "evidence": "reset_password_handler.go:53 `err := json.NewDecoder(r.Body).Decode(&resetPasswordRequest)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-29",
+   "severity": "medium",
+   "title": "Unauthenticated SEP-45 POST route decodes an unbounded request body",
+   "file": "sep45_handler.go",
+   "line": 79,
+   "evidence": "sep45_handler.go:79 `if err := json.NewDecoder(r.Body).Decode(&req); err != nil {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-30",
+   "severity": "medium",
+   "title": "Unauthenticated SEP-10 POST /auth decodes an unbounded JSON body",
+   "file": "sep10_handler.go",
+   "line": 74,
+   "evidence": "sep10_handler.go:74 `if err := json.NewDecoder(r.Body).Decode(&req); err != nil {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-31",
+   "severity": "medium",
+   "title": "SEP-24 OTP endpoint has no per-contact rate limit, so one caller can flood a receiver's SMS or email and keep invalidating the pending OTP",
+   "file": null,
+   "line": null,
+   "evidence": "receiver_send_otp_handler.go:191 `numberOfUpdatedRows, err := h.Models.ReceiverWallet.UpdateOTPByReceiverContactInfoAndWalletDomain(ctx, contactInfo, sep24ClientDomain, newOTP)`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-reliability-failure-40",
+   "severity": "medium",
+   "title": "Forgot-password decodes an unbounded JSON body on an anonymous route",
+   "file": "forgot_password_handler.go",
+   "line": 74,
+   "evidence": "forgot_password_handler.go:74 `err = json.NewDecoder(r.Body).Decode(&forgotPasswordRequest)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-11",
+   "severity": "medium",
+   "title": "RPC proxy injects the operator's upstream RPC credential for any unauthenticated caller",
+   "file": "rpc_proxy_handler.go",
+   "line": 81,
+   "evidence": "rpc_proxy_handler.go:81 `req.Header.Set(h.RPCAuthHeaderKey, h.RPCAuthHeaderValue)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-14",
+   "severity": "medium",
+   "title": "API key rotation skips master-wallet binding check, leaving the stored wallet ID unverified against the new key's Circle account",
+   "file": "circle_config_handler.go",
+   "line": 186,
+   "evidence": "circle_config_handler.go:186 `if patchRequest.WalletID != nil {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-38",
+   "severity": "medium",
+   "title": "Forgot-password has no per-target or per-client rate limit, so anyone can repeatedly mail reset links",
+   "file": "forgot_password_handler.go",
+   "line": 106,
+   "evidence": "forgot_password_handler.go:106 `err = db.RunInTransaction(ctx, h.Models.DBConnectionPool, nil, func(tx db.DBTransaction) error {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-43",
+   "severity": "medium",
+   "title": "PII verification attempt counter is a lost update, so the PII check can be brute-forced",
+   "file": "verify_receiver_registration_handler.go",
+   "line": 173,
+   "evidence": "verify_receiver_registration_handler.go:173 `rvu.Attempts = utils.IntPtr(receiverVerification.Attempts + 1)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-7",
+   "severity": "medium",
+   "title": "Hard-coded always-valid OTP bypasses receiver OTP verification on testnet deployments",
+   "file": "verify_receiver_registration_handler.go",
+   "line": 416,
+   "evidence": "verify_receiver_registration_handler.go:416 `case data.TestnetAlwaysValidOTP:`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-19",
+   "severity": "medium",
+   "title": "Stellar secret seed is reused as the symmetric key for encrypting the Circle API key",
+   "file": "circle_config_handler.go",
+   "line": 96,
+   "evidence": "circle_config_handler.go:96 `encryptedAPIKey, encryptErr := h.Encrypter.Encrypt(*patchRequest.APIKey, kp.Seed())`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-23",
+   "severity": "medium",
+   "title": "Partial reset token written to application logs on every successful reset",
+   "file": "reset_password_handler.go",
+   "line": 78,
+   "evidence": "reset_password_handler.go:78 `log.Ctx(ctx).Infof(\"[ResetUserPassword] - Successfully reset password for user with token %s\", truncatedToken)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-27",
+   "severity": "medium",
+   "title": "Registration session token is accepted from the URL query string and can be written to access logs",
+   "file": "passkey_handler.go",
+   "line": 92,
+   "evidence": "passkey_handler.go:92 `token := req.URL.Query().Get(\"token\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-32",
+   "severity": "medium",
+   "title": "OTP response reveals whether a phone or email is registered for the caller's client domain via verification_field and a 500 status",
+   "file": "receiver_send_otp_handler.go",
+   "line": 207,
+   "evidence": "receiver_send_otp_handler.go:207 `return receiverVerification.VerificationField, nil`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-5",
+   "severity": "medium",
+   "title": "Unauthenticated route deletes receiver records by phone or email on testnet deployments",
+   "file": "delete_contact_info_handler.go",
+   "line": 48,
+   "evidence": "delete_contact_info_handler.go:48 `err := d.Models.Receiver.DeleteByContactInfo(ctx, d.Models.DBConnectionPool, contactInfo)`",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "reliability-ai-functional-defect-12",
+   "severity": "low",
+   "title": "Distribution account sequence is read from Horizon and used without a lock, so concurrent asset trustline changes collide",
+   "file": "assets_handler.go",
+   "line": 366,
+   "evidence": "assets_handler.go:366 `Sequence: acc.Sequence,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "Uploaded filename is interpolated unescaped into Content-Disposition header",
+   "file": "disbursement_handler.go",
+   "line": 611,
+   "evidence": "disbursement_handler.go:611 `w.Header().Set(\"Content-Disposition\", fmt.Sprintf(`attachment; filename=\"%s\"`, filename))`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-18",
+   "severity": "low",
+   "title": "Empty wallet_id is accepted and written over the stored Circle master wallet ID",
+   "file": "circle_config_handler.go",
+   "line": 106,
+   "evidence": "circle_config_handler.go:106 `if patchRequest.WalletID != nil { clientConfigUpdate.WalletID = patchRequest.WalletID }`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-21",
+   "severity": "low",
+   "title": "First-name length error is reported under the misspelled key \"fist_name\"",
+   "file": "user_handler.go",
+   "line": 73,
+   "evidence": "user_handler.go:73 `validator.CheckError(utils.ValidateStringLength(cur.FirstName, \"first_name\", namesMaxLength), \"fist_name\", \"\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "Asset with code XLM skips issuer validation and is stored as a non-native asset with no trustline",
+   "file": "assets_handler.go",
+   "line": 155,
+   "evidence": "assets_handler.go:156 `v.Check(strkey.IsValidEd25519PublicKey(assetIssuer), \"issuer\", \"issuer is invalid\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-34",
+   "severity": "low",
+   "title": "OTP SMS and email bodies are rendered with html/template, so organization names are HTML-escaped in plain-text messages",
+   "file": null,
+   "line": null,
+   "evidence": "receiver_send_otp_handler.go:223 `sendOTPMessageTpl, err := template.New(\"\").Parse(otpMessageTemplate)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-36",
+   "severity": "low",
+   "title": "first_name and last_name have no length check in the profile update, unlike the user handlers",
+   "file": "profile_handler.go",
+   "line": 255,
+   "evidence": "profile_handler.go:255 `err := h.AuthManager.UpdateUser(ctx, token, reqBody.FirstName, reqBody.LastName, reqBody.Email, \"\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "GetDisbursement continues after error responses and indexes an empty slice, causing a panic",
+   "file": "disbursement_handler.go",
+   "line": 462,
+   "evidence": "disbursement_handler.go:462 `httperror.NotFound(\"disbursement user metadata not found\", err, nil).Render(w)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-42",
+   "severity": "low",
+   "title": "Invalid session token on refresh returns 400 instead of 401",
+   "file": "refresh_token_handler.go",
+   "line": 30,
+   "evidence": "refresh_token_handler.go:30 `httperror.BadRequest(\"\", err, map[string]interface{}{\"token\": \"token is invalid\"}).Render(rw)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-20",
+   "severity": "low",
+   "title": "Config write and tenant activation are not atomic, so a failed activation leaves a stored key with an inactive tenant",
+   "file": "circle_config_handler.go",
+   "line": 110,
+   "evidence": "circle_config_handler.go:110 `err = h.CircleClientConfigModel.Upsert(ctx, clientConfigUpdate)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-22",
+   "severity": "low",
+   "title": "PATCH /bridge-integration decodes an unbounded request body",
+   "file": "bridge_integration_handler.go",
+   "line": 118,
+   "evidence": "bridge_integration_handler.go:118 `err := json.NewDecoder(r.Body).Decode(&patchRequest)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-39",
+   "severity": "low",
+   "title": "Unchecked dereference of tenant UI base URL panics after the reset token is created",
+   "file": "forgot_password_handler.go",
+   "line": 112,
+   "evidence": "forgot_password_handler.go:112 `sendErr := h.SendForgotPasswordMessage(ctx, *tnt.SDPUIBaseURL, forgotPasswordRequest.Email, resetToken)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-9",
+   "severity": "low",
+   "title": "Adding an asset creates a trustline with no limit to any issuer that passes a format check, with no SEP-1 or issuer-flag verification",
+   "file": "assets_handler.go",
+   "line": 327,
+   "evidence": "assets_handler.go:327 `Limit: \"\", // empty means no limit`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "circle_config_handler_test.go:218 (SCW5I\u2026redacted); circle_config_handler_test.go:218: GBFL6FHG\u2026 has no account on mainnet or testnet (testnet resets erase accounts); ledger checked 2026-11-02T08:47:08+00:00 (mainnet and testnet Horizon)",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "assets_handler.go",
+   "line": 156,
+   "reason": "The issuer check is skipped whenever the code is XLM or its alias (line 155), so a non-native asset with code XLM is stored without an issuer, and it is compared by code alone. This is the same defect as reliability-ai-functional-defect-3. Holding elsewhere: the sponsorship allowlist builds the cont"
+  },
+  {
+   "id": "S1",
+   "title": "Externally supplied transactions",
+   "file": "sponsored_transaction_handler.go",
+   "line": 109,
+   "reason": "The handler decodes the caller's InvokeHostFunctionOp only far enough to read the contract address (getInvokeContractAddress, lines 166-191) and checks that address against the tenant's embedded-wallet SACs (isContractAllowed). It never checks the function name, arguments, auth entries or sub-invoca"
+  },
+  {
+   "id": "S6",
+   "title": "Account authority changes",
+   "file": "assets_handler.go",
+   "line": 327,
+   "reason": "CreateAsset takes the issuer straight from the request body (assets_handler.go:151) and only checks its strkey format (line 156). It then adds an unlimited change_trust to that issuer on the distribution account (lines 311-329) and signs and submits it. No issuer verification (SEP-1 or home_domain) "
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "delete_contact_info_handler.go",
+   "line": 48,
+   "reason": "ServeHTTP authenticates nothing. Its only gate is that the network passphrase is testnet (line 25), then it deletes receivers by phone or email from the URL. Other routes take the caller from request context (sdpcontext token or user ID). The RPC proxy (rpc_proxy_handler.go:27-44) also lacks caller "
+  },
+  {
+   "id": "A2",
+   "title": "Secret handling",
+   "file": "profile_handler.go",
+   "line": 480,
+   "reason": "The raw bearer token is put into an error and then logged by log.Ctx(ctx).Error(err) on the next line. Other paths handle secrets correctly: the Circle API key is encrypted before storage (circle_config_handler.go:96), and the reset-password handler truncates the token before logging (reset_password"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "sep24_handler.go",
+   "line": 253,
+   "reason": "The SEP-10 claims are read (line 237) and only checked for presence (line 238). The account that the interactive deposit uses comes from the request body (line 253) and is not compared with webAuthClaims. A caller who has a valid challenge for one account can name another account and act on it. Othe"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "sponsored_transaction_handler.go",
+   "line": 104,
+   "reason": "Several safety rules are enforced in code, not in prompts: the disbursement start is blocked for the creator (disbursement_handler.go:571 ErrDisbursementStartedByCreator), the testnet OTP shortcut is gated by utils.IsTestNetwork (verify_receiver_registration_handler.go:414), and sponsorship checks t"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "rpc_proxy_handler.go",
+   "line": 81,
+   "reason": "The proxy's stated purpose is to forward JSON-RPC to the configured Stellar RPC endpoint and inject a configured auth header for the operator's upstream. The code injects that credential for every request reaching the route, and the route has no authentication check (the handler validates only the m"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "disbursement_handler.go",
+   "line": 462,
+   "reason": "The core read path does not work as written. On error, the handler renders a NotFound response but does not return. It then checks len(response) != 1, renders a second error, and still falls through to response[0] at line 470, which panics on an empty slice. Errors are not stopped after they are wri"
+  }
+ ]
+}

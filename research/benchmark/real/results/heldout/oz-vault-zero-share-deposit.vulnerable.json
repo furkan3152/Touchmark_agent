@@ -1,0 +1,106 @@
+{
+ "case": "oz-vault-zero-share-deposit",
+ "side": "vulnerable",
+ "repo": "OpenZeppelin/stellar-contracts",
+ "commit": "0aaf9cb6af5b600e7467f8c3bd52b6b94adbf6b4",
+ "audited": "https://github.com/OpenZeppelin/stellar-contracts/tree/0aaf9cb6af5b600e7467f8c3bd52b6b94adbf6b4/packages/tokens/src/vault",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "storage.rs",
+   "line_start": 339,
+   "line_end": 354
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "economic-ai-economic-loss-3",
+   "cited": "storage.rs:352",
+   "title": "deposit and mint accept deposits that mint zero shares (donation-style value loss for depositors)"
+  },
+  {
+   "source": "ledger",
+   "id": "M5",
+   "cited": "storage.rs:352",
+   "title": "Core function works"
+  }
+ ],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-3",
+   "severity": "critical",
+   "title": "deposit and mint accept deposits that mint zero shares (donation-style value loss for depositors)",
+   "file": "storage.rs",
+   "line": 352,
+   "evidence": "storage.rs:352 `let shares: i128 = Self::preview_deposit(e, assets);`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-2",
+   "severity": "medium",
+   "title": "set_decimals_offset has no authorization and can be set by the first caller",
+   "file": "storage.rs",
+   "line": 598,
+   "evidence": "storage.rs:598 `pub fn set_decimals_offset(e: &Env, offset: u32) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "low",
+   "title": "Unauthenticated first-caller initialisation of vault asset and decimals offset",
+   "file": null,
+   "line": null,
+   "evidence": "storage.rs:550 `pub fn set_asset(e: &Env, asset: Address) {`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "storage.rs",
+   "line": 550,
+   "reason": "Identity and units hold: assets are contract Addresses, amounts are i128 base units, negatives are rejected (627-628, 675-676). But the asset a deposit is paid in is chosen by whoever first calls set_asset, with no auth (550-556). The check's bar requires the asset that is accepted to be the asset t"
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "storage.rs",
+   "line": 550,
+   "reason": "The state-changing entrypoints deposit, mint, withdraw and redeem each call operator.require_auth() (storage.rs:346, 393, 439, 485), which covers the address that pays or receives value, so those hold. Two state-changing functions do not require auth at all: set_asset (line 550-557) writes the under"
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "storage.rs",
+   "line": 550,
+   "reason": "The value-moving routes deposit, mint, withdraw and redeem each call operator.require_auth() (storage.rs:346, 393, 439, 485), so they require an authenticated caller. The configuration routes do not: set_asset (storage.rs:550-557) and set_decimals_offset (storage.rs:598-607) contain no require_auth "
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "storage.rs",
+   "line": 550,
+   "reason": "Withdraw and redeem are tenant-safe: when operator != owner, storage.rs:795-797 calls Base::spend_allowance(owner, operator, shares), so a caller cannot spend another holder's shares without an allowance. Deposit with operator != from uses transfer_from against the depositor's allowance (storage.rs:"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "storage.rs",
+   "line": 550,
+   "reason": "The operator controls on deposit, mint, withdraw and redeem are enforced in code (storage.rs:346 `operator.require_auth();`, storage.rs:393, 439, 485). But the safety rules the docs say are required for initialisation are not enforced: set_asset (storage.rs:550-557) and set_decimals_offset (storage."
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "storage.rs",
+   "line": 352,
+   "reason": "The arithmetic and call paths that can be read in the submitted files look right: token::Client transfer and transfer_from with the correct argument order (storage.rs:747, 752, 803), checked_pow and checked_add with MathOverflow errors, and mul_div_with_rounding with the intended rounding. The core "
+  }
+ ]
+}

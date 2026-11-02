@@ -1,0 +1,378 @@
+{
+ "case": "anchor-server-withdraw-any-payment-completes",
+ "side": "vulnerable",
+ "repo": "stellar/django-polaris",
+ "commit": "9e8d02eed20537b780006f5a28f01bd83cd32e3d",
+ "audited": "https://github.com/stellar/django-polaris/tree/9e8d02eed20537b780006f5a28f01bd83cd32e3d/src",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "withdraw/tasks.py",
+   "line_start": 29,
+   "line_end": 66
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-4",
+   "cited": "withdraw/tasks.py:47",
+   "title": "Withdrawal completion keyed only on memo: any dust payment with the memo marks the withdrawal completed"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-reliability-failure-8",
+   "cited": "withdraw/tasks.py:26",
+   "title": "Each withdrawal starts an unbounded blocking Horizon SSE stream, with cursor \"now\" and no timeout"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-20",
+   "cited": "withdraw/tasks.py:63",
+   "title": "A failed Horizon transaction with a withdrawal memo regresses a completed withdrawal to pending_stellar"
+  }
+ ],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-13",
+   "severity": "critical",
+   "title": "Atomic budget accounting",
+   "file": "deposit/tasks.py",
+   "line": 27,
+   "evidence": "deposit/tasks.py:27 `if transaction.status not in [`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "economic-ai-economic-loss-25",
+   "severity": "critical",
+   "title": "Withdrawal limit is per call only: unlimited withdrawal requests, each up to withdrawal_max_amount",
+   "file": "withdraw/forms.py",
+   "line": 28,
+   "evidence": "withdraw/forms.py:28 `elif amount > self.asset.withdrawal_max_amount:`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "economic-ai-economic-loss-6",
+   "severity": "critical",
+   "title": "Per-call amount limits only: no cumulative, daily or rate budget on deposit payouts",
+   "file": "deposit/forms.py",
+   "line": 23,
+   "evidence": "deposit/forms.py:23 `elif amount > self.asset.deposit_max_amount:`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-4",
+   "severity": "critical",
+   "title": "Withdrawal completion keyed only on memo: any dust payment with the memo marks the withdrawal completed",
+   "file": "withdraw/tasks.py",
+   "line": 47,
+   "evidence": "withdraw/tasks.py:47 `if response_memo != format_memo_horizon(withdraw_memo):`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-7",
+   "severity": "critical",
+   "title": "interactive_deposit and interactive_withdraw skip the deposit_enabled and withdrawal_enabled checks",
+   "file": "deposit/views.py",
+   "line": 149,
+   "evidence": "deposit/views.py:149 `if not asset_code or not Asset.objects.filter(name=asset_code).exists():`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "critical",
+   "title": "Unauthenticated confirm_transaction releases anchor-funded deposit payouts without any external deposit",
+   "file": "deposit/views.py",
+   "line": 131,
+   "evidence": "deposit/views.py:131 `create_stellar_deposit.delay(transaction.id)` \u00b7 deposit/views.py:83 `def confirm_transaction(request):`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-2",
+   "severity": "critical",
+   "title": "Re-confirming a completed deposit resets status to pending_anchor and pays again",
+   "file": "deposit/views.py",
+   "line": 122,
+   "evidence": "deposit/views.py:122 `transaction.status = Transaction.STATUS.pending_anchor`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "reliability-ai-functional-defect-11",
+   "severity": "medium",
+   "title": "check_trustlines returns from the whole task on one malformed account, stalling every other pending deposit",
+   "file": "deposit/tasks.py",
+   "line": 130,
+   "evidence": "deposit/tasks.py:131 `return`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-8",
+   "severity": "medium",
+   "title": "Each withdrawal starts an unbounded blocking Horizon SSE stream, with cursor \"now\" and no timeout",
+   "file": "withdraw/tasks.py",
+   "line": 26,
+   "evidence": "withdraw/tasks.py:26 `return address.transactions(cursor=\"now\", sse=True)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-21",
+   "severity": "medium",
+   "title": "confirm_transaction accepts withdrawal transactions and marks them completed via a self-payment",
+   "file": "deposit/views.py",
+   "line": 122,
+   "evidence": "deposit/views.py:113 `if transaction.amount_in != amount:`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-cross-user-access-23",
+   "severity": "medium",
+   "title": "CORS allows every origin to read transaction data from the browser",
+   "file": "app/settings.py",
+   "line": 184,
+   "evidence": "app/settings.py:184 `CORS_ORIGIN_ALLOW_ALL = True`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-cross-user-access-24",
+   "severity": "medium",
+   "title": "Serializer emits per-user addresses, deposit/withdraw memos and external data to unauthenticated callers",
+   "file": "transaction/serializers.py",
+   "line": 40,
+   "evidence": "transaction/serializers.py:40 `\"withdraw_memo\",`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-cross-user-access-5",
+   "severity": "medium",
+   "title": "Unauthenticated /transactions and /transaction expose other users' history and every pending withdraw_memo",
+   "file": "transaction/views.py",
+   "line": 103,
+   "evidence": "transaction/views.py:103 `def transactions(request):`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-per-call-cap-only",
+   "severity": "medium",
+   "title": "Payments are capped per call, with no total or rate limit",
+   "file": "deposit/forms.py",
+   "line": 23,
+   "evidence": "caps at deposit/forms.py:23 `elif amount > self.asset.deposit_max_amount:`; withdraw/forms.py:28 `elif amount > self.asset.withdrawal_max_amount:` \u00b7 no running total in deposit/tasks.py",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-3",
+   "severity": "medium",
+   "title": "Non-Horizon submit failure leaves deposit in pending_stellar and a retry rebuilds and re-pays without checking the first transaction",
+   "file": "deposit/tasks.py",
+   "line": 27,
+   "evidence": "deposit/tasks.py:95 `response = builder.submit()` \u00b7 deposit/tasks.py:56 `if address_exc.status_code != 404: return`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "low",
+   "title": "Unvalidated no_older_than and paging_id query values raise server errors on /transactions",
+   "file": "transaction/views.py",
+   "line": 135,
+   "evidence": "transaction/views.py:135 `start_transaction = Transaction.objects.get(id=paging_id)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-12",
+   "severity": "low",
+   "title": "Anchor-issued payments and account creation are built with no time bounds",
+   "file": null,
+   "line": null,
+   "evidence": "deposit/tasks.py:82 `builder = Builder(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-15",
+   "severity": "low",
+   "title": "Non-UUID transaction_id on deposit confirm and interactive routes raises an unhandled ValidationError (HTTP 500)",
+   "file": "deposit/views.py",
+   "line": 99,
+   "evidence": "deposit/views.py:99 `transaction = Transaction.objects.filter(id=transaction_id).first()`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-16",
+   "severity": "low",
+   "title": "Fee endpoint accepts NaN and infinite amounts and returns non-JSON fees",
+   "file": "fee/views.py",
+   "line": 46,
+   "evidence": "fee/views.py:46 `amount = float(amount_str)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-18",
+   "severity": "low",
+   "title": "interactive_deposit accepts any account string without Stellar address validation",
+   "file": "deposit/views.py",
+   "line": 144,
+   "evidence": "deposit/views.py:144 `account = request.GET.get(\"account\") if not account: return render_error_response(\"no 'account' provided\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-20",
+   "severity": "low",
+   "title": "A failed Horizon transaction with a withdrawal memo regresses a completed withdrawal to pending_stellar",
+   "file": "withdraw/tasks.py",
+   "line": 64,
+   "evidence": "withdraw/tasks.py:63 `transaction.status = Transaction.STATUS.pending_stellar`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-22",
+   "severity": "low",
+   "title": "Successful deposit payment is judged by exact match of result XDR, so a delivered payment can be left stuck in pending_stellar",
+   "file": "deposit/tasks.py",
+   "line": 106,
+   "evidence": "deposit/tasks.py:106 `if response[\"result_xdr\"] != SUCCESS_XDR:`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Non-UUID transaction_id on interactive_withdraw raises an unhandled exception (HTTP 500)",
+   "file": "withdraw/views.py",
+   "line": 66,
+   "evidence": "withdraw/views.py:66 `if Transaction.objects.filter(id=transaction_id).exists():`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-14",
+   "severity": "low",
+   "title": "Trustline check matches asset code without issuer",
+   "file": "deposit/tasks.py",
+   "line": 137,
+   "evidence": "deposit/tasks.py:137 `if asset_code == transaction.asset.name:`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "deposit/forms.py",
+   "line": 23,
+   "reason": "The only limit is per transaction. No model, table or counter sums payouts per account, per day or per caller, and nothing rate-limits interactive_deposit, which is unauthenticated and creates a new Transaction on every POST. Repeated requests can each reach deposit_max_amount, and each new account "
+  },
+  {
+   "id": "V3",
+   "title": "Atomic budget accounting",
+   "file": "deposit/tasks.py",
+   "line": 27,
+   "reason": "The status check at lines 27-33 is a read followed by a separate save, with no row lock, select_for_update or conditional UPDATE. Two concurrent create_stellar_deposit runs, for example from two confirm_transaction calls each setting pending_anchor and calling .delay, can both read pending_anchor be"
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "deposit/views.py",
+   "line": 131,
+   "reason": "The payment destination is transaction.stellar_account, set from the unauthenticated 'account' query/form parameter in interactive_deposit (deposit/views.py:144, 175) with no check that the caller controls that account. create_stellar_deposit then pays the anchor's asset (and creates accounts) to th"
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "deposit/tasks.py",
+   "line": 137,
+   "reason": "Trustline matching compares only the asset code, not the issuer. Any trustline with the same code triggers create_stellar_deposit. The payment op does name the anchor as issuer (deposit/tasks.py:90), so Stellar rejects the payment for a look-alike trustline and the transaction goes back to pending_t"
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "deposit/tasks.py",
+   "line": 95,
+   "reason": "After a submit timeout or a non-Horizon error, the code returns without checking whether the payment landed (lines 94-99), and the status stays pending_stellar. A later confirm or re-run rebuilds with a new sequence number and submits again. The account-creation branch has the same gap at lines 69-7"
+  },
+  {
+   "id": "S4",
+   "title": "Expiry and fees",
+   "file": "deposit/tasks.py",
+   "line": 82,
+   "reason": "The payment Builder (lines 82-86) and the create-account Builder (lines 58-62) set no timebounds or timeout, so a signed envelope stays valid indefinitely. The fee is not taken from input; it uses the stellar_base default. The expiry part is the defect, and it is the same as the earlier finding."
+  },
+  {
+   "id": "S5",
+   "title": "Submission outcome",
+   "file": "deposit/tasks.py",
+   "line": 95,
+   "reason": "On success the code checks the real result: line 106 compares response[\"result_xdr\"] to SUCCESS_XDR, and it records response[\"hash\"] at line 109. That part holds. The defect is what happens after an uncertain send. Only HorizonError is caught (lines 97-102). A timeout or 5xx that raises a non-Horizo"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "deposit/tasks.py",
+   "line": 56,
+   "reason": "The status is set to pending_stellar at line 32 before any work. Several failure branches return and leave that status: line 56 (non-404 Horizon error on address lookup), line 72 (create-account submit fails), line 99 (non-trustline payment failure) and line 107 (result_xdr mismatch). The guard at l"
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "deposit/views.py",
+   "line": 131,
+   "reason": "confirm_transaction is decorated only with @api_view() and reads transaction_id, amount and external_transaction_id from request.GET. No authentication, API key, or reviewer check precedes the status change to pending_anchor (line 122) and the Celery task that signs and submits a payment from the an"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "transaction/views.py",
+   "line": 103,
+   "reason": "There are many callers (anonymous HTTP clients) and the service holds per-user records (transaction rows with stellar_account, withdraw_memo, external_transaction_id). transactions() filters only on asset_code and account taken from request.GET (transaction/views.py:114-127) and transaction() looks "
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "deposit/views.py",
+   "line": 131,
+   "reason": "The only confirmation gate for deposit payouts is confirm_transaction. Its \"confirmation\" is a GET parameter the requester sets; the view has no reviewer, no timeout policy, and no fail-closed branch. Its docstring says the route is \"merely a mechanism for confirming the external transaction for dem"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "deposit/views.py",
+   "line": 83,
+   "reason": "Duplicate of the first M2 answer above; kept as the same defect."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "deposit/forms.py",
+   "line": 23,
+   "reason": "/info advertises deposit and withdrawal max_amount and the forms present them as limits, but the only enforcement is a per-request comparison. Nothing tracks a cumulative, daily or per-account total, and the deposit payout in create_stellar_deposit is triggered per transaction with no budget check. "
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "deposit/tasks.py",
+   "line": 131,
+   "reason": "The core payment path mostly uses the SDK correctly: the withdrawal memo conversion (helpers.format_memo_horizon with hex-to-base64 and strip) matches the Horizon memo format, and the payment result is compared to a success XDR. But check_trustlines returns from the whole periodic task when one acco"
+  }
+ ]
+}
