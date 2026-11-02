@@ -40,10 +40,13 @@ on the vulnerable commit through the public demo, exactly as a user would, and m
 
 | Set | Repositories | Detected |
 |---|---|---|
-| **Held-out: never used to build the rules** | stellar-disbursement-platform, stellar/go, java-stellar-anchor-sdk, anchor-platform, Blend, Soroswap, soroban-examples, OpenZeppelin stellar-contracts, Reflector, js-stellar-sdk, typescript-wallet-sdk, django-polaris | **19 of 22** |
-| Development: used to find and fix weaknesses | stellar-mpp-sdk, x402-stellar, asgcard, passkey-kit, OpenZeppelin stellar-contracts, one-way-channel, stellar-disbursement-platform, django-polaris, soneso | 11 of 16 → see benchmark |
+| **Held-out: kept out of development** | stellar-disbursement-platform, stellar/go, java-stellar-anchor-sdk, Blend, Soroswap, soroban-examples, OpenZeppelin stellar-contracts, Reflector, js-stellar-sdk, typescript-wallet-sdk, django-polaris | **20 of 22** |
+| Development: used to find and fix weaknesses | stellar-mpp-sdk, x402-stellar, asgcard, passkey-kit, OpenZeppelin stellar-contracts, one-way-channel, stellar-disbursement-platform, django-polaris, soneso | 11 of 16 |
 
-- **On fixed commits** the same audit must stop flagging the defect: see the false-alarm column in the benchmark.
+- **On the fixed commits** of the eight most severe held-out cases, 6 reports no longer flag the defect's lines; the
+  other two flag a different issue next to them.
+- Seven held-out cases are covered by lessons written with that set in view; on the other 15, **13 were detected**.
+  Every caveat is listed with the results.
 - **Cost:** about **$0.45 of model usage per audit** (Claude Haiku at medium effort, with prompt caching).
 - Every case links the vulnerable and fixed commits, and every report is published, so each result can be checked
   line by line: **[research/benchmark/real](research/benchmark/real/README.md)**. Re-run any case with

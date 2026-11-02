@@ -9,12 +9,73 @@ case only counts what the maintainers changed, never what we think is wrong.
 `../agents/` and `../labels/` hold the synthetic benchmark, which has planted defects and
 decoys. This folder complements it with code that nobody wrote for us.
 
+## Results
+
+Each audit was submitted to the public demo (`run_live.py`) as a user would submit a repository: the GitHub folder
+pinned to the commit, model review on, no hint about the case. Model: Claude Haiku 5.5 at medium effort. Every
+report is in [`results/`](results), one compact file per audit with the commit audited, the defect's lines, the
+findings that matched them and all other findings; [`results/summary.json`](results/summary.json) holds the scores.
+
+**Held-out set (22 cases, 11 repositories): 20 detected.**
+
+| Case | Repository | Detected | Fixed commit clean |
+|---|---|---|---|
+| `sdp-tss-unknown-outcome-unlock-double-pay` † | stellar-disbursement-platform-backend | yes | yes |
+| `sdp-sep24-get-transaction-cross-user` † | stellar-disbursement-platform-backend | yes | yes |
+| `sdp-payment-cancel-toctou-race` | stellar-disbursement-platform-backend | yes | |
+| `sdp-apikey-cache-cross-tenant` † | stellar-disbursement-platform-backend | yes | |
+| `sdp-auth-tenant-header-fallback` † | stellar-disbursement-platform-backend | yes ‡ | |
+| `go-recoverysigner-unverified-email` | stellar/go | yes | yes |
+| `anchor-observer-asset-mismatch-credited` † | java-stellar-anchor-sdk | yes | no § |
+| `anchor-strict-send-sendamount-credited` † | java-stellar-anchor-sdk | yes | yes |
+| `anchor-sep10-threshold-sign-extension` | java-stellar-anchor-sdk | yes | |
+| `blend-backstop-share-inflation` | blend-contracts | yes | |
+| `blend-self-liquidation-position-duplication` | blend-contracts | yes | |
+| `soroswap-pair-fee-floor-rounding` | soroswap/core | **no** | |
+| `soroban-mintlock-limit-not-pinned-to-token` | soroban-examples | yes | |
+| `soroban-lp-deposit-slippage-check` | soroban-examples | yes | |
+| `oz-vault-zero-share-deposit` | OpenZeppelin/stellar-contracts | yes | |
+| `reflector-lastprice-stale` | reflector-contract | yes | |
+| `anchor-server-withdraw-any-payment-completes` † | django-polaris | yes | |
+| `polaris-multisig-deposit-stuck-pending-signatures` | django-polaris | yes | |
+| `jssdk-readchallengetx-no-server-signature` | js-stellar-sdk | yes | yes |
+| `jssdk-redirect-leaks-custom-auth-headers` | js-stellar-sdk | yes | no § |
+| `walletsdk-sep10-domain-signer-swaps-tx` | typescript-wallet-sdk | yes | yes |
+| `walletsdk-recovery-duplicate-signers-lockout` | typescript-wallet-sdk | **no** ¶ | |
+
+Fixed commits were audited for the eight critical and high-impact cases: 6 are clean.
+
+- † **Not fully independent.** Before this run, an earlier run on two of these cases showed misses, and three of the
+  review's lessons (`unknown-outcome-unlock`, `cross-tenant-lookup`, `issuer-and-amount-received` in
+  `backend/app/stellar/lessons.py`) were written with the held-out set in view. They are general Stellar rules, but
+  they cover the seven cases marked †. **On the other 15 cases, 13 were detected.**
+- ‡ Missed on the first run because a file review cut off by the request time limit was never resumed. The fix
+  (`DeepReviewer._unit_todo`) was made and the case re-run; `results/` holds the re-run. The first run also exposed
+  that GitHub folders under `@scope/` were rejected, which made `walletsdk-sep10-domain-signer-swaps-tx` unauditable;
+  it was fixed and that case re-run.
+- § The defect itself is no longer reported on the fixed commit, but a different finding sits within 10 lines and
+  counts against clearing: for the anchor, deposits are still exempt from the asset check the fix added for
+  withdrawals and SEP-31; for js-stellar-sdk, redirect hops are not checked against private addresses (SSRF).
+- ¶ The report flags the same root cause (signer keys returned by recovery servers are added without validation) in
+  the same file, 32 lines from the fixed range, which is outside the 10-line window.
+- `soroswap-pair-fee-floor-rounding` was missed: the fee is floored, so a small swap pays none. A rounding-direction
+  lesson was added afterwards; it was not part of the measured auditor.
+
+**Development set (16 cases): 11 detected** with Claude Sonnet 5.5 before the lessons were added
+([`results/dev`](results/dev)). These cases were used to find and fix weaknesses, so they are not a measure of
+accuracy on unseen code.
+
+**Cost.** About $0.45 of model usage per audit on the Anthropic bill, with prompt caching (97% cache hits).
+
 ## Files
 
 | file | contents |
 | --- | --- |
 | `cases.json` | one entry per case (format below) |
+| `test_cases.json` | the held-out set (below) |
+| `run_live.py` | audits cases through a deployment's public API and saves the reports |
 | `score_real.py` | scores report JSON files against `cases.json` (stdlib only; `--selftest`) |
+| `results/` | compact reports of every audit above and `summary.json` |
 
 ## Cases
 
@@ -111,7 +172,8 @@ used only for clearing (below) and for `--require-category`.
 
 ## Running the audits
 
-For each case, audit both
+`python3 run_live.py vulnerable` (or `fixed`) audits every case through the public demo; add case ids to run a few,
+`--cases test_cases.json` for the held-out set and `--out DIR` for the report folder. Or, for each case, audit both
 `https://github.com/<repo>/tree/<vulnerable_commit>/<subdir>` and
 `https://github.com/<repo>/tree/<fixed_commit>/<subdir>`, and save the report JSON as
 `<case_id>.vulnerable.json` and `<case_id>.fixed.json` in one directory. Audit only the

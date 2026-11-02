@@ -13,12 +13,19 @@
    "line_end": 125
   }
  ],
- "matched": [],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-cross-user-access-3",
+   "cited": "middleware.go:119",
+   "title": "Authenticated request keeps header-selected tenant when token has no tenant or tenant lookup fails"
+  }
+ ],
  "findings": [
   {
    "id": "security-ai-control-bypass-1",
    "severity": "critical",
-   "title": "API key IP allowlist bypassed by client-supplied X-Forwarded-For / X-Real-IP header",
+   "title": "API key IP allowlist bypassed through spoofable X-Forwarded-For / X-Real-IP headers",
    "file": "api_keys_middleware.go",
    "line": 157,
    "evidence": "api_keys_middleware.go:157 `for _, header := range []string{\"X-Forwarded-For\", \"X-Real-IP\"} {` \u00b7 api_keys_middleware.go:190 `if clientIP := extractClientIP(r); !apiKey.IsAllowedIP(clientIP) {`",
@@ -26,9 +33,9 @@
    "verifier_severity": "high"
   },
   {
-   "id": "security-ai-control-bypass-3",
+   "id": "stellar_native-ai-replay-or-idempotency-2",
    "severity": "critical",
-   "title": "API key cache invalidation is asynchronous and can be overwritten by a stale in-flight validation",
+   "title": "Stale API key authorization can be re-cached after a concurrent permission change or revocation",
    "file": "api_keys_middleware.go",
    "line": 141,
    "evidence": "api_keys_middleware.go:141 `a.cache.SetWithTTL(cacheKey, apiKey, 1, apiKeyCacheTTL)`",
@@ -36,14 +43,14 @@
    "verifier_severity": "medium"
   },
   {
-   "id": "reliability-ai-functional-defect-4",
-   "severity": "low",
-   "title": "Synchronous invalidation assumed by the API key cache is not guaranteed",
-   "file": "api_keys_middleware.go",
-   "line": 91,
-   "evidence": "api_keys_middleware.go:91 `a.cache.Del(cacheKey)`",
+   "id": "security-ai-cross-user-access-3",
+   "severity": "medium",
+   "title": "Authenticated request keeps header-selected tenant when token has no tenant or tenant lookup fails",
+   "file": "middleware.go",
+   "line": 120,
+   "evidence": "middleware.go:119 `tenantID, err := authManager.GetTenantID(ctx, token) if err == nil && tenantID != \"\" {`",
    "verifier": "partial",
-   "verifier_severity": "low"
+   "verifier_severity": "medium"
   }
  ],
  "failing_checks": [
@@ -52,14 +59,7 @@
    "title": "Stated purpose versus behaviour",
    "file": "api_keys_middleware.go",
    "line": 190,
-   "reason": "The code comments and the Middleware docs present the API key IP allowlist as a security control. In extractClientIP (line 157-158) the client IP is read from the client-supplied X-Forwarded-For and X-Real-IP headers before RemoteAddr, so the stated restriction can be defeated by any client that sen"
-  },
-  {
-   "id": "M5",
-   "title": "Core function works",
-   "file": "api_keys_middleware.go",
-   "line": 91,
-   "reason": "Core authentication calls match their signatures: ristretto NewCache, Wait, Get, SetWithTTL(key, value, cost, ttl), and Del are used correctly, and the secret is verified on every hit. The failing part is the documented contract that Invalidate evicts synchronously within the instance. ristretto Del"
+   "reason": "The stated purpose is a client IP allowlist on API keys. extractClientIP (line 157) takes the client address from the X-Forwarded-For or X-Real-IP header before RemoteAddr, and both headers are set by the caller. The allowlist therefore does not do what its description says. The same file's doc comm"
   }
  ]
 }

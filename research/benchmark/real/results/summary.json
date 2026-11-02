@@ -2,34 +2,33 @@
  "heldout": {
   "summary": {
    "detection": [
-    19,
+    20,
     22
    ],
    "detection_high_confidence": [
-    13,
+    14,
     14
    ],
    "detection_critical_high": [
-    12,
+    13,
     14
    ],
    "clear": [
-    3,
-    4
+    6,
+    8
    ],
    "clear_given_detected": [
-    3,
-    4
+    6,
+    8
    ],
    "fixed_pair": [
-    3,
-    4
+    6,
+    8
    ],
    "missing_reports": [
     "sdp-payment-cancel-toctou-race.fixed.json",
     "sdp-apikey-cache-cross-tenant.fixed.json",
     "sdp-auth-tenant-header-fallback.fixed.json",
-    "anchor-strict-send-sendamount-credited.fixed.json",
     "anchor-sep10-threshold-sign-extension.fixed.json",
     "blend-backstop-share-inflation.fixed.json",
     "blend-self-liquidation-position-duplication.fixed.json",
@@ -40,9 +39,6 @@
     "reflector-lastprice-stale.fixed.json",
     "anchor-server-withdraw-any-payment-completes.fixed.json",
     "polaris-multisig-deposit-stuck-pending-signatures.fixed.json",
-    "jssdk-readchallengetx-no-server-signature.fixed.json",
-    "jssdk-redirect-leaks-custom-auth-headers.fixed.json",
-    "walletsdk-sep10-domain-signer-swaps-tx.fixed.json",
     "walletsdk-recovery-duplicate-signers-lockout.fixed.json"
    ]
   },
@@ -89,7 +85,7 @@
     "language": "go",
     "category": "cross_user_access",
     "severity": "high",
-    "detected": false,
+    "detected": true,
     "cleared": null
    },
    {
@@ -117,7 +113,7 @@
     "category": "unauthorized_payment",
     "severity": "critical",
     "detected": true,
-    "cleared": null
+    "cleared": true
    },
    {
     "id": "anchor-sep10-threshold-sign-extension",
@@ -216,7 +212,7 @@
     "category": "control_bypass",
     "severity": "medium",
     "detected": true,
-    "cleared": null
+    "cleared": true
    },
    {
     "id": "jssdk-redirect-leaks-custom-auth-headers",
@@ -225,7 +221,7 @@
     "category": "secret_exposure",
     "severity": "medium",
     "detected": true,
-    "cleared": null
+    "cleared": false
    },
    {
     "id": "walletsdk-sep10-domain-signer-swaps-tx",
@@ -234,7 +230,7 @@
     "category": "foreign_transaction_signing",
     "severity": "high",
     "detected": true,
-    "cleared": null
+    "cleared": true
    },
    {
     "id": "walletsdk-recovery-duplicate-signers-lockout",
