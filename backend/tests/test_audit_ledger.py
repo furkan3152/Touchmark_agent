@@ -509,3 +509,14 @@ def test_a_quote_on_a_comment_line_is_refused_even_without_the_comment_marker():
     problem = reviewer._verify_quote(art, "utils.ts", 2, "It also verifies that the transaction has been signed")
     assert "comment" in problem
     assert reviewer._verify_quote(art, "utils.ts", 4, "export function readChallengeTx(tx) {") == ""
+
+
+def test_a_tool_call_with_parameters_leaked_into_one_field_is_repaired():
+    from backend.app.services.deep_review import _repair_leaked_params
+    args = {"purpose": 'A pay-per-call marketplace.</purpose>\n<parameter name="triggers">A buyer LLM calling a tool',
+            "triggers": "placeholder", "example_run": "A buyer pays 0.01 USDC", "trust_boundaries": []}
+    fixed = _repair_leaked_params(args)
+    assert fixed["purpose"] == "A pay-per-call marketplace."
+    assert fixed["triggers"] == "A buyer LLM calling a tool"
+    assert fixed["example_run"] == "A buyer pays 0.01 USDC"   # a real value is never overwritten
+    assert _repair_leaked_params({"purpose": "plain"}) == {"purpose": "plain"}

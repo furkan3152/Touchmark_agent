@@ -398,7 +398,9 @@ class AuditSwarm:
         refutes, quoting the code that contradicts it, is lowered one level and marked as disputed. It is never removed;
         a candidate-rule finding (policy.CANDIDATE_RULES) is dismissed to a zero-weight note instead. A refutation never
         touches a model-review finding. A confirmed or partial verdict with a lower reviewed severity lowers rule and
-        model findings alike, except critical findings and the fund, signing and access categories (_KEEPS_SEVERITY)."""
+        model findings alike, except the fund, signing and access categories (_KEEPS_SEVERITY); a critical model
+        finding goes down at most one level, to high, so it still blocks a pass; rule and on-chain criticals keep
+        their severity."""
         results = {r["finding_id"]: r for r in verification.get("results", []) if r.get("quote_verified")
                    and not str(r.get("quote", "")).lstrip().startswith(("#", "//", "*", "/*"))}
         # "unverifiable" needs no quote: the verifier could not find the code that makes the
@@ -431,6 +433,17 @@ class AuditSwarm:
                         "severity": reviewed,
                         "detail": f.detail + f" Independent verification rates this {reviewed.value}: "
                                   f"{str(r.get('reason', ''))[:240]}"})
+                elif (r is not None and r.get("verdict") in {"confirmed", "partial"} and reviewed is not None
+                      and reviewed.rank < f.severity.rank and f.is_risk and f.severity is Severity.CRITICAL
+                      and "-ai-" in f.id):
+                    # A critical the verifier, quoting the code, finds real but less severe goes down one level
+                    # only: high still blocks a pass, so a real fund defect is never talked away, while a
+                    # critical inflated by a misread fact no longer dominates the score. On never-audited
+                    # agents every critical of one report was rated lower this way.
+                    f = f.model_copy(update={
+                        "severity": Severity.HIGH,
+                        "detail": f.detail + f" Independent verification rates this {reviewed.value}; lowered one "
+                                  f"level to high: {str(r.get('reason', ''))[:240]}"})
                 refuted = (r is not None and r.get("verdict") == "refuted" and "-ai-" not in f.id and f.is_risk
                            and not f.id.startswith("stellar_native-onchain-contract-"))  # a source quote cannot refute bytecode
                 no_issue = (r is not None and r.get("verdict") in {"confirmed", "partial"} and f.is_risk

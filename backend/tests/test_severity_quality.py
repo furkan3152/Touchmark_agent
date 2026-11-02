@@ -62,7 +62,10 @@ def test_the_verifier_lowers_an_overrated_finding_but_not_a_critical_or_fund_fin
         return AuditSwarm._apply_disputes([verdict], result)[0].findings[0]
     lowered = run("reliability-ai-functional-defect-1", Severity.HIGH)
     assert lowered.severity == Severity.LOW and "Independent verification rates this low" in lowered.detail
-    assert run("reliability-ai-functional-defect-2", Severity.CRITICAL).severity == Severity.CRITICAL
+    # A critical model finding goes down one level only, to high, which still blocks a pass; on never-audited
+    # agents every critical of one report was rated lower by the verifier.
+    assert run("reliability-ai-functional-defect-2", Severity.CRITICAL).severity == Severity.HIGH
+    assert run("security-ai-unauthorized-payment-4", Severity.CRITICAL).severity == Severity.HIGH
     assert run("security-ai-unauthorized-payment-3", Severity.HIGH).severity == Severity.HIGH
     # A pattern rule the verifier only partly confirms no longer blocks on its own: on blind-labelled
     # agents such findings were high in 2 of 12 (orchestrator._apply_disputes).

@@ -431,6 +431,30 @@ class _Cursor:
         return cls(**{k: v for k, v in (state or {}).items() if k in names})
 
 
+_LEAKED_PARAM = re.compile(r'<parameter name="([A-Za-z_]+)">')
+_STRAY_TAG = re.compile(r"</?(?:parameter|[A-Za-z_]+)>\s*$")
+
+
+def _repair_leaked_params(args: dict) -> dict:
+    """Undo a malformed tool call in which the model wrote the next parameters inside one string field
+    (`...</purpose>\n<parameter name="triggers">...`). Each leaked parameter is moved to its own field
+    unless the call already gave that field a real value; stray closing tags are dropped."""
+    if not isinstance(args, dict) or not any(isinstance(v, str) and "<parameter name=" in v for v in args.values()):
+        return args
+    out = dict(args)
+    for key, value in args.items():
+        if not isinstance(value, str) or "<parameter name=" not in value:
+            continue
+        parts = _LEAKED_PARAM.split(value)
+        out[key] = _STRAY_TAG.sub("", parts[0]).strip()
+        for name, text in zip(parts[1::2], parts[2::2]):
+            text = _STRAY_TAG.sub("", text.replace("</parameter>", "")).strip()
+            current = out.get(name)
+            if not current or (isinstance(current, str) and current.strip().lower() in {"placeholder", "tbd", "-"}):
+                out[name] = text
+    return out
+
+
 def _plain(block) -> dict:
     """A response content block as the request body carries it (JSON, for saving between legs)."""
     if isinstance(block, dict):
@@ -579,6 +603,7 @@ class DeepReviewer:
         return ""
 
     def _run_tool(self, name: str, args: dict, artifact: AgentArtifact, flows: dict, result: DeepReviewResult) -> str:
+        args = _repair_leaked_params(args)
         if name == "read_source":
             lines = self._lines(artifact, args.get("path", ""))
             if lines is None:
@@ -1114,6 +1139,7 @@ class DeepReviewer:
             results = []
             for block in uses:
                 name, args = _field(block, "name"), dict(_field(block, "input") or {})
+                args = _repair_leaked_params(args)
                 if name == "check_invariant":
                     output = self._check_invariant(args, artifact, unit)
                 elif name in ("answer_check", "describe_operating_model", "assess_flow"):

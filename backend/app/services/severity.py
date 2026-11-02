@@ -39,16 +39,19 @@ FACTOR_SCHEMA = {
                              "provider bills, quotas or rate limits bypassed; keys_or_secrets = a "
                              "Stellar or wallet signing key, seed, or a credential that controls funds or the host, "
                              "exposed; service_credential = an API key or token for a third-party service (search, "
-                             "model provider, analytics) exposed; account_control = signers, thresholds, merge, "
-                             "contract admin or upgrade; host_code_execution = commands or code run on the host; "
+                             "model provider, analytics) exposed; account_control = a Stellar "
+                             "account's signers, thresholds or merge, or a contract's admin or upgrade (a web login, "
+                             "an application user account or an email that can be claimed is data_exposure); "
+                             "host_code_execution = commands or code the service itself runs on its host (text a "
+                             "person might copy and paste is not); "
                              "funds_locked_or_delayed = value stuck or settlement blocked; service_availability; "
                              "data_exposure = non-secret data leaked; correctness = wrong behaviour without loss; "
                              "none."},
     "trigger": {"type": "string", "enum": sorted(TRIGGERS),
                 "description": "Who can make it happen: anyone = an unauthenticated caller or any content the agent "
                                "reads (web, memo, email, tool result, prompt injection); any_user = any "
-                               "authenticated user or customer; counterparty = a server, RPC, facilitator or "
-                               "payment challenge the agent talks to; operator_only = only the operator or admin; "
+                               "authenticated user or customer; counterparty = a server, RPC, facilitator, "
+                               "payment challenge or seller listing the agent talks to; operator_only = only the operator or admin; "
                                "nobody_yet = no caller, not wired up, mocked."},
     "network": {"type": "string", "enum": NETWORKS,
                 "description": "testnet_only only when the code is fixed to testnet; mainnet_or_configurable when "
