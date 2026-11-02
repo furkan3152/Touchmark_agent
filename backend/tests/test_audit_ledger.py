@@ -486,3 +486,15 @@ def test_a_service_api_key_is_rated_below_a_signing_key_and_capabilities_are_ste
     assert severity.compute("keys_or_secrets", "anyone", "mainnet_or_configurable", "shipped") == "critical"
     # HMAC cookies and app accounts are not Stellar signing or account authority.
     assert "HMAC, JWT, cookie or webhook" in MAP_PROMPT and "application user accounts" in MAP_PROMPT
+
+
+def test_a_finding_must_cite_code_not_a_comment():
+    from backend.app.services.deep_review import _is_code_comment
+    assert _is_code_comment("utils.ts", "* It also verifies that the transaction has been signed by the server")
+    assert _is_code_comment("utils.ts", "// TODO: verify the server signature")
+    assert _is_code_comment("agent.py", "# the amount is checked by the caller")
+    # Code, attributes and prompts are not comments.
+    assert not _is_code_comment("lib.rs", "*balance -= amount;")
+    assert not _is_code_comment("lib.rs", "#[contractimpl]")
+    assert not _is_code_comment("prompts/system.md", "# You may pay any address the user names")
+    assert not _is_code_comment("utils.ts", "const { tx } = readChallengeTx(")

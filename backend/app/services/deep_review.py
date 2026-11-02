@@ -512,6 +512,21 @@ def evidence_pack(artifact: AgentArtifact, findings: list[Finding], chain: dict 
     return json.dumps(pack, ensure_ascii=False, indent=1), flows
 
 
+_PROSE_FILES = (".md", ".mdx", ".txt", ".rst", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".env", ".prompt")
+
+
+def _is_code_comment(path: str, quote: str) -> bool:
+    """A quote that is only a comment in a source file. Comments never count as controls, and a finding
+    pinned to one points away from the code to fix (a docstring promising a check that the function body
+    does not make). Prompts, docs and config are prose and may be quoted as they are."""
+    if not path or path.lower().endswith(_PROSE_FILES):
+        return False
+    text = (quote or "").strip()
+    if text.startswith(("#[", "#!", "#include", "#define", "#if", "#pragma")):
+        return False
+    return text.startswith(("//", "/*", "* ", "*/", "#", "-- ", '"""', "\'\'\'")) or text == "*"
+
+
 class DeepReviewer:
     """Agentic review loop over an Anthropic client (injected for tests)."""
 
@@ -608,6 +623,9 @@ class DeepReviewer:
                 args = {**args, "severity": severity_table.compute(args.get("asset"), args.get("trigger"),
                                                                    args.get("network"), args.get("location"))}
             problem = self._verify_quote(artifact, args.get("file", ""), args.get("line", 0), args.get("evidence_quote", ""))
+            if not problem and _is_code_comment(args.get("file", ""), args.get("evidence_quote", "")):
+                problem = ("the quote is a code comment. Cite the code line where the defect is: for a comment that "
+                           "promises a check the code does not make, quote the code that should make it")
             category = args.get("category")
             if not problem and category not in CATEGORIES:
                 problem = "unknown category"
