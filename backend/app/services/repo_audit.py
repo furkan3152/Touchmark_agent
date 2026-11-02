@@ -58,7 +58,10 @@ _TOOL_PATTERNS = (
 SKIP_DIRS = {"node_modules", "dist", "build", "out", ".git", "target", "vendor", "__pycache__", "coverage",
              ".next", ".turbo", ".venv", "venv", "test", "tests", "__tests__", "spec", "fixtures", "e2e",
              "examples", "example", "docs", "benchmarks", "benchmark", ".github", "bin", "obj", "pods", "deriveddata",
-             "eval", "evals"}
+             "eval", "evals",
+             # Installed third-party packages committed with the code (a Windows virtualenv's Lib/site-packages
+             # held pip's own sources, and the review rated them as the agent's critical defects).
+             "site-packages", "dist-packages", "bower_components", "jspm_packages"}
 #: Test files by the naming conventions of languages without a tests/ folder habit
 #: (case-sensitive: "Contest.java" is not a test).
 _TEST_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$|_test\.(?:go|dart|exs?|rb)|_spec\.rb|(?:Test|Tests|Spec|IT)\.(?:java|kt|cs|swift|scala|php))$")

@@ -545,3 +545,12 @@ def test_severity_facts_are_held_to_the_file_map_evidence():
                            payer)[0]["location"] == "example_or_quickstart"
     # A payer charged for a call that failed is not value someone takes.
     assert severity.compute("paid_service_not_delivered", "anyone", "mainnet_or_configurable", "shipped") == "medium"
+
+
+def test_installed_third_party_packages_committed_with_the_code_are_not_the_agent():
+    from pathlib import Path
+    from backend.app.services.repo_audit import _skipped
+    assert _skipped(Path("Lib/site-packages/pip/_internal/operations/install/wheel.py"))
+    assert _skipped(Path("venv/lib/python3.12/site-packages/requests/api.py"))
+    assert _skipped(Path("lib/python3/dist-packages/x.py"))
+    assert not _skipped(Path("src/modules/engine/smart_bot.py"))
