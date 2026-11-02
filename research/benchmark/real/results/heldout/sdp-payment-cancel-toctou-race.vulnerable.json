@@ -18,175 +18,72 @@
    "line_end": 646
   }
  ],
- "matched": [
-  {
-   "source": "finding",
-   "id": "stellar_native-ai-replay-or-idempotency-7",
-   "cited": "payments.go:643",
-   "title": "Payment status update checks the caller's in-memory status, not the stored row, so a stale object can overwrite SUCCESS "
-  },
-  {
-   "source": "ledger",
-   "id": "M2",
-   "cited": "payments.go:643",
-   "title": "Controls outside the prompt"
-  }
- ],
+ "matched": [],
  "findings": [
   {
    "id": "security-ai-control-bypass-1",
    "severity": "critical",
-   "title": "API key update can widen a key's distribution-wallet scope beyond the caller's own reach",
+   "title": "API key Update lets a wallet-scoped key write any wallet scope it chooses",
    "file": "api_keys.go",
    "line": 500,
-   "evidence": "api_keys.go:500 `distribution_wallet_ids = COALESCE($5::VARCHAR(36)[], distribution_wallet_ids),`",
+   "evidence": "api_keys.go:500 `distribution_wallet_ids = COALESCE($5::VARCHAR(36)[], distribution_wallet_ids),` \u00b7 api_keys.go:505 `AND ($6::VARCHAR(36)[] IS NULL OR distribution_wallet_ids <@ $6::VARCHAR(36)[])`",
    "verifier": "partial",
    "verifier_severity": "high"
-  },
-  {
-   "id": "security-ai-cross-user-access-16",
-   "severity": "critical",
-   "title": "Disbursement upload plants verification values on receivers outside the uploader's scope",
-   "file": "disbursement_instructions.go",
-   "line": 334,
-   "evidence": "disbursement_instructions.go:334 `_, insertErr := di.receiverVerificationModel.Insert(ctx, dbTx, verificationInsert)`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "stellar_native-ai-replay-or-idempotency-3",
-   "severity": "critical",
-   "title": "Retry of FAILED payments re-queues them with no on-chain check and clears the prior transaction ID",
-   "file": "payments.go",
-   "line": 688,
-   "evidence": "payments.go:688 `status = 'READY'::payment_status, stellar_transaction_id = '',`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "stellar_native-ai-replay-or-idempotency-7",
-   "severity": "critical",
-   "title": "Payment status update checks the caller's in-memory status, not the stored row, so a stale object can overwrite SUCCESS and re-open a paid payment",
-   "file": "payments.go",
-   "line": 643,
-   "evidence": "payments.go:643 `WHERE id = $5`",
-   "verifier": "partial",
-   "verifier_severity": "low"
   },
   {
    "id": "security-ai-control-bypass-2",
-   "severity": "high",
-   "title": "Disbursement upload overwrites an unconfirmed receiver's verification value with the uploader's value",
+   "severity": "critical",
+   "title": "Disbursement upload can overwrite an unconfirmed receiver verification and then claim the receiver",
    "file": "disbursement_instructions.go",
-   "line": 338,
-   "evidence": "disbursement_instructions.go:338 `} else if !CompareVerificationValue(verification.HashedValue, instruction.VerificationValue) {`",
-   "verifier": "partial",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "security-ai-cross-user-access-17",
-   "severity": "medium",
-   "title": "Upload result is a yes/no oracle for verification values of out-of-scope receivers",
-   "file": "disbursement_instructions.go",
-   "line": 341,
-   "evidence": "disbursement_instructions.go:341 `return fmt.Errorf(\"%w: receiver verification for %s doesn't match. Check instruction with ID %s\", ErrReceiverVerificationMismatch, contact, instruction.ID)`",
+   "line": 343,
+   "evidence": "disbursement_instructions.go:343 `updateErr := di.receiverVerificationModel.UpdateVerificationValue(ctx, dbTx, verification.ReceiverID, verification.VerificationField, instruction.VerificationValue)`",
    "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
    "id": "stellar_native-sep24-payout-confusion",
-   "severity": "low",
+   "severity": "medium",
    "title": "Interactive withdrawal may be used as payout",
    "file": "receivers_wallet.go",
    "line": 314,
    "evidence": "",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-10",
-   "severity": "low",
-   "title": "Asset issuer is case-sensitive in lookups and unvalidated when building txnbuild CreditAsset",
-   "file": null,
-   "line": null,
-   "evidence": "assets.go:69 `return txnbuild.CreditAsset{Code: a.Code, Issuer: a.Issuer}`",
-   "verifier": null,
-   "verifier_severity": null
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
   },
   {
    "id": "reliability-ai-functional-defect-11",
    "severity": "low",
-   "title": "Wallet membership insert accepts any non-empty role string, not only wallet-scopable roles",
-   "file": "wallet_memberships.go",
-   "line": 40,
-   "evidence": "wallet_memberships.go:40 `if userID == \"\" || walletID == \"\" || role == \"\" {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-12",
-   "severity": "low",
-   "title": "ListAuditByWallet passes an unbounded caller limit to SQL LIMIT",
-   "file": "wallet_memberships.go",
-   "line": 181,
-   "evidence": "wallet_memberships.go:181 `if err := sqlExec.SelectContext(ctx, &entries, query, walletID, limit); err != nil {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-13",
-   "severity": "low",
-   "title": "SEPNonceModel.Consume returns expired nonces as valid; expiry is left to an unreviewed caller",
+   "title": "UpdateReceiverVerification builds invalid SQL when only the verification channel is set",
    "file": null,
    "line": null,
-   "evidence": "sep_nonces.go:49 `return expiresAt, true, nil`",
+   "evidence": "receiver_verification.go:295 `query = sqlExec.Rebind(fmt.Sprintf(query, strings.Join(fields, \", \")))`",
    "verifier": null,
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-15",
+   "id": "reliability-ai-functional-defect-7",
    "severity": "low",
-   "title": "UpdateReceiverVerification builds invalid SQL when no optional field is set",
+   "title": "Unchecked type assertion on receiver status filter panics on a non-ReceiversWalletStatus value",
    "file": null,
    "line": null,
-   "evidence": "receiver_verification.go:286 `%s, verification_channel = ?`",
+   "evidence": "receivers.go:361 `status := queryParams.Filters[FilterKeyStatus].(ReceiversWalletStatus)`",
    "verifier": null,
    "verifier_severity": null
   },
   {
    "id": "reliability-ai-functional-defect-8",
    "severity": "low",
-   "title": "Activate promotes a PENDING wallet to ACTIVE without checking that an account address exists",
+   "title": "AddOrCondition always appends OR, so a future caller would widen filters beyond the scoped WHERE clause",
    "file": null,
    "line": null,
-   "evidence": "distribution_wallets.go:249 `WHERE id = $1 AND status = 'PENDING'`",
+   "evidence": "query_builder.go:61 `if len(value) >= 0 {`",
    "verifier": null,
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-9",
+   "id": "security-ai-account-takeover-6",
    "severity": "low",
-   "title": "Soft-deleted assets remain resolvable and payable through GetAssetsPerReceiverWallet and GetByCodeAndIssuer",
-   "file": null,
-   "line": null,
-   "evidence": "assets.go:331 `rw.id = ANY($2)`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "security-ai-control-bypass-5",
-   "severity": "low",
-   "title": "EnsureDefaultWallet overwrites the default distribution wallet's account address without the guard UpdateAddress has",
-   "file": null,
-   "line": null,
-   "evidence": "distribution_wallets.go:342 `SET distribution_account_address = $1, distribution_account_type = $2, distribution_account_status = $3`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "security-ai-cross-user-access-4",
-   "severity": "low",
-   "title": "Cross-tenant lookup returns the schema of another tenant that holds a given Bridge customer ID",
+   "title": "Cross-tenant lookup reports which other tenant schema holds a Bridge customer ID",
    "file": null,
    "line": null,
    "evidence": "bridge_integration.go:210 `func (m *BridgeIntegrationModel) OtherTenantSchemaFor(ctx context.Context, sqlExec db.SQLExecuter, customerID, excludeSchema string) (string, error) {`",
@@ -194,37 +91,84 @@
    "verifier_severity": null
   },
   {
-   "id": "security-ai-secret-exposure-6",
+   "id": "security-ai-control-bypass-10",
    "severity": "low",
-   "title": "Receiver verification values (DOB, PIN, national ID) hashed with bcrypt MinCost",
+   "title": "Receiver verification attempt limit is not enforced on the disbursement compare path",
+   "file": null,
+   "line": null,
+   "evidence": "receiver_verification.go:306 `return attempts >= MaxAttemptsAllowed`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-3",
+   "severity": "low",
+   "title": "SEP-24 transaction lookup matches any Stellar account when the wallet has no address yet",
+   "file": null,
+   "line": null,
+   "evidence": "receivers_wallet.go:314 `AND (COALESCE(rw.stellar_address, '') = '' OR (rw.stellar_address = $2 AND COALESCE(rw.stellar_memo, '') = $3))`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-5",
+   "severity": "low",
+   "title": "Upsert overwrites a confirmed receiver verification with no ownership check on the receiver",
+   "file": null,
+   "line": null,
+   "evidence": "receiver_verification.go:182 `func (m *ReceiverVerificationModel) UpsertVerificationValue(ctx context.Context, sqlExec db.SQLExecuter, userID, receiverID string`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-secret-exposure-4",
+   "severity": "low",
+   "title": "Receiver verification values hashed with bcrypt MinCost",
    "file": null,
    "line": null,
    "evidence": "receiver_verification.go:310 `hashedValue, err := bcrypt.GenerateFromPassword([]byte(verificationValue), bcrypt.MinCost)`",
    "verifier": null,
    "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-9",
+   "severity": "low",
+   "title": "Consume returns found=true for expired SEP nonces because the DELETE has no expiry predicate",
+   "file": "sep_nonces.go",
+   "line": 37,
+   "evidence": "sep_nonces.go:37 `WHERE nonce = $1`",
+   "verifier": "partial",
+   "verifier_severity": "low"
   }
  ],
  "failing_checks": [
   {
-   "id": "S8",
-   "title": "Failure and rollback paths",
-   "file": "payments.go",
-   "line": 688,
-   "reason": "A FAILED payment is reset to READY and its stellar_transaction_id is cleared with no on-chain check, so the prior attempt's hash is lost. If the earlier submission actually landed (a timeout reported as FAILED), a retry pays the receiver again. This is the failure-path defect already recorded as ste"
-  },
-  {
    "id": "A3",
    "title": "Tenant isolation",
-   "file": "bridge_integration.go",
-   "line": 210,
-   "reason": "The data-layer lookup scans every tenant schema starting with sdp_ (bridge_integration.go:212-218) for a given Bridge customer ID and returns the name of the holder schema. Nothing in the function binds the caller to a tenant, so one tenant can learn which other tenant holds a customer. Per-tenant A"
+   "file": "api_keys.go",
+   "line": 500,
+   "reason": "Most per-caller binding holds. GetAll, GetByID, Delete and Update all bind created_by = caller (api_keys.go:383, 407, 533, 504), and receiver reads and writes are scoped by ReceiverInScopeCondition (receivers.go:111-114). Update is the exception: it checks only the current scope (line 505), then wri"
   },
   {
    "id": "M2",
    "title": "Controls outside the prompt",
-   "file": "payments.go",
-   "line": 643,
-   "reason": "The transition check is code, but it only tests the in-memory status of the caller's object (payments.go:633 TransitionTo(update.Status) on payment.Status). The UPDATE has no status predicate, so the stored status is never checked. UpdateStatuses (payments.go:612, WHERE id = ANY($2)) has the same ga"
+   "file": "api_keys.go",
+   "line": 500,
+   "reason": "Several safety rules are enforced in code, not in prompts. Key secrets are verified against a salted hash and expiry is checked (api_keys.go:455-461). Tenant-wide roles cannot be wallet-scoped (wallet_memberships.go:43-45). Role-on-wallet is a SQL EXISTS check (wallet_memberships.go:113-117). Submit"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "api_keys.go",
+   "line": 505,
+   "reason": "The comment on Update says the write lands only if the current scope is within withinWallets. The enforcing line checks only the stored distribution_wallet_ids against $6. The new scope written at line 500 from $5 is never checked against $6. So the stated restriction covers the existing scope and n"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "receivers.go",
+   "line": 361,
+   "reason": "The core paths that were read use real calls with correct types and units. Payment status transitions are checked before the update (payments.go:633-635), and disbursement instruction processing runs in a transaction. The defect is in the receiver query builder: a single-value type assertion panics "
   }
  ]
 }

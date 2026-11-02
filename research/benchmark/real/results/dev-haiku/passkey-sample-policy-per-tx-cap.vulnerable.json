@@ -1,0 +1,227 @@
+{
+ "case": "passkey-sample-policy-per-tx-cap",
+ "side": "vulnerable",
+ "repo": "kalepail/passkey-kit",
+ "commit": "73807666f073f08117b0f403f5ded8b846309f9c",
+ "audited": "https://github.com/kalepail/passkey-kit/tree/73807666f073f08117b0f403f5ded8b846309f9c/contracts",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "sample-policy/src/lib.rs",
+   "line_start": 113,
+   "line_end": 146
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-1",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "Policy signer authorizes unlimited repeated transfers, capped only per call"
+  },
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-3",
+   "cited": "sample-policy/src/lib.rs:134",
+   "title": "Sample policy approves transfers to any recipient, with no destination check"
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-soroban-policy-per-call-cap-2ae7cd9e",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "The on-chain amount limit is per call, with no running total"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-4",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "Sample policy caps raw amounts on any contract's transfer, with no asset identity check"
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-ai-stellar-protocol-misuse-6",
+   "cited": "sample-policy/src/lib.rs:128",
+   "title": "Sample policy caps raw amounts on any contract's transfer, with no asset identity check"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-reliability-failure-7",
+   "cited": "sample-policy/src/lib.rs:110",
+   "title": "Sample policy TTL is only renewed by policy__ or install, so an idle policy's marker and instance archive"
+  },
+  {
+   "source": "ledger",
+   "id": "V1",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "Per-action amount bound"
+  },
+  {
+   "source": "ledger",
+   "id": "V2",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "Cumulative budget"
+  },
+  {
+   "source": "ledger",
+   "id": "V4",
+   "cited": "sample-policy/src/lib.rs:134",
+   "title": "Recipient binding"
+  },
+  {
+   "source": "ledger",
+   "id": "V5",
+   "cited": "sample-policy/src/lib.rs:128",
+   "title": "Asset identity and units"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "sample-policy/src/lib.rs:139",
+   "title": "Stated purpose versus behaviour"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-2",
+   "severity": "critical",
+   "title": "Removing a policy signer does not revoke its approvals in other signers' limits",
+   "file": "smart-wallet/src/context.rs",
+   "line": 121,
+   "evidence": "smart-wallet/src/context.rs:121 `if PolicyClient::new(env, policy)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "critical",
+   "title": "Policy signer authorizes unlimited repeated transfers, capped only per call",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "evidence": "smart-wallet/src/lib.rs:231 `PolicyClient::new(&env, policy).policy__(` \u00b7 sample-policy/src/lib.rs:139 `if amount <= 0 || amount > TRANSFER_LIMIT {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-3",
+   "severity": "high",
+   "title": "Sample policy approves transfers to any recipient, with no destination check",
+   "file": "sample-policy/src/lib.rs",
+   "line": 134,
+   "evidence": "sample-policy/src/lib.rs:134 `let amount = match args.get(2).and_then(|v| i128::try_from_val(&env, &v).ok()) {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-soroban-policy-per-call-cap-2ae7cd9e",
+   "severity": "medium",
+   "title": "The on-chain amount limit is per call, with no running total",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "evidence": "sample-policy/src/lib.rs:139 policy__: amount > TRANSFER_LIMIT",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "medium",
+   "title": "Sample policy caps raw amounts on any contract's transfer, with no asset identity check",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "evidence": "sample-policy/src/lib.rs:139 `if amount <= 0 || amount > TRANSFER_LIMIT {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-6",
+   "severity": "medium",
+   "title": "Sample policy caps raw amounts on any contract's transfer, with no asset identity check",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "evidence": "sample-policy/src/lib.rs:128 `if fn_name != symbol_short!(\"transfer\") {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "Test fixture makes an extra hardcoded 1,000,000-unit transfer under the caller's authorization",
+   "file": null,
+   "line": null,
+   "evidence": "example-contract/src/lib.rs:25 `token::Client::new(&env, &sac).transfer(&from, &to, &1_000_000);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Build script does not rerun when Cargo.lock or manifests change, so test fixtures can go stale",
+   "file": null,
+   "line": null,
+   "evidence": "smart-wallet/build.rs:48 `println!(\"cargo:rerun-if-changed=src\");`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-7",
+   "severity": "low",
+   "title": "Sample policy TTL is only renewed by policy__ or install, so an idle policy's marker and instance archive",
+   "file": "sample-policy/src/lib.rs",
+   "line": 110,
+   "evidence": "sample-policy/src/lib.rs:110 `renew_ttls(&env, &key);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "reason": "The earlier hold covered only the per-call cap on the policy path. The bound is not code-enforced on every value-moving path. (1) Signers whose limits are Some({token -> None}) or None (smart-wallet-interface/src/types.rs:70-72 and smart-wallet/src/context.rs:33 `None => return true`) authorize any "
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "reason": "The only amount control is per call. policy__ has no running total. The only state is the Installed(wallet) marker written at sample-policy/src/lib.rs:75, and that stores no spend. So many calls of 10M each all pass."
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "sample-policy/src/lib.rs",
+   "line": 134,
+   "reason": "The policy checks no destination. It reads args[2] only and never args[1], the `to` address. Any recipient is approved, and the recipient is chosen by whoever builds the transaction. The value is not limited to an operator-fixed or allowlisted payee."
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "sample-policy/src/lib.rs",
+   "line": 128,
+   "reason": "The asset is never identified. The policy accepts the `contract` of any transfer by function name only, with no code, issuer or contract-id check. The amount is a raw i128 under one cap, with no decimals or per-asset scaling. The value checked is the value signed, but the asset is not identified at "
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "smart-wallet/src/context.rs",
+   "line": 121,
+   "reason": "Rejected or failed auth paths revert atomically (__check_auth returns Err or panics, and add_signer's install panic aborts the add), so there is no partial debit. The failing path is in remove_signer (lib.rs:104-137), which deletes the signer record but does not reconcile the policy's Installed mark"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "smart-wallet/src/context.rs",
+   "line": 121,
+   "reason": "For a required Policy co-signer, the wallet only checks expiry if the key is still stored (context.rs:112). If the policy was removed from the wallet, it is no longer stored, so no check runs and the policy still approves via policy__ (context.rs:121-130). Policy__ does not check current membership;"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "sample-policy/src/lib.rs",
+   "line": 139,
+   "reason": "The file header claims the policy \"allows only capped transfer contexts\" and \"models every hardening the audit asked for\" (lines 3-4, 13-16). The code caps only each call (line 139, against TRANSFER_LIMIT = 10_000_000 at line 49). It keeps no running total, so repeated transfers each under the cap a"
+  }
+ ]
+}

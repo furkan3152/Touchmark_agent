@@ -1,0 +1,398 @@
+{
+ "case": "asgcard-x402-proof-unverified",
+ "side": "vulnerable",
+ "repo": "ASGCompute/asgcard-public",
+ "commit": "d65ed2c8b3c362c3d585b065634a7f1f314fe602",
+ "audited": "https://github.com/ASGCompute/asgcard-public/tree/d65ed2c8b3c362c3d585b065634a7f1f314fe602/api",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/middleware/x402.ts",
+   "line_start": 59,
+   "line_end": 96
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-1",
+   "cited": "src/middleware/x402.ts:86",
+   "title": "x402 middleware accepts a forged X-Payment proof; no on-chain or facilitator verification, so paid cards are issued for "
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-ai-replay-or-idempotency-2",
+   "cited": "src/middleware/x402.ts:88",
+   "title": "Payment txHash is never recorded or checked on the paid routes, so one payment funds unlimited cards"
+  },
+  {
+   "source": "finding",
+   "id": "stellar_native-ai-stellar-protocol-misuse-7",
+   "cited": "src/middleware/x402.ts:76",
+   "title": "x402 proof checks amount and recipient but never the asset code and issuer"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-5",
+   "cited": "src/middleware/x402.ts:71",
+   "title": "Payment proof is used without schema validation, so a proof with no payload causes a TypeError and a 500"
+  },
+  {
+   "source": "ledger",
+   "id": "V5",
+   "cited": "src/middleware/x402.ts:76",
+   "title": "Asset identity and units"
+  },
+  {
+   "source": "ledger",
+   "id": "V6",
+   "cited": "src/middleware/x402.ts:88",
+   "title": "Replay and double payment"
+  },
+  {
+   "source": "ledger",
+   "id": "V7",
+   "cited": "src/middleware/x402.ts:86",
+   "title": "Incoming payment verification"
+  },
+  {
+   "source": "ledger",
+   "id": "A1",
+   "cited": "src/middleware/x402.ts:88",
+   "title": "Caller authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "A3",
+   "cited": "src/middleware/x402.ts:89",
+   "title": "Tenant isolation"
+  },
+  {
+   "source": "ledger",
+   "id": "A7",
+   "cited": "src/middleware/x402.ts:88",
+   "title": "Verification of incoming authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "src/middleware/x402.ts:86",
+   "title": "Controls outside the prompt"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-unauthorized-payment-1",
+   "severity": "critical",
+   "title": "x402 middleware accepts a forged X-Payment proof; no on-chain or facilitator verification, so paid cards are issued for free",
+   "file": "src/middleware/x402.ts",
+   "line": 86,
+   "evidence": "src/middleware/x402.ts:86 `// TODO [PAY-002]: Verify txHash via facilitator or Horizon.` \u00b7 src/middleware/x402.ts:88 `req.paymentContext = {` \u00b7 src/middleware/x402.ts:89 `payer: proof.payload.authorization.from,` \u00b7 src/services/paymentService.ts:42 `FAIL-CLOSED: if facilitator is unreachable, reject the request.`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-2",
+   "severity": "critical",
+   "title": "Payment txHash is never recorded or checked on the paid routes, so one payment funds unlimited cards",
+   "file": "src/middleware/x402.ts",
+   "line": 87,
+   "evidence": "src/middleware/x402.ts:88 `req.paymentContext = { payer: proof.payload.authorization.from, txHash: proof.payload.txHash,`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-9",
+   "severity": "critical",
+   "title": "Anti-replay check and insert split by an await, so concurrent identical proofs both pass",
+   "file": "src/services/paymentService.ts",
+   "line": 46,
+   "evidence": "src/services/paymentService.ts:46 `if (this.txHashStore.has(proof.txHash)) {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-7",
+   "severity": "critical",
+   "title": "x402 proof checks amount and recipient but never the asset code and issuer",
+   "file": "src/middleware/x402.ts",
+   "line": 76,
+   "evidence": "src/middleware/x402.ts:76 `if (proof.payload.authorization.value !== requiredAtomic) {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-6",
+   "severity": "medium",
+   "title": "Card \"issuance\" is mocked: createCard returns random card number and CVV with no issuer call, so paying buyers receive non-functional cards",
+   "file": "src/services/cardService.ts",
+   "line": 58,
+   "evidence": "src/services/cardService.ts:58 `details: createMockCardDetails()`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-8",
+   "severity": "medium",
+   "title": "Facilitator settle result never checked; settle retried on timeout without reconciliation",
+   "file": "src/services/paymentService.ts",
+   "line": 90,
+   "evidence": "src/services/paymentService.ts:90 `facilitatorClient.settle(settleId).catch((error) => {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-3",
+   "severity": "medium",
+   "title": "Wallet auth signature covers only the timestamp, so a captured header set can be replayed on any wallet route for 5 minutes",
+   "file": "src/middleware/walletAuth.ts",
+   "line": 64,
+   "evidence": "src/middleware/walletAuth.ts:64 `const message = new TextEncoder().encode(`asgcard-auth:${timestamp}`);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-secret-exposure-22",
+   "severity": "medium",
+   "title": "Webhook HMAC secret accepts any non-empty value, including one character",
+   "file": "src/config/env.ts",
+   "line": 32,
+   "evidence": "src/config/env.ts:32 `WEBHOOK_SECRET: z.string().min(1),`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "low",
+   "title": "Unpinned dependencies",
+   "file": "package.json",
+   "line": 17,
+   "evidence": "",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-12",
+   "severity": "low",
+   "title": "Facilitator verify and settle pipeline is never called; paid routes never verify payment",
+   "file": null,
+   "line": null,
+   "evidence": "src/services/paymentService.ts:44 `async verifyAndAccept(proof: VerifyRequest): Promise<PaymentVerifyResult> {` \u00b7 src/config/env.ts:20 `STELLAR_HORIZON_URL: z`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "provenance-ai-dependency-risk-11",
+   "severity": "low",
+   "title": "Caret-range dependencies with no lockfile in the repository",
+   "file": null,
+   "line": null,
+   "evidence": "package.json:17 `\"@stellar/stellar-sdk\": \"^14.5.0\",`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-15",
+   "severity": "low",
+   "title": "Webhook returns 200 \"accepted\" for card events but performs no state change",
+   "file": null,
+   "line": null,
+   "evidence": "src/routes/webhook.ts:119 `console.log(`[Webhook] Received ${event.type} (key=${event.idempotencyKey})`);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-16",
+   "severity": "low",
+   "title": "Card ID is 32-bit and create overwrites on collision",
+   "file": null,
+   "line": null,
+   "evidence": "src/repositories/inMemoryCardRepo.ts:10 `cardId: `card_${crypto.randomUUID().slice(0, 8)}`,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "addBalance accepts any amount, including negative or NaN",
+   "file": null,
+   "line": null,
+   "evidence": "src/repositories/inMemoryCardRepo.ts:47 `card.balance += amount;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-18",
+   "severity": "low",
+   "title": "Payment accepted before body and ownership validation, so a buyer is charged and gets a 400 or 404 with no refund",
+   "file": "src/middleware/x402.ts",
+   "line": 88,
+   "evidence": "src/routes/paid.ts:23 `const parsed = createCardSchema.safeParse(req.body);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-19",
+   "severity": "low",
+   "title": "findById returns the stored card object by reference",
+   "file": null,
+   "line": null,
+   "evidence": "src/repositories/inMemoryCardRepo.ts:27 `return this.cards.get(cardId);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-21",
+   "severity": "low",
+   "title": "Treasury address validated by shape only, not Stellar checksum",
+   "file": null,
+   "line": null,
+   "evidence": "src/config/env.ts:6 `.regex(/^G[A-Z2-7]{55}$/, \"Must be a valid Stellar public key (G...)\");`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-23",
+   "severity": "low",
+   "title": "Facilitator timeout and retry settings are unbounded numbers",
+   "file": null,
+   "line": null,
+   "evidence": "src/config/env.ts:36 `FACILITATOR_TIMEOUT_MS: z.coerce.number().default(8000),`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "Webhook HMAC check throws on a signature of the wrong length, so the request returns 500 instead of 401",
+   "file": "src/routes/webhook.ts",
+   "line": 44,
+   "evidence": "src/routes/webhook.ts:44 `if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signatureHeader))) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "low",
+   "title": "Payment proof is used without schema validation, so a proof with no payload causes a TypeError and a 500",
+   "file": "src/middleware/x402.ts",
+   "line": 71,
+   "evidence": "src/middleware/x402.ts:71 `if (proof.payload.authorization.to !== env.STELLAR_TREASURY_ADDRESS) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-10",
+   "severity": "low",
+   "title": "Card records held in per-process memory on a serverless deployment",
+   "file": "src/services/cardService.ts",
+   "line": 33,
+   "evidence": "src/services/cardService.ts:33 `private cards = new Map<string, StoredCard>();`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-14",
+   "severity": "low",
+   "title": "Webhook event marked processed before any handler runs; a failed handler loses the event on retry",
+   "file": null,
+   "line": null,
+   "evidence": "src/routes/webhook.ts:114 `idempotencyStore.add(event.idempotencyKey);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-13",
+   "severity": "low",
+   "title": "Signed webhook bodies are replayable indefinitely; no timestamp check and random dedupe key when the body has no id",
+   "file": "src/routes/webhook.ts",
+   "line": 98,
+   "evidence": "src/routes/webhook.ts:98 `idempotencyKey: parsed.idempotency_key ?? parsed.id ?? crypto.randomUUID(),`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-20",
+   "severity": "low",
+   "title": "Payment repository upserts over existing txHash records and marks any record settled",
+   "file": null,
+   "line": null,
+   "evidence": "src/repositories/inMemoryPaymentRepo.ts:16 `this.payments.set(record.txHash, record);`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "src/middleware/x402.ts",
+   "line": 76,
+   "reason": "The amount is compared as an exact string to the 7-decimal atomic value (toAtomicUsdc, pricing.ts:101), which is correct for the USDC amount. However, the proof's asset is never read or compared to env.STELLAR_USDC_ASSET (the code and issuer), on this path or on the facilitator path (paymentService."
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "src/middleware/x402.ts",
+   "line": 88,
+   "reason": "The paid routes never consult or record a txHash. The only anti-replay store (paymentService.ts:46, 61) is reached only through verifyAndAccept, which has no caller. One proof can therefore create or fund cards any number of times. Also, in paymentService.verifyAndAccept the has() check (line 46) ru"
+  },
+  {
+   "id": "V7",
+   "title": "Incoming payment verification",
+   "file": "src/middleware/x402.ts",
+   "line": 86,
+   "reason": "The destination is checked (line 71) and the amount is checked (line 76), but the asset is not (see V5). There is no memo or order binding, so a proof is not tied to a specific card or request. There is no finality check: the txHash is never verified on-chain or with the facilitator, and the proof's"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "src/services/paymentService.ts",
+   "line": 90,
+   "reason": "The verify failure path is fail-closed: on FacilitatorError the function returns valid:false (lines 70-75) and the txHash is only added to the replay store after a valid result (line 61), so a rejected payment is not marked used. The settle failure path is not. enqueueSettlement is fire-and-forget; "
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/middleware/x402.ts",
+   "line": 88,
+   "reason": "The paid routes that create and fund cards (paid.ts:17 and paid.ts:50) are gated only by requireX402Payment. That gate accepts any X-Payment header whose JSON fields match the treasury address, amount and scheme. It never verifies the transaction with the facilitator or Horizon (x402.ts:86-87 is a T"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/middleware/x402.ts",
+   "line": 89,
+   "reason": "The wallet routes are tenant-safe. cardService.getCard, getCardDetails, setCardStatus and listCards all filter by req.walletContext.address (cardService.ts:89, 124, 144, 167), and walletAuth binds that address to a verified signature. The paid fund route is not isolated. paid.ts:63-69 passes req.pay"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/middleware/x402.ts",
+   "line": 88,
+   "reason": "The payment proof is an incoming signed artifact, and it is not verified. The only checks are JSON field comparisons (x402.ts:66-84). There is no signature check, no facilitator or Horizon confirmation of txHash, no asset or issuer check, and no check that the source account signed the transaction. "
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/middleware/x402.ts",
+   "line": 86,
+   "reason": "The one control that matters for funds, proving that the payment happened on Stellar, is not enforced in code. The middleware only compares JSON fields supplied by the requester (scheme, network, to, value, presence of txHash and from) against the challenge. Nothing calls the facilitator or Horizon,"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/services/paymentService.ts",
+   "line": 42,
+   "reason": "The code states that payments are verified via the facilitator with fail-closed behaviour and anti-replay, but no paid route calls that code (see intent-ai-intent-mismatch-12). Card issuance is also mocked (cardService.ts:58). Both are gaps between the stated purpose and the behaviour, and the x402 "
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/config/env.ts",
+   "line": 20,
+   "reason": "The core payment function does not work as shipped: the verification that should confirm a Stellar payment is unwired, STELLAR_HORIZON_URL is validated but never used, and the stellar-sdk is imported only for StrKey. The StrKey and tweetnacl wallet check uses correct SDK calls (walletAuth.ts:57, :65"
+  }
+ ]
+}

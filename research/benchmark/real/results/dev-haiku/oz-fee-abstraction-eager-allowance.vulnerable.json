@@ -1,0 +1,187 @@
+{
+ "case": "oz-fee-abstraction-eager-allowance",
+ "side": "vulnerable",
+ "repo": "OpenZeppelin/stellar-contracts",
+ "commit": "7485b449ba0771204b6c0fb3f09f731b499e9580",
+ "audited": "https://github.com/OpenZeppelin/stellar-contracts/tree/7485b449ba0771204b6c0fb3f09f731b499e9580/packages/fee-abstraction",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/storage.rs",
+   "line_start": 179,
+   "line_end": 205
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "intent-ai-intent-mismatch-1",
+   "cited": "src/storage.rs:205",
+   "title": "User authorization does not bind fee_amount or fee_recipient, so the submitter chooses where the fee goes"
+  },
+  {
+   "source": "ledger",
+   "id": "V4",
+   "cited": "src/storage.rs:205",
+   "title": "Recipient binding"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "src/storage.rs:205",
+   "title": "Stated purpose versus behaviour"
+  }
+ ],
+ "findings": [
+  {
+   "id": "intent-ai-intent-mismatch-1",
+   "severity": "critical",
+   "title": "User authorization does not bind fee_amount or fee_recipient, so the submitter chooses where the fee goes",
+   "file": "src/storage.rs",
+   "line": 205,
+   "evidence": "src/storage.rs:205 `token_client.transfer_from(&e.current_contract_address(), user, fee_recipient, &fee_amount);` \u00b7 src/storage.rs:99 `user.require_auth_for_args(user_args_for_auth);`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "intent-ai-intent-mismatch-6",
+   "severity": "critical",
+   "title": "User signature does not bind fee_recipient or fee_amount, so the submitter can redirect the fee",
+   "file": "src/storage.rs",
+   "line": 97,
+   "evidence": "src/storage.rs:99 `user.require_auth_for_args(user_args_for_auth);`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-soroban-overflow-unchecked",
+   "severity": "medium",
+   "title": "Soroban contract arithmetic can wrap around in release builds",
+   "file": "src/storage.rs",
+   "line": 273,
+   "evidence": "Cargo.toml",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "medium",
+   "title": "Unpinned dependencies",
+   "file": "Cargo.toml",
+   "line": 18,
+   "evidence": "",
+   "verifier": "unverifiable",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-3",
+   "severity": "low",
+   "title": "Allowlist entries are written to persistent storage with no TTL extension at write time, and the removal path panics if an entry has expired",
+   "file": null,
+   "line": null,
+   "evidence": "src/storage.rs:280 `.expect(\"last token to be present\");`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-2",
+   "severity": "low",
+   "title": "Removing the last allowed fee token silently turns the allowlist off and accepts any token",
+   "file": null,
+   "line": null,
+   "evidence": "src/storage.rs:316 `if !is_fee_token_allowlist_enabled(e) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-4",
+   "severity": "low",
+   "title": "Public helpers collect_fee, sweep_token and set_allowed_fee_token perform no authorization, and integrators must add it",
+   "file": null,
+   "line": null,
+   "evidence": "src/storage.rs:370 `pub fn sweep_token(e: &Env, token: &Address, recipient: &Address) -> i128 {` \u00b7 src/storage.rs:379 `token_client.transfer(&contract_address, recipient, &balance);`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "src/storage.rs",
+   "line": 370,
+   "reason": "The per-fee bound holds: validate_fee_bounds (storage.rs:400) caps the fee at the user-signed max before approve or transfer_from. But value movement on other paths has no bound or authorization. sweep_token transfers the entire contract balance (storage.rs:373-379) to any recipient with no caller c"
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "src/storage.rs",
+   "line": 205,
+   "reason": "fee_recipient is a plain function argument. It is not in the signed user_args_for_auth tuple (storage.rs:90-98), and no allowlist or operator binding checks it. The submitter chooses where the user's fee goes. This is the defect already recorded as intent-ai-intent-mismatch-1."
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "src/storage.rs",
+   "line": 370,
+   "reason": "collect_fee_and_invoke does call user.require_auth_for_args (line 99), so the fee payer is authorized. But the state-changing public helpers collect_fee (line 157), set_allowed_fee_token (line 245), and sweep_token (line 370) contain no require_auth at all. sweep_token transfers the contract's whole"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "src/storage.rs",
+   "line": 280,
+   "reason": "Failure paths here are mostly safe because Soroban reverts all state on panic, so a failed invoke_contract in collect_fee_and_invoke (line 112) or a failed transfer_from (line 205) rolls back the fee collection too. No refund or stuck marker is needed. The defect is in set_allowed_fee_token: if the "
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/storage.rs",
+   "line": 370,
+   "reason": "The entrypoint-style helpers sweep_token (line 370), set_allowed_fee_token (line 245) and collect_fee (line 157) perform no caller authentication; their own doc comments say the caller must authorize. collect_fee_and_invoke does enforce auth at line 99 (user.require_auth_for_args), so that path hold"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/storage.rs",
+   "line": 379,
+   "reason": "Fees from all users accumulate in one shared contract balance (collect_fee line 205 transfers into the contract when sweeping is used). sweep_token transfers the entire balance to any recipient with no caller binding, so one user or anonymous caller can take other users' collected fees. collect_fee_"
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "src/storage.rs",
+   "line": 316,
+   "reason": "The allowlist is the policy gate for fee tokens. It is enforced only while the count is above zero. When the last token is removed the count reaches 0, is_allowed_fee_token returns true for every token, and the gate fails open rather than closed. A flag the caller controls (the count) therefore disa"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/storage.rs",
+   "line": 99,
+   "reason": "The Soroban host checks the user's signed auth entry against the exact args tuple, so the signer is attributed correctly and a missing or wrong signature is rejected. The verification is incomplete, though: the signed tuple (fee_token, max_fee_amount, expiration_ledger, target_contract, target_fn, t"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/storage.rs",
+   "line": 99,
+   "reason": "Code enforces user auth (line 99) and the fee cap (line 400: `if fee_amount <= 0 || fee_amount > max_fee_amount {`), and the allowlist (line 167). But the rule that the user chooses where the fee goes is not enforced: the signed args at lines 90-97 omit fee_amount and fee_recipient, and the transfer"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/storage.rs",
+   "line": 205,
+   "reason": "The README says the user signs the forward authorization and that the relayer verifies \"fee amount, token, fee recipient\". The code does not bind fee_recipient or fee_amount to the user's signature (lines 90-98), so the fee recipient the user agreed to is not enforced on-chain. The cap claim does ho"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/storage.rs",
+   "line": 280,
+   "reason": "The core forward path works as shipped: auth at line 99, bounds at line 175, the fee transfer at line 205 and invoke at line 112 use the right types and units (i128 amounts, u32 ledgers). The allowlist removal path does not: it panics at line 280 when a stored entry has expired, so the admin removal"
+  }
+ ]
+}

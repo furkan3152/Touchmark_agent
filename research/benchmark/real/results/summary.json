@@ -2,6 +2,256 @@
  "heldout": {
   "summary": {
    "detection": [
+    19,
+    21
+   ],
+   "detection_high_confidence": [
+    13,
+    14
+   ],
+   "detection_critical_high": [
+    12,
+    13
+   ],
+   "clear": [
+    2,
+    3
+   ],
+   "clear_given_detected": [
+    2,
+    3
+   ],
+   "fixed_pair": [
+    2,
+    3
+   ],
+   "missing_reports": [
+    "sdp-tss-unknown-outcome-unlock-double-pay.fixed.json",
+    "sdp-sep24-get-transaction-cross-user.fixed.json",
+    "sdp-payment-cancel-toctou-race.fixed.json",
+    "sdp-apikey-cache-cross-tenant.fixed.json",
+    "sdp-auth-tenant-header-fallback.fixed.json",
+    "anchor-observer-asset-mismatch-credited.fixed.json",
+    "anchor-strict-send-sendamount-credited.fixed.json",
+    "anchor-sep10-threshold-sign-extension.fixed.json",
+    "blend-backstop-share-inflation.fixed.json",
+    "blend-self-liquidation-position-duplication.fixed.json",
+    "soroswap-pair-fee-floor-rounding.fixed.json",
+    "soroban-mintlock-limit-not-pinned-to-token.fixed.json",
+    "soroban-lp-deposit-slippage-check.fixed.json",
+    "oz-vault-zero-share-deposit.fixed.json",
+    "reflector-lastprice-stale.fixed.json",
+    "anchor-server-withdraw-any-payment-completes.fixed.json",
+    "polaris-multisig-deposit-stuck-pending-signatures.fixed.json",
+    "walletsdk-sep10-domain-signer-swaps-tx.fixed.json",
+    "walletsdk-recovery-duplicate-signers-lockout.vulnerable.json",
+    "walletsdk-recovery-duplicate-signers-lockout.fixed.json"
+   ]
+  },
+  "cases": [
+   {
+    "id": "sdp-tss-unknown-outcome-unlock-double-pay",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "language": "go",
+    "category": "replay_or_idempotency",
+    "severity": "critical",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "sdp-sep24-get-transaction-cross-user",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "language": "go",
+    "category": "cross_user_access",
+    "severity": "medium",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "sdp-payment-cancel-toctou-race",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "language": "go",
+    "category": "reliability_failure",
+    "severity": "medium",
+    "detected": false,
+    "cleared": null
+   },
+   {
+    "id": "sdp-apikey-cache-cross-tenant",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "language": "go",
+    "category": "cross_user_access",
+    "severity": "critical",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "sdp-auth-tenant-header-fallback",
+    "repo": "stellar/stellar-disbursement-platform-backend",
+    "language": "go",
+    "category": "cross_user_access",
+    "severity": "high",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "go-recoverysigner-unverified-email",
+    "repo": "stellar/go",
+    "language": "go",
+    "category": "account_takeover",
+    "severity": "critical",
+    "detected": true,
+    "cleared": true
+   },
+   {
+    "id": "anchor-observer-asset-mismatch-credited",
+    "repo": "stellar/java-stellar-anchor-sdk",
+    "language": "java",
+    "category": "unauthorized_payment",
+    "severity": "critical",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "anchor-strict-send-sendamount-credited",
+    "repo": "stellar/java-stellar-anchor-sdk",
+    "language": "java",
+    "category": "unauthorized_payment",
+    "severity": "critical",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "anchor-sep10-threshold-sign-extension",
+    "repo": "stellar/java-stellar-anchor-sdk",
+    "language": "java",
+    "category": "control_bypass",
+    "severity": "high",
+    "detected": false,
+    "cleared": null
+   },
+   {
+    "id": "blend-backstop-share-inflation",
+    "repo": "blend-capital/blend-contracts",
+    "language": "rust",
+    "category": "economic_loss",
+    "severity": "high",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "blend-self-liquidation-position-duplication",
+    "repo": "blend-capital/blend-contracts",
+    "language": "rust",
+    "category": "economic_loss",
+    "severity": "high",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "soroswap-pair-fee-floor-rounding",
+    "repo": "soroswap/core",
+    "language": "rust",
+    "category": "economic_loss",
+    "severity": "medium",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "soroban-mintlock-limit-not-pinned-to-token",
+    "repo": "stellar/soroban-examples",
+    "language": "rust",
+    "category": "unauthorized_payment",
+    "severity": "high",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "soroban-lp-deposit-slippage-check",
+    "repo": "stellar/soroban-examples",
+    "language": "rust",
+    "category": "economic_loss",
+    "severity": "medium",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "oz-vault-zero-share-deposit",
+    "repo": "OpenZeppelin/stellar-contracts",
+    "language": "rust",
+    "category": "economic_loss",
+    "severity": "high",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "reflector-lastprice-stale",
+    "repo": "reflector-network/reflector-contract",
+    "language": "rust",
+    "category": "economic_loss",
+    "severity": "medium",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "anchor-server-withdraw-any-payment-completes",
+    "repo": "stellar/django-polaris",
+    "language": "python",
+    "category": "unauthorized_payment",
+    "severity": "critical",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "polaris-multisig-deposit-stuck-pending-signatures",
+    "repo": "stellar/django-polaris",
+    "language": "python",
+    "category": "reliability_failure",
+    "severity": "medium",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "jssdk-readchallengetx-no-server-signature",
+    "repo": "stellar/js-stellar-sdk",
+    "language": "typescript",
+    "category": "control_bypass",
+    "severity": "medium",
+    "detected": true,
+    "cleared": true
+   },
+   {
+    "id": "jssdk-redirect-leaks-custom-auth-headers",
+    "repo": "stellar/js-stellar-sdk",
+    "language": "typescript",
+    "category": "secret_exposure",
+    "severity": "medium",
+    "detected": true,
+    "cleared": false
+   },
+   {
+    "id": "walletsdk-sep10-domain-signer-swaps-tx",
+    "repo": "stellar/typescript-wallet-sdk",
+    "language": "typescript",
+    "category": "foreign_transaction_signing",
+    "severity": "high",
+    "detected": true,
+    "cleared": null
+   },
+   {
+    "id": "walletsdk-recovery-duplicate-signers-lockout",
+    "repo": "stellar/typescript-wallet-sdk",
+    "language": "typescript",
+    "category": "reliability_failure",
+    "severity": "high",
+    "detected": null,
+    "cleared": null
+   }
+  ]
+ },
+ "heldout-run1": {
+  "summary": {
+   "detection": [
     20,
     22
    ],
@@ -438,16 +688,16 @@
  "dev-haiku": {
   "summary": {
    "detection": [
-    8,
-    8
+    16,
+    16
    ],
    "detection_high_confidence": [
-    6,
-    6
+    12,
+    12
    ],
    "detection_critical_high": [
-    8,
-    8
+    14,
+    14
    ],
    "clear": [
     0,
@@ -466,25 +716,17 @@
     "mpp-charge-feebump-uncapped.fixed.json",
     "mpp-charge-txhash-replay.fixed.json",
     "x402-paywall-retry-resigns.fixed.json",
-    "asgcard-x402-proof-unverified.vulnerable.json",
     "asgcard-x402-proof-unverified.fixed.json",
-    "passkey-update-signer-no-auth.vulnerable.json",
     "passkey-update-signer-no-auth.fixed.json",
-    "passkey-sample-policy-per-tx-cap.vulnerable.json",
     "passkey-sample-policy-per-tx-cap.fixed.json",
     "oz-delegated-signer-invoker-bypass.fixed.json",
-    "oz-fee-abstraction-eager-allowance.vulnerable.json",
     "oz-fee-abstraction-eager-allowance.fixed.json",
-    "one-way-channel-funder-auth.vulnerable.json",
     "one-way-channel-funder-auth.fixed.json",
     "soneso-sep7-params-after-signature.fixed.json",
     "sdp-tss-feebump-replaced-double-pay.fixed.json",
-    "sdp-payment-amount-6dp.vulnerable.json",
     "sdp-payment-amount-6dp.fixed.json",
     "sdp-sep10-no-client-signature.fixed.json",
-    "sdp-sponsored-tx-foreign-authorizer.vulnerable.json",
     "sdp-sponsored-tx-foreign-authorizer.fixed.json",
-    "polaris-trustline-stuck-execution.vulnerable.json",
     "polaris-trustline-stuck-execution.fixed.json"
    ]
   },
@@ -531,7 +773,7 @@
     "language": "typescript",
     "category": "unauthorized_payment",
     "severity": "critical",
-    "detected": null,
+    "detected": true,
     "cleared": null
    },
    {
@@ -540,7 +782,7 @@
     "language": "rust",
     "category": "account_takeover",
     "severity": "critical",
-    "detected": null,
+    "detected": true,
     "cleared": null
    },
    {
@@ -549,7 +791,7 @@
     "language": "rust",
     "category": "economic_loss",
     "severity": "high",
-    "detected": null,
+    "detected": true,
     "cleared": null
    },
    {
@@ -567,7 +809,7 @@
     "language": "rust",
     "category": "economic_loss",
     "severity": "high",
-    "detected": null,
+    "detected": true,
     "cleared": null
    },
    {
@@ -576,7 +818,7 @@
     "language": "rust",
     "category": "stellar_protocol_misuse",
     "severity": "high",
-    "detected": null,
+    "detected": true,
     "cleared": null
    },
    {
@@ -603,7 +845,7 @@
     "language": "go",
     "category": "stellar_protocol_misuse",
     "severity": "medium",
-    "detected": null,
+    "detected": true,
     "cleared": null
    },
    {
@@ -621,7 +863,7 @@
     "language": "go",
     "category": "economic_loss",
     "severity": "high",
-    "detected": null,
+    "detected": true,
     "cleared": null
    },
    {
@@ -630,7 +872,7 @@
     "language": "python",
     "category": "reliability_failure",
     "severity": "medium",
-    "detected": null,
+    "detected": true,
     "cleared": null
    }
   ]

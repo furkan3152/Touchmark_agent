@@ -16,246 +16,134 @@
  "matched": [
   {
    "source": "finding",
-   "id": "security-ai-control-bypass-13",
+   "id": "security-ai-control-bypass-6",
    "cited": "utils.ts:268",
-   "title": "readChallengeTx documents a server-signature check it never performs"
+   "title": "readChallengeTx returns a challenge without checking the server signature its docs promise"
+  },
+  {
+   "source": "ledger",
+   "id": "A7",
+   "cited": "utils.ts:268",
+   "title": "Verification of incoming authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "utils.ts:268",
+   "title": "Controls outside the prompt"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "utils.ts:268",
+   "title": "Stated purpose versus behaviour"
   }
  ],
  "findings": [
   {
-   "id": "security-ai-account-takeover-1",
+   "id": "security-ai-control-bypass-6",
    "severity": "critical",
-   "title": "SEP-10 signer verification never binds the signature to the challenge's client account",
+   "title": "readChallengeTx returns a challenge without checking the server signature its docs promise",
    "file": "utils.ts",
-   "line": 445,
-   "evidence": "utils.ts:445 `const { tx } = readChallengeTx(`",
+   "line": 268,
+   "evidence": "utils.ts:268 `return { tx: transaction, clientAccountID, matchedHomeDomain };`",
    "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
-   "id": "security-ai-control-bypass-13",
-   "severity": "critical",
-   "title": "readChallengeTx documents a server-signature check it never performs",
-   "file": "utils.ts",
-   "line": 100,
-   "evidence": "utils.ts:268 `return { tx: transaction, clientAccountID, matchedHomeDomain };`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-control-bypass-22",
-   "severity": "high",
-   "title": "Unbounded Date header from any Horizon response sets the clock used for transaction timebounds",
-   "file": "horizon_axios_client.ts",
-   "line": 40,
-   "evidence": "horizon_axios_client.ts:40 `const serverTime = _toSeconds(Date.parse(response.headers.date));`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "stellar_native-ai-replay-or-idempotency-6",
+   "id": "stellar_native-ai-replay-or-idempotency-15",
    "severity": "medium",
-   "title": "submitTransaction surfaces submit timeouts as a plain error with no hash reconciliation, so callers can pay twice",
-   "file": "server.ts",
-   "line": 469,
-   "evidence": "server.ts:309 `return HorizonAxiosClient.post(`",
+   "title": "Unbounded server Date header is trusted as clock and widens transaction maxTime",
+   "file": "horizon_axios_client.ts",
+   "line": 43,
+   "evidence": "horizon_axios_client.ts:43 `if (!isNaN(serverTime)) {`",
    "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
    "id": "reliability-ai-functional-defect-10",
    "severity": "low",
-   "title": "Federation error path never produces BadResponseError for HTTP failures",
+   "title": "Non-2xx federation responses never produce BadResponseError; the else branch is unreachable",
    "file": null,
    "line": null,
-   "evidence": "federation_server.ts:231 `if (response instanceof Error) {`",
+   "evidence": "federation_server.ts:239 `} else { return Promise.reject( new BadResponseError(`",
    "verifier": null,
    "verifier_severity": null
   },
   {
    "id": "reliability-ai-functional-defect-11",
    "severity": "low",
-   "title": "Federation memo_type is not validated against the spec values",
-   "file": null,
-   "line": null,
-   "evidence": "federation_server.ts:223 `typeof response.data.memo !== \"string\"`",
-   "verifier": null,
-   "verifier_severity": null
+   "title": "accountId() accepts any string without validating it as a Stellar account address",
+   "file": "account_call_builder.ts",
+   "line": 33,
+   "evidence": "account_call_builder.ts:33 `builder.filter.push([id]);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
   },
   {
    "id": "reliability-ai-functional-defect-12",
    "severity": "low",
-   "title": "resolveAccountId sends unvalidated account ID to federation server",
-   "file": "federation_server.ts",
-   "line": 196,
-   "evidence": "federation_server.ts:196 `const url = this.serverURL.query({ type: \"id\", q: accountId });`",
+   "title": "stellar.toml fetch has no timeout by default, so a stalled domain hangs the caller",
+   "file": "stellar_toml_resolver.ts",
+   "line": 44,
+   "evidence": "stellar_toml_resolver.ts:44 `typeof opts.timeout === \"undefined\" ? Config.getTimeout() : opts.timeout;`",
    "verifier": "partial",
    "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-13",
+   "severity": "low",
+   "title": "Config.setTimeout accepts negative, NaN or non-finite values that break stellar.toml fetches",
+   "file": null,
+   "line": null,
+   "evidence": "config.ts:62 `config.timeout = value;`",
+   "verifier": null,
+   "verifier_severity": null
   },
   {
    "id": "reliability-ai-functional-defect-14",
    "severity": "low",
-   "title": "operation(id) accepts an unvalidated string ID and places it in the Horizon path",
-   "file": "operation_call_builder.ts",
-   "line": 35,
-   "evidence": "operation_call_builder.ts:35 `builder.filter.push([operationId]);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-15",
-   "severity": "low",
-   "title": "forLedger(sequence) passes an unvalidated string sequence into the Horizon path",
-   "file": "operation_call_builder.ts",
-   "line": 71,
-   "evidence": "operation_call_builder.ts:71 `typeof sequence === \"number\" ? sequence.toString() : sequence,`",
-   "verifier": "partial",
-   "verifier_severity": "low"
+   "title": "Config.setAllowHttp stores any value without a boolean check, so a truthy non-boolean enables plain HTTP",
+   "file": null,
+   "line": null,
+   "evidence": "config.ts:51 `config.allowHttp = value;`",
+   "verifier": null,
+   "verifier_severity": null
   },
   {
    "id": "reliability-ai-functional-defect-16",
    "severity": "low",
-   "title": "transaction() accepts an empty ID and returns the collection endpoint typed as a single record",
-   "file": "transaction_call_builder.ts",
-   "line": 34,
-   "evidence": "transaction_call_builder.ts:34 `builder.filter.push([transactionId]);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
+   "title": "forAssetPair leaves stale asset code and issuer when a native side is set after a non-native one",
+   "file": null,
+   "line": null,
+   "evidence": "trades_call_builder.ts:35 `this.url.setQuery(\"base_asset_type\", \"native\");`",
+   "verifier": null,
+   "verifier_severity": null
   },
   {
    "id": "reliability-ai-functional-defect-17",
    "severity": "low",
-   "title": "accountId accepts any string without StrKey validation",
-   "file": "account_call_builder.ts",
-   "line": 31,
-   "evidence": "account_call_builder.ts:31 `public accountId(id: string): CallBuilder<ServerApi.AccountRecord> {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-18",
-   "severity": "low",
-   "title": "Effect query builders accept unvalidated account, ledger, transaction and operation identifiers",
-   "file": "effect_call_builder.ts",
-   "line": 44,
-   "evidence": "effect_call_builder.ts:44 `typeof sequence === \"number\" ? sequence.toString() : sequence,`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-19",
-   "severity": "low",
-   "title": "forLedger passes an unvalidated sequence into the Horizon ledgers path",
-   "file": "payment_call_builder.ts",
-   "line": 41,
-   "evidence": "payment_call_builder.ts:41 `typeof sequence === \"number\" ? sequence.toString() : sequence,`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-20",
-   "severity": "low",
-   "title": "TradesCallBuilder.forAccount accepts an unvalidated account ID into the Horizon path",
-   "file": "trades_call_builder.ts",
-   "line": 64,
-   "evidence": "trades_call_builder.ts:64 `this.filter.push([\"accounts\", accountId, \"trades\"]);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-21",
-   "severity": "low",
-   "title": "TradesCallBuilder.forOffer passes an unvalidated offer ID to Horizon",
-   "file": "trades_call_builder.ts",
-   "line": 53,
-   "evidence": "trades_call_builder.ts:53 `this.url.setQuery(\"offer_id\", offerId);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-23",
-   "severity": "low",
-   "title": "ledger(sequence) accepts unvalidated input and sends it to Horizon",
-   "file": "ledger_call_builder.ts",
-   "line": 28,
+   "title": "LedgerCallBuilder.ledger accepts any value and does not validate the sequence as an integer",
+   "file": null,
+   "line": null,
    "evidence": "ledger_call_builder.ts:28 `this.filter.push([\"ledgers\", sequence.toString()]);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
+   "verifier": null,
+   "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-24",
+   "id": "reliability-ai-functional-defect-2",
    "severity": "low",
-   "title": "LedgerCallBuilder is typed as a collection page but ledger(n) returns a single record",
-   "file": "ledger_call_builder.ts",
-   "line": 15,
-   "evidence": "ledger_call_builder.ts:15 `ServerApi.CollectionPage<ServerApi.LedgerRecord>`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-25",
-   "severity": "low",
-   "title": "OfferCallBuilder.forAccount accepts any string as an account ID",
-   "file": "offer_call_builder.ts",
-   "line": 44,
-   "evidence": "offer_call_builder.ts:44 `this.filter.push([\"accounts\", id, \"offers\"]);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-26",
-   "severity": "low",
-   "title": "OfferCallBuilder.offer returns the collection endpoint for an empty offer ID",
-   "file": "offer_call_builder.ts",
-   "line": 32,
-   "evidence": "offer_call_builder.ts:32 `builder.filter.push([offerId]);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
+   "title": "submitTransaction never produces BadResponseError because every axios error is an Error",
+   "file": null,
+   "line": null,
+   "evidence": "server.ts:469 `if (response instanceof Error) {` \u00b7 server.ts:468 `if (response instanceof Error) {` \u00b7 server.ts:472 `return Promise.reject( new BadResponseError(`",
+   "verifier": null,
+   "verifier_severity": null
   },
   {
    "id": "reliability-ai-functional-defect-4",
    "severity": "low",
-   "title": "Amount conversion returns exponent notation for one stroop",
-   "file": null,
-   "line": null,
-   "evidence": "server.ts:55 `return new BigNumber(amt).div(STROOPS_IN_LUMEN).toString();`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-9",
-   "severity": "low",
-   "title": "Custom-header interceptor merges each request's headers into shared state, leaking headers across requests and Server instances",
-   "file": null,
-   "line": null,
-   "evidence": "server.ts:95 `config.headers = merge(customHeaders, config.headers);`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-reliability-failure-7",
-   "severity": "low",
-   "title": "Submit timeout is not reconciled by hash before retry",
-   "file": "server.ts",
-   "line": 309,
-   "evidence": "server.ts:309 `return HorizonAxiosClient.post(`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-reliability-failure-8",
-   "severity": "low",
-   "title": "Post-send failure leaves no reconciliation state; retry can pay twice",
-   "file": "server.ts",
-   "line": 468,
-   "evidence": "server.ts:468 `.catch((response) => {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-control-bypass-5",
-   "severity": "low",
-   "title": "Federation response is returned without checking that it matches the requested address",
+   "title": "Federation record returned without checking account_id or memo_type",
    "file": null,
    "line": null,
    "evidence": "federation_server.ts:228 `return response.data;`",
@@ -263,19 +151,59 @@
    "verifier_severity": null
   },
   {
-   "id": "security-ai-ssrf-2",
+   "id": "reliability-ai-functional-defect-7",
    "severity": "low",
-   "title": "Federation address domain is interpolated into an HTTPS URL without validation",
-   "file": "stellar_toml_resolver.ts",
-   "line": 49,
-   "evidence": "stellar_toml_resolver.ts:49 `.get(`${protocol}://${domain}/.well-known/stellar.toml`, {`",
+   "title": "Global Config.setTimeout is not applied to Horizon requests or transaction submission",
+   "file": null,
+   "line": null,
+   "evidence": "horizon_axios_client.ts:26 `const HorizonAxiosClient = axios.create({`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Sub-stroop-scale XLM amounts render as exponential strings (e.g. \"1e-7\")",
+   "file": null,
+   "line": null,
+   "evidence": "server.ts:55 `return new BigNumber(amt).div(STROOPS_IN_LUMEN).toString();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-8",
+   "severity": "low",
+   "title": "Federation HTTPS requirement is not enforced on HTTP redirects",
+   "file": null,
+   "line": null,
+   "evidence": "federation_server.ts:216 `return axios .get(url.toString(), {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-cross-user-access-1",
+   "severity": "low",
+   "title": "Per-Server appName header interceptors accumulate on a shared global Horizon client",
+   "file": "server.ts",
+   "line": 93,
+   "evidence": "server.ts:93 `HorizonAxiosClient.interceptors.request.use((config) => {`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
    "id": "security-ai-ssrf-3",
    "severity": "low",
-   "title": "Horizon pagination and link URLs are fetched with any host or scheme the response supplies",
+   "title": "Federation domain from a user address is used unchecked to build the stellar.toml fetch URL",
+   "file": "stellar_toml_resolver.ts",
+   "line": 49,
+   "evidence": "stellar_toml_resolver.ts:49 ``${protocol}://${domain}/.well-known/stellar.toml``",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-ssrf-5",
+   "severity": "low",
+   "title": "Horizon pagination and link hrefs are fetched as absolute URLs on any host",
    "file": null,
    "line": null,
    "evidence": "call_builder.ts:335 `return HorizonAxiosClient.get(url.toString())`",
@@ -289,63 +217,77 @@
    "title": "Recipient binding",
    "file": "federation_server.ts",
    "line": 228,
-   "reason": "The SDK's federation resolver returns a destination account chosen by a remote server with no check that it matches the requested name or account ID. Any payment flow that resolves a user-supplied or fetched address and pays the returned account_id therefore has a destination that the remote domain "
-  },
-  {
-   "id": "V5",
-   "title": "Asset identity and units",
-   "file": "server.ts",
-   "line": 55,
-   "reason": "Asset identity holds: offer and claimed-offer mappings keep issuer with code (server.ts:380-387, 422-437). The amount path fails. _getAmountInLumens returns exponent notation for small values (for example one stroop gives \"1e-7\"), so the amount reported after submit is not a plain decimal string. Th"
+   "reason": "FederationServer.resolve (federation_server.ts:80-103) turns a user-supplied address such as bob*domain into an account_id taken from the remote federation server's JSON. _sendRequest checks only that memo is a string (federation_server.ts:222-227) and returns response.data unchanged. The destinatio"
   },
   {
    "id": "V6",
    "title": "Replay and double payment",
    "file": "server.ts",
-   "line": 309,
-   "reason": "The earlier \"holds\" is wrong. The SDK does not retry, but on a submit timeout (server.ts:314 timeout: SUBMIT_TRANSACTION_TIMEOUT) the rejection is a bare axios Error with no transaction hash or reconciliation step (the catch at server.ts:468-478 passes Error instances through unchanged and wraps oth"
+   "line": 469,
+   "reason": "submitTransaction issues one POST and does not retry, so the SDK does not double-send by itself. But the error contract makes a timeout indistinguishable from a definitive rejection. The 60-second timeout (server.ts:46, :314) and any exception thrown while parsing a successful response's result_xdr "
+  },
+  {
+   "id": "S3",
+   "title": "Network and endpoint pinning",
+   "file": "call_builder.ts",
+   "line": 335,
+   "reason": "submitTransaction (server.ts:309-310) posts only to the URL from the Server constructor (this.serverURL), so the submit path is pinned to operator configuration, and the passphrase is part of the signed transaction. The payment-verifying listing path is not pinned: _sendNormalRequest (call_builder.t"
   },
   {
    "id": "S5",
    "title": "Submission outcome",
    "file": "server.ts",
-   "line": 309,
-   "reason": "On success the SDK returns the Horizon body and maps offer results (server.ts:316-467), so a 200 is checked. On timeout or 504 the POST rejects (server.ts:468-478) with no hash returned and no polling of GET /transactions/{hash} or the source sequence. A caller that retries after that error can rebu"
+   "line": 468,
+   "reason": "submitTransaction (server.ts:309-315) makes one POST, with no poll or re-check by hash. Any axios error, including a 60-second timeout (SUBMIT_TRANSACTION_TIMEOUT, server.ts:46) or a 504 after Horizon accepted the transaction, goes to the catch at server.ts:468-470 and is rejected as a plain Error w"
   },
   {
    "id": "S8",
    "title": "Failure and rollback paths",
    "file": "server.ts",
-   "line": 468,
-   "reason": "The memo-check rejection (server.ts:298-300, 758-780) and the post-send rejections leave no lock or stuck state, so those paths hold. The gap is the timeout or 504 path: the catch at server.ts:468-478 turns a post-send failure into a rejection with no reconciliation marker. The caller cannot tell fr"
+   "line": 472,
+   "reason": "Pre-send failures are handled safely: checkMemoRequired (server.ts:298-300, 758-778) rethrows AccountRequiresMemoError and any non-NotFound load error before anything is sent, so nothing is left behind. Post-send failures are not reconciled. Any axios error, timeout, 504 or Horizon FAILED result (se"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "server.ts",
+   "line": 93,
+   "reason": "More than one caller identity can share one process: several Server instances (for example one per tenant or appName) all register request interceptors on the single module-level HorizonAxiosClient. Each interceptor closes over its own customHeaders and merges them into every outgoing request, so on"
   },
   {
    "id": "A6",
    "title": "Outbound requests and file paths",
    "file": "stellar_toml_resolver.ts",
    "line": 49,
-   "reason": "The domain part of a federation address (user input) is interpolated into the outbound stellar.toml URL with no validation, so the requester can steer the request to arbitrary hosts. The same unchecked-URL pattern appears in call_builder.ts, where Horizon pagination URLs from the response are fetche"
+   "reason": "The requester controls the outbound host. FederationServer.resolve takes the domain after '*' from a user-supplied address (federation_server.ts:92-93) and passes it to StellarTomlResolver.resolve, which fetches it with no check against private or internal addresses. A FEDERATION_SERVER value from t"
   },
   {
    "id": "A7",
    "title": "Verification of incoming authentication",
    "file": "utils.ts",
-   "line": 445,
-   "reason": "Most checks hold. The server key is excluded from client signers (utils.ts:473), at least one client signer is required (utils.ts:486), unmatched and duplicate signatures are rejected through the consumed-signature count (utils.ts:518), and timebounds, home domain, the manage_data-only rule and the "
+   "line": 268,
+   "reason": "The verify-complete entry points hold. verifyChallengeTxSigners and verifyChallengeTxThreshold exclude the server key from the client count (utils.ts:473), require at least one G... client signer (utils.ts:486-490), require the server signature (utils.ts:504-508), reject unmatched signatures (utils."
   },
   {
    "id": "M2",
    "title": "Controls outside the prompt",
    "file": "utils.ts",
-   "line": 445,
-   "reason": "The SEP-10 safety rule that a challenge is only accepted when the client account itself signed it is not enforced in code. verifyChallengeTxSigners (utils.ts:436-520) calls readChallengeTx, which returns clientAccountID, but that value is discarded, and the signer set passed in by the caller is only"
+   "line": 268,
+   "reason": "Safety rules that matter for funds are mostly enforced in code: sequence must be zero (utils.ts:145), source must equal the server (utils.ts:152), the first op must be manageData (utils.ts:174), timebounds are checked (utils.ts:190), and verifyChallengeTxSigners requires the server signature (utils."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "utils.ts",
+   "line": 268,
+   "reason": "The docstring at utils.ts:100 says readChallengeTx verifies the server signature. The code that decides it is the return at utils.ts:268: no signature check runs between parsing (line 131) and this return. The server-signature check exists only in verifyChallengeTxSigners (utils.ts:504), so readChal"
   },
   {
    "id": "M5",
    "title": "Core function works",
    "file": "server.ts",
-   "line": 55,
-   "reason": "The core submit and load paths use real SDK calls with correct types, but amount conversion returns exponent notation for one stroop, so the value handed back for a transaction amount is not a valid Stellar decimal amount. This is the core-function defect already recorded as reliability-ai-functiona"
+   "line": 469,
+   "reason": "Most of the core path is correct: SDK calls match the API and units are right (STROOPS_IN_LUMEN = 10000000 at server.ts:48, and the BigNumber conversion at server.ts:54-56). The timebound, sequence and manageData parsing in readChallengeTx works. The core failure is the submit error path. Because ev"
   }
  ]
 }

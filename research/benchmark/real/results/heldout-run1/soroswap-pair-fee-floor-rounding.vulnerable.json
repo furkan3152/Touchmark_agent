@@ -1,0 +1,133 @@
+{
+ "case": "soroswap-pair-fee-floor-rounding",
+ "side": "vulnerable",
+ "repo": "soroswap/core",
+ "commit": "81536823f254297546f1cb0367519f403fa90e00",
+ "audited": "https://github.com/soroswap/core/tree/81536823f254297546f1cb0367519f403fa90e00/contracts/pair",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/lib.rs",
+   "line_start": 251,
+   "line_end": 260
+  }
+ ],
+ "matched": [],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-3",
+   "severity": "critical",
+   "title": "Deposit, withdraw and skim credit whatever balance is present at call time, with no caller binding; a split-transaction deposit or LP transfer can be front-run",
+   "file": "src/lib.rs",
+   "line": 141,
+   "evidence": "src/lib.rs:141 `let (balance_0, balance_1) = (get_balance_0(&e), get_balance_1(&e));` \u00b7 src/lib.rs:278 `fn withdraw(e: Env, to: Address) -> Result<(i128, i128), SoroswapPairError> {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-1",
+   "severity": "critical",
+   "title": "Pair WASM exports an unauthenticated LP token initialize; initialize_pair can be front-run to take LP admin and mint shares",
+   "file": "src/soroswap_pair_token/contract.rs",
+   "line": 55,
+   "evidence": "src/soroswap_pair_token/contract.rs:55 `pub fn initialize(e: Env, admin: Address, decimal: u32, name: String, symbol: String) {` \u00b7 src/lib.rs:78 `fn initialize_pair(e: Env, factory: Address, token_0: Address, token_1: Address) -> Result<(), SoroswapPairError> { if has_token_0(&e) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-4",
+   "severity": "critical",
+   "title": "initialize_pair has no caller binding; first caller chooses factory and pool tokens",
+   "file": "src/lib.rs",
+   "line": 78,
+   "evidence": "src/lib.rs:78 `fn initialize_pair(e: Env, factory: Address, token_0: Address, token_1: Address) -> Result<(), SoroswapPairError> {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-soroban-auth-missing",
+   "severity": "medium",
+   "title": "Soroban authorization not evidenced; an initializer can be front-run",
+   "file": "src/soroswap_pair_token/contract.rs",
+   "line": 55,
+   "evidence": "src/soroswap_pair_token/contract.rs:23 internal_burn; src/soroswap_pair_token/contract.rs:36 internal_mint; src/soroswap_pair_token/contract.rs:55 initialize",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-soroban-overflow-unchecked",
+   "severity": "low",
+   "title": "Soroban contract arithmetic can wrap around in release builds",
+   "file": "src/soroswap_pair_token/balance.rs",
+   "line": 38,
+   "evidence": "Cargo.toml",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "low",
+   "title": "skim panics when a pool token balance is below its reserve",
+   "file": "src/lib.rs",
+   "line": 333,
+   "evidence": "src/lib.rs:333 `let skimmed_0 = balance_0.checked_sub(reserve_0).unwrap();`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-2",
+   "severity": "low",
+   "title": "Swap path reads instance storage without extending its TTL; a quiet pool's reserves and token addresses can be archived",
+   "file": "src/lib.rs",
+   "line": 205,
+   "evidence": "src/lib.rs:205 `if !has_token_0(&e) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "src/lib.rs",
+   "line": 278,
+   "reason": "The recipient of deposit (line 135), withdraw (line 278), skim (line 330) and swap (line 204) is a caller-supplied address. Nothing binds it to the account that supplied the tokens or shares. Withdraw burns the pair's own LP balance and sends the proceeds to any address. A third party can take share"
+  },
+  {
+   "id": "S6",
+   "title": "Account authority changes",
+   "file": "src/soroswap_pair_token/contract.rs",
+   "line": 55,
+   "reason": "Post-setup authority is sound: set_admin (contract.rs:80-82) and mint (contract.rs:74-76) require the current admin, which is the pair contract itself after initialize_pair (lib.rs:91). The pair never invokes those functions externally, so no untrusted input changes signers, admin or minting. The ga"
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "src/lib.rs",
+   "line": 205,
+   "reason": "The LP token is mostly sound. Every state-changing token function calls require_auth on the right address: mint and set_admin on admin (contract.rs:76, 82); approve, transfer and burn on from (114, 136, 165); transfer_from and burn_from on spender (150, 170) plus allowance spend. Per-user balances a"
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/lib.rs",
+   "line": 78,
+   "reason": "Pair initialization (factory, token_0, token_1, and the embedded LP token initialize) is exported with no caller authentication. Only the \"already initialized\" guard protects it, so the first caller on an uninitialized deployment chooses the factory and tokens. The LP token's own initialize (contrac"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/lib.rs",
+   "line": 141,
+   "reason": "Deposit, withdraw and skim credit or pay out whatever token balance or LP share balance the pair holds at call time. No caller is bound to any balance, so one user's transfer into the pair can be claimed by another caller. The LP share balance (withdraw) is pooled across users, so the first caller t"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/lib.rs",
+   "line": 78,
+   "reason": "The rule that only the intended factory (or deployer) may bind a fresh pair to its factory, tokens and LP admin is not enforced in code. initialize_pair has no require_auth on any address; its only guard is has_token_0 at line 79, which is first-caller-wins. The LP token initialize at src/soroswap_p"
+  }
+ ]
+}

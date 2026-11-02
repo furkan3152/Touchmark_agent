@@ -21,99 +21,115 @@
  "matched": [
   {
    "source": "finding",
-   "id": "security-ai-control-bypass-12",
-   "cited": "src/auctions/auction.rs:155",
-   "title": "Liquidated user can self-fill their own liquidation auction, cancelling it without payment"
+   "id": "economic-ai-economic-loss-14",
+   "cited": "src/auctions/user_liquidation_auction.rs:132",
+   "title": "Stale user liquidation auction can be filled for zero bid after 400 ledgers, transferring the lot for free"
+  },
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-16",
+   "cited": "src/auctions/user_liquidation_auction.rs:131",
+   "title": "Liquidation fill does not recheck the borrower's health, so a recovered account can be liquidated at stale terms"
   }
  ],
  "findings": [
   {
-   "id": "economic-ai-economic-loss-11",
+   "id": "economic-ai-economic-loss-14",
    "severity": "critical",
-   "title": "Emissions accrued during a zero-supply interval are credited to the next supplier",
-   "file": "src/emissions/distributor.rs",
-   "line": 178,
-   "evidence": "src/emissions/distributor.rs:178 `|| supply == 0 { return token_emission_data;`",
-   "verifier": "partial",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "security-ai-account-takeover-5",
-   "severity": "critical",
-   "title": "Pool initialize assigns admin and backstop from caller input with no require_auth",
-   "file": "src/pool/config.rs",
-   "line": 34,
-   "evidence": "src/pool/config.rs:34 `storage::set_admin(e, admin);`",
+   "title": "Stale user liquidation auction can be filled for zero bid after 400 ledgers, transferring the lot for free",
+   "file": "src/auctions/auction.rs",
+   "line": 214,
+   "evidence": "src/auctions/user_liquidation_auction.rs:132 `filler_state.add_positions(e, pool, auction_data.lot.clone(), auction_data.bid.clone());`",
    "verifier": "partial",
    "verifier_severity": "high"
   },
   {
-   "id": "stellar_native-ai-stellar-protocol-misuse-7",
+   "id": "economic-ai-economic-loss-15",
    "severity": "critical",
-   "title": "Pool initialize assigns admin and backstop from caller input with no require_auth",
-   "file": "src/pool/config.rs",
-   "line": 34,
-   "evidence": "src/pool/config.rs:34 `storage::set_admin(e, admin);`",
+   "title": "Lot scaled out during the ramp window is dropped from the auction and never delivered",
+   "file": "src/auctions/auction.rs",
+   "line": 257,
+   "evidence": "src/auctions/auction.rs:251 `let remaining_base = amount - to_fill_base;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "economic-ai-economic-loss-18",
+   "severity": "critical",
+   "title": "Bad-debt transfer ignores the debtor's non-collateral supply, moving repayable debt onto the backstop",
+   "file": "src/pool/bad_debt.rs",
+   "line": 25,
+   "evidence": "src/pool/bad_debt.rs:25 `if !user_state.positions.collateral.is_empty() || user_state.positions.liabilities.is_empty() {`",
    "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
-   "id": "economic-ai-economic-loss-14",
-   "severity": "high",
-   "title": "Zero or negative oracle price accepted, letting a borrow of that asset pass the health-factor check with no liability value",
-   "file": null,
-   "line": null,
-   "evidence": "src/pool/pool.rs:129 `self.prices.set(asset.clone(), price_data.price);`",
-   "verifier": "unverifiable",
-   "verifier_severity": ""
+   "id": "economic-ai-economic-loss-6",
+   "severity": "critical",
+   "title": "Self-fill of own user liquidation auction duplicates collateral",
+   "file": "src/pool/submit.rs",
+   "line": 57,
+   "evidence": "src/pool/submit.rs:57 `new_from_state.store(e);`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
   },
   {
-   "id": "security-ai-control-bypass-8",
+   "id": "security-ai-account-takeover-4",
+   "severity": "critical",
+   "title": "Pool initialize sets admin without admin authorization",
+   "file": "src/contract.rs",
+   "line": 238,
+   "evidence": "src/contract.rs:238 `fn initialize( e: Env, admin: Address,`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-16",
+   "severity": "critical",
+   "title": "Liquidation fill does not recheck the borrower's health, so a recovered account can be liquidated at stale terms",
+   "file": "src/auctions/user_liquidation_auction.rs",
+   "line": 131,
+   "evidence": "src/auctions/user_liquidation_auction.rs:131 `user_state.rm_positions(e, pool, auction_data.lot.clone(), auction_data.bid.clone());`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-17",
    "severity": "high",
-   "title": "Duplicate asset entries inflate interest auction value and bypass the 200 USDC minimum",
-   "file": "src/auctions/backstop_interest_auction.rs",
-   "line": 33,
-   "evidence": "src/auctions/backstop_interest_auction.rs:33 `interest_value += i128(asset_to_base)`",
+   "title": "Oracle price of zero or negative is accepted and used in health checks",
+   "file": "src/pool/pool.rs",
+   "line": 129,
+   "evidence": "src/pool/pool.rs:129 `self.prices.set(asset.clone(), price_data.price);`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "economic-ai-economic-loss-13",
+   "severity": "medium",
+   "title": "Per-second EPS rounding drops remainder of each gulp instead of carrying it",
+   "file": "src/emissions/manager.rs",
+   "line": 133,
+   "evidence": "src/emissions/manager.rs:133 `let eps = u64(tokens_left_to_emit / (7 * 24 * 60 * 60)).unwrap_optimized();`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
    "id": "reliability-ai-functional-defect-1",
    "severity": "medium",
-   "title": "Self-fill of a user liquidation overwrites the liquidated user's storage with stale positions",
-   "file": null,
-   "line": null,
-   "evidence": "src/pool/submit.rs:57 `new_from_state.store(e);`",
-   "verifier": "unverifiable",
-   "verifier_severity": ""
-  },
-  {
-   "id": "reliability-ai-functional-defect-10",
-   "severity": "medium",
-   "title": "Partial bad-debt fill burns backstop liabilities, leaving the stored auction unfillable",
-   "file": "src/auctions/bad_debt_auction.rs",
-   "line": 103,
-   "evidence": "src/auctions/bad_debt_auction.rs:103 `if threshold < 0_0000003 {`",
-   "verifier": "confirmed",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "reliability-ai-functional-defect-2",
-   "severity": "medium",
-   "title": "Auction scaling computes block difference with unchecked u32 subtraction",
-   "file": null,
-   "line": null,
+   "title": "Auction block-age u32 subtraction underflows for fills in the creation ledger",
+   "file": "src/auctions/auction.rs",
+   "line": 210,
    "evidence": "src/auctions/auction.rs:210 `let block_dif = i128(e.ledger().sequence() - auction_data.block);`",
-   "verifier": "unverifiable",
-   "verifier_severity": ""
+   "verifier": "partial",
+   "verifier_severity": "high"
   },
   {
-   "id": "security-ai-control-bypass-12",
+   "id": "reliability-ai-functional-defect-9",
    "severity": "medium",
-   "title": "Liquidated user can self-fill their own liquidation auction, cancelling it without payment",
+   "title": "Partial bad debt fill on a small backstop burns the remaining bid and bricks the auction",
    "file": null,
    "line": null,
-   "evidence": "src/auctions/auction.rs:155 `fill_user_liq_auction(e, pool, &to_fill_auction, user, filler_state)`",
+   "evidence": "src/auctions/bad_debt_auction.rs:118 `backstop_state.rm_positions(e, pool, map![e], rm_liabilities);`",
    "verifier": "unverifiable",
    "verifier_severity": ""
   },
@@ -121,8 +137,8 @@
    "id": "security-soroban-overflow-unchecked",
    "severity": "medium",
    "title": "Soroban contract arithmetic can wrap around in release builds",
-   "file": "src/pool/user.rs",
-   "line": 72,
+   "file": "Cargo.toml",
+   "line": 1,
    "evidence": "Cargo.toml",
    "verifier": "unverifiable",
    "verifier_severity": "none"
@@ -135,22 +151,12 @@
    "line": 18,
    "evidence": "",
    "verifier": "unverifiable",
-   "verifier_severity": "none"
-  },
-  {
-   "id": "intent-ai-intent-mismatch-9",
-   "severity": "low",
-   "title": "200 USDC minimum interest auction threshold bypassed by duplicate assets",
-   "file": "src/auctions/backstop_interest_auction.rs",
-   "line": 43,
-   "evidence": "src/auctions/backstop_interest_auction.rs:43 `if interest_value <= (200 * 10i128.pow(pool.load_price_decimals(e))) {`",
-   "verifier": "partial",
    "verifier_severity": "low"
   },
   {
-   "id": "provenance-ai-dependency-risk-13",
+   "id": "provenance-ai-dependency-risk-19",
    "severity": "low",
-   "title": "Backstop client WASM is embedded from an unpinned local build artifact",
+   "title": "Backstop client is generated from an unpinned local WASM path with no hash check",
    "file": null,
    "line": null,
    "evidence": "src/dependencies/backstop.rs:3 `contractimport!(file = \"../target/wasm32-unknown-unknown/release/backstop.wasm\");`",
@@ -158,22 +164,102 @@
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-3",
+   "id": "reliability-ai-functional-defect-10",
    "severity": "low",
-   "title": "Auction fill percentage silently truncated from i128 to u64",
-   "file": "src/pool/actions.rs",
-   "line": 290,
-   "evidence": "src/pool/actions.rs:248 `request.amount as u64,` \u00b7 src/pool/actions.rs:290 `request.amount as u64,`",
+   "title": "Emission index update drops an interval whose increment rounds to zero",
+   "file": "src/emissions/distributor.rs",
+   "line": 195,
+   "evidence": "src/emissions/distributor.rs:195 `last_time: ledger_timestamp,`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
-   "id": "reliability-ai-functional-defect-4",
+   "id": "reliability-ai-functional-defect-11",
    "severity": "low",
-   "title": "Pool emission share total is summed in unchecked u64",
-   "file": "src/emissions/manager.rs",
-   "line": 46,
+   "title": "First fillable ledger pays full bid for zero lot and deletes the auction",
+   "file": "src/auctions/auction.rs",
+   "line": 221,
+   "evidence": "src/auctions/auction.rs:221 `lot_modifier = block_dif * per_block_scalar;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-12",
+   "severity": "low",
+   "title": "Emission share cap bypassed by u64 wrap in unchecked total_share accumulation",
+   "file": null,
+   "line": null,
    "evidence": "src/emissions/manager.rs:46 `total_share += metadata.share;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-2",
+   "severity": "low",
+   "title": "Auction fill percent narrowed from i128 to u64 without range check",
+   "file": "src/pool/actions.rs",
+   "line": 248,
+   "evidence": "src/pool/actions.rs:248 `request.amount as u64,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-20",
+   "severity": "low",
+   "title": "Bad debt and interest auction fill amounts truncated from i128 to u64 without range check",
+   "file": "src/pool/actions.rs",
+   "line": 290,
+   "evidence": "src/pool/actions.rs:290 `request.amount as u64,`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-21",
+   "severity": "low",
+   "title": "Reserve with l_factor 0 makes every liability valuation panic",
+   "file": null,
+   "line": null,
+   "evidence": "src/pool/reserve.rs:175 `.fixed_div_ceil(i128(self.l_factor), SCALAR_7)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "Interest auction sums duplicate asset entries, inflating value and the backstop-token bid",
+   "file": "src/auctions/backstop_interest_auction.rs",
+   "line": 33,
+   "evidence": "src/auctions/backstop_interest_auction.rs:33 `interest_value += i128(asset_to_base)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "Interest auction becomes permanently unfillable after 400 ledgers, blocking all later interest auctions",
+   "file": "src/auctions/backstop_interest_auction.rs",
+   "line": 83,
+   "evidence": "src/auctions/backstop_interest_auction.rs:83 `let backstop_token_bid_amount = auction_data.bid.get_unchecked(backstop_token);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-7",
+   "severity": "low",
+   "title": "Reserve timelock skipped for entries queued during Setup",
+   "file": null,
+   "line": null,
+   "evidence": "src/pool/config.rs:69 `if storage::get_pool_config(e).status != 6 { unlock_time += SECONDS_PER_WEEK; }`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-5",
+   "severity": "low",
+   "title": "User emission entries written without TTL extension",
+   "file": "src/storage.rs",
+   "line": 598,
+   "evidence": "src/storage.rs:593 `pub fn set_user_emissions(e: &Env, user: &Address, res_token_index: &u32, data: &UserEmissionData) {`",
    "verifier": "partial",
    "verifier_severity": "low"
   }
@@ -183,64 +269,50 @@
    "id": "V5",
    "title": "Asset identity and units",
    "file": "src/pool/actions.rs",
-   "line": 290,
-   "reason": "The amount is checked as i128 (require_nonnegative at L116) but passed to auctions::fill as u64 by truncation. A value above 2^64 wraps, so the percent actually applied differs from the amount the request and the event describe. The truncated value then drives scale_auction. Asset identity is by con"
-  },
-  {
-   "id": "S3",
-   "title": "Network and endpoint pinning",
-   "file": "src/pool/config.rs",
-   "line": 34,
-   "reason": "The earlier holds claimed the oracle, backstop, BLND and USDC addresses are operator-fixed at initialize. But initialize (contract.rs:238-261) has no require_auth, and it is only blocked by the is_init flag. Whoever calls it first sets the admin and every dependency address (config.rs:34-47). The co"
+   "line": 248,
+   "reason": "Asset identity holds: reserves are keyed by contract address (storage get_res_config(asset) in reserve.rs:44) and oracle prices by Stellar(contract id) (pool.rs:124). The amount check fails on one path. Fill requests narrow request.amount from i128 to u64 without a range check and pass the truncated"
   },
   {
    "id": "S6",
    "title": "Account authority changes",
-   "file": "src/pool/config.rs",
-   "line": 34,
-   "reason": "Post-initialization admin changes are gated: set_admin calls admin.require_auth() and new_admin.require_auth() (contract.rs:267-268), and update_pool, queue_set_reserve, cancel_set_reserve and set_status each call admin.require_auth(). But execute_initialize writes the admin from its argument with n"
+   "file": "src/contract.rs",
+   "line": 238,
+   "reason": "Admin changes are gated: set_admin requires both the current and new admin (contract.rs:267-268), and update_pool, queue/cancel/set reserve, set_status and set_emissions_config require the stored admin (contract.rs:279, 292, 305, 357, 376). initialize is the exception. It never calls require_auth on"
   },
   {
    "id": "S7",
    "title": "Soroban contract checks",
-   "file": "src/pool/config.rs",
-   "line": 34,
-   "reason": "Most state-changing entrypoints either require the right address (set_admin, update_pool, queue/cancel reserve, set_status, submit, claim, set_emissions_config) or are permissionless by design with on-chain checks (bad_debt requires no collateral and liabilities; liquidation creation requires liabil"
+   "file": "src/storage.rs",
+   "line": 593,
+   "reason": "require_auth is present on every state-changing entrypoint that acts on a specific user: submit requires spender.require_auth and from.require_auth when different (contract.rs:333-336), and claim requires from.require_auth (contract.rs:383). Per-user positions and emissions are in persistent storage"
   },
   {
    "id": "A1",
    "title": "Caller authentication",
-   "file": "src/pool/config.rs",
-   "line": 34,
-   "reason": "Pool initialize (contract.rs:238-261 routing to config.rs:24-36) is callable by any caller and sets admin and backstop from arguments with no require_auth. The guard is only the is_init flag, so whoever initializes first becomes admin. Admin-only routes (set_admin, update_pool, queue_set_reserve, ca"
+   "file": "src/contract.rs",
+   "line": 238,
+   "reason": "Every signing, payment, approval and admin route checks auth (set_admin contract.rs:267-268, update_pool :279, queue/cancel :292/:305, set_status :357, set_emissions_config :376, submit :333-335, claim :383), except initialize, which sets the admin without require_auth. That is the already-recorded "
   },
   {
-   "id": "A3",
-   "title": "Tenant isolation",
+   "id": "A4",
+   "title": "Approvals fail closed",
    "file": "src/pool/config.rs",
-   "line": 34,
-   "reason": "The submit and claim paths bind debits to authenticated accounts (contract.rs:333-336, 383), so ordinary users cannot move each other's positions. But the shared pool treasury and admin role are not protected: initialize has no auth (contract.rs:238-261). The first caller to initialize becomes admin"
-  },
-  {
-   "id": "M2",
-   "title": "Controls outside the prompt",
-   "file": "src/pool/config.rs",
-   "line": 34,
-   "reason": "Admin-only controls (update_pool, queue/set reserve, set_status, set_emissions_config, set_admin) call admin.require_auth() in src/contract.rs. The rule that initialize sets admin and backstop only from trusted callers has no code enforcement: execute_initialize takes admin and backstop_address from"
+   "line": 69,
+   "reason": "The reserve timelock is not universal. A queue entry made while the pool is in Setup (status 6) gets unlock_time = now (no week). Pool status can then move out of Setup via execute_set_pool_status (status.rs:71-90 has no check on the current status), and the entry remains valid, so the admin can app"
   },
   {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
-   "file": "src/auctions/backstop_interest_auction.rs",
-   "line": 43,
-   "reason": "The code comment and the intent state that interest auctions require at least 200 USDC of interest. Duplicate entries in the assets list add the same reserve's credit more than once to interest_value (lines 28-40), so the stated minimum is not enforced. The lot is still only one credit, so the behav"
+   "file": "src/pool/submit.rs",
+   "line": 57,
+   "reason": "The pool's documented behaviour is that a liquidation fill transfers the lot from the liquidated user to the filler and that the health check protects the pool. The shipped submit path instead lets the liquidated user fill their own auction, and the stored record ends up with the lot duplicated. Thi"
   },
   {
    "id": "M5",
    "title": "Core function works",
-   "file": "src/pool/actions.rs",
-   "line": 248,
-   "reason": "The core auction-fill path does not work as shipped for all amounts. Fill requests carry an i128 amount that is cast to u64 with `as`, which silently truncates values above u64::MAX (the same cast is on lines 269 and 290). Auction scaling also uses unchecked u32 subtraction (auction.rs:210). Both ar"
+   "file": "src/auctions/auction.rs",
+   "line": 210,
+   "reason": "The core paths (submit, claim, emissions gulp, auction create/fill) use the right SDK calls, types and scalars, and the imports exist. The known core defects remain: the block-age subtraction underflows for fills in the creation ledger, the fill percent is narrowed without a range check, and interes"
   }
  ]
 }

@@ -1,0 +1,230 @@
+{
+ "case": "sdp-payment-cancel-toctou-race",
+ "side": "vulnerable",
+ "repo": "stellar/stellar-disbursement-platform-backend",
+ "commit": "d4ca61736480b72b11ea5d2ac7efd6819c8d8864",
+ "audited": "https://github.com/stellar/stellar-disbursement-platform-backend/tree/d4ca61736480b72b11ea5d2ac7efd6819c8d8864/internal/data",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "payments.go",
+   "line_start": 608,
+   "line_end": 615
+  },
+  {
+   "path": "payments.go",
+   "line_start": 637,
+   "line_end": 646
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "stellar_native-ai-replay-or-idempotency-7",
+   "cited": "payments.go:643",
+   "title": "Payment status update checks the caller's in-memory status, not the stored row, so a stale object can overwrite SUCCESS "
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "payments.go:643",
+   "title": "Controls outside the prompt"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "API key update can widen a key's distribution-wallet scope beyond the caller's own reach",
+   "file": "api_keys.go",
+   "line": 500,
+   "evidence": "api_keys.go:500 `distribution_wallet_ids = COALESCE($5::VARCHAR(36)[], distribution_wallet_ids),`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-cross-user-access-16",
+   "severity": "critical",
+   "title": "Disbursement upload plants verification values on receivers outside the uploader's scope",
+   "file": "disbursement_instructions.go",
+   "line": 334,
+   "evidence": "disbursement_instructions.go:334 `_, insertErr := di.receiverVerificationModel.Insert(ctx, dbTx, verificationInsert)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-3",
+   "severity": "critical",
+   "title": "Retry of FAILED payments re-queues them with no on-chain check and clears the prior transaction ID",
+   "file": "payments.go",
+   "line": 688,
+   "evidence": "payments.go:688 `status = 'READY'::payment_status, stellar_transaction_id = '',`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-7",
+   "severity": "critical",
+   "title": "Payment status update checks the caller's in-memory status, not the stored row, so a stale object can overwrite SUCCESS and re-open a paid payment",
+   "file": "payments.go",
+   "line": 643,
+   "evidence": "payments.go:643 `WHERE id = $5`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-2",
+   "severity": "high",
+   "title": "Disbursement upload overwrites an unconfirmed receiver's verification value with the uploader's value",
+   "file": "disbursement_instructions.go",
+   "line": 338,
+   "evidence": "disbursement_instructions.go:338 `} else if !CompareVerificationValue(verification.HashedValue, instruction.VerificationValue) {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-cross-user-access-17",
+   "severity": "medium",
+   "title": "Upload result is a yes/no oracle for verification values of out-of-scope receivers",
+   "file": "disbursement_instructions.go",
+   "line": 341,
+   "evidence": "disbursement_instructions.go:341 `return fmt.Errorf(\"%w: receiver verification for %s doesn't match. Check instruction with ID %s\", ErrReceiverVerificationMismatch, contact, instruction.ID)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-sep24-payout-confusion",
+   "severity": "low",
+   "title": "Interactive withdrawal may be used as payout",
+   "file": "receivers_wallet.go",
+   "line": 314,
+   "evidence": "",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "low",
+   "title": "Asset issuer is case-sensitive in lookups and unvalidated when building txnbuild CreditAsset",
+   "file": null,
+   "line": null,
+   "evidence": "assets.go:69 `return txnbuild.CreditAsset{Code: a.Code, Issuer: a.Issuer}`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-11",
+   "severity": "low",
+   "title": "Wallet membership insert accepts any non-empty role string, not only wallet-scopable roles",
+   "file": "wallet_memberships.go",
+   "line": 40,
+   "evidence": "wallet_memberships.go:40 `if userID == \"\" || walletID == \"\" || role == \"\" {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-12",
+   "severity": "low",
+   "title": "ListAuditByWallet passes an unbounded caller limit to SQL LIMIT",
+   "file": "wallet_memberships.go",
+   "line": 181,
+   "evidence": "wallet_memberships.go:181 `if err := sqlExec.SelectContext(ctx, &entries, query, walletID, limit); err != nil {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-13",
+   "severity": "low",
+   "title": "SEPNonceModel.Consume returns expired nonces as valid; expiry is left to an unreviewed caller",
+   "file": null,
+   "line": null,
+   "evidence": "sep_nonces.go:49 `return expiresAt, true, nil`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-15",
+   "severity": "low",
+   "title": "UpdateReceiverVerification builds invalid SQL when no optional field is set",
+   "file": null,
+   "line": null,
+   "evidence": "receiver_verification.go:286 `%s, verification_channel = ?`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "Activate promotes a PENDING wallet to ACTIVE without checking that an account address exists",
+   "file": null,
+   "line": null,
+   "evidence": "distribution_wallets.go:249 `WHERE id = $1 AND status = 'PENDING'`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Soft-deleted assets remain resolvable and payable through GetAssetsPerReceiverWallet and GetByCodeAndIssuer",
+   "file": null,
+   "line": null,
+   "evidence": "assets.go:331 `rw.id = ANY($2)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-5",
+   "severity": "low",
+   "title": "EnsureDefaultWallet overwrites the default distribution wallet's account address without the guard UpdateAddress has",
+   "file": null,
+   "line": null,
+   "evidence": "distribution_wallets.go:342 `SET distribution_account_address = $1, distribution_account_type = $2, distribution_account_status = $3`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-cross-user-access-4",
+   "severity": "low",
+   "title": "Cross-tenant lookup returns the schema of another tenant that holds a given Bridge customer ID",
+   "file": null,
+   "line": null,
+   "evidence": "bridge_integration.go:210 `func (m *BridgeIntegrationModel) OtherTenantSchemaFor(ctx context.Context, sqlExec db.SQLExecuter, customerID, excludeSchema string) (string, error) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-secret-exposure-6",
+   "severity": "low",
+   "title": "Receiver verification values (DOB, PIN, national ID) hashed with bcrypt MinCost",
+   "file": null,
+   "line": null,
+   "evidence": "receiver_verification.go:310 `hashedValue, err := bcrypt.GenerateFromPassword([]byte(verificationValue), bcrypt.MinCost)`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "payments.go",
+   "line": 688,
+   "reason": "A FAILED payment is reset to READY and its stellar_transaction_id is cleared with no on-chain check, so the prior attempt's hash is lost. If the earlier submission actually landed (a timeout reported as FAILED), a retry pays the receiver again. This is the failure-path defect already recorded as ste"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "bridge_integration.go",
+   "line": 210,
+   "reason": "The data-layer lookup scans every tenant schema starting with sdp_ (bridge_integration.go:212-218) for a given Bridge customer ID and returns the name of the holder schema. Nothing in the function binds the caller to a tenant, so one tenant can learn which other tenant holds a customer. Per-tenant A"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "payments.go",
+   "line": 643,
+   "reason": "The transition check is code, but it only tests the in-memory status of the caller's object (payments.go:633 TransitionTo(update.Status) on payment.Status). The UPDATE has no status predicate, so the stored status is never checked. UpdateStatuses (payments.go:612, WHERE id = ANY($2)) has the same ga"
+  }
+ ]
+}

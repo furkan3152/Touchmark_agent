@@ -13,189 +13,232 @@
    "line_end": 133
   }
  ],
- "matched": [
-  {
-   "source": "finding",
-   "id": "security-ai-control-bypass-13",
-   "cited": "ledger/StellarRpc.java:130",
-   "title": "RPC account decoding sign-extends XDR thresholds and weights, so SEP-10 medium threshold above 127 is bypassed"
-  }
- ],
+ "matched": [],
  "findings": [
   {
-   "id": "economic-ai-economic-loss-2",
+   "id": "security-ai-account-takeover-7",
    "severity": "critical",
-   "title": "Failed transactions are parsed as successful payments because a null result list skips the operation-result check",
-   "file": null,
-   "line": null,
-   "evidence": "ledger/LedgerClientHelper.java:349 `if (operationResults != null && operationResults.length != parseResult.operations().length) {` \u00b7 ledger/Horizon.java:145 `OperationResult[] opResults = LedgerClientHelper.parseOperationResults(txResult, txnHash);`",
-   "verifier": "unverifiable",
-   "verifier_severity": ""
-  },
-  {
-   "id": "security-ai-account-takeover-1",
-   "severity": "critical",
-   "title": "SEP-45 validate issues a JWT for the requested contract account without verifying the client's auth entry",
-   "file": "sep45/Sep45Service.java",
-   "line": 212,
-   "evidence": "sep45/Sep45Service.java:212 `if (hasAccountCredentials(entry) && matchesKeypairAccount(entry, signingKeypair)) {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-account-takeover-22",
-   "severity": "critical",
-   "title": "SEP-45 validate issues a JWT whose sub is the args account, which no client signature proves",
+   "title": "SEP-45 validate issues a JWT for the contract account in args without checking the client's auth entry",
    "file": "sep45/Sep45Service.java",
    "line": 248,
    "evidence": "sep45/Sep45Service.java:248 `String account = argsMap.get(KEY_ACCOUNT);`",
    "verifier": "partial",
-   "verifier_severity": "high"
+   "verifier_severity": "medium"
   },
   {
-   "id": "security-ai-control-bypass-13",
+   "id": "security-ai-secret-exposure-56",
    "severity": "critical",
-   "title": "RPC account decoding sign-extends XDR thresholds and weights, so SEP-10 medium threshold above 127 is bypassed",
-   "file": "ledger/StellarRpc.java",
-   "line": 130,
-   "evidence": "ledger/StellarRpc.java:130 `(int) thresholdsXdr.getThresholds()[2],`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "security-ai-secret-exposure-50",
-   "severity": "high",
-   "title": "Platform/callback API key header is re-sent to redirect targets",
-   "file": "apiclient/BaseApiClient.java",
+   "title": "API key compared with non-constant-time String.equals",
+   "file": "filter/ApiKeyFilter.java",
    "line": 61,
-   "evidence": "apiclient/BaseApiClient.java:61 `: requestBuilder.header(authHeader.getName(), authHeader.getValue());`",
-   "verifier": "partial",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "reliability-ai-functional-defect-15",
-   "severity": "medium",
-   "title": "getHeaderJwt derives the signing key outside its error handling, so a null or invalid key throws a raw exception",
-   "file": null,
-   "line": null,
-   "evidence": "auth/JwtService.java:264 `KeyPair.fromAccountId(signingKey).getPublicKey());`",
-   "verifier": "unverifiable",
-   "verifier_severity": ""
-  },
-  {
-   "id": "reliability-ai-functional-defect-40",
-   "severity": "medium",
-   "title": "Muxed payment destinations are encoded with the id and key bytes swapped, producing wrong M-addresses",
-   "file": "ledger/LedgerClientHelper.java",
-   "line": 63,
-   "evidence": "ledger/LedgerClientHelper.java:63 `payment.getDestination().getMed25519().toXdrByteArray());`",
-   "verifier": "refuted",
-   "verifier_severity": "none"
-  },
-  {
-   "id": "reliability-ai-functional-defect-44",
-   "severity": "medium",
-   "title": "Invoke-transfer operations are emitted without the asset they move, unlike classic payment and path payment operations",
-   "file": null,
-   "line": null,
-   "evidence": "ledger/LedgerClientHelper.java:190 `.contractId(contractId)`",
-   "verifier": "unverifiable",
-   "verifier_severity": ""
-  },
-  {
-   "id": "reliability-ai-reliability-failure-4",
-   "severity": "medium",
-   "title": "Platform JSON-RPC notifications never check HTTP status or RPC error body",
-   "file": "apiclient/PlatformApiClient.java",
-   "line": 245,
-   "evidence": "apiclient/PlatformApiClient.java:245 `return client.newCall(request).execute();`",
-   "verifier": "confirmed",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "security-ai-control-bypass-10",
-   "severity": "medium",
-   "title": "SEP-10 client_domain signature check fails on the non-existent-account branch: count-only check accepts any third signature",
-   "file": "sep10/Sep10Service.java",
-   "line": 460,
-   "evidence": "sep10/Sep10Service.java:460 `if (clientDomain != null && challenge.getTransaction().getSignatures().size() != 3) {`",
+   "evidence": "filter/ApiKeyFilter.java:61 `if (!apiKey.equals(gotApiKey)) {`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
-   "id": "security-ai-control-bypass-17",
-   "severity": "medium",
-   "title": "SEP-45 validate never checks the root invocation's contract or function before trusting its args",
+   "id": "stellar_native-ai-stellar-protocol-misuse-13",
+   "severity": "critical",
+   "title": "SEP-45 validate does not bind each auth entry to the web_auth_verify root invocation",
    "file": "sep45/Sep45Service.java",
    "line": 202,
    "evidence": "sep45/Sep45Service.java:202 `firstEntryArgs = entry.getRootInvocation().getFunction().getContractFn().getArgs();`",
    "verifier": "partial",
-   "verifier_severity": "low"
+   "verifier_severity": "high"
   },
   {
-   "id": "security-ai-control-bypass-48",
+   "id": "stellar_native-ai-stellar-protocol-misuse-6",
+   "severity": "critical",
+   "title": "Failed Horizon transactions are parsed as successful payments with the declared amount",
+   "file": null,
+   "line": null,
+   "evidence": "ledger/LedgerClientHelper.java:80 `.amount(BigInteger.valueOf(payment.getAmount().getInt64()))`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-foreign-transaction-signing-5",
+   "severity": "high",
+   "title": "SEP-45 challenge signs every server-credentialed auth entry returned by the RPC without checking its invocation",
+   "file": "sep45/Sep45Service.java",
+   "line": 95,
+   "evidence": "sep45/Sep45Service.java:95 `if (hasAccountCredentials(entry) && matchesKeypairAccount(entry, signingKeypair)) {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-52",
    "severity": "medium",
-   "title": "Client attribution takes the domain match and ignores the account, so mixed identities are attributed silently",
-   "file": "client/ClientFinder.java",
-   "line": 59,
-   "evidence": "client/ClientFinder.java:59 `return clientByDomain != null ? clientByDomain : clientByAccount;`",
+   "title": "Any contract's transfer(from,to,amount) is emitted as an asset transfer without checking the contract is the anchor's asset",
+   "file": "ledger/LedgerTransaction.java",
+   "line": 114,
+   "evidence": "ledger/LedgerClientHelper.java:168 `.equals(\"transfer\")) yield null;`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-51",
+   "severity": "medium",
+   "title": "Malformed transfer invocation args throw an unchecked exception that aborts conversion of the whole transaction",
+   "file": "ledger/LedgerClientHelper.java",
+   "line": 171,
+   "evidence": "ledger/LedgerClientHelper.java:171 `SCVal from = hostFunction.getInvokeContract().getArgs()[0];`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "medium",
+   "title": "SEP-10 validation never verifies the client_domain signature for existing accounts",
+   "file": "sep10/Sep10Service.java",
+   "line": 420,
+   "evidence": "sep10/Sep10Service.java:420 `.verifyChallengeTransactionThreshold(`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-19",
+   "severity": "medium",
+   "title": "SEP-31 accepts a SEP-38 quote owned by another client account",
+   "file": "sep31/Sep31Service.java",
+   "line": 498,
+   "evidence": "sep31/Sep31Service.java:498 `Sep38Quote quote = sep38QuoteStore.findByQuoteId(request.getQuoteId());`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
-   "id": "security-ai-control-bypass-9",
+   "id": "security-ai-control-bypass-20",
    "severity": "medium",
-   "title": "SEP-10 validation of an existing account never verifies the client_domain signature, so any account holder can claim an allowlisted client identity",
+   "title": "SEP-10 validation for a nonexistent account accepts any extra signature as the client_domain proof",
+   "file": null,
+   "line": null,
+   "evidence": "sep10/Sep10Service.java:460 `if (clientDomain != null && challenge.getTransaction().getSignatures().size() != 3) {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-control-bypass-21",
+   "severity": "medium",
+   "title": "Client-name attribution is checked only when an Authorization header is supplied",
    "file": "sep10/Sep10Service.java",
-   "line": 407,
-   "evidence": "sep10/Sep10Service.java:407 `Set<Sep10Challenge.Signer> signers = fetchSigners(account);`",
-   "verifier": "confirmed",
+   "line": 361,
+   "evidence": "sep10/Sep10Service.java:361 `clientFinder.getClientName(request.getClientDomain(), request.getAccount());`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-26",
+   "severity": "medium",
+   "title": "SEP-12 id-path PUT sends a request memo upstream without binding it to the token's memo",
+   "file": null,
+   "line": null,
+   "evidence": "sep12/Sep12Service.java:279 `if (!isIdPath) {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-control-bypass-27",
+   "severity": "medium",
+   "title": "SEP-31 customer-id claim runs after the upstream customer write, so a rejected claim still leaves the write applied",
+   "file": "sep12/Sep12Service.java",
+   "line": 122,
+   "evidence": "sep12/Sep12Service.java:122 `customerIntegration.putCustomer(PutCustomerRequest.from(request));`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-33",
+   "severity": "medium",
+   "title": "SEP-6 exchange accepts a SEP-38 quote created by another account",
+   "file": "util/ExchangeAmountsCalculator.java",
+   "line": 62,
+   "evidence": "sep6/Sep6Service.java:222 `exchangeAmountsCalculator.calculateFromQuote(`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-36",
+   "severity": "medium",
+   "title": "SEP-24 deposit to a contract account skips the memo_type 'id' rule when memo_type is omitted",
+   "file": "sep24/Sep24Service.java",
+   "line": 381,
+   "evidence": "sep24/Sep24Service.java:371 `if (depositRequest.get(\"memo_type\") != null && !depositRequest.get(\"memo_type\").equalsIgnoreCase(\"id\")) {`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-ai-control-bypass-43",
+   "severity": "medium",
+   "title": "Transaction id is concatenated into the REST path without encoding, so a crafted id changes the request path",
+   "file": "apiclient/PlatformApiClient.java",
+   "line": 46,
+   "evidence": "apiclient/PlatformApiClient.java:46 `Request request = getRequestBuilder().url(endpoint + \"/transactions/\" + id).get().build();`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-55",
+   "severity": "medium",
+   "title": "Domain match overrides the account's own client, so the allowlist can be satisfied by a domain the account does not belong to",
+   "file": null,
+   "line": null,
+   "evidence": "client/ClientFinder.java:59 `return clientByDomain != null ? clientByDomain : clientByAccount;`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-control-bypass-57",
+   "severity": "medium",
+   "title": "Client attribution is resolved from an unproven client_domain string (duplicate root cause of security-ai-control-bypass-1/20/21)",
+   "file": "sep10/Sep10Service.java",
+   "line": 130,
+   "evidence": "client/ClientFinder.java:31 `ClientConfig client = getClient(clientDomain, account);`",
+   "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
    "id": "security-ai-cross-user-access-25",
    "severity": "medium",
-   "title": "SEP-31 POST accepts a SEP-38 quote created by another client",
-   "file": "sep31/Sep31Service.java",
-   "line": 498,
-   "evidence": "sep31/Sep31Service.java:498 `Sep38Quote quote = sep38QuoteStore.findByQuoteId(request.getQuoteId());`",
-   "verifier": "confirmed",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "security-ai-ssrf-8",
-   "severity": "medium",
-   "title": "client_domain private-address guard misses IPv6 unique-local addresses and is bypassable by DNS rebinding",
-   "file": "util/ClientDomainHelper.java",
-   "line": 141,
-   "evidence": "util/ClientDomainHelper.java:141 `|| address.isSiteLocalAddress()`",
-   "verifier": "confirmed",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "security-ai-unauthorized-payment-41",
-   "severity": "medium",
-   "title": "Any contract's transfer(from,to,amount) invocation is converted to a payment with no token identity check or asset",
-   "file": "ledger/LedgerTransaction.java",
-   "line": 114,
-   "evidence": "ledger/LedgerClientHelper.java:170 `SCAddress contractAddress = hostFunction.getInvokeContract().getContractAddress();`",
-   "verifier": "refuted",
-   "verifier_severity": "none"
-  },
-  {
-   "id": "stellar_native-ai-stellar-protocol-misuse-7",
-   "severity": "medium",
-   "title": "SEP-45 challenge signs server auth entries from RPC simulation without checking invoked contract, function or sub-invocations",
-   "file": "sep45/Sep45Service.java",
-   "line": 97,
-   "evidence": "sep45/Sep45Service.java:97 `entry = authorizeEntry(xdr, signingKeypair, sequenceNumber + 10, network);` \u00b7 sep45/Sep45Service.java:92 `for (String xdr : simulateTransactionResponse.getResults().get(0).getAuth()) {`",
+   "title": "SEP-12 delete skips memo binding for muxed-account tokens, letting a user delete another subaccount's customer",
+   "file": "sep12/Sep12Service.java",
+   "line": 174,
+   "evidence": "sep12/Sep12Service.java:174 `if (!Objects.equals(token.getMuxedAccount(), account)) {`",
    "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
-   "id": "reliability-ai-functional-defect-34",
+   "id": "security-ai-secret-exposure-16",
    "severity": "medium",
-   "title": "MEMO_ID parser accepts negative and out-of-range uint64 values",
+   "title": "RPC auth header secret is re-sent to any host an RPC endpoint redirects to",
+   "file": "ledger/StellarRpc.java",
+   "line": 72,
+   "evidence": "ledger/StellarRpc.java:73 `rpcAuth.getHeaderConfig().getName(), secretConfig.getRpcAuthSecret())`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-58",
+   "severity": "medium",
+   "title": "Platform and callback credentials are re-sent to any host a configured endpoint redirects to",
+   "file": "apiclient/BaseApiClient.java",
+   "line": 61,
+   "evidence": "apiclient/BaseApiClient.java:61 `: requestBuilder.header(authHeader.getName(), authHeader.getValue());`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-11",
+   "severity": "medium",
+   "title": "SEP-31 create saves the transaction before binding the quote, so a race leaves an orphan transaction with a used quote",
+   "file": "sep31/Sep31Service.java",
+   "line": 117,
+   "evidence": "sep31/Sep31Service.java:248 `exchangeAmountsCalculator.bindQuoteToTransaction(consumedQuote.getId(), txn.getId());` \u00b7 sep31/Sep31Service.java:243 `Context.get().setTransaction(sep31TransactionStore.save(txn));`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "reliability-ai-functional-defect-49",
+   "severity": "medium",
+   "title": "MEMO_ID accepts negative and out-of-range uint64 values, so the stored memo may differ from the on-chain memo",
    "file": "util/MemoHelper.java",
    "line": 109,
    "evidence": "util/MemoHelper.java:109 `return new MemoId(new BigInteger(memo));`",
@@ -203,249 +246,19 @@
    "verifier_severity": "none"
   },
   {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "low",
+   "title": "SEP-45 challenge tells the client which network to sign for using the RPC-reported passphrase, not the configured one",
+   "file": null,
+   "line": null,
+   "evidence": "sep45/Sep45Service.java:113 `.networkPassphrase(stellarRpc.getSorobanServer().getNetwork().getPassphrase())`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
    "id": "reliability-ai-functional-defect-14",
    "severity": "low",
-   "title": "hasTrustline ignores the trustline authorization flag",
-   "file": null,
-   "line": null,
-   "evidence": "ledger/StellarRpc.java:97 `return getTrustlineRpc(account, asset) != null;`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-16",
-   "severity": "low",
-   "title": "WebAuthJwtFilter finally block dereferences a null token, replacing the real JWT error with a NullPointerException",
-   "file": "filter/WebAuthJwtFilter.java",
-   "line": 28,
-   "evidence": "filter/WebAuthJwtFilter.java:28 `shorter(token.getAccount())`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-19",
-   "severity": "low",
-   "title": "SEP-45 validate crashes on missing or malformed args instead of returning a 400",
-   "file": "sep45/Sep45Service.java",
-   "line": 382,
-   "evidence": "sep45/Sep45Service.java:382 `argsMap.get(KEY_HOME_DOMAIN).replaceFirst(\"^https?://\", \"\")`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-20",
-   "severity": "low",
-   "title": "Platform RPC and PATCH calls drop the configured endpoint path",
-   "file": null,
-   "line": null,
-   "evidence": "apiclient/PlatformApiClient.java:241 `url = new HttpUrl.Builder().scheme(url.scheme()).host(url.host()).port(url.port()).build();`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-23",
-   "severity": "low",
-   "title": "Platform health() ignores the requested checks and the builder it constructs",
-   "file": null,
-   "line": null,
-   "evidence": "apiclient/PlatformApiClient.java:266 `.url(endpoint + \"/health\")`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-24",
-   "severity": "low",
-   "title": "SEP-31 POST casts any issuer-matched fiat asset to StellarAssetInfo, causing ClassCastException",
-   "file": "sep31/Sep31Service.java",
-   "line": 125,
-   "evidence": "sep31/Sep31Service.java:125 `StellarAssetInfo assetInfo = (StellarAssetInfo) assetService.getAsset(request.getAssetCode(), request.getAssetIssuer());`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-26",
-   "severity": "low",
-   "title": "Horizon hasTrustline ignores the trustline authorization flag",
-   "file": "ledger/Horizon.java",
-   "line": 65,
-   "evidence": "ledger/Horizon.java:65 `return creditAsset.getCode().equals(assetCode) && creditAsset.getIssuer().equals(assetIssuer);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-28",
-   "severity": "low",
-   "title": "SEP-1 fetch errors are rethrown without their cause, though the code claims it preserves them",
-   "file": "util/Sep1Helper.java",
-   "line": 18,
-   "evidence": "util/Sep1Helper.java:18 `throw new IOException(obfuscatedMessage); // Preserve the original exception as the cause`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-29",
-   "severity": "low",
-   "title": "JSON-RPC helper crashes with NPE or IndexOutOfBounds on empty or malformed response instead of a controlled error",
-   "file": null,
-   "line": null,
-   "evidence": "util/RpcHelper.java:32 `RpcResponse response = responseList.get(0);`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-3",
-   "severity": "low",
-   "title": "SEP-24 withdraw casts any matched asset to StellarAssetInfo, so a fiat asset code causes a ClassCastException",
-   "file": "sep24/Sep24Service.java",
-   "line": 169,
-   "evidence": "sep24/Sep24Service.java:169 `StellarAssetInfo asset = (StellarAssetInfo) assetService.getAsset(assetCode, assetIssuer);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-30",
-   "severity": "low",
-   "title": "SEP-38 getPrice divides by a rate buy amount it never null- or zero-checks",
-   "file": null,
-   "line": null,
-   "evidence": "sep38/Sep38Service.java:490 `BigDecimal bTotalPrice = bSellAmount.divide(bBuyAmount, pricePrecision, DEFAULT_ROUNDING_MODE);`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-32",
-   "severity": "low",
-   "title": "SEP-6 findTransactions dereferences a null account parameter",
-   "file": "sep6/Sep6Service.java",
-   "line": 490,
-   "evidence": "sep6/Sep6Service.java:490 `if (!request.getAccount().equals(tokenAccount)) {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-33",
-   "severity": "low",
-   "title": "Two-argument forApiKey ignores the supplied authorization header name",
-   "file": null,
-   "line": null,
-   "evidence": "auth/AuthHelper.java:30 `return new ApiAuthHelper(apiKey);`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-35",
-   "severity": "low",
-   "title": "Invalid base64 hash or return memo escapes as an unhandled runtime exception",
-   "file": "util/MemoHelper.java",
-   "line": 97,
-   "evidence": "util/MemoHelper.java:97 `} catch (NumberFormatException nfex) {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-36",
-   "severity": "low",
-   "title": "xdrMemoToString prints MEMO_ID as a signed value",
-   "file": null,
-   "line": null,
-   "evidence": "util/MemoHelper.java:178 `case MEMO_ID -> memoXdr.getId().getUint64().getNumber().toString();`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-37",
-   "severity": "low",
-   "title": "ErrorHelper hides the intended exception type when reflective construction fails",
-   "file": null,
-   "line": null,
-   "evidence": "util/ErrorHelper.java:13 `throw new RuntimeException(\"Error creating exception\", e);`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-38",
-   "severity": "low",
-   "title": "Scaled amount validator has no magnitude bound and no null or parse-error handling",
-   "file": "util/SepRequestValidator.java",
-   "line": 189,
-   "evidence": "util/SepRequestValidator.java:189 `BigDecimal amount = new BigDecimal(requestAmount);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-39",
-   "severity": "low",
-   "title": "getDepositAsset and getWithdrawAsset cast any matched asset to StellarAssetInfo",
-   "file": "util/SepRequestValidator.java",
-   "line": 154,
-   "evidence": "util/SepRequestValidator.java:154 `StellarAssetInfo asset = (StellarAssetInfo) assetService.getAsset(assetCode);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-42",
-   "severity": "low",
-   "title": "Payment operations take the transaction source as payer, ignoring per-operation source accounts",
-   "file": "ledger/LedgerClientHelper.java",
-   "line": 81,
-   "evidence": "ledger/LedgerClientHelper.java:81 `.from(sourceAccount)`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-45",
-   "severity": "low",
-   "title": "JWT JSON deserializer leaks Gson exceptions and null instead of DeserializationException",
-   "file": "auth/JwtsGsonDeserializer.java",
-   "line": 19,
-   "evidence": "auth/JwtsGsonDeserializer.java:19 `return gson.fromJson(new String(bytes), Map.class);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-47",
-   "severity": "low",
-   "title": "JWT secret validation accepts an empty secret because the null key is never reported",
-   "file": null,
-   "line": null,
-   "evidence": "util/KeyUtil.java:17 `toSecretKeySpecOrNull(secret);`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-5",
-   "severity": "low",
-   "title": "Contract transfer decoding indexes args and address without length or type checks",
-   "file": "ledger/LedgerClientHelper.java",
-   "line": 171,
-   "evidence": "ledger/LedgerClientHelper.java:171 `SCVal from = hostFunction.getInvokeContract().getArgs()[0];`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-51",
-   "severity": "low",
-   "title": "handleResponse returns 3xx bodies as successful responses",
-   "file": null,
-   "line": null,
-   "evidence": "apiclient/BaseApiClient.java:47 `} else if (response.code() >= 400 || response.code() < 200) {`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-6",
-   "severity": "low",
-   "title": "Asset lookup by code only (or fiat fallback ignoring issuer) resolves the wrong or non-Stellar asset",
-   "file": "asset/DefaultAssetService.java",
-   "line": 212,
-   "evidence": "asset/DefaultAssetService.java:212 `if (asset.getCode().equals(code)) {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-reliability-failure-18",
-   "severity": "low",
-   "title": "SEP-45 getChallenge indexes simulation results without a shape check, so a malformed RPC reply throws an unhandled exception",
+   "title": "getChallenge indexes simulation results without null or empty checks",
    "file": null,
    "line": null,
    "evidence": "sep45/Sep45Service.java:92 `for (String xdr : simulateTransactionResponse.getResults().get(0).getAuth()) {`",
@@ -453,52 +266,332 @@
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-reliability-failure-27",
+   "id": "reliability-ai-functional-defect-18",
    "severity": "low",
-   "title": "Horizon submitTransaction returns async PENDING status without polling for finality",
-   "file": "ledger/Horizon.java",
-   "line": 164,
+   "title": "hasTrustline treats a deauthorized trustline as present",
+   "file": null,
+   "line": null,
+   "evidence": "ledger/StellarRpc.java:97 `return getTrustlineRpc(account, asset) != null;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-22",
+   "severity": "low",
+   "title": "Empty client_domain with an Authorization header reaches JWT verification with a null key and throws an unhandled error",
+   "file": "sep10/Sep10Service.java",
+   "line": 320,
+   "evidence": "sep10/Sep10Service.java:320 `if (request.getClientDomain() != null) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-23",
+   "severity": "low",
+   "title": "Horizon hasTrustline counts a deauthorized trustline as present",
+   "file": null,
+   "line": null,
+   "evidence": "ledger/Horizon.java:65 `return creditAsset.getCode().equals(assetCode)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-24",
+   "severity": "low",
+   "title": "Horizon hasTrustline lets SDK network errors escape the LedgerException contract",
+   "file": null,
+   "line": null,
+   "evidence": "ledger/Horizon.java:55 `AccountResponse accountResponse = getServer().accounts().account(account);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-28",
+   "severity": "low",
+   "title": "total_price divides by a rate buy amount that may be zero, with no check",
+   "file": null,
+   "line": null,
+   "evidence": "sep38/Sep38Service.java:490 `BigDecimal bTotalPrice = bSellAmount.divide(bBuyAmount, pricePrecision, DEFAULT_ROUNDING_MODE);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-29",
+   "severity": "low",
+   "title": "getPrice and getPrices dereference the rate response without a null check",
+   "file": null,
+   "line": null,
+   "evidence": "sep38/Sep38Service.java:222 `GetRateResponse.Rate rate = rateResponse.getRate();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "SEP-24 deposit and withdraw skip the sign and scale checks that SEP-6 and SEP-31 apply to amounts",
+   "file": "sep24/Sep24Service.java",
+   "line": 180,
+   "evidence": "sep24/Sep24Service.java:180 `validateAmountLimits(strAmount, minAmount, maxAmount);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-30",
+   "severity": "low",
+   "title": "RpcHelper crashes with an unchecked exception on empty, non-array or empty-array JSON-RPC bodies",
+   "file": null,
+   "line": null,
+   "evidence": "util/RpcHelper.java:32 `RpcResponse response = responseList.get(0);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-37",
+   "severity": "low",
+   "title": "SEP-24 deposit stores the raw request asset_issuer, so omitted issuers are saved as null",
+   "file": "sep24/Sep24Service.java",
+   "line": 356,
+   "evidence": "sep24/Sep24Service.java:356 `.assetIssuer(depositRequest.get(\"asset_issuer\"))`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-38",
+   "severity": "low",
+   "title": "SEP-24 transaction-created event is published before the @Transactional method commits",
+   "file": "sep24/Sep24Service.java",
+   "line": 247,
+   "evidence": "sep24/Sep24Service.java:247 `eventSession.publish(`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-39",
+   "severity": "low",
+   "title": "SEP-24 findTransactions throws NullPointerException when asset_code is absent",
+   "file": "sep24/Sep24Service.java",
+   "line": 444,
+   "evidence": "sep24/Sep24Service.java:444 `if (assetCode.contains(\"stellar:\")) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "WebAuthJwtFilter finally block dereferences a null token when both decodes fail",
+   "file": "filter/WebAuthJwtFilter.java",
+   "line": 28,
+   "evidence": "filter/WebAuthJwtFilter.java:28 `shorter(token.getAccount()), request.getRequestURL());`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-41",
+   "severity": "low",
+   "title": "health() builds the checks query and then discards it, so the requested checks are never sent",
+   "file": null,
+   "line": null,
+   "evidence": "apiclient/PlatformApiClient.java:266 `.url(endpoint + \"/health\")`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-42",
+   "severity": "low",
+   "title": "RPC and PATCH calls drop the endpoint path prefix, unlike the REST GET calls",
+   "file": null,
+   "line": null,
+   "evidence": "apiclient/PlatformApiClient.java:241 `url = new HttpUrl.Builder().scheme(url.scheme()).host(url.host()).port(url.port()).build();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-44",
+   "severity": "low",
+   "title": "SEP-6 amount validator skips magnitude bound and leaks raw NumberFormatException",
+   "file": "util/SepRequestValidator.java",
+   "line": 189,
+   "evidence": "util/SepRequestValidator.java:189 `BigDecimal amount = new BigDecimal(requestAmount);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-46",
+   "severity": "low",
+   "title": "Static amount validator used by SEP-31 has no significant-decimals check",
+   "file": "util/SepRequestValidator.java",
+   "line": 54,
+   "evidence": "util/SepRequestValidator.java:54 `if (!NumberHelper.hasReasonableMagnitude(sAmount)) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-47",
+   "severity": "low",
+   "title": "ReflectionUtil.getField does not check that the target is an SSEStream before reading its field",
+   "file": null,
+   "line": null,
+   "evidence": "util/ReflectionUtil.java:13 `return (T) field.get(target);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-50",
+   "severity": "low",
+   "title": "Malformed base64 memo_hash throws an unchecked IllegalArgumentException instead of a validation error",
+   "file": "util/MemoHelper.java",
+   "line": 97,
+   "evidence": "util/MemoHelper.java:97 `} catch (NumberFormatException nfex) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-59",
+   "severity": "low",
+   "title": "Outbound platform and callback calls have no response-size cap and a 10-minute timeout",
+   "file": null,
+   "line": null,
+   "evidence": "apiclient/BaseApiClient.java:42 `String responseBody = response.body().string();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "SEP-31 strict-send accepts a fee that exceeds the amount and stores a negative amount_out",
+   "file": "sep31/Sep31Service.java",
+   "line": 324,
+   "evidence": "sep31/Sep31Service.java:324 `amountOut = amountIn.subtract(fee);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-17",
+   "severity": "low",
+   "title": "Soroban RPC submit returns the admission status without polling to a final result",
+   "file": null,
+   "line": null,
+   "evidence": "ledger/StellarRpc.java:180 `SendTransactionResponse txnR = sorobanServer.sendTransaction(transaction);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-31",
+   "severity": "low",
+   "title": "RPC response body is read into memory with no size cap",
+   "file": null,
+   "line": null,
+   "evidence": "util/RpcHelper.java:26 `String responseBody = rpcResponse.body().string();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-40",
+   "severity": "low",
+   "title": "Platform notifications ignore HTTP and JSON-RPC failures, so a rejected on-chain funds notice reads as success",
+   "file": "apiclient/PlatformApiClient.java",
+   "line": 233,
+   "evidence": "apiclient/PlatformApiClient.java:233 `sendRpcRequest(List.of(rpcRequest));`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-48",
+   "severity": "low",
+   "title": "ReflectionUtil.getField returns the default on any lookup failure, hiding a renamed or inaccessible SDK field",
+   "file": null,
+   "line": null,
+   "evidence": "util/ReflectionUtil.java:14 `} catch (NoSuchFieldException | IllegalAccessException nsfex) {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-9",
+   "severity": "low",
+   "title": "Horizon and Soroban RPC submit paths return the send status without polling to a final state",
+   "file": null,
+   "line": null,
    "evidence": "ledger/Horizon.java:164 `SubmitTransactionAsyncResponse txnR = getServer().submitTransactionAsync(transaction, false);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-reliability-failure-43",
-   "severity": "low",
-   "title": "waitForTransactionAvailable swallows InterruptedException without restoring the interrupt flag",
-   "file": null,
-   "line": null,
-   "evidence": "ledger/LedgerClientHelper.java:399 `} catch (InterruptedException e) {`",
    "verifier": null,
    "verifier_severity": null
   },
   {
-   "id": "security-ai-control-bypass-49",
+   "id": "security-ai-cross-user-access-34",
    "severity": "low",
-   "title": "OPTIONS requests bypass the Bearer token check on every filtered route",
-   "file": null,
-   "line": null,
-   "evidence": "filter/AbstractJwtFilter.java:57 `if (request.getMethod().equals(\"OPTIONS\")) {`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "security-ai-cross-user-access-11",
-   "severity": "low",
-   "title": "SEP-6/SEP-24 exchange flows accept another client's SEP-38 quote_id without a creator check",
-   "file": "util/ExchangeAmountsCalculator.java",
-   "line": 62,
-   "evidence": "util/ExchangeAmountsCalculator.java:62 `Sep38Quote quote = sep38QuoteStore.findByQuoteId(quoteId);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-cross-user-access-31",
-   "severity": "low",
-   "title": "SEP-6 findTransaction lets a muxed identity read legacy G-account records of the same underlying account",
+   "title": "Legacy G-account rows are readable by every muxed sub-account of that G (findTransaction)",
    "file": "sep6/Sep6Service.java",
    "line": 636,
-   "evidence": "sep6/Sep6Service.java:636 `return storedAccount.equals(token.getAccount());`",
+   "evidence": "sep6/Sep6Service.java:634 `return storedAccount.equals(token.getAccount());`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-35",
+   "severity": "low",
+   "title": "SEP-24 findTransaction legacy branch lets muxed sub-accounts read each other's rows of the same G account",
+   "file": "sep24/Sep24Service.java",
+   "line": 627,
+   "evidence": "sep24/Sep24Service.java:515 `if (txn == null || !webAuthAccountMatches(txn.getWebAuthAccount(), token)) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-secret-exposure-53",
+   "severity": "low",
+   "title": "Secret getters are not annotated @Secret, so Log redaction would not cover the SEP-10 signing seed",
+   "file": null,
+   "line": null,
+   "evidence": "config/SecretConfig.java:10 `String getSep10SigningSeed();`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-ssrf-2",
+   "severity": "low",
+   "title": "Client-domain SSRF guard checks DNS once and then fetches the URL with redirects followed",
+   "file": "util/ClientDomainHelper.java",
+   "line": 33,
+   "evidence": "util/ClientDomainHelper.java:33 `validateDomainNotPrivateNetwork(clientDomain);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-15",
+   "severity": "low",
+   "title": "Client-signed SEP-10 header JWT is replayable until exp (no jti, nonce or audience binding)",
+   "file": "auth/JwtService.java",
+   "line": 269,
+   "evidence": "auth/JwtService.java:269 `return jwtsParser().verifyWith(jcaPublicKey).build().parseSignedClaims(cipher);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-12",
+   "severity": "low",
+   "title": "Asset resolution falls back to code-only match when issuer is omitted",
+   "file": "asset/DefaultAssetService.java",
+   "line": 205,
+   "evidence": "asset/DefaultAssetService.java:205 `if (issuer == null) return getAsset(code);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-45",
+   "severity": "low",
+   "title": "SEP-6 deposit and withdraw enablement is checked by asset code only, not by issuer",
+   "file": "util/SepRequestValidator.java",
+   "line": 154,
+   "evidence": "util/SepRequestValidator.java:154 `StellarAssetInfo asset = (StellarAssetInfo) assetService.getAsset(assetCode);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-54",
+   "severity": "low",
+   "title": "SEP-45 signs contract auth entries with the SEP-10 signing seed, so one key serves both protocols",
+   "file": "sep45/Sep45Service.java",
+   "line": 61,
+   "evidence": "sep45/Sep45Service.java:61 `KeyPair signingKeypair = KeyPair.fromSecretSeed(secretConfig.getSep10SigningSeed());`",
    "verifier": "partial",
    "verifier_severity": "low"
   }
@@ -508,85 +601,71 @@
    "id": "V5",
    "title": "Asset identity and units",
    "file": "asset/DefaultAssetService.java",
-   "line": 212,
-   "reason": "Several paths identify an asset by code only: DefaultAssetService.getAsset(code) and the fiat branch of getAsset(code, issuer) (line 212), SepRequestValidator.java:154 and :169 for SEP-6 deposit and withdraw, Sep6Service.java:493, and Sep24Service.java:320 when the issuer is null. The issuer is not "
-  },
-  {
-   "id": "V7",
-   "title": "Incoming payment verification",
-   "file": "ledger/LedgerClientHelper.java",
-   "line": 349,
-   "reason": "The incoming-payment conversion does not check the transaction's success. Horizon.getTransaction (Horizon.java:111, :145) and parseOperationResults (LedgerClientHelper:256-268) return null results for failed transactions, and getLedgerOperations then builds PAYMENT operations from the envelope amoun"
+   "line": 205,
+   "reason": "Accept paths compare the asset by code alone whenever the issuer is absent. Sep31Service.postTransaction (line 125) calls getAsset(request.getAssetCode(), request.getAssetIssuer()); Sep24Service deposit (line 320) and withdraw/findTransactions (line 455), and SepRequestValidator.getDepositAsset/getW"
   },
   {
    "id": "S1",
    "title": "Externally supplied transactions",
    "file": "sep45/Sep45Service.java",
-   "line": 92,
-   "reason": "The SEP-45 challenge path signs server-credentialed auth entries from an RPC simulation (line 97) without decoding the root invocation or sub-invocations. Contract, function and sub-invocations are not checked. Client-supplied entries in validate() are not signed by the server, so the SEP-10 validat"
+   "line": 95,
+   "reason": "getChallenge signs server-credentialed auth entries that come from the RPC simulation (line 84 simulateTransaction, line 92 getAuth) and calls authorizeEntry (line 97) without decoding and checking the contract, function, arguments or sub-invocations. The SEP-10 path signs only server-built challeng"
   },
   {
-   "id": "S2",
-   "title": "Raw byte signing",
+   "id": "S3",
+   "title": "Network and endpoint pinning",
    "file": "sep45/Sep45Service.java",
-   "line": 97,
-   "reason": "Bare bytes are never signed, since the call takes a structured SorobanAuthorizationEntry. But the agent key still signs whatever invocation tree the RPC simulation returned. Lines 92-98 sign any entry with server credentials without checking the invoked contract, function, args, or sub-invocations. "
+   "line": 113,
+   "reason": "All signing and submission endpoints are operator-configured. The passphrase used to sign and verify comes from StellarNetworkConfig (Sep45Service lines 65, 299, 400; Sep10Service lines 191, 294, 344). The RPC URL is taken from config (StellarRpc lines 63, 84), Horizon from config (Horizon line 40),"
   },
   {
    "id": "S5",
    "title": "Submission outcome",
    "file": "ledger/Horizon.java",
-   "line": 145,
-   "reason": "Horizon.getTransaction never reads the response's successful flag. A FAILED transaction returns a null operation-result list from parseOperationResults, which skips the count check, so failed operations are converted into ledger payments. The same defect is already recorded. StellarRpc.getTransactio"
+   "line": 164,
+   "reason": "The submit paths (Horizon.java:164 and StellarRpc.java:180) return only the initial send status and never poll the hash to a final state. There is no caller in the submitted files, so the defect is latent. Horizon.getTransaction (lines 108-160) also never checks the successful flag, so a FAILED tran"
   },
   {
    "id": "S8",
    "title": "Failure and rollback paths",
-   "file": "ledger/LedgerClientHelper.java",
-   "line": 349,
-   "reason": "When a transaction fails on chain, parseOperationResults returns null (LedgerClientHelper line 263-265) and this guard passes. The operations are then recorded as if they had succeeded, so a failed payment is marked as received, a record is marked paid when it was not, and no reconcile state is rest"
+   "file": "sep31/Sep31Service.java",
+   "line": 243,
+   "reason": "The SEP-31 create path saves the transaction (line 243) and only then binds the quote (line 248). If the bind fails because a concurrent request already used the quote, the caller gets an error after the transaction is stored. The failure path leaves the stored transaction with the quote's id and no"
   },
   {
-   "id": "A3",
-   "title": "Tenant isolation",
-   "file": "util/ExchangeAmountsCalculator.java",
-   "line": 62,
-   "reason": "validateQuoteAgainstRequestInfo (lines 59-103) checks existence, unused state, expiry, and asset and amount match. It never compares quote.getCreatorAccountId() or the creator memo with the caller's SEP-10 token. The caller-bound check exists only in Sep38Service.getQuote (lines 404-407). This looku"
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "sep45/Sep45Service.java",
+   "line": 95,
+   "reason": "getChallenge is intentionally public under SEP-45, so it has no caller authentication. It signs with the server key every server-credentialed auth entry the RPC simulation returns, without checking the invoked contract, function or sub-invocations. The JWT-gated routes (Sep6, Sep12, Sep24, Sep31, Se"
   },
   {
    "id": "A6",
    "title": "Outbound requests and file paths",
    "file": "util/ClientDomainHelper.java",
-   "line": 141,
-   "reason": "The requester controls client_domain, which becomes an outbound HTTPS fetch of https://{client_domain}/.well-known/stellar.toml before any authentication (Sep10Service.java:94 and Sep45Service.java:141). On the public network the only guard is validateDomainNotPrivateNetwork, which misses IPv6 uniqu"
+   "line": 33,
+   "reason": "The client_domain in a SEP-10 or SEP-45 request is attacker-chosen and is used to build the stellar.toml fetch URL. On public networks the private-network check runs once on the hostname and the fetch then follows redirects, so a redirect can reach internal addresses. The earlier pass recorded this "
   },
   {
    "id": "A7",
    "title": "Verification of incoming authentication",
    "file": "sep45/Sep45Service.java",
-   "line": 212,
-   "reason": "SEP-45 validate does not verify client-submitted auth entries: only entries that match the server key are checked (line 212-214), so a client-signed account entry is accepted without any signature check, and the JWT is issued at lines 246-275. This is the earlier finding. SEP-10 validation has furth"
-  },
-  {
-   "id": "M2",
-   "title": "Controls outside the prompt",
-   "file": "sep45/Sep45Service.java",
-   "line": 212,
-   "reason": "Safety controls for web auth are in code (for example sep10/Sep10Service.java:525 rejects transactions over 50,000 characters, and sep38 quote single-use is enforced at ExchangeAmountsCalculator.java:67-69). No keyword filter or prompt-only rule guards funds or keys. However, the SEP-45 authorizatio"
+   "line": 248,
+   "reason": "SEP-45 validate verifies only the server's own entry (line 212-213). It never checks that the client's auth entry for the account was signed. Client entries are not counted, matched or rejected when unmatched or duplicated. A JWT is then issued for the account named in the args (line 248). The SEP-1"
   },
   {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
-   "file": "sep10/Sep10Service.java",
-   "line": 407,
-   "reason": "The SDK advertises client attribution and allow-listed client identity for SEP-10. In the existing-account branch the client_domain signature is not verified, so the stated attribution is not enforced. No on-chain or contract enforcement of limits is claimed in the submitted code. This matches the r"
+   "file": "sep24/Sep24Service.java",
+   "line": 180,
+   "reason": "The SEP-24 flow is documented as validating amounts the same way as SEP-6 and SEP-31, but this path applies only min/max limits and skips the sign and scale checks used elsewhere. This is already recorded as reliability-ai-functional-defect-3."
   },
   {
    "id": "M5",
    "title": "Core function works",
-   "file": "sep24/Sep24Service.java",
-   "line": 169,
-   "reason": "The core path does not work as shipped in several places. SEP-24 withdraw casts any matched asset to StellarAssetInfo, which fails for fiat assets (reliability-ai-functional-defect-3). Platform JSON-RPC notifications do not check HTTP status or RPC error body (reliability-ai-reliability-failure-4). "
+   "file": "sep45/Sep45Service.java",
+   "line": 113,
+   "reason": "The SEP-45 challenge uses the RPC-reported passphrase instead of the configured one, so the core function signs for the wrong network if the RPC differs. Already recorded as reliability-ai-functional-defect-10."
   }
  ]
 }

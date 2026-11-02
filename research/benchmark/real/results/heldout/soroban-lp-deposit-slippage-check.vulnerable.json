@@ -16,9 +16,9 @@
  "matched": [
   {
    "source": "finding",
-   "id": "reliability-ai-functional-defect-4",
+   "id": "reliability-ai-functional-defect-2",
    "cited": "src/lib.rs:145",
-   "title": "Deposit min_a slippage bound is never enforced on the amount_a branch"
+   "title": "Deposit slippage check for token A compares desired_a instead of the computed amount_a, so min_a is not enforced"
   },
   {
    "source": "ledger",
@@ -28,26 +28,52 @@
   },
   {
    "source": "ledger",
-   "id": "M4",
+   "id": "A4",
    "cited": "src/lib.rs:145",
-   "title": "Stated purpose versus behaviour"
+   "title": "Approvals fail closed"
+  },
+  {
+   "source": "ledger",
+   "id": "M5",
+   "cited": "src/lib.rs:145",
+   "title": "Core function works"
   }
  ],
  "findings": [
   {
-   "id": "security-ai-control-bypass-7",
+   "id": "economic-ai-economic-loss-11",
    "severity": "critical",
-   "title": "Share-token WASM hash is caller-chosen and never pinned",
+   "title": "deposit takes tokens and can mint zero shares; no zero-share guard and donations dilute later depositors",
+   "file": "src/lib.rs",
+   "line": 234,
+   "evidence": "src/lib.rs:234 `let shares_a = (balance_a * total_shares) / reserve_a;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-9",
+   "severity": "critical",
+   "title": "create_contract deploys an arbitrary caller-supplied WASM hash as the pool's share token",
    "file": "src/token.rs",
-   "line": 10,
-   "evidence": "src/token.rs:10 `token_wasm_hash: BytesN<32>,`",
+   "line": 20,
+   "evidence": "src/token.rs:20 `.deploy(token_wasm_hash)`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-cross-user-access-6",
+   "severity": "critical",
+   "title": "withdraw burns the pool's entire share balance, so anyone can redeem pool shares sent to the contract address",
+   "file": "src/lib.rs",
+   "line": 332,
+   "evidence": "src/lib.rs:332 `burn_shares(&e, balance_shares);`",
    "verifier": "partial",
    "verifier_severity": "high"
   },
   {
    "id": "security-ai-account-takeover-1",
    "severity": "high",
-   "title": "initialize can be called again by anyone, re-pointing a live pool at attacker tokens and draining its existing token_a reserves",
+   "title": "initialize has no access control and can be re-run, letting anyone rebind a live pool to attacker tokens and drain its reserves",
    "file": "src/lib.rs",
    "line": 188,
    "evidence": "src/lib.rs:188 `fn initialize(e: Env, token_wasm_hash: BytesN<32>, token_a: Address, token_b: Address) {`",
@@ -55,29 +81,29 @@
    "verifier_severity": "high"
   },
   {
-   "id": "reliability-ai-functional-defect-4",
-   "severity": "medium",
-   "title": "Deposit min_a slippage bound is never enforced on the amount_a branch",
-   "file": "src/lib.rs",
-   "line": 145,
-   "evidence": "src/lib.rs:145 `if amount_a > desired_a || desired_a < min_a {`",
-   "verifier": "partial",
-   "verifier_severity": "medium"
-  },
-  {
    "id": "reliability-ai-functional-defect-2",
    "severity": "low",
-   "title": "Pool state lives in instance storage with no TTL extension, so the pool can be archived and its liquidity locked",
+   "title": "Deposit slippage check for token A compares desired_a instead of the computed amount_a, so min_a is not enforced",
    "file": null,
    "line": null,
-   "evidence": "src/lib.rs:33 `e.storage().instance().get(&DataKey::TokenA).unwrap()`",
+   "evidence": "src/lib.rs:145 `if amount_a > desired_a || desired_a < min_a {`",
    "verifier": null,
    "verifier_severity": null
   },
   {
    "id": "reliability-ai-functional-defect-3",
    "severity": "low",
-   "title": "i128 products in deposit, swap invariant and share minting overflow once reserves are large, so these calls panic",
+   "title": "swap does not validate the requested output amount, so an out larger than the reserve gives a negative sell amount that passes the in_max check",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:258 `let d = (reserve_buy - out) * 997;` \u00b7 src/lib.rs:260 `if sell_amount > in_max {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "Swap invariant product overflows i128 once pool reserves are large, reverting every swap",
    "file": null,
    "line": null,
    "evidence": "src/lib.rs:298 `if new_inv_a * new_inv_b < old_inv_a * old_inv_b {`",
@@ -85,72 +111,103 @@
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-5",
+   "id": "reliability-ai-reliability-failure-4",
    "severity": "low",
-   "title": "Swap and deposit do not validate out, desired amounts or sell_amount sign",
+   "title": "Pool state in instance storage with no TTL extension; reserves and token addresses can archive",
    "file": null,
    "line": null,
-   "evidence": "src/lib.rs:259 `let sell_amount = (n / d) + 1;`",
+   "evidence": "src/lib.rs:308 `put_reserve_a(&e, balance_a - out_a);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-5",
+   "severity": "low",
+   "title": "Pool state in instance storage with no TTL extension; reserves and token addresses can archive",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:225 `token_a_client.transfer(&to, &e.current_contract_address(), &amounts.0);`",
    "verifier": null,
    "verifier_severity": null
   }
  ],
  "failing_checks": [
   {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "src/lib.rs",
+   "line": 260,
+   "reason": "The swap bound is the only cap on what the caller pays, and it is computed from an unvalidated 'out'. Line 258 (`let d = (reserve_buy - out) * 997;`) and line 259 give sell_amount <= 0 when out >= reserve_buy, and line 260 then passes for any in_max. Nothing in the code rejects out > reserve_buy or "
+  },
+  {
    "id": "V8",
    "title": "Slippage and quoted prices",
    "file": "src/lib.rs",
    "line": 145,
-   "reason": "For deposit, the minimum-received bound min_a is not enforced on the branch that computes amount_a from the pool ratio. The guard tests the caller's own desired_a against min_a instead of the computed amount_a. The price the depositor accepts can therefore move past their min_a without a revert. Swa"
+   "reason": "The deposit path in the else branch does not enforce min_a, so the slippage bound on deposits is not applied. Swap uses in_max (line 260) and withdraw uses min_a and min_b (lines 328-330), and both are enforced. The price comes from on-chain reserves, not from requester-supplied values. The deposit "
   },
   {
    "id": "S6",
    "title": "Account authority changes",
    "file": "src/lib.rs",
    "line": 188,
-   "reason": "The contract's admin-level state (token_a, token_b, share token, reserves) is set by initialize. initialize has no require_auth and no already-initialized guard. Anyone can call it again on a live pool. It re-points token_a and token_b and deploys a new share token whose admin is the pool, and it re"
+   "reason": "initialize has no caller check and can run again on a live pool. It deploys a new share token with the pool as admin (lines 193-199), then overwrites token_a, token_b and the share token address (lines 201-203). Anyone can therefore change which token contracts the pool trusts and controls the share"
   },
   {
    "id": "S7",
    "title": "Soroban contract checks",
    "file": "src/lib.rs",
-   "line": 188,
-   "reason": "Two parts. (1) require_auth: deposit (line 215), swap (247) and withdraw (313) each call require_auth on the to address, which is the address whose balances change, so those hold. initialize (188) is state-changing and has no require_auth, so it fails. (2) Storage: there are no per-user records. Use"
+   "line": 225,
+   "reason": "Auth is correct: deposit (line 215), swap (247) and withdraw (313) call require_auth on the address whose tokens or shares move (to). Per-user balances are kept in the token contracts, not in this contract's instance storage, so there are no per-user records to misplace. The failing part is TTL: thi"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "src/lib.rs",
+   "line": 308,
+   "reason": "A panic reverts the invocation and its token transfers, so a failed deposit, swap or withdraw leaves no partial state (holds for rejection). The failure path that remains is time: all pool state (TokenA, TokenB, TokenShare, TotalShares, ReserveA, ReserveB) is in instance storage with no TTL extensio"
   },
   {
    "id": "A1",
    "title": "Caller authentication",
    "file": "src/lib.rs",
    "line": 188,
-   "reason": "initialize mutates the pool's token configuration and reserves with no caller authentication: there is no require_auth or admin check before create_contract and put_token_a/put_token_b run. Any caller can reach it. The fund-moving routes deposit, swap and withdraw do authenticate the account they de"
+   "reason": "initialize has no require_auth or admin check, so any caller can run it; re-running it rebinds a live pool's tokens and reserves. The other signing and moving routes (deposit line 215, swap line 247, withdraw line 313) do require to.require_auth(), which holds for them. The failing route is initiali"
   },
   {
    "id": "A3",
    "title": "Tenant isolation",
    "file": "src/lib.rs",
-   "line": 188,
-   "reason": "The pool is shared state across all depositors. Deposit, swap and withdraw are keyed to the caller: each calls to.require_auth() (lines 215, 247, 313) and moves tokens only from or to that address, so one user cannot spend another's balance. The break is initialize: any caller can replace the shared"
+   "line": 332,
+   "reason": "Pool state is shared by all users, and the caller is bound to the debited account only for the shares it transfers in. withdraw then burns and pays out the pool's whole share balance, which can include shares belonging to another user, so one caller can redeem another user's shares. The same shared-"
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "src/lib.rs",
+   "line": 145,
+   "reason": "The slippage gates in deposit fail open. The min_a check compares desired_a rather than amount_a, so the minimum for token A is never enforced. Swap's in_max gate also passes when out exceeds the reserve (negative sell amount; existing finding defect-3). There is no other approval or policy gate in "
   },
   {
    "id": "M2",
    "title": "Controls outside the prompt",
    "file": "src/lib.rs",
    "line": 188,
-   "reason": "The value-moving paths are enforced in code: deposit, swap and withdraw each call to.require_auth() (lib.rs:215, 247, 313). The control that is missing is on initialize, which sets the token addresses that every later transfer uses and has no require_auth or admin check. Anyone can call it again on "
+   "reason": "deposit (line 215), swap (line 247) and withdraw (line 313) each call to.require_auth(), so those actions are enforced in code. initialize has no require_auth or admin check and can be called again at any time by anyone, so the pool's token pair and reserves can be rebound. The rule that matters mos"
   },
   {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
    "file": "src/lib.rs",
-   "line": 145,
-   "reason": "The deposit API promises slippage protection through min_a and min_b, and the doc comment says a deposit is sized from reserves. On the amount_a branch (lib.rs:143-148) the min_b bound is never checked, and the min_a check tests desired_a instead of amount_a. A deposit can therefore settle below the"
+   "line": 260,
+   "reason": "The doc comment at line 171 says in_max is a safety to make sure the caller receives at least out. The deciding code at line 260 only caps the amount sold. Nothing checks the amount received against out or against the reserves, which is why the reserve-bounds defect is possible. The stated guarantee"
   },
   {
    "id": "M5",
    "title": "Core function works",
    "file": "src/lib.rs",
-   "line": 298,
-   "reason": "The core swap, deposit and mint paths use i128 products of reserves and amounts with no checked arithmetic. Once reserves are large, these products overflow and the call panics, so the pool stops working for large balances. The SDK and token calls, the types and the storage keys are otherwise consis"
+   "line": 145,
+   "reason": "The core paths compile against soroban-sdk 20 and use real token client calls, storage and the sqrt from num_integer, and error paths panic rather than being swallowed. The deposit slippage guard is wrong: it checks desired_a against min_a rather than amount_a, so the minimum for token A is not enfo"
   }
  ]
 }

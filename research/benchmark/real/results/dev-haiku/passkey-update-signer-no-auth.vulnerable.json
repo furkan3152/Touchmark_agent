@@ -1,0 +1,227 @@
+{
+ "case": "passkey-update-signer-no-auth",
+ "side": "vulnerable",
+ "repo": "kalepail/passkey-kit",
+ "commit": "528926c32675900ec89c19d22934a33fa597ed1f",
+ "audited": "https://github.com/kalepail/passkey-kit/tree/528926c32675900ec89c19d22934a33fa597ed1f/contracts/smart-wallet",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/lib.rs",
+   "line_start": 66,
+   "line_end": 77
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-account-takeover-1",
+   "cited": "src/lib.rs:66",
+   "title": "update_signer has no require_auth, so anyone can replace an existing signer's key and take over the wallet"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-6",
+   "cited": "src/lib.rs:84",
+   "title": "remove_signer allows removing the last signer, leaving the wallet permanently without authority"
+  },
+  {
+   "source": "ledger",
+   "id": "S6",
+   "cited": "src/lib.rs:66",
+   "title": "Account authority changes"
+  },
+  {
+   "source": "ledger",
+   "id": "S7",
+   "cited": "src/lib.rs:66",
+   "title": "Soroban contract checks"
+  },
+  {
+   "source": "ledger",
+   "id": "A1",
+   "cited": "src/lib.rs:66",
+   "title": "Caller authentication"
+  },
+  {
+   "source": "ledger",
+   "id": "A3",
+   "cited": "src/lib.rs:66",
+   "title": "Tenant isolation"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "src/lib.rs:66",
+   "title": "Controls outside the prompt"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-account-takeover-1",
+   "severity": "critical",
+   "title": "update_signer has no require_auth, so anyone can replace an existing signer's key and take over the wallet",
+   "file": "src/lib.rs",
+   "line": 66,
+   "evidence": "src/lib.rs:66 `fn update_signer(env: Env, signer: Signer) {`",
+   "verifier": "partial",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "medium",
+   "title": "remove_signer allows removing the last signer, leaving the wallet permanently without authority",
+   "file": "src/lib.rs",
+   "line": 84,
+   "evidence": "src/lib.rs:84 `env.storage().persistent().remove::<SignerKey>(&signer_key);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-2",
+   "severity": "medium",
+   "title": "Expired signers are not expiry-checked when they supply a co-signature or sit after the first matching signer",
+   "file": "src/lib.rs",
+   "line": 153,
+   "evidence": "src/lib.rs:153 `for (signer_key, signature) in signatures.0.iter() { // This is probably the only right place to verify_signer_expiration for crypto keys`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-unpinned-deps",
+   "severity": "medium",
+   "title": "Unpinned dependencies",
+   "file": "Cargo.toml",
+   "line": 17,
+   "evidence": "",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-soroban-overflow-unchecked",
+   "severity": "low",
+   "title": "Soroban contract arithmetic can wrap around in release builds",
+   "file": "src/storage.rs",
+   "line": 4,
+   "evidence": "Cargo.toml",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "A signer with an empty contexts map is treated as unlimited, not as authorizing nothing",
+   "file": null,
+   "line": null,
+   "evidence": "src/context.rs:19 `if signer_limits.is_empty() { return true; }`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "remove_signer check in verify_context applies to every contract, and panics when no argument is given",
+   "file": "src/context.rs",
+   "line": 35,
+   "evidence": "src/context.rs:35 `|| (*fn_name == Symbol::new(&env, \"remove_signer\") && SignerKey::from_val(env, &args.get_unchecked(0))`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "low",
+   "title": "WebAuthn verification does not check rpIdHash, the user-presence flag or the clientData type",
+   "file": "src/verify.rs",
+   "line": 25,
+   "evidence": "src/verify.rs:25 `env.crypto().secp256r1_verify(`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-7",
+   "severity": "low",
+   "title": "Restricted signer's failed limit check panics and aborts __check_auth, blocking valid unrestricted signers in the same transaction",
+   "file": "src/signer.rs",
+   "line": 176,
+   "evidence": "src/signer.rs:176 `panic_with_error!(env, Error::FailedSignerLimits)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "low",
+   "title": "Self-referencing stored policy limits recurse without bound in verify_signer_limit_keys",
+   "file": null,
+   "line": null,
+   "evidence": "src/signer.rs:150 `if let Some((signer_limits_val, _)) = get_signer_val_storage(env, &signer_limits_key, true)`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "S6",
+   "title": "Account authority changes",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "update_signer replaces the key, policy, expiration, limits and storage class of an existing signer with no require_auth call. Its body goes straight to process_signer and store_signer (lines 67-69). Compare remove_signer (line 79) and update_contract_code (line 99), which both call env.current_contr"
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "The state-changing function update_signer does not require_auth on the wallet address. Other parts of the contract do the right thing: remove_signer (line 79), update_contract_code (line 99) and add_signer after initialization (line 48) call require_auth on current_contract_address. Per-user signer "
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "update_signer is a public contract entrypoint that reaches signer authority (it rewrites the key, limits and expiration of an existing signer) but has no require_auth call, unlike add_signer (line 48), remove_signer (line 79) and update_contract_code (line 99). Any caller can invoke it. The routes t"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "Each wallet is a separate contract instance with its own storage, so the isolation boundary is the wallet's signer set. Multiple principals (wallet owners and third parties) exist. Because update_signer does not bind the caller to the wallet's signers, one party can overwrite the signer that control"
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "src/context.rs",
+   "line": 19,
+   "reason": "The context-limit gate is meant to deny anything a signer is not explicitly allowed to do. Where a signer's limits map is present but empty, this line returns true, so the gate approves every context. The gate also fails open in another way: update_signer (src/lib.rs:66) has no auth, so an unauthent"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "src/verify.rs",
+   "line": 25,
+   "reason": "The __check_auth signature path is mostly sound. Each signature is looked up by its own SignerKey (lib.rs:156, NotFound if unknown), the signature type must match the stored key type (lib.rs:173-196, SignatureKeyValueMismatch), duplicates cannot exist because signatures is a Map, and each context ne"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/lib.rs",
+   "line": 66,
+   "reason": "The key control for signer changes is enforced in code only on add_signer, remove_signer and update_contract_code (require_auth at lines 48, 79, 99). update_signer performs no require_auth and no signature check, so the wallet's authority rule is not enforced in code for this entrypoint. This is a c"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/lib.rs",
+   "line": 153,
+   "reason": "The stated purpose (types.rs comments and the signer expiration and limits model) is that expired signers cannot authorize. The expiry check runs only in the context loop (lib.rs:137, on the first matching signer). The signature loop at lib.rs:153-156 looks up the signer but never calls verify_signe"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/context.rs",
+   "line": 35,
+   "reason": "The core auth path works for ordinary signers. Those signers have no limits or an explicit contract map, and secp256r1 and ed25519 verification use correct SDK types and units. However, the remove_signer clause in verify_context is reachable on any contract. When a context names a foreign contract's"
+  }
+ ]
+}

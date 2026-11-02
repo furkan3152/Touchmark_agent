@@ -1,0 +1,883 @@
+{
+ "case": "polaris-trustline-stuck-execution",
+ "side": "vulnerable",
+ "repo": "stellar/django-polaris",
+ "commit": "fb462ab62fb9f7bfdef4dca24c34af2526ce2ebd",
+ "audited": "https://github.com/stellar/django-polaris/tree/fb462ab62fb9f7bfdef4dca24c34af2526ce2ebd/polaris/polaris",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "management/commands/check_trustlines.py",
+   "line_start": 104,
+   "line_end": 113
+  },
+  {
+   "path": "management/commands/check_trustlines.py",
+   "line_start": 125,
+   "line_end": 147
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-36",
+   "cited": "management/commands/check_trustlines.py:118",
+   "title": "check_trustlines crashes with KeyError on liquidity-pool-share balances, locking the whole deposit batch"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-reliability-failure-2",
+   "cited": "management/commands/check_trustlines.py:138",
+   "title": "check_trustlines returns on the first submit error and leaves the rest of the batch stuck in pending_execution_attempt"
+  },
+  {
+   "source": "ledger",
+   "id": "S8",
+   "cited": "management/commands/check_trustlines.py:138",
+   "title": "Failure and rollback paths"
+  }
+ ],
+ "findings": [
+  {
+   "id": "economic-ai-economic-loss-16",
+   "severity": "critical",
+   "title": "SEP-31 send caps apply per transaction only; no cumulative or rate limit",
+   "file": "sep31/transactions.py",
+   "line": 163,
+   "evidence": "sep31/transactions.py:163 `if asset.send_min_amount > amount or amount > asset.send_max_amount:`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-27",
+   "severity": "critical",
+   "title": "Interactive POST endpoints are CSRF-exempt and the session cookie is SameSite=None",
+   "file": "sep24/urls.py",
+   "line": 22,
+   "evidence": "sep24/utils.py:145 `if not r.session.get(\"authenticated\"):`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-3",
+   "severity": "critical",
+   "title": "SEP-31 PATCH does not bind the transaction to the calling sending anchor and can push it to payout",
+   "file": "sep31/transactions.py",
+   "line": 65,
+   "evidence": "sep31/transactions.py:65 `transaction = Transaction.objects.filter(id=transaction_id).first()`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-25",
+   "severity": "critical",
+   "title": "Interactive JWT replayable in a new session within its 30-second lifetime",
+   "file": "sep24/utils.py",
+   "line": 100,
+   "evidence": "sep24/utils.py:100 `elif r.session.exists(r.session.session_key) and token in r.session.get(`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-57",
+   "severity": "critical",
+   "title": "SEP-6 withdraw resolves the asset by code only, so the wrong issuer's distribution account can be returned",
+   "file": "sep6/withdraw.py",
+   "line": 100,
+   "evidence": "sep6/withdraw.py:100 `code=request.GET.get(\"asset_code\"), sep6_enabled=True, withdrawal_enabled=True`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-18",
+   "severity": "high",
+   "title": "LOCAL_MODE disables authentication on SEP-24 interactive routes, allowing any caller to advance any transaction",
+   "file": "sep24/utils.py",
+   "line": 80,
+   "evidence": "sep24/utils.py:80 `if settings.LOCAL_MODE: return`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-74",
+   "severity": "high",
+   "title": "Middleware sets SameSite=None on the session cookie, so cross-site requests carry it to CSRF-exempt interactive routes",
+   "file": "sep24/urls.py",
+   "line": 22,
+   "evidence": "middleware.py:51 `response.cookies[settings.SESSION_COOKIE_NAME][\"samesite\"] = \"None\"`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-path-secret-to-exfiltration",
+   "severity": "medium",
+   "title": "A signing secret reaches a logging or network boundary",
+   "file": "management/commands/testnet.py",
+   "line": 148,
+   "evidence": "management/commands/testnet.py:148 `print(f\"secret key: {issuer.secret}\\n\")` [secret -> issue]; management/commands/testnet.py:151 `print(f\"secret key: {distributor.secret}\\n\")` [secret -> issue]; management/commands/testnet.py:156 `print(f\"secret key: {client.secret}\\n\")` [secret -> issue]",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-1",
+   "severity": "medium",
+   "title": "Deposit path signs with the raw distribution seed string, so the default deposit submission fails",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 183,
+   "evidence": "management/commands/poll_pending_deposits.py:183 `envelope.sign(transaction.asset.distribution_seed)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-10",
+   "severity": "medium",
+   "title": "Deposits waiting for a trustline are locked by a flag that nothing clears",
+   "file": "management/commands/check_trustlines.py",
+   "line": 86,
+   "evidence": "management/commands/check_trustlines.py:86 `pending_execution_attempt=False,`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-28",
+   "severity": "medium",
+   "title": "amount=NaN in the interactive URL raises an unhandled InvalidOperation (HTTP 500)",
+   "file": null,
+   "line": null,
+   "evidence": "sep24/utils.py:229 `err_resp = verify_valid_asset_operation(`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-functional-defect-36",
+   "severity": "medium",
+   "title": "check_trustlines crashes with KeyError on liquidity-pool-share balances, locking the whole deposit batch",
+   "file": "management/commands/check_trustlines.py",
+   "line": 118,
+   "evidence": "management/commands/check_trustlines.py:118 `balance[\"asset_code\"] == transaction.asset.code`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-59",
+   "severity": "medium",
+   "title": "SEP-6 withdraw returns a raw string when a query parameter is named 'error'",
+   "file": "sep6/withdraw.py",
+   "line": 43,
+   "evidence": "sep6/withdraw.py:43 `if \"error\" in args:`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-69",
+   "severity": "medium",
+   "title": "SEP-24/SEP-6 /fee returns HTTP 500 for amount=NaN or sNaN",
+   "file": "shared/endpoints.py",
+   "line": 177,
+   "evidence": "shared/endpoints.py:177 `amount = Decimal(amount_str)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-73",
+   "severity": "medium",
+   "title": "Serializer rounds every row in a list with the first row's asset precision",
+   "file": null,
+   "line": null,
+   "evidence": "shared/serializers.py:30 `self.asset = data[0].asset`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-reliability-failure-2",
+   "severity": "medium",
+   "title": "check_trustlines returns on the first submit error and leaves the rest of the batch stuck in pending_execution_attempt",
+   "file": "management/commands/check_trustlines.py",
+   "line": 137,
+   "evidence": "management/commands/check_trustlines.py:138 `return`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-31",
+   "severity": "medium",
+   "title": "Unhandled exception in the multisig deposit branch stops the batch and leaves deposits flagged forever",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 407,
+   "evidence": "management/commands/poll_pending_deposits.py:407 `cls.execute_deposit(transaction)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-37",
+   "severity": "medium",
+   "title": "GET complete endpoint moves any owned transaction to pending_user_transfer_start without status or memo checks",
+   "file": "sep24/withdraw.py",
+   "line": 218,
+   "evidence": "sep24/withdraw.py:218 `Transaction.objects.filter(id=transaction_id).update(`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-71",
+   "severity": "medium",
+   "title": "SEP-6 /fee: amount=NaN escapes validation and returns HTTP 500",
+   "file": "utils.py",
+   "line": 88,
+   "evidence": "utils.py:88 `elif not (min_amount <= amount <= max_amount):`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-44",
+   "severity": "medium",
+   "title": "SERVER_JWT_KEY accepts an empty value, so session JWTs can be forged",
+   "file": "settings.py",
+   "line": 63,
+   "evidence": "settings.py:63 `SERVER_JWT_KEY = env_or_settings(\"SERVER_JWT_KEY\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-50",
+   "severity": "medium",
+   "title": "Seed-edit privilege is matched by a non-unique permission name, not by codename or group",
+   "file": "admin.py",
+   "line": 25,
+   "evidence": "admin.py:25 `or request.user.user_permissions.filter(name=\"Can edit asset\").exists()`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-cross-user-access-11",
+   "severity": "medium",
+   "title": "SEP-24 deposit writes SEP-9 fields under a body-supplied account, not the authenticated account",
+   "file": "sep24/deposit.py",
+   "line": 329,
+   "evidence": "sep24/deposit.py:329 `stellar_account = request.data.get(\"account\")`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-cross-user-access-46",
+   "severity": "medium",
+   "title": "Unauthenticated more_info route returns any customer's transaction by public Stellar transaction hash",
+   "file": "shared/endpoints.py",
+   "line": 256,
+   "evidence": "shared/endpoints.py:256 `return Transaction.objects.get(protocol=protocol, **qset_filter)`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-ssrf-4",
+   "severity": "medium",
+   "title": "on_change_callback from a SEP-24 client is POSTed by the server to any HTTPS URL, with no internal-address or allowlist check",
+   "file": "utils.py",
+   "line": 252,
+   "evidence": "utils.py:252 `return post(`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-7",
+   "severity": "medium",
+   "title": "Outgoing payout amount is taken from the on-chain payment with no code-enforced maximum",
+   "file": "management/commands/watch_transactions.py",
+   "line": 164,
+   "evidence": "management/commands/watch_transactions.py:164 `transaction.amount_in = round(`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-9",
+   "severity": "medium",
+   "title": "Outgoing payout is retried after an exception with no idempotency check",
+   "file": "management/commands/execute_outgoing_transactions.py",
+   "line": 111,
+   "evidence": "management/commands/execute_outgoing_transactions.py:111 `transaction.pending_execution_attempt = False`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-13",
+   "severity": "medium",
+   "title": "Deposit envelope is built with no time bounds and stored for later signing",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 259,
+   "evidence": "management/commands/poll_pending_deposits.py:259 `return builder.build()`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-path-untrusted-account-control",
+   "severity": "medium",
+   "title": "Untrusted input changes account authority",
+   "file": "management/commands/testnet.py",
+   "line": 192,
+   "evidence": "management/commands/testnet.py:196 `envelope.sign(issuer)` [external -> set_home_domain]; management/commands/testnet.py:198 `self.server.submit_transaction(envelope)` [external -> set_home_domain]",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-transaction-never-expires",
+   "severity": "low",
+   "title": "Signed transactions are built without an expiry",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/poll_pending_deposits.py:119 (built without time bounds)",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "intent-ai-intent-mismatch-41",
+   "severity": "low",
+   "title": "SEP-24 withdraw resolves the asset by code only, so the wrong issuer's distribution account can be chosen",
+   "file": "sep24/withdraw.py",
+   "line": 355,
+   "evidence": "sep24/withdraw.py:355 `asset = Asset.objects.filter(code=asset_code).first()`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-12",
+   "severity": "low",
+   "title": "Multisig loop on shutdown resets the wrong list, leaving transactions locked",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/poll_pending_deposits.py:424 `still_processing_transactions = ready_transactions[i:]`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "Testnet command hardcodes the testnet passphrase, ignoring STELLAR_NETWORK_PASSPHRASE",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/testnet.py:190 `network_passphrase=\"Test SDF Network ; September 2015\",`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-20",
+   "severity": "low",
+   "title": "reset accepts any valid issuer seed without checking it matches Asset.issuer",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/testnet.py:100 `Keypair.from_secret(issuer_seed)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-22",
+   "severity": "low",
+   "title": "add_balance hardcodes the testnet passphrase and ignores STELLAR_NETWORK_PASSPHRASE",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/testnet.py:212 `network_passphrase=\"Test SDF Network ; September 2015\",`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-23",
+   "severity": "low",
+   "title": "SEP-31 POST: NaN amount escapes the ValueError handler and returns a 500",
+   "file": "sep31/transactions.py",
+   "line": 163,
+   "evidence": "sep31/transactions.py:163 `if asset.send_min_amount > amount or amount > asset.send_max_amount:`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-24",
+   "severity": "low",
+   "title": "SEP-31 PATCH without a 'fields' object raises an unhandled TypeError",
+   "file": "sep31/transactions.py",
+   "line": 275,
+   "evidence": "sep31/transactions.py:275 `if category not in fields:`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-32",
+   "severity": "low",
+   "title": "Distribution-account signer cache is process-global and never refreshed",
+   "file": null,
+   "line": null,
+   "evidence": "models.py:287 `if (self.code, self.issuer) in ASSET_DISTRIBUTION_ACCOUNT_MAP:`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-33",
+   "severity": "low",
+   "title": "envelope_xdr validator never runs on save, so stored XDR is not checked",
+   "file": null,
+   "line": null,
+   "evidence": "models.py:567 `envelope_xdr = models.TextField(validators=[deserialize], null=True, blank=True)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-34",
+   "severity": "low",
+   "title": "Deposit memo_type without memo raises an unhandled exception (HTTP 500)",
+   "file": "sep24/deposit.py",
+   "line": 362,
+   "evidence": "sep24/deposit.py:362 `make_memo(request.data.get(\"memo\"), request.data.get(\"memo_type\"))`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-35",
+   "severity": "low",
+   "title": "Deposit asset looked up by code only, with no issuer or ordering",
+   "file": "sep24/deposit.py",
+   "line": 374,
+   "evidence": "sep24/deposit.py:374 `asset = Asset.objects.filter(code=asset_code).first()`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-38",
+   "severity": "low",
+   "title": "Registered custom fee function is never called on the outgoing payout path; fee is silently set to zero",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/execute_outgoing_transactions.py:139 `if registered_fee_func is calculate_fee:`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-39",
+   "severity": "low",
+   "title": "Payout amount_out is not checked to be non-negative; fixed fee larger than the amount yields a negative payout",
+   "file": "management/commands/execute_outgoing_transactions.py",
+   "line": 159,
+   "evidence": "management/commands/execute_outgoing_transactions.py:159 `transaction.amount_out = transaction.amount_in - transaction.amount_fee`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-40",
+   "severity": "low",
+   "title": "Fee lookup by asset code alone applies another issuer's fee settings to the payout",
+   "file": null,
+   "line": null,
+   "evidence": "integrations/fees.py:36 `asset = Asset.objects.filter(code=fee_params[\"asset_code\"]).first()`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-43",
+   "severity": "low",
+   "title": "SEP-12 GET validation raises AttributeError, not ValueError, on non-dict field values",
+   "file": null,
+   "line": null,
+   "evidence": "sep12/customer.py:247 `if not value.get(\"type\") or value.get(\"type\") not in accepted_types:`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-45",
+   "severity": "low",
+   "title": "Network passphrase and Horizon URL default independently to testnet, so a mainnet override can be mismatched",
+   "file": null,
+   "line": null,
+   "evidence": "settings.py:67 `or \"Test SDF Network ; September 2015\"`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-49",
+   "severity": "low",
+   "title": "Callbacks fire for every returned transaction, not only the rows actually updated, and send unpersisted status",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/poll_outgoing_transactions.py:93 `for t in complete_transactions: maybe_make_callback(t)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "low",
+   "title": "testnet issue command prints the issuer secret key to stdout",
+   "file": "management/commands/testnet.py",
+   "line": 148,
+   "evidence": "management/commands/testnet.py:148 `print(f\"secret key: {issuer.secret}\\n\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-51",
+   "severity": "low",
+   "title": "Missing iss, iat or exp claim raises KeyError instead of a 403",
+   "file": null,
+   "line": null,
+   "evidence": "sep10/utils.py:72 `if jwt_dict[\"iss\"] != os.path.join(settings.HOST_URL, \"auth\"):`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-52",
+   "severity": "low",
+   "title": "SEP-6 deposit: query parameter named \"error\" hijacks the error branch and returns a non-Response",
+   "file": "sep6/deposit.py",
+   "line": 211,
+   "evidence": "sep6/deposit.py:44 `if \"error\" in args: return args[\"error\"]`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-53",
+   "severity": "low",
+   "title": "SEP-6 deposit: NaN amount passes the parse and raises unhandled InvalidOperation at the bounds check",
+   "file": "sep6/deposit.py",
+   "line": 189,
+   "evidence": "sep6/deposit.py:189 `if not (min_amount <= amount <= max_amount):`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-55",
+   "severity": "low",
+   "title": "SEP-6 deposit: asset resolved by code alone, so a second issuer's deposit settings or instructions can be used",
+   "file": "sep6/deposit.py",
+   "line": 134,
+   "evidence": "sep6/deposit.py:134 `asset = Asset.objects.filter( code=request.GET.get(\"asset_code\"), sep6_enabled=True, deposit_enabled=True ).first()`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-56",
+   "severity": "low",
+   "title": "Unsupported-language message is formatted before translation lookup",
+   "file": "locale/utils.py",
+   "line": 19,
+   "evidence": "locale/utils.py:19 `_(\"unsupported language: %s\" % lang)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "low",
+   "title": "SEP-6 withdraw amount error message prints the minimum amount twice",
+   "file": "sep6/withdraw.py",
+   "line": 150,
+   "evidence": "sep6/withdraw.py:150 `_(\"'amount' must be within [%s, %s]\") % (min_amount, min_amount)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-61",
+   "severity": "low",
+   "title": "Migration saves full Transaction rows, so concurrent status updates can be overwritten",
+   "file": null,
+   "line": null,
+   "evidence": "migrations/0005_auto_20210226_0053.py:12 `tx.save()`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-62",
+   "severity": "low",
+   "title": "Card number validator raises ValueError on Unicode superscript digits",
+   "file": "integrations/forms.py",
+   "line": 54,
+   "evidence": "integrations/forms.py:54 `if not (value.isdigit() and self.is_luhn_valid(value)):`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-63",
+   "severity": "low",
+   "title": "SEP-6 /info returns 500 when the info integration omits the 'types' key",
+   "file": null,
+   "line": null,
+   "evidence": "sep6/info.py:70 `for t, val in types.items():`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-64",
+   "severity": "low",
+   "title": "SEP-6 /info publishes limits and fees keyed by asset code, so issuers sharing a code overwrite each other",
+   "file": null,
+   "line": null,
+   "evidence": "sep6/info.py:44 `info_data[\"deposit\"][asset.code] = get_asset_info(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-65",
+   "severity": "low",
+   "title": "SEP-6 info validator raises AttributeError on non-dict field descriptors, returning a 500",
+   "file": null,
+   "line": null,
+   "evidence": "sep6/info.py:84 `desc = val.get(\"description\")`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-66",
+   "severity": "low",
+   "title": "SEP-31 info maps every integration ValueError to an unsupported-lang error",
+   "file": "sep31/info.py",
+   "line": 29,
+   "evidence": "sep31/info.py:29 `except ValueError: return render_error_response(\"unsupported 'lang'\")`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-67",
+   "severity": "low",
+   "title": "Default RailsIntegration methods return None instead of failing, so an unconfigured anchor silently breaks rails polling",
+   "file": null,
+   "line": null,
+   "evidence": "integrations/rails.py:26 `pass`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-68",
+   "severity": "low",
+   "title": "SEP-24 /info keys limits and fees by asset code, so same-code issuers overwrite each other",
+   "file": null,
+   "line": null,
+   "evidence": "sep24/info.py:52 `info_data[\"deposit\"][asset.code] = _get_asset_info(asset, \"deposit\")`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-72",
+   "severity": "low",
+   "title": "SameSite middleware placement is documented but not enforced, so cookie attributes silently fail to apply",
+   "file": null,
+   "line": null,
+   "evidence": "sep24/utils.py:281 `if session_middleware_path not in django_settings.MIDDLEWARE:`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-14",
+   "severity": "low",
+   "title": "Submit timeout marks a deposit error without checking whether the payment landed",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/poll_pending_deposits.py:191 `response = settings.HORIZON_SERVER.submit_transaction(envelope)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-42",
+   "severity": "low",
+   "title": "SEP-24 withdraw accepts NaN and Infinity amounts and records the transaction before validating them",
+   "file": "sep24/withdraw.py",
+   "line": 350,
+   "evidence": "sep24/withdraw.py:350 `amount = Decimal(request.data.get(\"amount\"))`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-48",
+   "severity": "low",
+   "title": "Watcher restarts with no completed transaction skip payments received while down",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/watch_transactions.py:92 `cursor = \"now\"`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-58",
+   "severity": "low",
+   "title": "SEP-6 withdraw amount=NaN raises an unhandled InvalidOperation (HTTP 500)",
+   "file": "sep6/withdraw.py",
+   "line": 147,
+   "evidence": "sep6/withdraw.py:147 `if not (min_amount <= amount <= max_amount):`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-47",
+   "severity": "low",
+   "title": "Completion update is not scoped to the queried pending_external set, so any returned id is marked completed",
+   "file": null,
+   "line": null,
+   "evidence": "management/commands/poll_outgoing_transactions.py:88 `num_completed = Transaction.objects.filter(id__in=ids).update(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-cross-user-access-26",
+   "severity": "low",
+   "title": "Interactive POST authorization not scoped to the transaction the token was issued for",
+   "file": "sep24/utils.py",
+   "line": 149,
+   "evidence": "sep24/utils.py:149 `id=r.GET.get(\"transaction_id\"), stellar_account=r.session.get(\"account\"),`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-per-call-cap-only",
+   "severity": "low",
+   "title": "Payments are capped per call, with no total or rate limit",
+   "file": "sep31/transactions.py",
+   "line": 163,
+   "evidence": "caps at integrations/forms.py:153 `elif amount > self.max_amount:`; utils.py:88 `elif not (min_amount <= amount <= max_amount):`; sep31/transactions.py:163 `if asset.send_min_amount > amount or amount > asset.send_max_amount:` \u00b7 no running total in management/commands/poll_pending_deposits.py, management/commands/testnet.py",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-60",
+   "severity": "low",
+   "title": "Channel seed encryption migration is not idempotent; a re-run double-encrypts stored seeds",
+   "file": null,
+   "line": null,
+   "evidence": "migrations/0005_auto_20210226_0053.py:9 `channel_seed_txs = Transaction.objects.filter(channel_seed__isnull=False).all()`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-29",
+   "severity": "low",
+   "title": "Asset looked up by code without issuer in the interactive flow",
+   "file": "sep24/utils.py",
+   "line": 192,
+   "evidence": "sep24/utils.py:192 `asset = Asset.objects.filter(code=asset_code, sep24_enabled=True).first()`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-30",
+   "severity": "low",
+   "title": "Stored deposit envelope is submitted without checking its operations",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 172,
+   "evidence": "management/commands/poll_pending_deposits.py:172 `envelope = TransactionEnvelope.from_xdr(`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-8",
+   "severity": "low",
+   "title": "Asset is selected by code alone when asset_issuer is omitted",
+   "file": "sep31/transactions.py",
+   "line": 156,
+   "evidence": "sep31/transactions.py:156 `asset = Asset.objects.filter(**asset_args).first()`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-stellar-secret-seed",
+   "severity": "info",
+   "title": "Stellar signing secret in source",
+   "file": null,
+   "line": null,
+   "evidence": "tests/auth_test.py:18 (SDKWS\u2026redacted); tests/commands/test_watch_transactions.py:30 (SADPW\u2026redacted); tests/commands/test_watch_transactions.py:33 (SBYMI\u2026redacted); tests/conftest.py:15 (SBB57\u2026redacted); tests/conftest.py:17 (SAAND\u2026redacted); tests/auth_test.py:18: GDKFNRUA\u2026 has no account on mainnet or testnet (testnet resets erase accounts); tests/commands/test_watch_transactions.py:30: GC6Z5AI",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "management/commands/watch_transactions.py",
+   "line": 164,
+   "reason": "Deposit distribution payments are bounded before signing: the SEP-24 form enforces min and max (integrations/forms.py:153 `elif amount > self.max_amount:`) and sep24/deposit.py:126 stores only the validated amount. The outgoing payout path has no code-enforced maximum: watch_transactions.py:164 over"
+  },
+  {
+   "id": "V2",
+   "title": "Cumulative budget",
+   "file": "integrations/forms.py",
+   "line": 153,
+   "reason": "The only limits are per transaction: the SEP-24 form (forms.py:153), the SEP-6 and SEP-24 request checks, and the SEP-31 min/max (sep31/transactions.py:163). There is no running total per account, caller or day, no rate limit, and no table of spend. Repeated requests each pass the per-call cap. Noth"
+  },
+  {
+   "id": "V5",
+   "title": "Asset identity and units",
+   "file": "sep31/transactions.py",
+   "line": 156,
+   "reason": "Asset identity is code and issuer where value is paid or matched: poll_pending_deposits.py:252-253 pays with code and issuer, check_trustlines.py:117-120 matches trustlines by code and issuer, and watch_transactions.py:224-228 matches incoming payments by code, issuer and destination. The SEP-31 POS"
+  },
+  {
+   "id": "V6",
+   "title": "Replay and double payment",
+   "file": "management/commands/execute_outgoing_transactions.py",
+   "line": 111,
+   "reason": "Deposits do not double-pay in shipped code: a send-side exception ends in status error (poll_pending_deposits.py:474-483, 292-296) and is not retried. The outgoing-payout loop does retry. On any exception from rri.execute_outgoing_transaction it clears pending_execution_attempt (lines 110-116) and t"
+  },
+  {
+   "id": "S4",
+   "title": "Expiry and fees",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 259,
+   "reason": "The deposit envelope built by create_deposit_envelope has no set_timeout or time bounds, so it is signed and then stored in envelope_xdr for later signing or submission (poll_pending_deposits.py:333, :191). Such an envelope stays valid indefinitely. Fees are bounded: base_fee comes from operator set"
+  },
+  {
+   "id": "S5",
+   "title": "Submission outcome",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 191,
+   "reason": "Success is checked correctly via response.get(\"successful\") (line 196), which is correct for Horizon's full transaction body. Failure is not reconciled, though. Only BaseHorizonError is caught (line 192). A timeout or connection error raised by stellar_sdk ConnectionError propagates, and execute_dep"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "management/commands/check_trustlines.py",
+   "line": 138,
+   "reason": "Failure paths leave bad state. check_trustlines.py:131-138 returns from the whole batch after one exception, so every later transaction keeps pending_execution_attempt=True and is never retried. execute_outgoing_transactions.py:110-112 clears the lock after an exception with no check that the payout"
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "sep24/utils.py",
+   "line": 80,
+   "reason": "Most value-moving HTTP routes do require SEP-10 bearer JWTs (SEP-31 get/patch/post at sep31/transactions.py:35/56/91, SEP-6 deposit/withdraw/transactions, SEP-12 routes). The SEP-24 interactive routes do not in LOCAL_MODE: check_authentication (sep24/utils.py:80-81) and authenticate_session return e"
+  },
+  {
+   "id": "A2",
+   "title": "Secret handling",
+   "file": "management/commands/testnet.py",
+   "line": 148,
+   "reason": "The issue command writes the issuer, distribution and client secret seeds to stdout (lines 148, 151, 156). Secrets appear in terminal output and any log capture. Same defect as the earlier finding reliability-ai-functional-defect-5. The command is a testnet dev tool run by the operator, and the seed"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "sep31/transactions.py",
+   "line": 65,
+   "reason": "The SEP-31 PATCH handler authenticates the sending anchor but then loads the transaction by ID alone, with no stellar_account or sending-anchor filter. Any authenticated anchor can update another anchor's transaction, including pushing it to payout. The SEP-24 deposit SEP-9 write (sep24/deposit.py:3"
+  },
+  {
+   "id": "A6",
+   "title": "Outbound requests and file paths",
+   "file": "utils.py",
+   "line": 252,
+   "reason": "The on_change_callback URL is set by the SEP-24 client (sep24/utils.py:189-190 read it from the request) and checked only with URLValidator for https (sep24/utils.py:167-176). The server then POSTs the transaction JSON to that URL with no internal-address or allowlist check. The SEP-12 callback URL "
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "sep31/transactions.py",
+   "line": 163,
+   "reason": "Duplicate placeholder; see the first M2 answer."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "management/commands/testnet.py",
+   "line": 148,
+   "reason": "The command is described as testnet reset and issuance. It also prints the issuer, distribution and client secret keys to stdout (lines 148, 151, 156), which is not stated in its purpose. Those secrets control funds. Separately, the deterministic claim of a critical untrusted account-control path is"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "management/commands/poll_pending_deposits.py",
+   "line": 183,
+   "reason": "The core deposit path does not work as shipped. The default deposit submission signs with the raw seed string instead of a Keypair (line 183), so the signing call fails. The testnet tool also ignores the configured passphrase (testnet.py:190, recorded as reliability-ai-functional-defect-17). Config "
+  }
+ ]
+}

@@ -16,95 +16,106 @@
  "matched": [
   {
    "source": "finding",
-   "id": "security-ai-control-bypass-4",
+   "id": "security-ai-cross-user-access-6",
    "cited": "api_keys_middleware.go:54",
-   "title": "Cached API key keeps authenticating for up to 3 minutes after revocation or permission change"
+   "title": "API key validation cache is keyed by raw key only, not by tenant"
   },
   {
    "source": "finding",
-   "id": "security-ai-cross-user-access-1",
+   "id": "security-ai-control-bypass-3",
    "cited": "api_keys_middleware.go:54",
-   "title": "API-key validation cache ignores tenant, so a key from one tenant authenticates on another"
-  },
-  {
-   "source": "finding",
-   "id": "reliability-ai-reliability-failure-5",
-   "cited": "api_keys_middleware.go:61",
-   "title": "No throttling of failed API key validations, so each guess costs a database lookup"
+   "title": "Cached API key validation ignores revocation and permission changes for up to 3 minutes"
   },
   {
    "source": "ledger",
-   "id": "A3",
+   "id": "A7",
    "cited": "api_keys_middleware.go:54",
-   "title": "Tenant isolation"
+   "title": "Verification of incoming authentication"
   }
  ],
  "findings": [
   {
-   "id": "security-ai-control-bypass-2",
+   "id": "security-ai-control-bypass-1",
    "severity": "critical",
-   "title": "API-key IP allowlist trusts client-supplied X-Forwarded-For and X-Real-IP headers",
+   "title": "API key IP allowlist bypassed via client-supplied X-Forwarded-For / X-Real-IP headers",
    "file": "api_keys_middleware.go",
    "line": 83,
    "evidence": "api_keys_middleware.go:83 `for _, header := range []string{\"X-Forwarded-For\", \"X-Real-IP\"} {`",
    "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-cross-user-access-6",
+   "severity": "critical",
+   "title": "API key validation cache is keyed by raw key only, not by tenant",
+   "file": "api_keys_middleware.go",
+   "line": 54,
+   "evidence": "api_keys_middleware.go:54 `if cached, found := a.cache.Get(rawKey); found {`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "security-ai-secret-exposure-4",
+   "severity": "high",
+   "title": "Request logging writes the full URL including query string to logs",
+   "file": "middleware.go",
+   "line": 205,
+   "evidence": "middleware.go:205 `\"path\": req.URL.String(),`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-control-bypass-3",
+   "severity": "medium",
+   "title": "Cached API key validation ignores revocation and permission changes for up to 3 minutes",
+   "file": "api_keys_middleware.go",
+   "line": 54,
+   "evidence": "api_keys_middleware.go:54 `if cached, found := a.cache.Get(rawKey); found {`",
+   "verifier": "confirmed",
    "verifier_severity": "medium"
   },
   {
-   "id": "security-ai-control-bypass-4",
-   "severity": "critical",
-   "title": "Cached API key keeps authenticating for up to 3 minutes after revocation or permission change",
-   "file": "api_keys_middleware.go",
-   "line": 54,
-   "evidence": "api_keys_middleware.go:54 `if cached, found := a.cache.Get(rawKey); found {`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "security-ai-cross-user-access-1",
-   "severity": "critical",
-   "title": "API-key validation cache ignores tenant, so a key from one tenant authenticates on another",
-   "file": "api_keys_middleware.go",
-   "line": 54,
-   "evidence": "api_keys_middleware.go:54 `if cached, found := a.cache.Get(rawKey); found {`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "reliability-ai-reliability-failure-5",
-   "severity": "low",
-   "title": "No throttling of failed API key validations, so each guess costs a database lookup",
-   "file": "api_keys_middleware.go",
-   "line": 61,
-   "evidence": "api_keys_middleware.go:61 `apiKey, err := a.model.ValidateRawKeyAndUpdateLastUsed(ctx, rawKey)`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-cross-user-access-3",
-   "severity": "low",
-   "title": "Tenant-less JWT inherits the tenant chosen by the SDP-Tenant-Name header",
+   "id": "security-ai-cross-user-access-2",
+   "severity": "medium",
+   "title": "Tenant selected by client header when JWT tenant claim is absent or its lookup fails",
    "file": "middleware.go",
    "line": 120,
    "evidence": "middleware.go:120 `if err == nil && tenantID != \"\" {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "medium",
+   "title": "Metrics middleware panics on tenant-less requests via MustGet tenant lookup",
+   "file": "middleware.go",
+   "line": 74,
+   "evidence": "middleware.go:74 `TenantName: sdpcontext.MustGetTenantNameFromContext(req.Context()),`",
+   "verifier": "unverifiable",
+   "verifier_severity": "none"
   }
  ],
  "failing_checks": [
   {
    "id": "A3",
    "title": "Tenant isolation",
+   "file": "middleware.go",
+   "line": 120,
+   "reason": "More than one caller identity exists (users, API keys, wallets, tenants), so this check applies. Two paths break per-caller and per-tenant isolation. (1) The tenant is taken from the client-controlled SDP-Tenant-Name header or hostname (middleware.go:293-345) and the JWT path falls back to it (middl"
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
    "file": "api_keys_middleware.go",
    "line": 54,
-   "reason": "The API-key validation cache is keyed only by the raw key and stores the APIKey with no tenant binding. A key validated for one tenant is returned from cache for any request, so the caller is not bound to the tenant of the key. This is the defect already recorded as security-ai-cross-user-access-1. "
+   "reason": "The verified artifact here is the SDP_ bearer API key. It is accepted from a cache for up to 3 minutes after the DB check that verified it, so a key revoked or whose permissions changed in that window is still accepted (the cache-hit path returns without re-running ValidateRawKeyAndUpdateLastUsed). "
   },
   {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
    "file": "api_keys_middleware.go",
    "line": 83,
-   "reason": "The file summary and API-key design present the IP allowlist as a control (\"checks client IP allowlists\"). On line 118 the allowlist is applied to extractClientIP, which takes the client-supplied X-Forwarded-For or X-Real-IP header before RemoteAddr. The advertised restriction therefore does not hol"
+   "reason": "The API key path is presented as an IP allowlist control (api_keys_middleware.go:118 `if clientIP := extractClientIP(r); !apiKey.IsAllowedIP(clientIP) {`), but extractClientIP takes the client-controlled X-Forwarded-For and X-Real-IP headers before RemoteAddr, so the stated restriction is not enforc"
   }
  ]
 }

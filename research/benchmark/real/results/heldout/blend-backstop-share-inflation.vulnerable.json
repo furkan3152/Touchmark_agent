@@ -21,16 +21,32 @@
  "matched": [
   {
    "source": "finding",
-   "id": "economic-ai-economic-loss-10",
+   "id": "economic-ai-economic-loss-4",
    "cited": "deposit.rs:22",
-   "title": "Backstop deposit accepts zero-share mints, so a donation can capture a victim's deposit"
+   "title": "deposit mints zero shares without a check, so a donation-inflated pool takes depositors' tokens"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-14",
+   "cited": "deposit.rs:22",
+   "title": "Deposits into a pool whose backstop tokens were fully drawn panic with division by zero"
   }
  ],
  "findings": [
   {
-   "id": "economic-ai-economic-loss-10",
+   "id": "economic-ai-economic-loss-2",
    "severity": "critical",
-   "title": "Backstop deposit accepts zero-share mints, so a donation can capture a victim's deposit",
+   "title": "claim() credits minted shares to an arbitrary recipient without updating that recipient's emission index",
+   "file": "src/emissions/claim.rs",
+   "line": 64,
+   "evidence": "src/emissions/claim.rs:64 `user_balance.add_shares(to_mint);` \u00b7 src/emissions/claim.rs:67 `storage::set_user_balance(e, &pool_id, to, &user_balance);` \u00b7 src/emissions/claim.rs:59 `let mut user_balance = storage::get_user_balance(e, &pool_id, to);`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "economic-ai-economic-loss-4",
+   "severity": "critical",
+   "title": "deposit mints zero shares without a check, so a donation-inflated pool takes depositors' tokens",
    "file": "src/backstop/deposit.rs",
    "line": 22,
    "evidence": "src/backstop/deposit.rs:22 `let to_mint = pool_balance.convert_to_shares(amount);`",
@@ -38,39 +54,19 @@
    "verifier_severity": "high"
   },
   {
-   "id": "economic-ai-economic-loss-11",
+   "id": "economic-ai-economic-loss-8",
    "severity": "critical",
-   "title": "Reward-zone threshold uses a spot Comet balance that anyone can inflate by direct token transfer",
-   "file": "src/backstop/fund_management.rs",
-   "line": 49,
-   "evidence": "src/backstop/fund_management.rs:49 `let total_blnd = TokenClient::new(e, &blnd_token).balance(backstop_token);`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "economic-ai-economic-loss-3",
-   "severity": "critical",
-   "title": "Claim credits new LP shares to the recipient without updating its emission index, so the shares accrue historical BLND",
-   "file": "src/emissions/claim.rs",
-   "line": 64,
-   "evidence": "src/emissions/claim.rs:64 `user_balance.add_shares(to_mint);`",
-   "verifier": "confirmed",
-   "verifier_severity": "critical"
-  },
-  {
-   "id": "economic-ai-economic-loss-9",
-   "severity": "critical",
-   "title": "Claim-to-LP deposit passes min_lp_tokens_out = 0, so the claimed BLND can be sandwiched",
+   "title": "Claim-to-LP conversion uses min_amount_out = 0, so the claimed BLND can be converted at a manipulated Comet price",
    "file": "src/emissions/claim.rs",
    "line": 50,
    "evidence": "src/emissions/claim.rs:47 `let lp_tokens_out = CometClient::new(e, &lp_id).dep_tokn_amt_in_get_lp_tokns_out(`",
    "verifier": "partial",
-   "verifier_severity": "medium"
+   "verifier_severity": "high"
   },
   {
-   "id": "security-ai-control-bypass-2",
+   "id": "security-ai-account-takeover-3",
    "severity": "critical",
-   "title": "initialize() has no caller authorization, so the first caller can set the backstop token, emitter and pool factory",
+   "title": "initialize() has no caller authorization, so the first caller can set the pool factory, emitter and tokens",
    "file": "src/contract.rs",
    "line": 188,
    "evidence": "src/contract.rs:188 `if storage::get_is_init(&e) {`",
@@ -78,44 +74,84 @@
    "verifier_severity": "high"
   },
   {
-   "id": "stellar_native-ai-stellar-protocol-misuse-14",
-   "severity": "critical",
-   "title": "User share and emission records are written without extend_ttl, so idle depositors' balances can archive",
+   "id": "economic-ai-economic-loss-12",
+   "severity": "medium",
+   "title": "LP token valuation is a permissionless spot read of Comet balances that a direct transfer can inflate",
+   "file": "src/backstop/fund_management.rs",
+   "line": 49,
+   "evidence": "src/backstop/fund_management.rs:49 `let total_blnd = TokenClient::new(e, &blnd_token).balance(backstop_token);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-16",
+   "severity": "medium",
+   "title": "gulp_emissions advances the distribution clock with an empty reward zone, dropping that period's emissions",
+   "file": "src/emissions/manager.rs",
+   "line": 75,
+   "evidence": "src/emissions/manager.rs:75 `storage::set_last_distribution_time(e, &emitter_last_distribution);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "medium",
+   "title": "Duplicate pool addresses in claim() overwrite the per-pool claim amounts, so the claimant's BLND is converted to LP tokens that are never credited",
+   "file": "src/emissions/claim.rs",
+   "line": 24,
+   "evidence": "src/emissions/claim.rs:24 `claims.set(pool_id, claim_amt);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-5",
+   "severity": "medium",
+   "title": "Division by zero when every pool share is queued for withdrawal, which blocks emission updates and gulp_emissions for all pools",
+   "file": "src/emissions/distributor.rs",
+   "line": 95,
+   "evidence": "src/emissions/distributor.rs:95 `let unqueued_shares = pool_balance.shares - pool_balance.q4w;`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-11",
+   "severity": "medium",
+   "title": "update_tkn_val is permissionless and caches a Comet valuation read from raw token balances that anyone can move",
+   "file": null,
+   "line": null,
+   "evidence": "src/contract.rs:333 `fn update_tkn_val(e: Env) -> (i128, i128) {`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "security-ai-control-bypass-7",
+   "severity": "medium",
+   "title": "draw() removes tokens without excluding amounts queued for withdrawal",
+   "file": "src/backstop/fund_management.rs",
+   "line": 17,
+   "evidence": "src/backstop/fund_management.rs:17 `pool_balance.withdraw(e, amount, 0);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-10",
+   "severity": "medium",
+   "title": "First-time user balance and emissions entries are written to persistent storage without extend_ttl",
    "file": "src/storage.rs",
    "line": 242,
    "evidence": "src/storage.rs:242 `.set::<BackstopDataKey, UserBalance>(&key, balance);`",
    "verifier": "partial",
-   "verifier_severity": "low"
+   "verifier_severity": "medium"
   },
   {
-   "id": "reliability-ai-reliability-failure-17",
+   "id": "security-soroban-overflow-unchecked",
    "severity": "medium",
-   "title": "gulp_emissions divides by zero total_non_queued_tokens when all reward-zone pools are fully queued",
-   "file": null,
-   "line": null,
-   "evidence": "src/emissions/manager.rs:105 `.fixed_div_floor(total_non_queued_tokens, SCALAR_7)`",
+   "title": "Soroban contract arithmetic can wrap around in release builds",
+   "file": "Cargo.toml",
+   "line": 1,
+   "evidence": "Cargo.toml",
    "verifier": "unverifiable",
-   "verifier_severity": ""
-  },
-  {
-   "id": "reliability-ai-reliability-failure-4",
-   "severity": "medium",
-   "title": "Emission index update divides by zero when every share of a pool is queued, which can block gulp_emissions for all pools",
-   "file": null,
-   "line": null,
-   "evidence": "src/emissions/distributor.rs:98 `.fixed_div_floor(unqueued_shares, SCALAR_7)`",
-   "verifier": "unverifiable",
-   "verifier_severity": ""
-  },
-  {
-   "id": "security-ai-control-bypass-19",
-   "severity": "medium",
-   "title": "Pool draw can take tokens that back queued withdrawals",
-   "file": "src/backstop/pool.rs",
-   "line": 153,
-   "evidence": "src/backstop/pool.rs:153 `if tokens > self.tokens || shares > self.shares || shares > self.q4w {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
+   "verifier_severity": "none"
   },
   {
    "id": "security-unpinned-deps",
@@ -125,22 +161,12 @@
    "line": 19,
    "evidence": "",
    "verifier": "unverifiable",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-soroban-overflow-unchecked",
-   "severity": "low",
-   "title": "Soroban contract arithmetic can wrap around in release builds",
-   "file": "src/emissions/manager.rs",
-   "line": 166,
-   "evidence": "Cargo.toml",
-   "verifier": "partial",
-   "verifier_severity": "low"
+   "verifier_severity": "none"
   },
   {
    "id": "reliability-ai-functional-defect-1",
    "severity": "low",
-   "title": "initialize() parameter order differs from the Backstop trait, so BLND and USDC addresses are stored swapped",
+   "title": "initialize() swaps the BLND and USDC token addresses relative to the public trait",
    "file": null,
    "line": null,
    "evidence": "src/contract.rs:182 `usdc_token: Address,`",
@@ -148,19 +174,49 @@
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-12",
+   "id": "reliability-ai-functional-defect-13",
    "severity": "low",
-   "title": "LP token value is unwrapped before it is ever set, so pool_data and reward-zone checks panic until update_tkn_val runs",
-   "file": "src/storage.rs",
-   "line": 497,
-   "evidence": "src/storage.rs:497 `.get::<Symbol, (i128, i128)>(&Symbol::new(&e, LP_TOKEN_VAL_KEY))` \u00b7 src/backstop/pool.rs:20 `.fixed_div_ceil(pool_balance.shares, SCALAR_7)`",
+   "title": "update_tkn_val panics when the Comet LP has zero total supply because the divisor is not guarded",
+   "file": "src/backstop/fund_management.rs",
+   "line": 54,
+   "evidence": "src/backstop/fund_management.rs:54 `.fixed_div_floor(total_comet_shares, SCALAR_7)`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
-   "id": "reliability-ai-functional-defect-16",
+   "id": "reliability-ai-functional-defect-14",
    "severity": "low",
-   "title": "convert_to_shares divides by zero when a pool has shares but no tokens",
+   "title": "Deposits into a pool whose backstop tokens were fully drawn panic with division by zero",
+   "file": null,
+   "line": null,
+   "evidence": "src/backstop/deposit.rs:22 `let to_mint = pool_balance.convert_to_shares(amount);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-15",
+   "severity": "low",
+   "title": "Reward-zone swap compares total tokens, but emissions are weighted by non-queued tokens",
+   "file": "src/emissions/manager.rs",
+   "line": 50,
+   "evidence": "src/emissions/manager.rs:50 `if pool_data.tokens <= storage::get_pool_balance(e, &to_remove).tokens {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "load_pool_backstop_data divides by zero for pools with no shares, breaking the public pool_data view",
+   "file": "src/backstop/pool.rs",
+   "line": 19,
+   "evidence": "src/backstop/pool.rs:18 `.fixed_div_ceil(pool_balance.shares, SCALAR_7)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-19",
+   "severity": "low",
+   "title": "convert_to_shares divides by zero when a pool has shares but no tokens, blocking deposits and claims",
    "file": null,
    "line": null,
    "evidence": "src/backstop/pool.rs:112 `.fixed_mul_floor(self.shares, self.tokens)`",
@@ -168,49 +224,9 @@
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-5",
-   "severity": "low",
-   "title": "User balance and user emission entries are written without extend_ttl, so idle depositors' shares and accrued BLND can be archived",
-   "file": "src/storage.rs",
-   "line": 242,
-   "evidence": "src/storage.rs:242 `.set::<BackstopDataKey, UserBalance>(&key, balance);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-6",
-   "severity": "low",
-   "title": "Duplicate pool addresses in claim() overwrite the per-pool claim amount, so the LP tokens for part of the claim are never credited",
-   "file": "src/emissions/claim.rs",
-   "line": 24,
-   "evidence": "src/emissions/claim.rs:24 `claims.set(pool_id, claim_amt);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-8",
-   "severity": "low",
-   "title": "load_pool_backstop_data divides by pool shares, so pool_data and add_to_reward_zone panic for pools with no backstop deposits",
-   "file": "src/backstop/pool.rs",
-   "line": 20,
-   "evidence": "src/backstop/pool.rs:20 `.fixed_div_ceil(pool_balance.shares, SCALAR_7)`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-reliability-failure-13",
-   "severity": "low",
-   "title": "Pool backstop emission data is written to persistent storage without extend_ttl, and its archival bricks gulp_emissions and all pool deposit/withdraw/claim paths",
-   "file": "src/storage.rs",
-   "line": 424,
-   "evidence": "src/storage.rs:424 `.set::<BackstopDataKey, BackstopEmissionsData>(&key, backstop_emis_data);`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
    "id": "reliability-ai-reliability-failure-18",
    "severity": "low",
-   "title": "Queue withdrawal accepts zero amounts and has no cap on queued entries",
+   "title": "Zero-amount queue_withdrawal succeeds with no shares and grows the Q4W list without limit",
    "file": "src/backstop/user.rs",
    "line": 63,
    "evidence": "src/backstop/withdrawal.rs:22 `user_balance.queue_shares_for_withdrawal(e, amount);`",
@@ -218,65 +234,79 @@
    "verifier_severity": "low"
   },
   {
-   "id": "reliability-ai-reliability-failure-7",
+   "id": "reliability-ai-reliability-failure-9",
    "severity": "low",
-   "title": "Drop list is kept in temporary storage and never extended on read, so drop() fails after the entry expires",
+   "title": "gulp_emissions panics when every reward-zone pool has zero non-queued tokens",
    "file": null,
    "line": null,
-   "evidence": "src/storage.rs:466 `.temporary()`",
+   "evidence": "src/emissions/manager.rs:105 `.fixed_div_floor(total_non_queued_tokens, SCALAR_7)`",
    "verifier": null,
    "verifier_severity": null
   }
  ],
  "failing_checks": [
   {
+   "id": "V1",
+   "title": "Per-action amount bound",
+   "file": "src/backstop/fund_management.rs",
+   "line": 17,
+   "reason": "Balance-based bounds exist (pool.rs line 153 rejects tokens above pool tokens and shares above q4w), but draw() caps the amount at total tokens and not at non-queued tokens, so queued-for-withdrawal backstop tokens can be drawn. This is the already-recorded control bypass."
+  },
+  {
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "src/emissions/claim.rs",
+   "line": 67,
+   "reason": "Claim authenticates only from. The shares minted to `to` (claim.rs line 64, add_shares) are credited to an arbitrary address whose owner never authorized the claim, and the recipient is not bound to the caller. This is the already-recorded issue."
+  },
+  {
    "id": "V5",
    "title": "Asset identity and units",
    "file": "src/contract.rs",
-   "line": 188,
-   "reason": "Asset identity inside the contract is by contract address, not code (fund_management.rs:21 and :49-50 read stored BLND, USDC and backstop token addresses; amounts are i128 at 7 decimals with no float or string parsing, and the checked value is the value transferred). But those stored addresses are w"
+   "line": 182,
+   "reason": "Assets are identified by contract id, which is correct, and amounts are i128 stroops with no float parsing. But initialize() declares usdc_token before blnd_token (line 182-183), which contradicts the trait order (blnd first). The contract then stores the two token ids swapped relative to the public"
   },
   {
    "id": "V8",
    "title": "Slippage and quoted prices",
    "file": "src/emissions/claim.rs",
    "line": 47,
-   "reason": "The claim's BLND-to-LP deposit into Comet passes min_lp_tokens_out = 0 (claim.rs:47-52), so there is no minimum received. The claimant cannot set the amount, but a manipulated Comet price can make the deposit fill at a much worse rate and the transaction still succeeds. This is the existing defect e"
-  },
-  {
-   "id": "S3",
-   "title": "Network and endpoint pinning",
-   "file": "src/contract.rs",
-   "line": 188,
-   "reason": "The submitted files contain no Horizon, RPC, passphrase or facilitator URL and no signing path. The only trust-anchor addresses that vary per deployment are the backstop token, emitter, pool factory and BLND/USDC token. They are set by initialize(), which has no caller authorization and runs only on"
+   "reason": "The BLND-to-LP conversion uses min_amount_out = 0 (claim.rs line 50 `&0,`), so no minimum is enforced. The claimed BLND amount is fixed by emissions, not by the requester, but the price is determined by Comet's current pool state, so it can be sandwiched. This is the already-recorded issue."
   },
   {
    "id": "S7",
    "title": "Soroban contract checks",
    "file": "src/storage.rs",
    "line": 242,
-   "reason": "Auth: each user-facing state change calls require_auth on the owner: deposit, queue_withdrawal, dequeue_withdrawal, withdraw and donate call from.require_auth() (contract.rs:213, 226, 239, 251, 326); gulp_pool_emissions and draw call pool_address.require_auth() (contract.rs:294, 316). claim calls fr"
-  },
-  {
-   "id": "S8",
-   "title": "Failure and rollback paths",
-   "file": "src/emissions/distributor.rs",
-   "line": 98,
-   "reason": "Soroban reverts the whole invocation when a call panics, so the emission, balance and transfer writes made before a failing step are rolled back. Ordering is therefore safe, and no lock or pending marker exists in the backstop. The failure that does leave a pool stuck is this one: when every share i"
+   "reason": "require_auth is present on every state-changing entrypoint in src/contract.rs (lines 213, 226, 239, 251, 294, 300, 316, 326), and per-user records (UserBalance, UEmisData) are in persistent storage, not instance. TTL handling is incomplete: set_user_balance (storage.rs:235-243) writes the persistent"
   },
   {
    "id": "A1",
    "title": "Caller authentication",
    "file": "src/contract.rs",
    "line": 188,
-   "reason": "Every value-moving or authority route authenticates its caller: deposit, queue_withdrawal, dequeue_withdrawal, withdraw, claim, donate use from.require_auth() (contract.rs:213, 226, 239, 251, 300, 326); draw and gulp_pool_emissions use pool_address.require_auth() (316, 294). initialize at line 178 h"
+   "reason": "Most state-changing routes call from.require_auth() or pool_address.require_auth() (contract.rs:213, 226, 239, 251, 294, 300, 316, 326). initialize() (contract.rs:178-207) has no caller authentication. The only guard is the one-time flag at line 188, so the first unauthenticated caller can set the b"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/emissions/claim.rs",
+   "line": 59,
+   "reason": "Deposit, queue_withdrawal, dequeue_withdrawal, withdraw and donate all bind the debited or credited balance to the authenticated from (contract.rs:213, 226, 239, 251, 326; withdrawal.rs:17, 36, 54). Claim does authenticate from (contract.rs:300) and reads from's emissions, but it credits the minted "
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/emissions/claim.rs",
+   "line": 64,
+   "reason": "The claim entrypoint is documented as a user claiming their own backstop emissions, and it authenticates only `from`. The recipient `to` is then credited with newly minted shares via storage::set_user_balance without any update to that recipient's emission index, so behaviour departs from the stated"
   },
   {
    "id": "M5",
    "title": "Core function works",
-   "file": "src/backstop/pool.rs",
-   "line": 20,
-   "reason": "The core path does not work as shipped on some reachable states. load_pool_backstop_data divides by pool shares (pool.rs:20) and get_lp_token_val unwraps a value that is never set until update_tkn_val runs (storage.rs:497). So pool_data and add_to_reward_zone panic. The gulp path also divides by tot"
+   "file": "src/contract.rs",
+   "line": 182,
+   "reason": "The contract implementation declares initialize(backstop_token, emitter, usdc_token, blnd_token, ...) while the trait at contract.rs:38-39 declares blnd_token before usdc_token. The impl then stores its positional arguments into the BLND and USDC slots, so BLND and USDC addresses are swapped. Every "
   }
  ]
 }

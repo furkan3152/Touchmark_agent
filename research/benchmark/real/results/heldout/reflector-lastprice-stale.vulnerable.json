@@ -27,45 +27,35 @@
   {
    "source": "finding",
    "id": "reliability-ai-functional-defect-3",
-   "cited": "lib.rs:434",
-   "title": "prices() does not step back in time when a record is missing, so twap/prices return fewer or no records across a gap"
+   "cited": "lib.rs:435",
+   "title": "prices() does not step the timestamp when a record is missing, so gaps truncate history and TWAPs"
   }
  ],
  "findings": [
   {
    "id": "security-ai-account-takeover-1",
    "severity": "critical",
-   "title": "config() can be called by anyone until the first initialization, so an attacker can claim admin",
+   "title": "config() can be called by anyone until the contract is initialized, letting the first caller become admin",
    "file": "lib.rs",
    "line": 280,
-   "evidence": "lib.rs:280 `admin.require_auth();` \u00b7 lib.rs:284 `if admin != config.admin {` \u00b7 lib.rs:269 `Updates the contract configuration parameters. Can be invoked only by the admin account.`",
+   "evidence": "lib.rs:280 `admin.require_auth();`",
    "verifier": "partial",
    "verifier_severity": "high"
   },
   {
-   "id": "security-ai-account-takeover-9",
-   "severity": "critical",
-   "title": "set_admin writes the admin key with no authorization, so config() lets anyone install themselves as admin before initialization",
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "medium",
+   "title": "prices() does not step the timestamp when a record is missing, so gaps truncate history and TWAPs",
    "file": "lib.rs",
-   "line": 279,
-   "evidence": "extensions/env_extensions.rs:82 `get_instance_storage(&self).set(&ADMIN_KEY, admin);`",
-   "verifier": "partial",
+   "line": 434,
+   "evidence": "lib.rs:435 `continue;`",
+   "verifier": "confirmed",
    "verifier_severity": "medium"
-  },
-  {
-   "id": "reliability-ai-functional-defect-10",
-   "severity": "low",
-   "title": "Zero stored price reaches cross-price division, so x_price/x_twap panic for every pair using that asset",
-   "file": null,
-   "line": null,
-   "evidence": "lib.rs:516 `.fixed_div_floor(quote_asset_price.unwrap(), decimals),`",
-   "verifier": null,
-   "verifier_severity": null
   },
   {
    "id": "reliability-ai-functional-defect-2",
    "severity": "low",
-   "title": "div_floor is missing 'return' for zero inputs, so zero prices reach ilog10 and division by zero",
+   "title": "div_floor is missing its early return, so zero or negative prices make cross-price reads trap",
    "file": null,
    "line": null,
    "evidence": "extensions/i128_extensions.rs:27 `0_i128;`",
@@ -73,29 +63,9 @@
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-3",
-   "severity": "low",
-   "title": "prices() does not step back in time when a record is missing, so twap/prices return fewer or no records across a gap",
-   "file": "lib.rs",
-   "line": 434,
-   "evidence": "lib.rs:434 `if price.is_none() {`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
    "id": "reliability-ai-functional-defect-4",
    "severity": "low",
-   "title": "Duplicate assets in one add/config batch are both accepted, so the asset index and list disagree",
-   "file": null,
-   "line": null,
-   "evidence": "lib.rs:399 `if e.get_asset_index(asset.clone()).is_some() {`",
-   "verifier": null,
-   "verifier_severity": null
-  },
-  {
-   "id": "reliability-ai-functional-defect-5",
-   "severity": "low",
-   "title": "Asset indexes are truncated to u8, so more than 256 assets alias to the same price slots",
+   "title": "Asset indexes are truncated to u8 and set_price does not check the update vector length, so more than 256 assets alias each other",
    "file": null,
    "line": null,
    "evidence": "extensions/env_extensions.rs:181 `return Some(index.unwrap() as u8);`",
@@ -103,9 +73,19 @@
    "verifier_severity": null
   },
   {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "low",
+   "title": "Duplicate assets in one add_assets or config batch are accepted",
+   "file": null,
+   "line": null,
+   "evidence": "lib.rs:399 `if e.get_asset_index(asset.clone()).is_some() {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
    "id": "reliability-ai-functional-defect-6",
    "severity": "low",
-   "title": "Price TTL is truncated from u64 to u32 without a bound check",
+   "title": "Retention period documented in seconds is used as milliseconds, so history expires after about 90 seconds",
    "file": null,
    "line": null,
    "evidence": "lib.rs:362 `let ledgers_to_live: u32 = ((retention_period / 1000 / 5) + 1) as u32;`",
@@ -113,12 +93,22 @@
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-reliability-failure-7",
+   "id": "reliability-ai-functional-defect-8",
    "severity": "low",
-   "title": "Instance storage (admin, config, asset index) is only TTL-extended through a public bump(), and set_price never extends it",
-   "file": "extensions/env_extensions.rs",
-   "line": 191,
-   "evidence": "extensions/env_extensions.rs:191 `get_instance_storage(&self).extend_ttl(ledgers_to_live, ledgers_to_live);`",
+   "title": "Identity cross price returned without checking that the asset has a price",
+   "file": "lib.rs",
+   "line": 493,
+   "evidence": "lib.rs:493 `if base_asset == quote_asset {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Cross-price division at the call site has no zero or sign guard, so one zero or negative stored price traps every pair read that uses it",
+   "file": "lib.rs",
+   "line": 514,
+   "evidence": "lib.rs:514 `.fixed_div_floor(quote_asset_price.unwrap(), decimals),`",
    "verifier": "partial",
    "verifier_severity": "low"
   }
@@ -129,49 +119,49 @@
    "title": "Account authority changes",
    "file": "lib.rs",
    "line": 280,
-   "reason": "Contract-admin changes are gated by admin checks on most paths: update_contract (lib.rs:388-390) and add_assets/set_period/set_price go through panic_if_not_admin, which calls is_authorized and require_auth (extensions/env_extensions.rs:66, 70). After initialization, config() panics at lib.rs:281-28"
+   "reason": "Contract-admin changes are reachable from untrusted input before initialization. config() at lib.rs:279-294 is a public entrypoint; it only checks that the supplied admin signed (require_auth) and that admin equals config.admin, both of which an attacker controls by passing their own address. It the"
   },
   {
    "id": "A1",
    "title": "Caller authentication",
    "file": "lib.rs",
    "line": 280,
-   "reason": "Every admin-only route (add_assets, set_period, set_price, update_contract at lib.rs:321/337/353/389) goes through panic_if_not_admin, which calls require_auth and then compares to the stored admin (env_extensions.rs:66-70). config() at lib.rs:279-280 is the exception: before initialization it only "
+   "reason": "Every write routed through panic_if_not_admin (lib.rs:321, 337, 353, 389) is admin-gated. config() (lib.rs:279-294) is a privileged path that writes the admin, base asset, decimals, resolution, retention and initial assets, but it authenticates only the caller-supplied address. Its only checks are i"
   },
   {
    "id": "A3",
    "title": "Tenant isolation",
    "file": "lib.rs",
-   "line": 284,
-   "reason": "The only principal that can change shared oracle state is the stored admin. Admin-only functions correctly bind to it. The exception is config() before initialization: the check at line 284 compares the caller-supplied admin to the caller-supplied config.admin, so the caller chooses the admin who ow"
+   "line": 280,
+   "reason": "The contract has several caller identities (any account can call config() and any account can later try admin routes). The admin record is a single global slot. Before initialization, config() only proves that the caller controls the admin address it supplies. Whoever calls first becomes the admin f"
   },
   {
-   "id": "A7",
-   "title": "Verification of incoming authentication",
+   "id": "A4",
+   "title": "Approvals fail closed",
    "file": "lib.rs",
    "line": 280,
-   "reason": "The earlier hold was wrong. Incoming authentication here is Soroban require_auth, which does bind the signature to the invoking address, but config() only applies it to the caller-supplied admin argument. config() then checks is_initialized (line 281) and that admin == config.admin (line 284), and b"
+   "reason": "The admin gate in extensions/env_extensions.rs:70 fails closed once an admin exists. However, the authority-setting path config() bypasses that gate while no admin is stored. The check is only that the caller authenticates as the address it supplies, so there is no approval or reviewer control at al"
   },
   {
    "id": "M2",
    "title": "Controls outside the prompt",
    "file": "lib.rs",
    "line": 280,
-   "reason": "Admin-only writes (set_price, add_assets, set_period, update_contract, bump-free paths) are enforced in code through panic_if_not_admin -> is_authorized, which calls invoker.require_auth() and compares against the stored admin (extensions/env_extensions.rs:65-71, 184-188). The rule that config() may"
+   "reason": "The admin-only writes are enforced in code. panic_if_not_admin is called in add_assets (lib.rs:321), set_period (lib.rs:337), set_price (lib.rs:353) and update_contract (lib.rs:389), and is_authorized requires auth and compares the stored admin (extensions/env_extensions.rs:66 and 70). config() is t"
   },
   {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
    "file": "lib.rs",
-   "line": 269,
-   "reason": "The documented claim that config() can be invoked only by the admin account is false before the first initialization. The code at lib.rs:280 and lib.rs:284 only ties the caller to the admin address supplied in the call, so the documented restriction is not enforced on the path the docs describe. Thi"
+   "line": 399,
+   "reason": "The docs say add_assets panics if the assets are already added. The check at lib.rs:399 only covers assets already in storage, so repeats inside one batch get through (recorded as reliability-ai-functional-defect-5). The period documentation also disagrees with the code: lib.rs:330 says seconds, but"
   },
   {
    "id": "M5",
    "title": "Core function works",
-   "file": "extensions/i128_extensions.rs",
-   "line": 27,
-   "reason": "The normal write and read paths work: set_price stores records with TTL through the admin check (lib.rs:352-376, env_extensions.rs:126-136), lastprice/prices/price read them back, and the units are consistently milliseconds (resolution and retention are divided by 1000 for public values and ledger c"
+   "file": "lib.rs",
+   "line": 362,
+   "reason": "Most of the core path works as shipped. The SDK calls match the soroban-sdk storage API used here (instance and temporary get/set, extend_ttl with two arguments, deployer().update_current_contract_wasm). Keys do not collide: encode_price_record_key puts the timestamp in the high 64 bits and the u8 a"
   }
  ]
 }

@@ -1,0 +1,276 @@
+{
+ "case": "anchor-observer-asset-mismatch-credited",
+ "side": "vulnerable",
+ "repo": "stellar/java-stellar-anchor-sdk",
+ "commit": "c78c9696ab5440be0315656185426b5f25116ae5",
+ "audited": "https://github.com/stellar/java-stellar-anchor-sdk/tree/c78c9696ab5440be0315656185426b5f25116ae5/platform/src/main/java/org/stellar/anchor/platform/observer",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "stellar/DefaultPaymentListener.java",
+   "line_start": 438,
+   "line_end": 449
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-control-bypass-1",
+   "cited": "stellar/DefaultPaymentListener.java:444",
+   "title": "Asset mismatch is only logged, so a worthless issued token credits a pending SEP-24/6/31 transaction"
+  },
+  {
+   "source": "finding",
+   "id": "security-ai-unauthorized-payment-11",
+   "cited": "stellar/DefaultPaymentListener.java:444",
+   "title": "Incoming payment asset is never bound to the expected asset; mismatch is only logged"
+  },
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-7",
+   "cited": "stellar/DefaultPaymentListener.java:428",
+   "title": "Null SAC asset is dereferenced in validate(), throwing NullPointerException out of the listener"
+  },
+  {
+   "source": "ledger",
+   "id": "V7",
+   "cited": "stellar/DefaultPaymentListener.java:444",
+   "title": "Incoming payment verification"
+  },
+  {
+   "source": "ledger",
+   "id": "A4",
+   "cited": "stellar/DefaultPaymentListener.java:444",
+   "title": "Approvals fail closed"
+  },
+  {
+   "source": "ledger",
+   "id": "M2",
+   "cited": "stellar/DefaultPaymentListener.java:444",
+   "title": "Controls outside the prompt"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "stellar/DefaultPaymentListener.java:443",
+   "title": "Stated purpose versus behaviour"
+  },
+  {
+   "source": "ledger",
+   "id": "M5",
+   "cited": "stellar/DefaultPaymentListener.java:428",
+   "title": "Core function works"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "Asset mismatch is only logged, so a worthless issued token credits a pending SEP-24/6/31 transaction",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 444,
+   "evidence": "stellar/DefaultPaymentListener.java:444 `if (!sepTransaction.getAmountInAsset().equals(paymentAssetName)) {` \u00b7 stellar/DefaultPaymentListener.java:443 `String paymentAssetName = \"stellar:\" + getSep11AssetName(ledgerPayment.getAsset());`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "security-ai-unauthorized-payment-11",
+   "severity": "critical",
+   "title": "Incoming payment asset is never bound to the expected asset; mismatch is only logged",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 444,
+   "evidence": "stellar/DefaultPaymentListener.java:444 `if (!sepTransaction.getAmountInAsset().equals(paymentAssetName)) {` \u00b7 stellar/DefaultPaymentListener.java:145 `ledgerPayment.getTo(), memo, SepTransactionStatus.PENDING_SENDER.toString());`",
+   "verifier": "confirmed",
+   "verifier_severity": "critical"
+  },
+  {
+   "id": "reliability-ai-functional-defect-14",
+   "severity": "medium",
+   "title": "Horizon SAC transfer branch throws on empty balance changes and sets PUBLISHER_ERROR",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 269,
+   "evidence": "stellar/HorizonPaymentObserver.java:269 `invokeOp.getAssetBalanceChanges().get(0);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-8",
+   "severity": "medium",
+   "title": "getEntries().get(0) throws IndexOutOfBoundsException for an unknown SAC, outside the IOException handler",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/SacToAssetMapper.java:76 `LedgerEntry.LedgerEntryData.fromXdrBase64(response.getEntries().get(0).getXdr())`",
+   "verifier": "unverifiable",
+   "verifier_severity": ""
+  },
+  {
+   "id": "reliability-ai-reliability-failure-2",
+   "severity": "medium",
+   "title": "Platform notification failure is swallowed and the on-chain deposit is never retried",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 237,
+   "evidence": "stellar/DefaultPaymentListener.java:237 `errorEx(ex);`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-3",
+   "severity": "medium",
+   "title": "Horizon cursor is saved in finally even when event processing failed, so the failed payment is skipped",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 219,
+   "evidence": "stellar/HorizonPaymentObserver.java:219 `saveHorizonCursor(operationResponse.getPagingToken());`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-4",
+   "severity": "medium",
+   "title": "Stellar RPC observer drops a transfer event on any processing error and still advances the cursor",
+   "file": "stellar/StellarRpcPaymentObserver.java",
+   "line": 203,
+   "evidence": "stellar/StellarRpcPaymentObserver.java:203 `} catch (Exception ex) {`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-5",
+   "severity": "medium",
+   "title": "Horizon restart can skip a whole window of payments when the stored cursor is behind",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 167,
+   "evidence": "stellar/HorizonPaymentObserver.java:167 `return String.valueOf(Math.max(lastStored, latest - MAX_RESULTS));`",
+   "verifier": "confirmed",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-17",
+   "severity": "low",
+   "title": "RPC observer builds the event it dispatches from the ledger op, so the listener's event-vs-ledger cross-check can never fail",
+   "file": "stellar/StellarRpcPaymentObserver.java",
+   "line": 383,
+   "evidence": "stellar/StellarRpcPaymentObserver.java:383 `.sep11Asset(AssetHelper.getSep11AssetName(paymentOp.getAsset()))`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-18",
+   "severity": "low",
+   "title": "Event i128 amount is truncated to 64 bits with longValue(); the value is computed but unused",
+   "file": "stellar/StellarRpcPaymentObserver.java",
+   "line": 262,
+   "evidence": "stellar/StellarRpcPaymentObserver.java:262 `amount = Scv.fromInt128(scValue).longValue();`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-6",
+   "severity": "low",
+   "title": "Horizon restart throws NumberFormatException when the latest cursor fetch fails, killing the status watcher",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/HorizonPaymentObserver.java:160 `long latest = Long.parseLong(strLatestFromNetwork);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-7",
+   "severity": "low",
+   "title": "Null SAC asset is dereferenced in validate(), throwing NullPointerException out of the listener",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 428,
+   "evidence": "stellar/DefaultPaymentListener.java:428 `.contains(ledgerPayment.getAsset().getDiscriminant())) {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Shared SAC cache is an unsynchronized HashMap written from two observer threads",
+   "file": "stellar/SacToAssetMapper.java",
+   "line": 18,
+   "evidence": "stellar/SacToAssetMapper.java:18 `HashMap<String, Asset> sacToAssetMap = new HashMap<>();`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-10",
+   "severity": "low",
+   "title": "Transient observed accounts are evicted after 30 idle days, so later deposits to them are silently ignored",
+   "file": null,
+   "line": null,
+   "evidence": "stellar/PaymentObservingAccountsManager.java:146 `allAccounts.remove(acct.account);`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-cross-user-access-12",
+   "severity": "low",
+   "title": "Incoming payment matched to a SEP transaction by destination and memo only, without binding the payer",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 145,
+   "evidence": "stellar/DefaultPaymentListener.java:145 `ledgerPayment.getTo(), memo, SepTransactionStatus.PENDING_SENDER.toString());`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V7",
+   "title": "Incoming payment verification",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 444,
+   "reason": "Destination and memo binding hold: validate() rejects empty memos (lines 399-413), SEP-31/24/6 lookups are keyed on ledgerPayment.getTo() and the memo (lines 143-145, 199-203, 240-245), ambiguous matches are refused (lines 154, 212, 254), and amount is checked as a lower bound (line 453). Asset bind"
+  },
+  {
+   "id": "S8",
+   "title": "Failure and rollback paths",
+   "file": "stellar/HorizonPaymentObserver.java",
+   "line": 219,
+   "reason": "The failure paths leave the stream cursor advanced past a payment that was not processed. processOperation catches EventPublishException, TransactionException and Throwable (HorizonPaymentObserver.java:207-217), sets an error status, and then always saves the cursor in finally (line 219). A listener"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 145,
+   "reason": "Several customers' pending transactions share the anchor's receiving account. The routing lookup uses only destination and memo, with no check on the payer. A payment from one account can advance another customer's SEP-31 transaction, and the same applies to the SEP-24/6 lookups at lines 200-203 and"
+  },
+  {
+   "id": "A4",
+   "title": "Approvals fail closed",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 444,
+   "reason": "The earlier answer relied on the amount gate at line 453. That gate does fail closed for an insufficient amount (line 463 returns false). But the asset check that sits right before it is a policy gate that fails open. At lines 444-449 a mismatch between the asset the SEP transaction expects and the "
+  },
+  {
+   "id": "A7",
+   "title": "Verification of incoming authentication",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 145,
+   "reason": "The incoming payment is the artifact the agent verifies. The check binds it only to destination, memo and a lower-bound amount. It is not bound to the payer or to a request-specific expected asset. checkAssetAmountSufficient at line 444 only logs an asset mismatch, so a payment of another asset with"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 444,
+   "reason": "The asset binding is enforced only by a debugF log at lines 445-449. No return follows, so a payment in any issued asset passes checkAssetAmountSufficient. The check is a code check that does nothing, not a prompt rule. Keyword filters are not involved."
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 443,
+   "reason": "The code claims to bind the payment to the expected asset (\"Compare asset code\"), and the cross-check at lines 122-139 refuses on mismatch between event and ledger data. The SEP-asset binding at lines 443-449 does not refuse, so the stated control (a payment must match the expected asset) is not enf"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "stellar/DefaultPaymentListener.java",
+   "line": 428,
+   "reason": "The core SAC-token path fails as shipped. When getAssetFromSac returns null for a contract that is not a Stellar Asset Contract (SacToAssetMapper lines 88-89) or the metadata is missing, validate() dereferences a null asset and throws NullPointerException out of the listener. Separately, SacToAssetM"
+  }
+ ]
+}

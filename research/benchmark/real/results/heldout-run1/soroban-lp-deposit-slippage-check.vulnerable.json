@@ -1,0 +1,156 @@
+{
+ "case": "soroban-lp-deposit-slippage-check",
+ "side": "vulnerable",
+ "repo": "stellar/soroban-examples",
+ "commit": "186443aab0bf8b7c2673428c38708bf38cb772ab",
+ "audited": "https://github.com/stellar/soroban-examples/tree/186443aab0bf8b7c2673428c38708bf38cb772ab/liquidity_pool",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "src/lib.rs",
+   "line_start": 143,
+   "line_end": 149
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "reliability-ai-functional-defect-4",
+   "cited": "src/lib.rs:145",
+   "title": "Deposit min_a slippage bound is never enforced on the amount_a branch"
+  },
+  {
+   "source": "ledger",
+   "id": "V8",
+   "cited": "src/lib.rs:145",
+   "title": "Slippage and quoted prices"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "src/lib.rs:145",
+   "title": "Stated purpose versus behaviour"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-7",
+   "severity": "critical",
+   "title": "Share-token WASM hash is caller-chosen and never pinned",
+   "file": "src/token.rs",
+   "line": 10,
+   "evidence": "src/token.rs:10 `token_wasm_hash: BytesN<32>,`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-account-takeover-1",
+   "severity": "high",
+   "title": "initialize can be called again by anyone, re-pointing a live pool at attacker tokens and draining its existing token_a reserves",
+   "file": "src/lib.rs",
+   "line": 188,
+   "evidence": "src/lib.rs:188 `fn initialize(e: Env, token_wasm_hash: BytesN<32>, token_a: Address, token_b: Address) {`",
+   "verifier": "confirmed",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "medium",
+   "title": "Deposit min_a slippage bound is never enforced on the amount_a branch",
+   "file": "src/lib.rs",
+   "line": 145,
+   "evidence": "src/lib.rs:145 `if amount_a > desired_a || desired_a < min_a {`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-2",
+   "severity": "low",
+   "title": "Pool state lives in instance storage with no TTL extension, so the pool can be archived and its liquidity locked",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:33 `e.storage().instance().get(&DataKey::TokenA).unwrap()`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "i128 products in deposit, swap invariant and share minting overflow once reserves are large, so these calls panic",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:298 `if new_inv_a * new_inv_b < old_inv_a * old_inv_b {`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
+   "severity": "low",
+   "title": "Swap and deposit do not validate out, desired amounts or sell_amount sign",
+   "file": null,
+   "line": null,
+   "evidence": "src/lib.rs:259 `let sell_amount = (n / d) + 1;`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "V8",
+   "title": "Slippage and quoted prices",
+   "file": "src/lib.rs",
+   "line": 145,
+   "reason": "For deposit, the minimum-received bound min_a is not enforced on the branch that computes amount_a from the pool ratio. The guard tests the caller's own desired_a against min_a instead of the computed amount_a. The price the depositor accepts can therefore move past their min_a without a revert. Swa"
+  },
+  {
+   "id": "S6",
+   "title": "Account authority changes",
+   "file": "src/lib.rs",
+   "line": 188,
+   "reason": "The contract's admin-level state (token_a, token_b, share token, reserves) is set by initialize. initialize has no require_auth and no already-initialized guard. Anyone can call it again on a live pool. It re-points token_a and token_b and deploys a new share token whose admin is the pool, and it re"
+  },
+  {
+   "id": "S7",
+   "title": "Soroban contract checks",
+   "file": "src/lib.rs",
+   "line": 188,
+   "reason": "Two parts. (1) require_auth: deposit (line 215), swap (247) and withdraw (313) each call require_auth on the to address, which is the address whose balances change, so those hold. initialize (188) is state-changing and has no require_auth, so it fails. (2) Storage: there are no per-user records. Use"
+  },
+  {
+   "id": "A1",
+   "title": "Caller authentication",
+   "file": "src/lib.rs",
+   "line": 188,
+   "reason": "initialize mutates the pool's token configuration and reserves with no caller authentication: there is no require_auth or admin check before create_contract and put_token_a/put_token_b run. Any caller can reach it. The fund-moving routes deposit, swap and withdraw do authenticate the account they de"
+  },
+  {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "src/lib.rs",
+   "line": 188,
+   "reason": "The pool is shared state across all depositors. Deposit, swap and withdraw are keyed to the caller: each calls to.require_auth() (lines 215, 247, 313) and moves tokens only from or to that address, so one user cannot spend another's balance. The break is initialize: any caller can replace the shared"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "src/lib.rs",
+   "line": 188,
+   "reason": "The value-moving paths are enforced in code: deposit, swap and withdraw each call to.require_auth() (lib.rs:215, 247, 313). The control that is missing is on initialize, which sets the token addresses that every later transfer uses and has no require_auth or admin check. Anyone can call it again on "
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "src/lib.rs",
+   "line": 145,
+   "reason": "The deposit API promises slippage protection through min_a and min_b, and the doc comment says a deposit is sized from reserves. On the amount_a branch (lib.rs:143-148) the min_b bound is never checked, and the min_a check tests desired_a instead of amount_a. A deposit can therefore settle below the"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "src/lib.rs",
+   "line": 298,
+   "reason": "The core swap, deposit and mint paths use i128 products of reserves and amounts with no checked arithmetic. Once reserves are large, these products overflow and the call panics, so the pool stops working for large balances. The SDK and token calls, the types and the storage keys are otherwise consis"
+  }
+ ]
+}

@@ -5,7 +5,7 @@
  "commit": "5fe2c35c0d177551f76fb8079fb6233c55b624a4",
  "audited": "https://github.com/stellar/js-stellar-sdk/tree/5fe2c35c0d177551f76fb8079fb6233c55b624a4/src/http-client",
  "model": "claude-haiku-5-5",
- "decision": "needs_fixes",
+ "decision": "needs_evidence",
  "defect_lines": [
   {
    "path": "fetch-client.ts",
@@ -21,9 +21,9 @@
  "matched": [
   {
    "source": "finding",
-   "id": "security-ai-ssrf-4",
+   "id": "security-ai-ssrf-7",
    "cited": "fetch-client.ts:447",
-   "title": "Redirect hops are not checked against internal or private destinations (SSRF)"
+   "title": "Bounded fetch follows redirects to any host, including private or loopback addresses"
   },
   {
    "source": "ledger",
@@ -34,19 +34,39 @@
  ],
  "findings": [
   {
-   "id": "security-ai-control-bypass-3",
-   "severity": "high",
-   "title": "Cross-origin header allowlist is skipped on the default request path",
+   "id": "security-ai-secret-exposure-1",
+   "severity": "medium",
+   "title": "Custom credential headers forwarded cross-origin when only maxContentLength is set",
    "file": "fetch-client.ts",
-   "line": 539,
-   "evidence": "fetch-client.ts:539 `config.maxRedirects !== undefined ||` \u00b7 fetch-client.ts:285 `const SAFE_CROSS_ORIGIN_HEADERS = new Set([`",
-   "verifier": "partial",
+   "line": 387,
+   "evidence": "fetch-client.ts:387 `if (!managedRedirects) {`",
+   "verifier": "confirmed",
    "verifier_severity": "medium"
   },
   {
-   "id": "reliability-ai-functional-defect-1",
+   "id": "reliability-ai-functional-defect-2",
    "severity": "low",
-   "title": "Caller AbortSignal is overwritten and ignored on the managed path; cancel does not abort the request",
+   "title": "304 Not Modified treated as a redirect, so conditional requests fail on the bounded path",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:432 `redirect === \"manual\" && response.status >= 300 && response.status < 400;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-3",
+   "severity": "low",
+   "title": "postForm sends a JSON body labelled as form-urlencoded on the bounded adapter path",
+   "file": "fetch-client.ts",
+   "line": 157,
+   "evidence": "fetch-client.ts:157 `return JSON.stringify(data);`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-4",
+   "severity": "low",
+   "title": "Cancel token and caller signal do not abort the bounded fetch",
    "file": "fetch-client.ts",
    "line": 628,
    "evidence": "fetch-client.ts:628 `config.signal = abortController.signal;`",
@@ -54,19 +74,59 @@
    "verifier_severity": "low"
   },
   {
-   "id": "reliability-ai-functional-defect-2",
+   "id": "reliability-ai-functional-defect-5",
    "severity": "low",
-   "title": "postForm sends an object body as JSON labelled as form-urlencoded on the managed path",
-   "file": "fetch-client.ts",
-   "line": 154,
-   "evidence": "fetch-client.ts:154 `if (!headers.has(\"content-type\")) { headers.set(\"content-type\", \"application/json\"); }`",
+   "title": "CancelToken.throwIfRequested does nothing when cancel() is called without a reason",
+   "file": "types.ts",
+   "line": 127,
+   "evidence": "types.ts:127 `if (this.reason) {`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
-   "id": "security-ai-ssrf-4",
+   "id": "reliability-ai-functional-defect-8",
    "severity": "low",
-   "title": "Redirect hops are not checked against internal or private destinations (SSRF)",
+   "title": "maxRedirects N>0 is not enforced in browser builds (native follow up to browser limit)",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:394 `redirect = \"follow\";`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-functional-defect-9",
+   "severity": "low",
+   "title": "Bounded adapter serializes undefined/null params as the strings \"undefined\"/\"null\"",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:111 `const qs = new URLSearchParams(`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-secret-exposure-6",
+   "severity": "low",
+   "title": "307/308 redirects re-send the request body to a cross-origin host",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:268 `if (status === 307 || status === 308) return init;`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-ssrf-10",
+   "severity": "low",
+   "title": "HTTPS-to-HTTP downgrade check is skipped on the native follow path when maxRedirects is unset",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:388 `redirect = \"follow\";`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-ssrf-7",
+   "severity": "low",
+   "title": "Bounded fetch follows redirects to any host, including private or loopback addresses",
    "file": null,
    "line": null,
    "evidence": "fetch-client.ts:447 `const target = new URL(location, from);`",
@@ -80,28 +140,21 @@
    "title": "Outbound requests and file paths",
    "file": "fetch-client.ts",
    "line": 447,
-   "reason": "Redirect targets from the Location header are followed with only a scheme check (line 450) and an https-to-http downgrade check (line 453). No host, IP-range or private-address check exists. The managed path (boundedFetchAdapter, lines 419-460) therefore follows a counterparty-supplied redirect to 1"
-  },
-  {
-   "id": "M2",
-   "title": "Controls outside the prompt",
-   "file": "fetch-client.ts",
-   "line": 539,
-   "reason": "Code-enforced controls exist for redirects, body size, protocol and https-to-http downgrade (fetch-client.ts:183, 450, 453), but the cross-origin credential-header allowlist (fetch-client.ts:324) only runs on the bounded adapter path. The default adapter branch at lines 539-555 sends the caller's he"
+   "reason": "The bounded adapter fetches whatever URL the caller gives (line 413/421) and follows Location redirects with no host or IP restriction. Enforced controls are limited to scheme checks (line 450: \"if (target.protocol !== \\\"http:\\\" && target.protocol !== \\\"https:\\\") {\") and the https-to-http downgrade "
   },
   {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
    "file": "fetch-client.ts",
-   "line": 285,
-   "reason": "The file describes a generic HTTP client with \"redirect, size, timeout and cross-origin header enforcement\". The code does implement those controls, but only on the bounded adapter. The default path (fetch-client.ts:539-555) skips them, so the stated cross-origin protection does not hold for normal "
+   "line": 394,
+   "reason": "The stated purpose is a bounded HTTP wrapper that enforces maxRedirects and maxContentLength. maxContentLength is enforced on both the Node and browser paths (readBodyBounded, line 183). maxRedirects is only enforced in Node (line 389-390). In browser builds with maxRedirects N>0 the code sets redir"
   },
   {
    "id": "M5",
    "title": "Core function works",
    "file": "fetch-client.ts",
-   "line": 628,
-   "reason": "The core request path does not behave as documented in two places. First, the caller's AbortSignal is overwritten at line 628 with an internal controller that nothing ever aborts unless cancelToken fires, so a caller's abort does nothing (reliability-ai-functional-defect-1). Second, postForm sends a"
+   "line": 157,
+   "reason": "The default feaxios path works. The bounded adapter (used whenever maxRedirects or maxContentLength is set) has defects that break its core behaviour. postForm sends a JSON body under a form-urlencoded header (line 157, already recorded). Conditional 304 requests fail (line 432, already recorded). C"
   }
  ]
 }

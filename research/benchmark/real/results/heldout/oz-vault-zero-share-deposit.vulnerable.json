@@ -16,22 +16,28 @@
  "matched": [
   {
    "source": "finding",
-   "id": "economic-ai-economic-loss-3",
+   "id": "economic-ai-economic-loss-2",
    "cited": "storage.rs:352",
-   "title": "deposit and mint accept deposits that mint zero shares (donation-style value loss for depositors)"
+   "title": "Deposit and mint have no minimum-shares slippage bound"
   },
   {
    "source": "ledger",
-   "id": "M5",
+   "id": "V8",
    "cited": "storage.rs:352",
-   "title": "Core function works"
+   "title": "Slippage and quoted prices"
+  },
+  {
+   "source": "ledger",
+   "id": "M4",
+   "cited": "storage.rs:352",
+   "title": "Stated purpose versus behaviour"
   }
  ],
  "findings": [
   {
-   "id": "economic-ai-economic-loss-3",
+   "id": "economic-ai-economic-loss-2",
    "severity": "critical",
-   "title": "deposit and mint accept deposits that mint zero shares (donation-style value loss for depositors)",
+   "title": "Deposit and mint have no minimum-shares slippage bound",
    "file": "storage.rs",
    "line": 352,
    "evidence": "storage.rs:352 `let shares: i128 = Self::preview_deposit(e, assets);`",
@@ -39,9 +45,9 @@
    "verifier_severity": "medium"
   },
   {
-   "id": "security-ai-account-takeover-2",
+   "id": "security-ai-control-bypass-3",
    "severity": "medium",
-   "title": "set_decimals_offset has no authorization and can be set by the first caller",
+   "title": "set_decimals_offset has no authorization and is first-come-first-set",
    "file": "storage.rs",
    "line": 598,
    "evidence": "storage.rs:598 `pub fn set_decimals_offset(e: &Env, offset: u32) {`",
@@ -49,58 +55,75 @@
    "verifier_severity": "low"
   },
   {
-   "id": "security-ai-control-bypass-1",
+   "id": "reliability-ai-reliability-failure-5",
    "severity": "low",
-   "title": "Unauthenticated first-caller initialisation of vault asset and decimals offset",
+   "title": "Vault configuration in instance storage has no TTL extension; expiry blocks all vault operations",
    "file": null,
    "line": null,
-   "evidence": "storage.rs:550 `pub fn set_asset(e: &Env, asset: Address) {`",
+   "evidence": "storage.rs:127 `.get(&VaultStorageKey::AssetAddress)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "low",
+   "title": "Unauthenticated set_asset can be front-run to bind the vault to a malicious token",
+   "file": null,
+   "line": null,
+   "evidence": "storage.rs:550 `pub fn set_asset(e: &Env, asset: Address) {` \u00b7 storage.rs:556 `e.storage().instance().set(&VaultStorageKey::AssetAddress, &asset);`",
    "verifier": null,
    "verifier_severity": null
   }
  ],
  "failing_checks": [
   {
-   "id": "V5",
-   "title": "Asset identity and units",
+   "id": "V4",
+   "title": "Recipient binding",
+   "file": "storage.rs",
+   "line": 556,
+   "reason": "Every token transfer the vault makes goes to the contract address stored by set_asset, and set_asset has no caller authentication (line 550-557). Whoever first calls it before the operator binds the vault can choose the token contract that all deposits and withdrawals use. The receiver of withdraw/r"
+  },
+  {
+   "id": "V8",
+   "title": "Slippage and quoted prices",
+   "file": "storage.rs",
+   "line": 352,
+   "reason": "deposit and mint take no minimum-shares-out or maximum-assets-in argument. The share amount is computed at execution from the live totalAssets, which is the token balance of the vault (line 151 and 648). A third party can donate tokens to the vault in front of a victim's deposit and so reduce the sh"
+  },
+  {
+   "id": "S6",
+   "title": "Account authority changes",
    "file": "storage.rs",
    "line": 550,
-   "reason": "Identity and units hold: assets are contract Addresses, amounts are i128 base units, negatives are rejected (627-628, 675-676). But the asset a deposit is paid in is chosen by whoever first calls set_asset, with no auth (550-556). The check's bar requires the asset that is accepted to be the asset t"
+   "reason": "set_asset (line 550) and set_decimals_offset (line 598) change the vault's underlying asset and share-math configuration with no caller check. Only the one-time \"already set\" guard applies. The vault has no admin concept in the submitted code, so any account can make these changes first. This is con"
   },
   {
    "id": "S7",
    "title": "Soroban contract checks",
    "file": "storage.rs",
-   "line": 550,
-   "reason": "The state-changing entrypoints deposit, mint, withdraw and redeem each call operator.require_auth() (storage.rs:346, 393, 439, 485), which covers the address that pays or receives value, so those hold. Two state-changing functions do not require auth at all: set_asset (line 550-557) writes the under"
+   "line": 556,
+   "reason": "The user-facing functions deposit, mint, withdraw and redeem (storage.rs:346, 393, 439, 485) call require_auth on operator. For operator != owner or from, the owner's shares are spent through Base::spend_allowance (796) and the depositor's tokens through transfer_from (752), so the right address is "
   },
   {
    "id": "A1",
    "title": "Caller authentication",
    "file": "storage.rs",
    "line": 550,
-   "reason": "The value-moving routes deposit, mint, withdraw and redeem each call operator.require_auth() (storage.rs:346, 393, 439, 485), so they require an authenticated caller. The configuration routes do not: set_asset (storage.rs:550-557) and set_decimals_offset (storage.rs:598-607) contain no require_auth "
-  },
-  {
-   "id": "A3",
-   "title": "Tenant isolation",
-   "file": "storage.rs",
-   "line": 550,
-   "reason": "Withdraw and redeem are tenant-safe: when operator != owner, storage.rs:795-797 calls Base::spend_allowance(owner, operator, shares), so a caller cannot spend another holder's shares without an allowance. Deposit with operator != from uses transfer_from against the depositor's allowance (storage.rs:"
+   "reason": "The value-moving and signing routes deposit, mint, withdraw and redeem each call operator.require_auth() (storage.rs:346, 393, 439, 485), so they need an authenticated caller. The configuration routes set_asset (storage.rs:550-556) and set_decimals_offset (storage.rs:598-606) have no caller authenti"
   },
   {
    "id": "M2",
    "title": "Controls outside the prompt",
    "file": "storage.rs",
    "line": 550,
-   "reason": "The operator controls on deposit, mint, withdraw and redeem are enforced in code (storage.rs:346 `operator.require_auth();`, storage.rs:393, 439, 485). But the safety rules the docs say are required for initialisation are not enforced: set_asset (storage.rs:550-557) and set_decimals_offset (storage."
+   "reason": "The user-facing value paths are enforced in code: deposit, mint, withdraw and redeem each call operator.require_auth() (storage.rs:346, 393, 439, 485), and the allowance is spent for operator != owner (storage.rs:795-797). The safety rule that matters most for funds, who may bind the underlying asse"
   },
   {
-   "id": "M5",
-   "title": "Core function works",
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
    "file": "storage.rs",
    "line": 352,
-   "reason": "The arithmetic and call paths that can be read in the submitted files look right: token::Client transfer and transfer_from with the correct argument order (storage.rs:747, 752, 803), checked_pow and checked_add with MathOverflow errors, and mul_div_with_rounding with the intended rounding. The core "
+   "reason": "The documentation at storage.rs:68-73 claims that the default offset of 0 makes the inflation attack non-profitable. The code that should enforce this is absent. The default is 0 (get_decimals_offset, storage.rs:823-824, unwrap_or(0)). deposit at storage.rs:352 accepts zero shares with no minimum, a"
   }
  ]
 }

@@ -15,61 +15,77 @@ decoys. This folder complements it with code that nobody wrote for us.
 
 Each audit was submitted to the public demo (`run_live.py`) as a user would submit a repository: the GitHub folder
 pinned to the commit, model review on, no hint about the case. Model: Claude Haiku 5.5 at medium effort. Every
-report is in [`results/`](results), one compact file per audit with the commit audited, the defect's lines, the
-findings that matched them and all other findings; [`results/summary.json`](results/summary.json) holds the scores.
+report is published, one compact file per audit with the commit audited, the defect's lines, the findings that
+matched them and all other findings: [`results/heldout`](results/heldout) (run 2),
+[`results/heldout-run1`](results/heldout-run1) (run 1), [`results/dev`](results/dev),
+[`results/dev-haiku`](results/dev-haiku); [`results/summary.json`](results/summary.json) holds the scores.
 
-**Held-out set (22 cases, 11 repositories): 20 detected.**
+The held-out set was run twice. **Run 1** used the auditor of 1–2 November 2026; two infrastructure defects it
+exposed were fixed during the run and the affected cases re-run (‡). **Run 2** used the final auditor (commit
+`5afdb99`) for every case. Between the runs, the auditor learned to rate an operator's own model or API bills and
+third-party API keys apart from funds and signing keys, to read signing and account-authority capabilities as
+Stellar ones only, to cite the call site rather than a helper, and to refuse code comments as evidence; one lesson
+(rounding direction) was added after run 1 missed `soroswap-pair-fee-floor-rounding` (◊).
 
-| Case | Repository | Detected | Fixed commit clean |
-|---|---|---|---|
-| `sdp-tss-unknown-outcome-unlock-double-pay` † | stellar-disbursement-platform-backend | yes | yes |
-| `sdp-sep24-get-transaction-cross-user` † | stellar-disbursement-platform-backend | yes | yes |
-| `sdp-payment-cancel-toctou-race` | stellar-disbursement-platform-backend | yes | |
-| `sdp-apikey-cache-cross-tenant` † | stellar-disbursement-platform-backend | yes | |
-| `sdp-auth-tenant-header-fallback` † | stellar-disbursement-platform-backend | yes ‡ | |
-| `go-recoverysigner-unverified-email` | stellar/go | yes | yes |
-| `anchor-observer-asset-mismatch-credited` † | java-stellar-anchor-sdk | yes | no § |
-| `anchor-strict-send-sendamount-credited` † | java-stellar-anchor-sdk | yes | yes |
-| `anchor-sep10-threshold-sign-extension` | java-stellar-anchor-sdk | yes | |
-| `blend-backstop-share-inflation` | blend-contracts | yes | |
-| `blend-self-liquidation-position-duplication` | blend-contracts | yes | |
-| `soroswap-pair-fee-floor-rounding` | soroswap/core | **no** | |
-| `soroban-mintlock-limit-not-pinned-to-token` | soroban-examples | yes | |
-| `soroban-lp-deposit-slippage-check` | soroban-examples | yes | |
-| `oz-vault-zero-share-deposit` | OpenZeppelin/stellar-contracts | yes | |
-| `reflector-lastprice-stale` | reflector-contract | yes | |
-| `anchor-server-withdraw-any-payment-completes` † | django-polaris | yes | |
-| `polaris-multisig-deposit-stuck-pending-signatures` | django-polaris | yes | |
-| `jssdk-readchallengetx-no-server-signature` | js-stellar-sdk | yes | yes |
-| `jssdk-redirect-leaks-custom-auth-headers` | js-stellar-sdk | yes | no § |
-| `walletsdk-sep10-domain-signer-swaps-tx` | typescript-wallet-sdk | yes | yes |
-| `walletsdk-recovery-duplicate-signers-lockout` | typescript-wallet-sdk | **no** ¶ | |
+| | Run 1 | Run 2 (final auditor) |
+|---|---|---|
+| Detected | **20 of 22** | **19 of 21** (one case not run: the deployment's daily token budget ran out) |
+| Detected, without the 7 cases marked † | 13 of 15 | 11 of 13 (also without ◊) |
+| Fixed commit clean | 6 of 8 | 2 of 3 |
 
-Fixed commits were audited for the eight critical and high-impact cases: 6 are clean.
+Detected in at least one of the two runs: **21 of 22**. The two cases run 2 missed were found in run 1, and the
+one run 1 missed besides ◊ was a near miss (¶): a single Haiku run is not deterministic, so a defect found once can
+be missed the next time, and the other way round.
 
-- † **Not fully independent.** Before this run, an earlier run on two of these cases showed misses, and three of the
-  review's lessons (`unknown-outcome-unlock`, `cross-tenant-lookup`, `issuer-and-amount-received` in
-  `backend/app/stellar/lessons.py`) were written with the held-out set in view. They are general Stellar rules, but
-  they cover the seven cases marked †. **On the other 15 cases, 13 were detected.**
-- ‡ Missed on the first run because a file review cut off by the request time limit was never resumed. The fix
-  (`DeepReviewer._unit_todo`) was made and the case re-run; `results/` holds the re-run. The first run also exposed
-  that GitHub folders under `@scope/` were rejected, which made `walletsdk-sep10-domain-signer-swaps-tx` unauditable;
-  it was fixed and that case re-run.
+| Case | Repository | Run 1 | Run 2 | Fixed commit clean |
+|---|---|---|---|---|
+| `sdp-tss-unknown-outcome-unlock-double-pay` † | stellar-disbursement-platform-backend | yes | yes | yes |
+| `sdp-sep24-get-transaction-cross-user` † | stellar-disbursement-platform-backend | yes | yes | yes |
+| `sdp-payment-cancel-toctou-race` | stellar-disbursement-platform-backend | yes | **no** |  |
+| `sdp-apikey-cache-cross-tenant` † | stellar-disbursement-platform-backend | yes | yes |  |
+| `sdp-auth-tenant-header-fallback` † ‡ | stellar-disbursement-platform-backend | yes | yes |  |
+| `go-recoverysigner-unverified-email` | stellar/go | yes | yes | yes (both runs) |
+| `anchor-observer-asset-mismatch-credited` † | java-stellar-anchor-sdk | yes | yes | no § |
+| `anchor-strict-send-sendamount-credited` † | java-stellar-anchor-sdk | yes | yes | yes |
+| `anchor-sep10-threshold-sign-extension` | java-stellar-anchor-sdk | yes | **no** |  |
+| `blend-backstop-share-inflation` | blend-contracts | yes | yes |  |
+| `blend-self-liquidation-position-duplication` | blend-contracts | yes | yes |  |
+| `soroswap-pair-fee-floor-rounding` ◊ | soroswap/core | **no** | yes |  |
+| `soroban-mintlock-limit-not-pinned-to-token` | soroban-examples | yes | yes |  |
+| `soroban-lp-deposit-slippage-check` | soroban-examples | yes | yes |  |
+| `oz-vault-zero-share-deposit` | OpenZeppelin/stellar-contracts | yes | yes |  |
+| `reflector-lastprice-stale` | reflector-contract | yes | yes |  |
+| `anchor-server-withdraw-any-payment-completes` † | django-polaris | yes | yes |  |
+| `polaris-multisig-deposit-stuck-pending-signatures` | django-polaris | yes | yes |  |
+| `jssdk-readchallengetx-no-server-signature` | js-stellar-sdk | yes | yes | yes (both runs) |
+| `jssdk-redirect-leaks-custom-auth-headers` | js-stellar-sdk | yes | yes | no (both runs) § |
+| `walletsdk-sep10-domain-signer-swaps-tx` ‡ | typescript-wallet-sdk | yes | yes | yes |
+| `walletsdk-recovery-duplicate-signers-lockout` | typescript-wallet-sdk | **no** ¶ | not run ¶ |  |
+
+- † **Not fully independent.** Three of the review's lessons (`unknown-outcome-unlock`, `cross-tenant-lookup`,
+  `issuer-and-amount-received` in `backend/app/stellar/lessons.py`) were written with the held-out set in view after
+  an earlier run on two of these cases. They are general Stellar rules, but they cover the seven cases marked †.
+- ‡ `sdp-auth-tenant-header-fallback` was first missed because a file review cut off by the request time limit was
+  never resumed (fixed in `DeepReviewer._unit_todo`); `walletsdk-sep10-domain-signer-swaps-tx` could not be audited
+  at first because GitHub folders under `@scope/` were rejected (fixed in `agent_resolver`). Both were re-run;
+  run 1 holds the re-runs.
+- ◊ Missed in run 1: the fee is floored, so a small swap pays none. The rounding-direction lesson written after
+  that miss is in the run 2 auditor, so run 2's detection of this case is not independent either.
+- ¶ The report flags the same root cause (signer keys returned by recovery servers are added without validation) in
+  the same file, 32 lines from the fixed range, outside the 10-line window.
 - § The defect itself is no longer reported on the fixed commit, but a different finding sits within 10 lines and
   counts against clearing: for the anchor, deposits are still exempt from the asset check the fix added for
   withdrawals and SEP-31; for js-stellar-sdk, redirect hops are not checked against private addresses (SSRF).
-- ¶ The report flags the same root cause (signer keys returned by recovery servers are added without validation) in
-  the same file, 32 lines from the fixed range, which is outside the 10-line window.
-- `soroswap-pair-fee-floor-rounding` was missed: the fee is floored, so a small swap pays none. A rounding-direction
-  lesson was added afterwards; it was not part of the measured auditor.
+- Fixed commits were audited for the eight cases run first in run 1, chosen for impact before any result was
+  known; run 2 re-ran three of them before the budget ran out.
 
-**Development set (16 cases): 11 detected** with Claude Sonnet 5.5 before the lessons were added
-([`results/dev`](results/dev)). These cases were used to find and fix weaknesses, so they are not a measure of
-accuracy on unseen code. Re-run with Claude Haiku and the lessons, 8 of the 16 so far, including the two Sonnet had
-missed (`sdp-tss-feebump-replaced-double-pay`, `oz-delegated-signer-invoker-bypass`): 8 detected
-([`results/dev-haiku`](results/dev-haiku)).
+**Development set (16 cases).** 11 detected with Claude Sonnet 5.5 before the lessons were added
+([`results/dev`](results/dev)); **16 of 16** re-run with Claude Haiku 5.5 and the lessons
+([`results/dev-haiku`](results/dev-haiku)). These cases were used to find and fix weaknesses, so they are not a
+measure of accuracy on unseen code.
 
-**Cost.** About $0.45 of model usage per audit on the Anthropic bill, with prompt caching (97% cache hits).
+**Cost.** About $0.45 of model usage per audit, with prompt caching (from the operator's billing console; not
+published).
 
 ## Files
 

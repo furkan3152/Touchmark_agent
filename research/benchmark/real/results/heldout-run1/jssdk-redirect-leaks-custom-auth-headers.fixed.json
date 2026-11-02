@@ -1,0 +1,107 @@
+{
+ "case": "jssdk-redirect-leaks-custom-auth-headers",
+ "side": "fixed",
+ "repo": "stellar/js-stellar-sdk",
+ "commit": "5fe2c35c0d177551f76fb8079fb6233c55b624a4",
+ "audited": "https://github.com/stellar/js-stellar-sdk/tree/5fe2c35c0d177551f76fb8079fb6233c55b624a4/src/http-client",
+ "model": "claude-haiku-5-5",
+ "decision": "needs_fixes",
+ "defect_lines": [
+  {
+   "path": "fetch-client.ts",
+   "line_start": 283,
+   "line_end": 327
+  },
+  {
+   "path": "fetch-client.ts",
+   "line_start": 454,
+   "line_end": 459
+  }
+ ],
+ "matched": [
+  {
+   "source": "finding",
+   "id": "security-ai-ssrf-4",
+   "cited": "fetch-client.ts:447",
+   "title": "Redirect hops are not checked against internal or private destinations (SSRF)"
+  },
+  {
+   "source": "ledger",
+   "id": "A6",
+   "cited": "fetch-client.ts:447",
+   "title": "Outbound requests and file paths"
+  }
+ ],
+ "findings": [
+  {
+   "id": "security-ai-control-bypass-3",
+   "severity": "high",
+   "title": "Cross-origin header allowlist is skipped on the default request path",
+   "file": "fetch-client.ts",
+   "line": 539,
+   "evidence": "fetch-client.ts:539 `config.maxRedirects !== undefined ||` \u00b7 fetch-client.ts:285 `const SAFE_CROSS_ORIGIN_HEADERS = new Set([`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-1",
+   "severity": "low",
+   "title": "Caller AbortSignal is overwritten and ignored on the managed path; cancel does not abort the request",
+   "file": "fetch-client.ts",
+   "line": 628,
+   "evidence": "fetch-client.ts:628 `config.signal = abortController.signal;`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-functional-defect-2",
+   "severity": "low",
+   "title": "postForm sends an object body as JSON labelled as form-urlencoded on the managed path",
+   "file": "fetch-client.ts",
+   "line": 154,
+   "evidence": "fetch-client.ts:154 `if (!headers.has(\"content-type\")) { headers.set(\"content-type\", \"application/json\"); }`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "security-ai-ssrf-4",
+   "severity": "low",
+   "title": "Redirect hops are not checked against internal or private destinations (SSRF)",
+   "file": null,
+   "line": null,
+   "evidence": "fetch-client.ts:447 `const target = new URL(location, from);`",
+   "verifier": null,
+   "verifier_severity": null
+  }
+ ],
+ "failing_checks": [
+  {
+   "id": "A6",
+   "title": "Outbound requests and file paths",
+   "file": "fetch-client.ts",
+   "line": 447,
+   "reason": "Redirect targets from the Location header are followed with only a scheme check (line 450) and an https-to-http downgrade check (line 453). No host, IP-range or private-address check exists. The managed path (boundedFetchAdapter, lines 419-460) therefore follows a counterparty-supplied redirect to 1"
+  },
+  {
+   "id": "M2",
+   "title": "Controls outside the prompt",
+   "file": "fetch-client.ts",
+   "line": 539,
+   "reason": "Code-enforced controls exist for redirects, body size, protocol and https-to-http downgrade (fetch-client.ts:183, 450, 453), but the cross-origin credential-header allowlist (fetch-client.ts:324) only runs on the bounded adapter path. The default adapter branch at lines 539-555 sends the caller's he"
+  },
+  {
+   "id": "M4",
+   "title": "Stated purpose versus behaviour",
+   "file": "fetch-client.ts",
+   "line": 285,
+   "reason": "The file describes a generic HTTP client with \"redirect, size, timeout and cross-origin header enforcement\". The code does implement those controls, but only on the bounded adapter. The default path (fetch-client.ts:539-555) skips them, so the stated cross-origin protection does not hold for normal "
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "fetch-client.ts",
+   "line": 628,
+   "reason": "The core request path does not behave as documented in two places. First, the caller's AbortSignal is overwritten at line 628 with an internal controller that nothing ever aborts unless cancelToken fires, so a caller's abort does nothing (reliability-ai-functional-defect-1). Second, postForm sends a"
+  }
+ ]
+}

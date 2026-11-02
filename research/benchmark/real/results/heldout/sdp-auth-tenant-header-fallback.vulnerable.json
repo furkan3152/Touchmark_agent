@@ -17,25 +17,21 @@
   {
    "source": "finding",
    "id": "security-ai-cross-user-access-3",
-   "cited": "middleware.go:119",
-   "title": "Authenticated request keeps header-selected tenant when token has no tenant or tenant lookup fails"
+   "cited": "middleware.go:122",
+   "title": "JWT tenant binding fails open to the request-header tenant when the token's tenant cannot be resolved"
+  },
+  {
+   "source": "ledger",
+   "id": "A3",
+   "cited": "middleware.go:122",
+   "title": "Tenant isolation"
   }
  ],
  "findings": [
   {
-   "id": "security-ai-control-bypass-1",
+   "id": "intent-ai-intent-mismatch-4",
    "severity": "critical",
-   "title": "API key IP allowlist bypassed through spoofable X-Forwarded-For / X-Real-IP headers",
-   "file": "api_keys_middleware.go",
-   "line": 157,
-   "evidence": "api_keys_middleware.go:157 `for _, header := range []string{\"X-Forwarded-For\", \"X-Real-IP\"} {` \u00b7 api_keys_middleware.go:190 `if clientIP := extractClientIP(r); !apiKey.IsAllowedIP(clientIP) {`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "stellar_native-ai-replay-or-idempotency-2",
-   "severity": "critical",
-   "title": "Stale API key authorization can be re-cached after a concurrent permission change or revocation",
+   "title": "Cache comment claims immediate revocation, but a stale validation can re-cache a revoked key",
    "file": "api_keys_middleware.go",
    "line": 141,
    "evidence": "api_keys_middleware.go:141 `a.cache.SetWithTTL(cacheKey, apiKey, 1, apiKeyCacheTTL)`",
@@ -43,23 +39,60 @@
    "verifier_severity": "medium"
   },
   {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "API key IP allowlist is bypassed by a client-supplied X-Forwarded-For or X-Real-IP header",
+   "file": "api_keys_middleware.go",
+   "line": 157,
+   "evidence": "api_keys_middleware.go:157 `for _, header := range []string{\"X-Forwarded-For\", \"X-Real-IP\"} {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
    "id": "security-ai-cross-user-access-3",
    "severity": "medium",
-   "title": "Authenticated request keeps header-selected tenant when token has no tenant or tenant lookup fails",
+   "title": "JWT tenant binding fails open to the request-header tenant when the token's tenant cannot be resolved",
    "file": "middleware.go",
-   "line": 120,
-   "evidence": "middleware.go:119 `tenantID, err := authManager.GetTenantID(ctx, token) if err == nil && tenantID != \"\" {`",
-   "verifier": "partial",
+   "line": 122,
+   "evidence": "middleware.go:122 `if tenantErr == nil && currentTenant != nil {`",
+   "verifier": "refuted",
+   "verifier_severity": "none"
+  },
+  {
+   "id": "stellar_native-ai-replay-or-idempotency-2",
+   "severity": "medium",
+   "title": "Cache invalidation can be overwritten by a concurrent stale validation, keeping revoked or narrowed API keys valid for the 10 second TTL",
+   "file": "api_keys_middleware.go",
+   "line": 141,
+   "evidence": "api_keys_middleware.go:141 `a.cache.SetWithTTL(cacheKey, apiKey, 1, apiKeyCacheTTL)`",
+   "verifier": "confirmed",
    "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-cross-user-access-5",
+   "severity": "low",
+   "title": "Multi-tenant mode selects the tenant from an untrusted header or Host with no membership check",
+   "file": "middleware.go",
+   "line": 322,
+   "evidence": "middleware.go:322 `tenantName, err := extractTenantNameFromRequest(req)`",
+   "verifier": "partial",
+   "verifier_severity": "low"
   }
  ],
  "failing_checks": [
   {
+   "id": "A3",
+   "title": "Tenant isolation",
+   "file": "middleware.go",
+   "line": 122,
+   "reason": "Tenant binding holds for two paths. The API key cache key is tenant-scoped (api_keys_middleware.go:76, 115), and the wallet JWT path rejects a token whose tenant differs from the request tenant (wallet_auth_middleware.go:56-59). The JWT user path (AuthenticateMiddleware) fails open: if the token's t"
+  },
+  {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
    "file": "api_keys_middleware.go",
-   "line": 190,
-   "reason": "The stated purpose is a client IP allowlist on API keys. extractClientIP (line 157) takes the client address from the X-Forwarded-For or X-Real-IP header before RemoteAddr, and both headers are set by the caller. The allowlist therefore does not do what its description says. The same file's doc comm"
+   "line": 141,
+   "reason": "The doc comment at lines 19-26 and 79-85 claims that, within one instance, Invalidate makes revocation and permission changes take effect at once, so the 10-second TTL is only defence in depth and \"a given instance never needs to wait out the TTL\". The deciding line does not enforce that. validate()"
   }
  ]
 }

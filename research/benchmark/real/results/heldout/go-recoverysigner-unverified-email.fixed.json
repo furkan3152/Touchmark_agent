@@ -16,119 +16,79 @@
  "matched": [],
  "findings": [
   {
-   "id": "security-ai-account-takeover-13",
+   "id": "security-ai-account-takeover-10",
    "severity": "critical",
-   "title": "Firebase middleware accepts revoked ID tokens because revocation is not checked on /accounts routes",
-   "file": "internal/serve/auth/firebase.go",
-   "line": 67,
-   "evidence": "internal/serve/serve.go:122 `mux.Use(auth.FirebaseMiddleware(auth.FirebaseTokenVerifierLive{AuthClient: deps.FirebaseAuthClient}))`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "security-ai-control-bypass-1",
-   "severity": "critical",
-   "title": "Sign route signs any transaction for an identity holder with no operation, destination, amount or fee allowlist",
-   "file": "internal/serve/account_sign.go",
-   "line": 136,
-   "evidence": "internal/serve/account_sign.go:136 `sig, err := h.SigningKey.SignBase64(hash[:])` \u00b7 internal/serve/account_sign.go:123 `if op.GetSourceAccount().GetAccountID() != req.Address.Address() {` \u00b7 internal/serve/account_sign.go:118 `for _, op := range tx.Operations {`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "security-ai-control-bypass-11",
-   "severity": "critical",
-   "title": "SEP-10 middleware is wired with an issuer that may be empty, so issuer and service binding are skipped",
-   "file": "internal/serve/auth/sep10.go",
-   "line": 41,
-   "evidence": "internal/serve/serve.go:121 `mux.Use(auth.SEP10Middleware(deps.SEP10JWTIssuer, deps.SEP10JWK))`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-control-bypass-3",
-   "severity": "critical",
-   "title": "Any registered phone or email identity can delete the whole account registration",
-   "file": "internal/serve/account_delete.go",
-   "line": 64,
-   "evidence": "internal/serve/account_delete.go:64 `(m.Type == account.AuthMethodTypePhoneNumber && m.Value == claims.PhoneNumber) ||`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "security-ai-control-bypass-9",
-   "severity": "critical",
-   "title": "Firebase ID tokens are not checked for revocation",
-   "file": "internal/serve/auth/firebase.go",
-   "line": 67,
-   "evidence": "internal/serve/auth/firebase.go:67 `token, err := v.AuthClient.VerifyIDToken(ctx, tokenEncoded)`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "stellar_native-ai-replay-or-idempotency-2",
-   "severity": "critical",
-   "title": "Sign route never checks time bounds, so the service signature on a transaction never expires",
-   "file": "internal/serve/account_sign.go",
-   "line": 105,
-   "evidence": "internal/serve/account_sign.go:105 `tx, err := txnbuild.TransactionFromXDR(req.Transaction)`",
+   "title": "Sign route mounted behind identity-only auth lets a Firebase phone or email holder obtain the agent's co-signature",
+   "file": "internal/serve/serve.go",
+   "line": 145,
+   "evidence": "internal/serve/serve.go:145 `mux.Post(\"/sign\", accountSignHandler{`",
    "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
-   "id": "security-ai-control-bypass-5",
+   "id": "security-ai-account-takeover-11",
+   "severity": "critical",
+   "title": "Revoked or disabled Firebase users keep co-signing access until token expiry",
+   "file": "internal/serve/auth/firebase.go",
+   "line": 67,
+   "evidence": "internal/serve/auth/firebase.go:67 `token, err := v.AuthClient.VerifyIDToken(ctx, tokenEncoded)`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-1",
+   "severity": "critical",
+   "title": "Sign endpoint co-signs any operation for a registered account after identity-only authentication",
+   "file": "internal/serve/account_sign.go",
+   "line": 136,
+   "evidence": "internal/serve/account_sign.go:136 `sig, err := h.SigningKey.SignBase64(hash[:])` \u00b7 internal/serve/account_sign.go:118 `for _, op := range tx.Operations {`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "stellar_native-ai-stellar-protocol-misuse-2",
+   "severity": "critical",
+   "title": "Signs transactions with no time bounds, so issued signatures never expire",
+   "file": "internal/serve/account_sign.go",
+   "line": 130,
+   "evidence": "internal/serve/account_sign.go:130 `hash, err := tx.Hash()`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-control-bypass-3",
    "severity": "high",
-   "title": "SEP-10 issuer check is skipped when no issuer is configured, and the token is not bound to this service",
-   "file": "internal/serve/auth/sep10.go",
-   "line": 41,
-   "evidence": "internal/serve/auth/sep10.go:41 `expectedClaims := jwt.Expected{`",
+   "title": "Role is stored but never enforced; any identity can delete the account registration or read it",
+   "file": "internal/serve/account_delete.go",
+   "line": 64,
+   "evidence": "internal/serve/account_delete.go:64 `if m.Value != \"\" && ((m.Type == account.AuthMethodTypeAddress && m.Value == claims.Address) ||`",
    "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
    "id": "reliability-ai-functional-defect-4",
    "severity": "medium",
-   "title": "Auth method values are never validated, so identities can be stored in a form that never matches a login",
+   "title": "Identity values are not validated, so mismatched phone or email entries silently never match",
    "file": "internal/serve/account_post.go",
    "line": 69,
-   "evidence": "internal/serve/account_post.go:69 `// TODO: Validate auth method values: Stellar address, phone number and email.`",
+   "evidence": "internal/serve/account_post.go:70 `return nil`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
-   "id": "reliability-ai-reliability-failure-8",
+   "id": "reliability-ai-reliability-failure-6",
    "severity": "medium",
-   "title": "Duplicate account POST leaves a database transaction open, leaking a pooled connection per request",
+   "title": "Account insert transaction never rolled back on error, leaking pooled DB connections",
    "file": "internal/account/db_store_add.go",
-   "line": 21,
-   "evidence": "internal/account/db_store_add.go:21 `return ErrAlreadyExists`",
+   "line": 43,
+   "evidence": "internal/account/db_store_add.go:43 `return err`",
    "verifier": "confirmed",
    "verifier_severity": "medium"
   },
   {
-   "id": "security-ai-control-bypass-10",
+   "id": "security-ai-secret-exposure-7",
    "severity": "medium",
-   "title": "Any authenticated user can register another person's phone, email or Stellar address as an identity on their own account",
-   "file": "internal/serve/account_post.go",
-   "line": 116,
-   "evidence": "internal/serve/account_post.go:116 `err = h.AccountStore.Add(acc)`",
-   "verifier": "confirmed",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "security-ai-secret-exposure-12",
-   "severity": "medium",
-   "title": "Service signing seed reaches the process through a command-line flag, where it is exposed in argv and shell history",
-   "file": "cmd/serve.go",
-   "line": 47,
-   "evidence": "internal/serve/serve.go:66 `signingKey, err := keypair.ParseFull(opts.SigningKey)`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-secret-exposure-6",
-   "severity": "medium",
-   "title": "Service signing seed is read from a command-line flag, which exposes it in process listings and shell history",
+   "title": "Server signing seed is accepted as a command-line flag, exposing it in argv and shell history",
    "file": "cmd/serve.go",
    "line": 47,
    "evidence": "cmd/serve.go:47 `Name: \"signing-key\",`",
@@ -136,22 +96,32 @@
    "verifier_severity": "medium"
   },
   {
-   "id": "reliability-ai-functional-defect-14",
+   "id": "reliability-ai-functional-defect-8",
    "severity": "low",
-   "title": "GET /accounts lists an owner account twice when its own address is registered as an identity",
-   "file": "internal/serve/account_list.go",
-   "line": 61,
-   "evidence": "internal/serve/account_list.go:61 `accs, err := h.AccountStore.FindWithIdentityAddress(claims.Address)`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "reliability-ai-functional-defect-7",
-   "severity": "low",
-   "title": "Database ping failure at startup is only logged, and the server runs without a working database",
+   "title": "Network passphrase defaults to testnet, so a mainnet deployment that omits it signs for the wrong network",
    "file": null,
    "line": null,
-   "evidence": "internal/serve/serve.go:89 `err = db.Ping()`",
+   "evidence": "cmd/serve.go:43 `FlagDefault: network.TestNetworkPassphrase,`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "reliability-ai-reliability-failure-9",
+   "severity": "low",
+   "title": "Startup continues when the database ping fails, so the server runs with a dead store",
+   "file": null,
+   "line": null,
+   "evidence": "internal/serve/serve.go:91 `opts.Logger.Warn(\"Error pinging to Database: \", err)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-5",
+   "severity": "low",
+   "title": "SEP-10 JWT issuer and audience are unchecked when the issuer flag is empty",
+   "file": null,
+   "line": null,
+   "evidence": "internal/serve/auth/sep10.go:41 `expectedClaims := jwt.Expected{`",
    "verifier": null,
    "verifier_severity": null
   },
@@ -171,78 +141,43 @@
    "id": "S1",
    "title": "Externally supplied transactions",
    "file": "internal/serve/account_sign.go",
-   "line": 123,
-   "reason": "The sign route decodes the client-supplied XDR and checks only the transaction source and operation source accounts. It never inspects operation type, destination, amount or asset, nor any invoked contract. Any transaction whose sources are the account is signed with the service key before being ret"
+   "line": 118,
+   "reason": "The externally supplied XDR is decoded and signed. The only inspection is the transaction source account and each operation's explicit source account (lines 114-127). Operation type, destination, amount, asset, and the set-options, merge or trustline effects are never inspected before SignBase64 at "
   },
   {
    "id": "S2",
    "title": "Raw byte signing",
    "file": "internal/serve/account_sign.go",
    "line": 136,
-   "reason": "The bytes signed are the hash of a transaction the requester supplied (tx.Hash() of req.Transaction at line 130). The agent key therefore acts as a signing oracle for any transaction the requester builds that passes the source check. Input is not limited to a fixed-structure preimage or a transactio"
+   "reason": "The agent key signs a 32-byte hash, and the requester fully determines that hash through the supplied transaction XDR (lines 105 and 130). The requester can choose any transaction, so the key acts as a signing oracle for any transaction hash it did not check. Only source-account checks stand in the "
   },
   {
    "id": "S4",
    "title": "Expiry and fees",
    "file": "internal/serve/account_sign.go",
-   "line": 105,
-   "reason": "The handler never reads tx.Timebounds, so a signed envelope can carry timeout 0 (no expiry) and remain valid indefinitely. The fee (tx.Fee, from input) is also not bounded: the handler signs whatever fee the requester set, and the account pays it. The earlier finding covers the missing expiry."
-  },
-  {
-   "id": "S6",
-   "title": "Account authority changes",
-   "file": "internal/serve/account_sign.go",
-   "line": 118,
-   "reason": "Nothing in the operation loop excludes SetOptions, ChangeTrust, AllowTrust or AccountMerge. A requester with a phone or email identity on the account can get the service signature on a SetOptions transaction that adds or re-weights signers or changes thresholds, or on an AccountMerge. Its signature "
-  },
-  {
-   "id": "S8",
-   "title": "Failure and rollback paths",
-   "file": "internal/account/db_store_add.go",
-   "line": 21,
-   "reason": "The sign and delete handlers change no state before their error returns, so their failure paths hold. The account-add failure path does not: on ErrAlreadyExists, DBStore.Add returns without rolling back its transaction, so a database connection stays held. Repeated failures make the service unavaila"
-  },
-  {
-   "id": "A2",
-   "title": "Secret handling",
-   "file": "cmd/serve.go",
-   "line": 47,
-   "reason": "The service signing seed is delivered as a command-line flag (SIGNING_KEY or --signing-key). Flag values appear in process listings and shell history. The seed is also passed through a plain string into keypair.ParseFull (serve.go:66). Logging and error paths checked here do not print the seed (serv"
-  },
-  {
-   "id": "A3",
-   "title": "Tenant isolation",
-   "file": "internal/serve/account_delete.go",
-   "line": 64,
-   "reason": "The service has several callers, so tenant isolation applies. Any caller who holds one registered phone or email identity, which is not the account owner, can delete the whole account registration (delete:64-68 and the store delete at db_store_delete.go:6). The sign route does the same (account_sign"
+   "line": 130,
+   "reason": "The transaction's timebounds are never read or checked (search for Timebounds returns nothing in the submitted files). The hash is signed even when MaxTime is 0 (infinite). The fee is also not bounded: the requester sets it in the XDR, and the code does not check it. Fee bumps are not rejected. The "
   },
   {
    "id": "A7",
    "title": "Verification of incoming authentication",
    "file": "internal/serve/auth/sep10.go",
    "line": 41,
-   "reason": "The SEP-10 JWT path verifies the signature against the configured JWK (sep10.go:59) and requires iat and exp (sep10.go:35-40). It does not check the issuer when none is configured, because go-jose skips an empty Issuer. It also has no audience check, so a token that a SEP-10 server signed for anothe"
+   "reason": "The SEP-10 JWT is verified against the JWKS key (sep10.go:59) with expiry and iat checks (sep10.go:34-46), and Firebase tokens go through VerifyIDToken (firebase.go:67), which is complete. But the issuer is only checked when the operator sets --sep10-jwt-issuer (cmd/serve.go:61-66 says \"not checked "
   },
   {
    "id": "M2",
    "title": "Controls outside the prompt",
    "file": "internal/serve/account_sign.go",
-   "line": 136,
-   "reason": "The only controls on what the service key signs are the caller-identity check (line 99) and the source-account and operation-source-account equality checks (lines 114-127). No code limits operation type, destination, amount, fee, or time bounds. The rule that matters most, which transactions the age"
+   "line": 118,
+   "reason": "The gates for source and identity are enforced in Go (lines 99-127), so the earlier holds is right for those. The rule that matters for funds is not complete. The code checks only that the transaction source and each operation source equal the account. It does not check operation type, destination, "
   },
   {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
    "file": "internal/serve/account_sign.go",
-   "line": 136,
-   "reason": "The README describes a SEP-30 recovery signer that helps a user regain control of a lost account, and says recovery needs two or more signers. The code does not check either condition. It signs any transaction for any account where the caller holds a matching phone, email, or address identity, inclu"
-  },
-  {
-   "id": "M5",
-   "title": "Core function works",
-   "file": "internal/account/db_store_add.go",
-   "line": 21,
-   "reason": "The registration path (POST /accounts/{address}) is part of the core function. On a duplicate address, and on every error after Beginx, Add returns without calling tx.Rollback(), so each failed registration leaves a database transaction open and holds its connection. Repeated duplicate POSTs exhaust"
+   "line": 130,
+   "reason": "The README describes a SEP-30 recovery signer that signs transactions for an account once the user proves a phone number or email, and the code does this. It does not disclose that the signature has no expiry: the handler never checks the transaction's time bounds (timeout 0 is accepted) and signs t"
   }
  ]
 }

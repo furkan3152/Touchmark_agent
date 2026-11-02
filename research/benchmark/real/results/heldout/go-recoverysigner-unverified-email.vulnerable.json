@@ -18,40 +18,50 @@
    "source": "finding",
    "id": "security-ai-account-takeover-1",
    "cited": "internal/serve/auth/firebase.go:31",
-   "title": "Firebase email identity accepted without email_verified, letting an attacker obtain recovery signatures for a victim's a"
+   "title": "Unverified Firebase email claim is accepted as proof of identity for recovery signing"
   },
   {
    "source": "ledger",
-   "id": "A3",
+   "id": "A7",
    "cited": "internal/serve/auth/firebase.go:31",
-   "title": "Tenant isolation"
+   "title": "Verification of incoming authentication"
   }
  ],
  "findings": [
   {
    "id": "security-ai-account-takeover-1",
    "severity": "critical",
-   "title": "Firebase email identity accepted without email_verified, letting an attacker obtain recovery signatures for a victim's account",
+   "title": "Unverified Firebase email claim is accepted as proof of identity for recovery signing",
    "file": "internal/serve/auth/firebase.go",
    "line": 31,
-   "evidence": "internal/serve/auth/firebase.go:31 `auth.Email, _ = token.Claims[\"email\"].(string)`",
-   "verifier": "confirmed",
-   "verifier_severity": "critical"
-  },
-  {
-   "id": "security-ai-account-takeover-15",
-   "severity": "critical",
-   "title": "Sign route co-signs for any Firebase session whose unverified email matches a registered identity",
-   "file": "internal/serve/account_sign.go",
-   "line": 92,
-   "evidence": "internal/serve/account_sign.go:92 `if m.Type == account.AuthMethodTypeEmail && m.Value == claims.Email {`",
+   "evidence": "internal/serve/auth/firebase.go:31 `auth.Email, _ = token.Claims[\"email\"].(string)` \u00b7 internal/serve/account_sign.go:92 `if m.Type == account.AuthMethodTypeEmail && m.Value == claims.Email {`",
    "verifier": "partial",
    "verifier_severity": "high"
   },
   {
-   "id": "security-ai-control-bypass-11",
+   "id": "security-ai-account-takeover-11",
    "severity": "critical",
-   "title": "Firebase ID tokens are not checked for revocation, so disabled users keep signing access until token expiry",
+   "title": "SEP-10 JWT audience is never checked, so tokens issued for other services authenticate here",
+   "file": "internal/serve/auth/sep10.go",
+   "line": 41,
+   "evidence": "internal/serve/auth/sep10.go:41 `expectedClaims := jwt.Expected{`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "security-ai-account-takeover-13",
+   "severity": "critical",
+   "title": "Firebase middleware is wired without requiring a verified email or phone, so unverified claims authenticate sign requests",
+   "file": "internal/serve/auth/firebase.go",
+   "line": 31,
+   "evidence": "internal/serve/serve.go:122 `mux.Use(auth.FirebaseMiddleware(auth.FirebaseTokenVerifierLive{AuthClient: deps.FirebaseAuthClient}))`",
+   "verifier": "partial",
+   "verifier_severity": "high"
+  },
+  {
+   "id": "security-ai-control-bypass-14",
+   "severity": "critical",
+   "title": "Firebase ID token verified without revocation or disabled-user check",
    "file": "internal/serve/auth/firebase.go",
    "line": 65,
    "evidence": "internal/serve/auth/firebase.go:65 `token, err := v.AuthClient.VerifyIDToken(ctx, tokenEncoded)`",
@@ -59,69 +69,69 @@
    "verifier_severity": "medium"
   },
   {
-   "id": "security-ai-control-bypass-17",
+   "id": "security-ai-foreign-transaction-signing-15",
    "severity": "critical",
-   "title": "Empty SEP-10 issuer is passed through unchecked, so any token signed by the configured JWK is accepted",
-   "file": "internal/serve/auth/sep10.go",
-   "line": 41,
-   "evidence": "internal/serve/serve.go:106 `SEP10JWTIssuer: opts.SEP10JWTIssuer,`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-foreign-transaction-signing-8",
-   "severity": "critical",
-   "title": "Sign endpoint signs any operation of a registered account without inspecting operations, destinations or amounts",
+   "title": "Shared service signing key is injected into the sign route with no operation policy, so any operation set for an authorized account gets co-signed",
    "file": "internal/serve/account_sign.go",
-   "line": 114,
-   "evidence": "internal/serve/account_sign.go:114 `if tx.SourceAccount.GetAccountID() != req.Address.Address() {`",
+   "line": 118,
+   "evidence": "internal/serve/serve.go:147 `SigningKey: deps.SigningKey,`",
    "verifier": "partial",
    "verifier_severity": "high"
   },
   {
-   "id": "security-ai-unauthorized-payment-7",
+   "id": "security-ai-foreign-transaction-signing-2",
    "severity": "critical",
-   "title": "Sign endpoint signs any operation of a registered account without inspecting operations, destinations or amounts",
+   "title": "Sign endpoint signs any operation set for an authorized caller with no allowlist or time bounds",
    "file": "internal/serve/account_sign.go",
    "line": 136,
-   "evidence": "internal/serve/account_sign.go:136 `sig, err := h.SigningKey.SignBase64(hash[:])`",
-   "verifier": "partial",
-   "verifier_severity": "high"
-  },
-  {
-   "id": "stellar_native-ai-stellar-protocol-misuse-5",
-   "severity": "critical",
-   "title": "Sign handler signs transactions with no time bounds, so issued server signatures never expire",
-   "file": "internal/serve/account_sign.go",
-   "line": 136,
-   "evidence": "internal/serve/account_sign.go:136 `sig, err := h.SigningKey.SignBase64(hash[:])` \u00b7 internal/serve/account_sign.go:130 `hash, err := tx.Hash()`",
+   "evidence": "internal/serve/account_sign.go:136 `sig, err := h.SigningKey.SignBase64(hash[:])` \u00b7 internal/serve/account_sign.go:114 `if tx.SourceAccount.GetAccountID() != req.Address.Address() {`",
    "verifier": "partial",
    "verifier_severity": "medium"
   },
   {
-   "id": "security-ai-control-bypass-2",
-   "severity": "high",
-   "title": "Unverified email identity can delete a victim's recovery registration",
-   "file": "internal/serve/account_delete.go",
-   "line": 66,
-   "evidence": "internal/serve/account_delete.go:66 `(m.Type == account.AuthMethodTypeEmail && m.Value == claims.Email)) {`",
-   "verifier": "confirmed",
-   "verifier_severity": "high"
+   "id": "stellar_native-ai-replay-or-idempotency-3",
+   "severity": "critical",
+   "title": "Signatures issued for transactions without timebounds stay valid indefinitely",
+   "file": "internal/serve/account_sign.go",
+   "line": 130,
+   "evidence": "internal/serve/account_sign.go:130 `hash, err := tx.Hash()`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
   },
   {
-   "id": "reliability-ai-functional-defect-10",
-   "severity": "medium",
-   "title": "Identity values are not validated on account registration, so third-party identities can be attached",
-   "file": "internal/serve/account_post.go",
-   "line": 69,
-   "evidence": "internal/serve/account_post.go:69 `// TODO: Validate auth method values: Stellar address, phone number and email.`",
+   "id": "security-ai-control-bypass-12",
+   "severity": "high",
+   "title": "SEP-10 middleware is wired with an issuer that may be empty, so any JWT signed by the configured key is accepted",
+   "file": "internal/serve/auth/sep10.go",
+   "line": 41,
+   "evidence": "internal/serve/serve.go:121 `mux.Use(auth.SEP10Middleware(deps.SEP10JWTIssuer, deps.SEP10JWK))`",
    "verifier": "partial",
    "verifier_severity": "low"
   },
   {
-   "id": "reliability-ai-functional-defect-4",
+   "id": "security-ai-control-bypass-7",
+   "severity": "high",
+   "title": "Any single registered identity can delete the whole account registration, not only the account owner",
+   "file": "internal/serve/account_delete.go",
+   "line": 64,
+   "evidence": "internal/serve/account_delete.go:64 `if m.Value != \"\" && ((m.Type == account.AuthMethodTypeAddress && m.Value == claims.Address) ||`",
+   "verifier": "partial",
+   "verifier_severity": "medium"
+  },
+  {
+   "id": "reliability-ai-functional-defect-5",
    "severity": "medium",
-   "title": "Unique-violation path in Add returns without rolling back, leaking a DB connection per duplicate POST",
+   "title": "Identity values are never validated or normalized at registration, so recovery identities can be unverifiable or never match",
+   "file": "internal/serve/account_post.go",
+   "line": 69,
+   "evidence": "internal/serve/account_post.go:66 `if !account.AuthMethodType(am.Type).Valid() {`",
+   "verifier": "partial",
+   "verifier_severity": "low"
+  },
+  {
+   "id": "reliability-ai-reliability-failure-6",
+   "severity": "medium",
+   "title": "Account insert returns without rolling back its transaction, leaking a DB connection per duplicate registration",
    "file": "internal/account/db_store_add.go",
    "line": 21,
    "evidence": "internal/account/db_store_add.go:21 `return ErrAlreadyExists`",
@@ -129,39 +139,9 @@
    "verifier_severity": "medium"
   },
   {
-   "id": "reliability-ai-reliability-failure-9",
+   "id": "security-ai-secret-exposure-10",
    "severity": "medium",
-   "title": "Account query leaks DB rows on scan error and ignores iteration errors",
-   "file": "internal/account/db_store_get.go",
-   "line": 33,
-   "evidence": "internal/account/db_store_get.go:33 `rows, err := s.DB.Queryx(query, args...)`",
-   "verifier": "confirmed",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "security-ai-account-takeover-6",
-   "severity": "medium",
-   "title": "SEP-10 issuer check is skipped when sep10-jwt-issuer is unset, so tokens minted for other services under the same key are accepted",
-   "file": "internal/serve/auth/sep10.go",
-   "line": 42,
-   "evidence": "internal/serve/auth/sep10.go:42 `Issuer: issuer,`",
-   "verifier": "partial",
-   "verifier_severity": "low"
-  },
-  {
-   "id": "security-ai-cross-user-access-3",
-   "severity": "medium",
-   "title": "Unverified email lets any Firebase user enumerate accounts registered under that email",
-   "file": "internal/serve/account_list.go",
-   "line": 119,
-   "evidence": "internal/serve/account_list.go:119 `accs, err := h.AccountStore.FindWithIdentityEmail(claims.Email)`",
-   "verifier": "confirmed",
-   "verifier_severity": "medium"
-  },
-  {
-   "id": "security-ai-secret-exposure-13",
-   "severity": "medium",
-   "title": "Agent signing seed accepted as a command-line flag, exposing it in process arguments and shell history",
+   "title": "Signing seed is accepted as a CLI flag that lands in process listings and shell history",
    "file": "cmd/serve.go",
    "line": 47,
    "evidence": "cmd/serve.go:47 `Name: \"signing-key\",`",
@@ -169,22 +149,32 @@
    "verifier_severity": "medium"
   },
   {
-   "id": "provenance-ai-dependency-risk-12",
+   "id": "reliability-ai-reliability-failure-8",
    "severity": "low",
-   "title": "Runtime image is end-of-life Ubuntu 16.04 and runs as root with the whole build context copied in",
+   "title": "Database rows are not closed when a row scan fails, leaking connections",
    "file": null,
    "line": null,
-   "evidence": "docker/Dockerfile:8 `FROM ubuntu:16.04`",
+   "evidence": "internal/account/db_store_get.go:51 `err = rows.StructScan(&r)`",
    "verifier": null,
    "verifier_severity": null
   },
   {
-   "id": "reliability-ai-functional-defect-14",
+   "id": "reliability-ai-reliability-failure-9",
    "severity": "low",
-   "title": "Database Ping failure at startup is logged and ignored, so the server runs without a working account store",
+   "title": "Failed database ping only logs a warning, so the server starts with no working database",
    "file": null,
    "line": null,
-   "evidence": "internal/serve/serve.go:89 `err = db.Ping()`",
+   "evidence": "internal/serve/serve.go:91 `opts.Logger.Warn(\"Error pinging to Database: \", err)`",
+   "verifier": null,
+   "verifier_severity": null
+  },
+  {
+   "id": "security-ai-control-bypass-4",
+   "severity": "low",
+   "title": "SEP-10 JWT issuer check is skipped when no issuer is configured",
+   "file": null,
+   "line": null,
+   "evidence": "internal/serve/auth/sep10.go:42 `Issuer: issuer,`",
    "verifier": null,
    "verifier_severity": null
   },
@@ -205,42 +195,49 @@
    "title": "Externally supplied transactions",
    "file": "internal/serve/account_sign.go",
    "line": 114,
-   "reason": "The externally supplied transaction is decoded with txnbuild.TransactionFromXDR (line 105). The only checks are that the transaction source and each explicit operation source equal the account address (lines 114-127). Operation type, payment destination, amount, asset, SetOptions signer changes and "
+   "reason": "The only checks on the externally supplied transaction are that the envelope source and each op-level source equal the account. Operation type, destination, amount, asset, and invoked contract/function are never inspected before tx.Hash() and SignBase64 at lines 130-136. Any operation set (e.g. SetO"
   },
   {
    "id": "S4",
    "title": "Expiry and fees",
    "file": "internal/serve/account_sign.go",
    "line": 130,
-   "reason": "The handler never reads Timebounds, so a transaction with timeout 0 (no expiry) is signed as-is and remains valid indefinitely. The fee is also not bounded: the handler does not inspect tx.BaseFee, so a requester can have the server sign a transaction whose fee drains the account. This is the same d"
+   "reason": "The handler never reads tx.Timebounds before signing, so a transaction with TimeBounds.MaxTime of 0 (infinite) or far in the future is signed and can be held and submitted later. Fees are also not bounded or checked (no MaxFee or fee-bump rejection). Fee charges are borne by the user's source accoun"
   },
   {
    "id": "A3",
    "title": "Tenant isolation",
-   "file": "internal/serve/auth/firebase.go",
-   "line": 31,
-   "reason": "Callers are bound to the account they touch: account_sign.go:63-102, account_get.go:56-78 and account_delete.go:56-78 require an identity match. But the email identity is accepted from a Firebase token without checking email_verified. Anyone who creates a Firebase account with someone else's email c"
+   "file": "internal/serve/account_sign.go",
+   "line": 92,
+   "reason": "Account-scoped access is bound to the caller's claims: the address must match the account or a registered identity (account_sign.go lines 63-102, account_get.go lines 56-78, account_delete.go lines 56-78). Rows are never shared across callers. But the email claim is accepted without checking email_v"
   },
   {
    "id": "A7",
    "title": "Verification of incoming authentication",
-   "file": "internal/serve/auth/sep10.go",
-   "line": 42,
-   "reason": "The SEP-10 JWT signature is checked against the configured JWK (sep10.go:59), but the issuer is only checked when sep10-jwt-issuer is set (cmd/serve.go:61-66 marks it not required, and jwt.Expected skips an empty Issuer). Any JWT signed by the same key for another service is accepted as a login for "
+   "file": "internal/serve/auth/firebase.go",
+   "line": 31,
+   "reason": "The Firebase ID token is checked for signature and audience by VerifyIDToken (firebase.go line 65), but the email claim is copied without checking email_verified, so an unverified address is accepted as proof of identity. The SEP-10 JWT path is checked properly: signature against the single configur"
   },
   {
    "id": "M2",
    "title": "Controls outside the prompt",
    "file": "internal/serve/account_sign.go",
    "line": 136,
-   "reason": "The only safety rule enforced in code for this key is that the caller is linked to the account. The code applies no rule about which transactions are signed: there is no operation-type, destination, amount or asset check, and no recovery-only restriction. The signing rule therefore depends only on t"
+   "reason": "The code enforces identity binding (lines 61-102) and the source-account check (lines 114-127). It does not enforce any rule on operation type, destination, amount or timebounds, and no control on request rate or spend. The only rule stopping a misuse of the signing key is the requester's account ma"
   },
   {
    "id": "M4",
    "title": "Stated purpose versus behaviour",
    "file": "internal/serve/account_sign.go",
-   "line": 136,
-   "reason": "The README describes a SEP-30 recovery signer whose job is to help a user regain control of an account after key loss, with signing gated on proving a phone number or email. The code does more than that: it signs any transaction whose source is a linked account, including payments and any other oper"
+   "line": 114,
+   "reason": "The README describes a SEP-30 recovery signer that signs transactions for a user who proves an identity. The code does that, but it also signs any operation set whose source is the account, including operations that the README never mentions (for example set_options or payments). Recovery is not lim"
+  },
+  {
+   "id": "M5",
+   "title": "Core function works",
+   "file": "internal/account/db_store_add.go",
+   "line": 21,
+   "reason": "The core registration path does not work cleanly as shipped. Add returns without rolling back the transaction on duplicate (line 21) and on the identity and auth-method insert errors (lines 33-35 and 42-44). Each leaks a pooled connection, which is the existing reliability finding. Other defects on "
   }
  ]
 }
