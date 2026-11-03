@@ -104,7 +104,7 @@ async def main_async(args) -> None:
               "metrics": metrics(rows),
               "by_source": {src: metrics([r for r in rows if r["source"] == src]) for src in sorted({r["source"] for r in rows})},
               "usage": run.usage,
-              "note": "Hand labels come from one AI-assisted annotator; agreement measures consistency between two "
+              "note": "Hand labels come from one automated annotator; agreement measures consistency between two "
                       "independent passes, not ground truth."}
     Path(args.out).write_text(json.dumps(public, indent=1) + "\n")
     print(json.dumps(public["metrics"], indent=1))

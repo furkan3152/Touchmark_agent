@@ -75,7 +75,7 @@
   "Each repository was audited at the listed commit with scripts/audit_repository.py (rules plus deep review).",
   "Every reported finding was opened at its cited file and line and labelled TRUE, PARTIAL (real but overstated or narrower), FALSE or UNVERIFIABLE, with a written reason and a reviewed severity."
  ],
- "annotation": "One annotator: the maintainer's AI-assisted review session. There was no second, independent annotator and no inter-annotator agreement measure.",
+ "annotation": "One annotator: the maintainer's automated review session. There was no second, independent annotator and no inter-annotator agreement measure.",
  "not_measured": [
   "False negatives: there is no exhaustive ground truth for these repositories, so recall is unknown.",
   "Independent replication: nobody outside the project has re-labelled the findings."

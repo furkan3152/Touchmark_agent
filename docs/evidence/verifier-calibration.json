@@ -76,5 +76,5 @@
   "cache_read_input_tokens": 661950,
   "cache_creation_input_tokens": 258619
  },
- "note": "Hand labels come from one AI-assisted annotator; agreement measures consistency between two independent passes, not ground truth."
+ "note": "Hand labels come from one automated annotator; agreement measures consistency between two independent passes, not ground truth."
 }
