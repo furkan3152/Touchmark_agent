@@ -91,6 +91,24 @@ def _near(a: Finding, b: Finding, slack: int) -> bool:
     return any(pa == pb and abs(na - nb) <= slack for pa, na in _locations(a) for pb, nb in _locations(b))
 
 
+_WORD = re.compile(r"[a-z0-9]+")
+_STOP = {"the", "a", "an", "is", "are", "and", "or", "of", "to", "in", "on", "for", "with", "by", "so", "no",
+         "not", "any", "its", "it", "be", "can", "from", "as", "at", "that", "this", "without", "before", "after"}
+
+
+def _title_words(title: str) -> set[str]:
+    return {w for w in _WORD.findall((title or "").lower()) if w not in _STOP and len(w) > 2}
+
+
+def _same_defect_elsewhere(a: Finding, b: Finding) -> bool:
+    """One defect filed again for another file or language: the same kind and, word for word, mostly the same
+    title (a session budget race reported for the TypeScript, Python and MCP copies of one handler)."""
+    if _category(a.id) != _category(b.id):
+        return False
+    wa, wb = _title_words(a.title), _title_words(b.title)
+    return len(wa) >= 4 and len(wb) >= 4 and len(wa & wb) / len(wa | wb) >= 0.45
+
+
 def merge_duplicates(findings: list[Finding]) -> list[Finding]:
     """A model finding at the same place and of the same kind as one already kept is the
     same defect reported again: it is folded into the kept one, never dropped silently.
@@ -108,10 +126,18 @@ def merge_duplicates(findings: list[Finding]) -> list[Finding]:
             # (on live repositories one shell injection came back as four findings).
             (_same_place(k, f, 6) and _category(k.id) == _category(f.id)) if "-ai-" in k.id
             else (_near(k, f, 40) and _category(f.id) in _RULE_TWINS.get(_SUFFIX.sub("", k.id), set())))), None)
+        elsewhere = False
+        if twin is None:
+            twin = next((k for k in kept if k.is_risk and "-ai-" in k.id and _same_defect_elsewhere(k, f)), None)
+            elsewhere = twin is not None
         if twin is None:
             kept.append(f)
             continue
+        place = _locations(f)
         merged = twin.model_copy(update={
+            # Every place stays cited, so a reader (and the benchmark) still finds each copy of the defect.
+            **({"evidence": f"{twin.evidence} · {place[0][0]}:{place[0][1]}"[:900]}
+               if elsewhere and place and place[0] not in _locations(twin) else {}),
             "severity": max(twin.severity, f.severity, key=lambda s: s.rank) if "-ai-" in twin.id else twin.severity,
             "detail": twin.detail + f" Also reported as {f.id}: {f.title}.",
             "confidence": max(twin.confidence, f.confidence) if "-ai-" in twin.id else min(1.0, twin.confidence + 0.05),

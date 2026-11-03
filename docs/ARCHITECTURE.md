@@ -50,7 +50,11 @@ Nothing submitted is imported or executed.
    keys, webhooks) taken first. Source left out keeps the analysis-incomplete gap open.
    Dependencies and build output committed with the code (`node_modules`, `vendor`,
    `site-packages`, `dist-packages`, `dist`, `build`, `target`) are not the agent and are
-   skipped (`repo_audit.SKIP_DIRS`).
+   skipped (`repo_audit.SKIP_DIRS`). Agent instructions (`SKILL.md`, `AGENTS.md`, prompt files)
+   are read too, and in a skill bundle the Markdown guides beside a `SKILL.md`: the hardening
+   checks (hidden characters, poisoned instructions, hidden loaders) run over all of them.
+   A hidden or obfuscated loader (code pushed past the visible width, or a long obfuscated
+   line) is a finding, critical when a package script or build tool config runs it.
 2. **Data flow.** `swarm/codeflow.py` handles Python (AST) and `swarm/jsflow.py` handles
    JavaScript and TypeScript (tree-sitter). The analysis is project-wide, follows imports
    and is context-insensitive.
@@ -255,7 +259,11 @@ high; the operator's own provider spend, a payer charged for a call that then fa
 availability, data exposure or correctness, medium. A
 counterparty trigger lowers the level one step and an operator-only trigger two; testnet-only
 code is at most medium, example code one lower and at most high, and tests, developer tools and
-unwired paths low. The facts are held to positive evidence (`severity.ground`): a claim of
+unwired paths low; code that cannot run (does not compile, or calls a stub) counts as unwired,
+and the buttons and flags of a single-user desktop or command-line app as the operator's. The
+same defect filed for several files or languages (same kind, mostly the same title) is merged
+into one finding that cites every place (`consolidate.merge_duplicates`). The facts are held to
+positive evidence (`severity.ground`): a claim of
 funds, keys or account control is lowered when the audited agent holds no Stellar authority at
 all (unless the cited file authenticates callers, which may gate a system outside the audit), or
 when the cited file is front-end view code with no authority of its own; a capability the file

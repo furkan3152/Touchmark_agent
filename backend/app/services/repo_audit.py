@@ -46,6 +46,8 @@ MAX_PATH_DEPTH = 64
 #: in-memory state such as an MPP replay store is not shared between requests.
 DEPLOYMENT_MARKERS = {"vercel.json", "wrangler.toml", "serverless.yml", "serverless.yaml", "netlify.toml"}
 INSTRUCTION_NAMES = {"skill.md", "agents.md", "claude.md", "system_prompt.md", "prompt.md", "instructions.md"}
+#: Markdown read from skill bundles beside their SKILL.md, in total (a bundle of guides can run to many pages).
+SKILL_TEXT_BYTES = 200_000
 #: The root README states what the agent promises its users; deep review checks the code against it.
 README_NAMES = {"readme.md", "readme"}
 #: Tool registrations in MCP servers and agent frameworks.
@@ -329,6 +331,10 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
     tmark_record: dict = {}
     markers: list[str] = []
     prefix = len(str(root)) + 1
+    # A skill bundle (a folder with a SKILL.md) ships its other Markdown files to the agent as instructions too:
+    # references and guides with signing and key-handling steps the agent follows.
+    skill_dirs = {p.parent for p in root.rglob("*") if p.name.lower() == "skill.md" and p.is_file()}
+    skill_text = 0
     for path in sorted(root.rglob("*")):
         if str(path).count("/", prefix) >= MAX_PATH_DEPTH or not path.is_file() or path.is_symlink():
             continue
@@ -356,6 +362,12 @@ def select_repository(root: Path, *, max_files: int = 1_500, max_bytes: int = 12
             continue
         if rel.name.lower() in INSTRUCTION_NAMES and not _skipped(rel):
             instructions[rel.as_posix()] = path.read_text(errors="replace")[:20_000]
+            continue
+        if (rel.suffix.lower() == ".md" and skill_dirs and any(d in path.parents for d in skill_dirs)
+                and not _skipped(rel) and skill_text < SKILL_TEXT_BYTES):
+            text = path.read_text(errors="replace")[:20_000]
+            instructions[rel.as_posix()] = text
+            skill_text += len(text)
             continue
         manifest_file = _is_manifest(rel.as_posix())
         if not (_is_source(rel.name) or manifest_file):

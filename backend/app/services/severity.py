@@ -56,8 +56,11 @@ FACTOR_SCHEMA = {
                 "description": "Who can make it happen: anyone = an unauthenticated caller or any content the agent "
                                "reads (web, memo, email, tool result, prompt injection); any_user = any "
                                "authenticated user or customer; counterparty = a server, RPC, facilitator, "
-                               "payment challenge or seller listing the agent talks to; operator_only = only the operator or admin; "
-                               "nobody_yet = no caller, not wired up, mocked."},
+                               "payment challenge or seller listing the agent talks to; operator_only = only the operator or admin, "
+                               "including the person at the keyboard of a single-user desktop or command-line app "
+                               "(its own buttons and flags); "
+                               "nobody_yet = no caller, not wired up, mocked, or code that cannot run: it does not "
+                               "compile, or the function the path depends on is a stub or raises NotImplementedError."},
     "network": {"type": "string", "enum": NETWORKS,
                 "description": "testnet_only only when the code is fixed to testnet; mainnet_or_configurable when "
                                "mainnet is used or a setting can select it; not_applicable when no chain is involved."},

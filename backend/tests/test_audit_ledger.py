@@ -584,3 +584,34 @@ def test_a_hidden_loader_that_a_build_or_start_runs_is_a_critical_finding():
     assert found and found[0].severity.value == "critical"
     # Ordinary long lines, minified bundles and indented code are not hidden loaders.
     assert _hidden_loaders({"a.js": "const x = '" + "a" * 5000 + "';\n", "b.js": "    return 1;\n"}) == ([], [])
+
+
+def test_a_skill_bundle_ships_its_markdown_guides_as_instructions(tmp_path):
+    from backend.app.services.repo_audit import select_repository
+    (tmp_path / "skills" / "pay").mkdir(parents=True)
+    (tmp_path / "skills" / "pay" / "SKILL.md").write_text("# Pay\nSee x402.md.\n")
+    (tmp_path / "skills" / "pay" / "x402.md").write_text("Write the payer secret to .env\n")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text("Not part of a skill\n")
+    (tmp_path / "index.ts").write_text("export const x = 1;\n")
+    _, manifest = select_repository(tmp_path)
+    assert "skills/pay/x402.md" in manifest["instructions"] and "skills/pay/SKILL.md" in manifest["instructions"]
+    assert "docs/guide.md" not in manifest["instructions"]
+
+
+def test_one_defect_filed_again_for_another_file_is_merged_and_keeps_every_place():
+    from backend.app.models import Dimension, Finding, Severity
+    from backend.app.swarm.consolidate import merge_duplicates
+    def f(fid, title, where, sev=Severity.HIGH):
+        return Finding(id=fid, dimension=Dimension.SECURITY, severity=sev, title=title, detail="d",
+                       evidence=f"{where} `x`", remediation="r", auditor="deep-review")
+    out = merge_duplicates([
+        f("security-ai-control-bypass-1", "Session budget is checked before the payment await and charged after it",
+          "integrations/shared/src/handlers.ts:116"),
+        f("security-ai-control-bypass-2", "Session budget checked before the payment await, charged only after it",
+          "python/src/stellaragent/handlers.py:124", Severity.CRITICAL),
+        f("security-ai-control-bypass-3", "Admin route has no authentication check", "src/admin.ts:10")])
+    assert len(out) == 2
+    merged = out[0]
+    assert merged.severity is Severity.CRITICAL
+    assert "handlers.ts:116" in merged.evidence and "handlers.py:124" in merged.evidence
