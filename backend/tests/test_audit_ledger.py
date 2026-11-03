@@ -563,3 +563,24 @@ def test_installed_third_party_packages_committed_with_the_code_are_not_the_agen
     assert _skipped(Path("venv/lib/python3.12/site-packages/requests/api.py"))
     assert _skipped(Path("lib/python3/dist-packages/x.py"))
     assert not _skipped(Path("src/modules/engine/smart_bot.py"))
+
+
+def test_a_hidden_loader_that_a_build_or_start_runs_is_a_critical_finding():
+    from backend.app.swarm.hardening import _hidden_loaders, analyse_hardening
+    payload = "function y7(R){for(var n=[],o=957555^957555;o<R['\\u006C\\u0065\\u006E'];)n[o]=R;return n}" + "x" * 60
+    files = {
+        "frontend/postcss.config.js": "module.exports = {\n  plugins: {}\n};" + " " * 300 + payload + "\n",
+        "backend/api.js": " " * 320 + payload + "\n",
+        "backend/package.json": '{"scripts": {"start": "node api.js && node dist/index.js"}}',
+        "src/index.ts": "export const x = 1;\n",
+        "public/app.min.js": " " * 300 + payload,
+    }
+    auto, other = _hidden_loaders(files)
+    assert any(a.startswith("frontend/postcss.config.js:3") for a in auto)
+    assert any(a.startswith("backend/api.js:1") for a in auto) and not other
+    art = artifact()
+    art.code_files = files
+    found = [f for f in analyse_hardening(art, "hardening") if f.id == "security-hidden-loader"]
+    assert found and found[0].severity.value == "critical"
+    # Ordinary long lines, minified bundles and indented code are not hidden loaders.
+    assert _hidden_loaders({"a.js": "const x = '" + "a" * 5000 + "';\n", "b.js": "    return 1;\n"}) == ([], [])

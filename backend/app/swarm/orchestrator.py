@@ -51,7 +51,8 @@ _KEEPS_SEVERITY = re.compile(
 
 #: Facts a source quote cannot argue with: a committed secret, a dependency advisory matched
 #: on the installed version, contract bytecode. The verifier never caps these.
-_STRUCTURAL = re.compile(r"^stellar_native-(?:onchain-contract-|stellar-secret-seed|dep-)|^security-default-secret")
+_STRUCTURAL = re.compile(r"^stellar_native-(?:onchain-contract-|stellar-secret-seed|dep-)|^security-default-secret|"
+                         r"^security-hidden-loader")
 
 
 _EXAMPLE_PLACE = re.compile(r"(?:^|/)(?:examples?|demos?|samples?|quickstart|scripts?|tests?|__tests__|spec|"

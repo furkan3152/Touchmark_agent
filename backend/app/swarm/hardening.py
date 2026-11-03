@@ -318,6 +318,49 @@ def _tool_descriptions(name: str, text: str) -> list[tuple[int, str]]:
     return out
 
 
+#: Code pushed past the visible width of an editor: code, a long run of blanks, then more code on the same line
+#: (a build config whose loader starts 300 columns to the right of `};`), or a line that starts that far right.
+_OFFSCREEN = re.compile(r"^(?:[^\n]*?\S)?[ \t]{150,}(?=\S)[^\n]{40,}$", re.M)
+#: Obfuscated JavaScript: string-keyed property access spelled in unicode escapes, `_0x` identifiers, and integer
+#: identities such as `957555^957555` used to hide constants.
+_UNICODE_ESCAPE = re.compile(r"\\u00[0-9a-fA-F]{2}")
+_HEX_IDENT = re.compile(r"\b_0x[0-9a-fA-F]{3,}\b")
+_XOR_ZERO = re.compile(r"\b(\d{3,})\s*\^\s*\1\b")
+#: Files a build or package manager runs on its own: tool configs, and anything a package.json script starts.
+_AUTORUN = re.compile(r"(?:^|/)(?:postcss|next|vite|webpack|babel|tailwind|eslint|jest|rollup|nuxt|svelte|"
+                      r"astro|vitest|metro)\.config\.[cm]?[jt]s$|(?:^|/)(?:setup\.py|conftest\.py|\.babelrc\.js)$", re.I)
+_SCRIPT_FILE = re.compile(r"\bnode\s+(?:--[\w-]+\s+)*([\w./-]+\.[cm]?js)\b")
+
+
+def _hidden_loaders(files: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Source a reviewer cannot read but a build or `npm start` runs: code hidden past the visible width, or a
+    long obfuscated line. Returns (places that run on their own, other places). Minified bundles are skipped."""
+    started = set()
+    for name, text in files.items():
+        if name.rsplit("/", 1)[-1] == "package.json":
+            folder = name.rsplit("/", 1)[0] + "/" if "/" in name else ""
+            started.update(folder + m.group(1).lstrip("./") for m in _SCRIPT_FILE.finditer(text))
+    auto, other = [], []
+    for name, text in files.items():
+        low = name.lower()
+        if not low.endswith((".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx", ".py")) \
+                or low.endswith((".min.js", ".bundle.js")) or "/dist/" in f"/{low}" or "/build/" in f"/{low}":
+            continue
+        place = ""
+        hidden = _OFFSCREEN.search(text)
+        if hidden:
+            place = f"{name}:{_line(text, hidden.start())} (code hidden past column 150)"
+        else:
+            for no, line in enumerate(text.splitlines(), 1):
+                if len(line) > 3000 and (len(_UNICODE_ESCAPE.findall(line)) >= 30 or len(_HEX_IDENT.findall(line)) >= 3
+                                         or _XOR_ZERO.search(line)):
+                    place = f"{name}:{no} (obfuscated line of {len(line)} characters)"
+                    break
+        if place:
+            (auto if _AUTORUN.search(name) or name in started else other).append(place)
+    return auto, other
+
+
 def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     findings: list[Finding] = []
     files = artifact.code_files
@@ -356,6 +399,22 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             "and can carry hidden text into a prompt.",
             hidden_zw, "Remove them, or normalize and reject them where names and instructions are compared.",
             ["Unicode TR36 security considerations"], auditor, confidence=0.75))
+
+    # A hidden loader: code a reviewer cannot see that a build or `npm start` runs. Whoever wrote the payload, not
+    # the operator who starts the build, decides what it does (a demo agent's api.js ran before every start and
+    # fetched code to eval from addresses read off a blockchain transaction), so it is never operator-triggered.
+    auto, other = _hidden_loaders(files)
+    if auto or other:
+        findings.append(_finding(
+            "security-hidden-loader", Severity.CRITICAL if auto else Severity.HIGH,
+            "Hidden or obfuscated code " + ("runs on every build or start" if auto else "in the source"),
+            "Code is pushed past the visible width of an editor or obfuscated into a single long line, so a reviewer "
+            "cannot read what it does. " + ("It sits in a file that a package script or build tool runs on its own, "
+            "inside the process that holds the agent's keys and environment. " if auto else "")
+            + "This is how supply-chain loaders hide: they fetch and evaluate code chosen by their author.",
+            auto + other,
+            "Remove the hidden code, rotate every secret the process could read, and check the commit that added it.",
+            ["CWE-506 Embedded Malicious Code", "OWASP LLM03 Supply Chain"], auditor, confidence=0.9))
 
     # Tool descriptions are instructions to the model; a poisoned one runs with the user's trust.
     poisoned = []
