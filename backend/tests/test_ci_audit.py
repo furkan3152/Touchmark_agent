@@ -61,7 +61,9 @@ def test_a_path_with_no_source_exits_cleanly_without_a_traceback(tmp_path, capsy
     assert "is not a directory" in capsys.readouterr().err
 
 
-def test_a_supplied_tmark_is_used_as_if_committed(tmp_path, capsys):
+def test_a_supplied_tmark_is_used_as_if_committed(tmp_path, capsys, monkeypatch):
+    for name in ("GITHUB_ACTIONS", "GITHUB_STEP_SUMMARY", "GITHUB_OUTPUT"):
+        monkeypatch.delenv(name, raising=False)  # outside Actions the summary goes to stdout
     repo = tmp_path / "agent"
     shutil.copytree(ROOT / "examples/demo/safe-treasury-agent", repo)
     supplied = tmp_path / "decl.tmark"
