@@ -6,7 +6,7 @@ half read is worse than none. What it states is checked against the code; it nev
 a risk by itself.
 
     {
-      "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+      "$schema": "https://usetouchmark.app/schemas/tmark-v1.json",
       "tmark": "1",
       "agent": {"name": "...", "purpose": "...", "kind": "mcp_server", "network": "testnet"},
       "owner": {"stellar_account": "G..."},
@@ -44,7 +44,7 @@ FILE_NAME = ".tmark"
 VERSION = "1.1"
 #: Every version this parser reads. Minor versions only add optional fields and values.
 VERSIONS = ("1", "1.1")
-SCHEMA_URL = "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json"
+SCHEMA_URL = "https://usetouchmark.app/schemas/tmark-v1.json"
 MAX_BYTES = 64_000
 
 _AMOUNT = re.compile(r"^(?:0|[1-9]\d{0,11})(?:\.\d{1,7})?$")

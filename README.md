@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://touchmark-stellar.vercel.app"><img src="https://img.shields.io/badge/Live_demo-touchmark--stellar.vercel.app-1d2b4f?style=for-the-badge" alt="Live demo"></a>
+  <a href="https://usetouchmark.app"><img src="https://img.shields.io/badge/Live_demo-usetouchmark.app-1d2b4f?style=for-the-badge" alt="Live demo"></a>
   <img src="https://img.shields.io/badge/Stellar-Testnet-e2432a?style=for-the-badge&logo=stellar&logoColor=white" alt="Stellar testnet">
   <a href="https://github.com/furkan3152/Touchmark_agent/actions/workflows/verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/Touchmark_agent/verify.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
   <img src="https://img.shields.io/badge/License-Apache_2.0-1f7a5a?style=for-the-badge" alt="License">
@@ -58,7 +58,7 @@ the maintainers' fix, not our opinion.
 
 ## Try it
 
-**[touchmark-stellar.vercel.app](https://touchmark-stellar.vercel.app)**: paste a GitHub repository or folder
+**[usetouchmark.app](https://usetouchmark.app)**: paste a GitHub repository or folder
 pinned to a commit, a `C…` contract, a `G…` account or a registry agent id, and tick the model review.
 
 | An unsafe agent: not yet | The same agent, fixed: touchmarked on Stellar |
@@ -118,7 +118,7 @@ Details, limits and the decision rule: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 
 A `.tmark` at the repository root states what the agent may do: network, keys and what it signs, spending limits,
 recipients, approval and tools. Touchmark holds the code to every claim; a declaration never closes a risk on its
-own. **[Build one in the browser](https://touchmark-stellar.vercel.app/guide/tmark#builder)** from a template and
+own. **[Build one in the browser](https://usetouchmark.app/guide/tmark#builder)** from a template and
 check it live, or start from your code:
 
 ```bash

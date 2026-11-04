@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("ids", nargs="*", help="case ids (default: all)")
     ap.add_argument("--cases", type=Path, default=HERE / "cases.json")
     ap.add_argument("--out", type=Path, default=Path("reports"))
-    ap.add_argument("--base", default="https://touchmark-stellar.vercel.app")
+    ap.add_argument("--base", default="https://usetouchmark.app")
     args = ap.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     for case in json.loads(args.cases.read_text()):

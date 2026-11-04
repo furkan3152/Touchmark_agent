@@ -1,5 +1,5 @@
 {
-  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "$schema": "https://usetouchmark.app/schemas/tmark-v1.json",
   "tmark": "1",
   "agent": {
     "name": "Treasury agent",

@@ -287,7 +287,7 @@ def tmark_findings(artifact: AgentArtifact, auditor: str) -> list[Finding]:
             "A .tmark is read only when every field is valid; a half-read declaration could hide a limit or an "
             "authority the agent has. Fix the errors listed and audit again.",
             "; ".join(info.get("errors", [])[:8]),
-            "Validate the file against https://touchmark-stellar.vercel.app/schemas/tmark-v1.json (or "
+            "Validate the file against https://usetouchmark.app/schemas/tmark-v1.json (or "
             "python scripts/tmark.py check) and fix each listed field.", auditor)]
     if status == "legacy":
         return [_finding(

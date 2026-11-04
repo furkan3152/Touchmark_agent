@@ -16,7 +16,7 @@
  *   "touchmark.tmark.toAudit"    text the builder sends back to the home page audit (/#declare)
  */
 (() => {
-  const SCHEMA_URL = "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json";
+  const SCHEMA_URL = "https://usetouchmark.app/schemas/tmark-v1.json";
 
   // ------------------------------------------------------------ StrKey
   const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";

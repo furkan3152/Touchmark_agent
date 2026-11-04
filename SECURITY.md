@@ -3,7 +3,7 @@
 ## Supported versions
 
 Touchmark has no numbered releases yet. Security fixes go to the `main` branch and to the live demo
-(<https://touchmark-stellar.vercel.app>); nothing else is supported.
+(<https://usetouchmark.app>); nothing else is supported.
 
 ## Reporting a vulnerability
 

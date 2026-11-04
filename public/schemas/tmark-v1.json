@@ -339,7 +339,7 @@
   "additionalProperties": false,
   "properties": {
     "$schema": {
-      "default": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+      "default": "https://usetouchmark.app/schemas/tmark-v1.json",
       "title": "$Schema",
       "type": "string"
     },
@@ -422,6 +422,6 @@
   ],
   "title": ".tmark v1 (1.1)",
   "type": "object",
-  "$id": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "$id": "https://usetouchmark.app/schemas/tmark-v1.json",
   "description": "What a repository declares about its Stellar agent. Checked against the code by Touchmark."
 }

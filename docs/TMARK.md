@@ -11,7 +11,7 @@ The format is strict on purpose:
 - unknown fields are rejected;
 - a file with any error is not used at all.
 
-Schema: [`/schemas/tmark-v1.json`](https://touchmark-stellar.vercel.app/schemas/tmark-v1.json). Editors that read `$schema` (VS Code, JetBrains) validate it as you type.
+Schema: [`/schemas/tmark-v1.json`](https://usetouchmark.app/schemas/tmark-v1.json). Editors that read `$schema` (VS Code, JetBrains) validate it as you type.
 
 ## Start
 
@@ -26,7 +26,7 @@ Commit `.tmark` at the root, next to `README.md`. The [GitHub Action](../README.
 
 ```json
 {
-  "$schema": "https://touchmark-stellar.vercel.app/schemas/tmark-v1.json",
+  "$schema": "https://usetouchmark.app/schemas/tmark-v1.json",
   "tmark": "1",
   "agent": {
     "name": "Treasury agent",
