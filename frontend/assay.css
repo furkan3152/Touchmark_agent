@@ -135,3 +135,6 @@
   .book-table thead{display:none}.book-table tr{display:block;border-bottom:2px solid var(--ink)}.book-table td{display:block;border:0;padding:6px 14px}
   .proof dl,.manual{grid-template-columns:1fr}
 }
+
+/* A display rule above would otherwise override the hidden attribute (the strip showed 0 before the book loaded). */
+.book-strip[hidden],.assay[hidden],.paywall[hidden],#book[hidden]{display:none}

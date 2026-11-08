@@ -90,3 +90,13 @@ def test_the_public_site_does_not_serve_the_operator_console():
             "print([c.get(p).status_code for p in ('/ui/', '/ui/index.html', '/ui/app.js', '/ui/demo.js', '/docs', '/book')])")
     out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, timeout=120)
     assert out.stdout.strip().splitlines()[-1] == "[404, 404, 404, 200, 200, 200]", out.stderr[-500:]
+
+
+def test_hidden_elements_with_a_display_rule_stay_hidden():
+    # .book-strip{display:flex} beat the hidden attribute, so the home page showed "0 audits" before the book loaded.
+    import re
+    from pathlib import Path
+    css = (Path(__file__).resolve().parents[2] / "frontend/assay.css").read_text()
+    for cls in ("book-strip", "assay"):
+        assert re.search(rf"\.{cls}\{{[^}}]*display:(flex|grid)", css)
+        assert re.search(rf"\.{cls}\[hidden\][^{{]*\{{display:none\}}", css), cls

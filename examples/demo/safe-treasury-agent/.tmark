@@ -30,7 +30,7 @@
   "tools": [
     {
       "name": "send_payment",
-      "description": "Pay one invoice from the invoice host to a listed supplier in XLM: at most 500 per payment and 1000 per 24 hours, each invoice once",
+      "description": "Pay one invoice from the invoice host to a listed supplier in XLM: the supplier and amount must match the invoice; at most 500 per payment and 1000 per 24 hours, each invoice once",
       "moves_funds": true,
       "signs": true,
       "network": true,
@@ -42,7 +42,7 @@
     },
     {
       "name": "fetch_invoice",
-      "description": "Read an invoice by id from the fixed invoice host",
+      "description": "Read an invoice's supplier and amount by id from the fixed invoice host",
       "moves_funds": false,
       "signs": false,
       "network": true

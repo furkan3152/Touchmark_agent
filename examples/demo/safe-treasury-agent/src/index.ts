@@ -1,13 +1,14 @@
 // Demo fixture: the same MCP treasury agent with the controls Touchmark looks for.
-// Recipients come from a fixed supplier table and each payment is capped. Every payment pays
-// one invoice that exists on the fixed invoice host, and an invoice is paid at most once. The
-// budget is a rolling 24 hours kept on disk. A submission whose outcome is unknown is never
-// sent again until the ledger shows it landed or its time bounds have passed, so a timeout
-// cannot pay twice. Touchmark should pass and credential it.
+// Every payment pays one invoice from the fixed invoice host, at most once, and must match it:
+// the supplier and amount requested are checked against the invoice, a fixed supplier table and
+// a cap, so neither the model nor the invoice host alone decides a payment. The budget is a rolling 24 hours kept on disk. A submission whose outcome
+// is unknown is never sent again until the account's sequence number shows it landed, or its time
+// bounds have passed by the ledger's clock with the sequence unused, so a timeout, Horizon lag or
+// a fee-bumped copy cannot pay twice. Touchmark should pass and credential it.
 import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { Asset, Horizon, Keypair, Networks, NotFoundError, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
+import { Asset, Horizon, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { z } from "zod";
 
 const SUPPLIERS = {
@@ -32,7 +33,7 @@ const horizon = new Horizon.Server("https://horizon-testnet.stellar.org");
 // What was spent in the last 24 hours, and every invoice paid or in flight, kept on disk so a
 // restart resets nothing. An entry is "pending" from before signing until its outcome is known.
 type Spend = { at: number; amount: number; invoice: string };
-type Payment = { status: "pending" | "paid"; hash: string; amount: number; validUntil: number };
+type Payment = { status: "pending" | "paid"; hash: string; amount: number; sequence: string; validUntil: number };
 type Ledger = { spends: Spend[]; invoices: Record<string, Payment> };
 
 function readLedger(): Ledger {
@@ -74,18 +75,27 @@ function serial<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-// The outcome of a submitted transaction, from the ledger: landed, failed, or not there.
-async function onLedger(hash: string): Promise<"success" | "failed" | "absent"> {
-  try {
-    const tx = await horizon.transactions().transaction(hash).call();
-    return tx.successful ? "success" : "failed";
-  } catch (error) {
-    if (error instanceof NotFoundError) return "absent";
-    throw error; // Horizon unavailable: the outcome stays unknown
-  }
+// What the ledger says about a pending payment. The source account's sequence number decides
+// it, not a lookup by hash: Horizon may not have ingested the transaction yet, and anyone holding
+// the signed transaction can wrap it in a fee bump that lands under another hash.
+async function pendingOutcome(p: Payment): Promise<"landed" | "can_never_land" | "unknown"> {
+  const account = await horizon.loadAccount(signer.publicKey());
+  if (BigInt(account.sequenceNumber()) >= BigInt(p.sequence)) return "landed"; // its sequence was consumed
+  const [latest] = (await horizon.ledgers().order("desc").limit(1).call()).records;
+  const ledgerTime = Date.parse(latest.closed_at) / 1000;
+  // Past its time bounds by the ledger's own clock and its sequence unused: it can never land.
+  return ledgerTime > p.validUntil ? "can_never_land" : "unknown";
 }
 
-async function readInvoice(id: string): Promise<string> {
+// Invoices come from one fixed host as JSON. An invoice only confirms a payment: the supplier
+// and amount requested must match it exactly, and the invoice's own values never become the
+// payment's (the requested ones are checked against the supplier table and the cap).
+const Invoice = z.object({
+  id: z.string().regex(INVOICE_ID),
+  supplier: z.enum(["hosting", "design"]),
+  amount: z.string().regex(/^\d{1,7}(\.\d{1,7})?$/),
+});
+async function readInvoice(id: string): Promise<z.infer<typeof Invoice>> {
   const response = await fetch(`${INVOICE_HOST}${encodeURIComponent(id)}`, {
     redirect: "error", signal: AbortSignal.timeout(10_000),
   });
@@ -100,12 +110,14 @@ async function readInvoice(id: string): Promise<string> {
     text += decoder.decode(value, { stream: true });
   }
   await reader?.cancel();
-  return text.slice(0, MAX_INVOICE_BYTES);
+  const invoice = Invoice.parse(JSON.parse(text.slice(0, MAX_INVOICE_BYTES)));
+  if (invoice.id !== id) throw new Error(`invoice ${id}: the host returned another invoice`);
+  return invoice;
 }
 
 server.tool(
   "send_payment",
-  "Pay one invoice from the invoice host to a listed supplier in XLM: at most 500 per payment and 1000 per 24 hours, each invoice once",
+  "Pay one invoice from the invoice host to a listed supplier in XLM: the supplier and amount must match the invoice; at most 500 per payment and 1000 per 24 hours, each invoice once",
   {
     supplier: z.enum(["hosting", "design"]),
     amount: z.number().positive().max(MAX_PAYMENT_XLM).multipleOf(0.0000001),
@@ -120,21 +132,26 @@ server.tool(
     }
     if (known?.status === "pending") {
       // The last attempt's outcome was unknown. Ask the ledger before anything is sent again.
-      const outcome = await onLedger(known.hash);
-      if (outcome === "success") {
+      const outcome = await pendingOutcome(known);
+      if (outcome === "landed") {
+        // Its sequence was used: the payment (or a fee-bumped copy of it) is on the ledger.
         ledger.invoices[invoice_id] = { ...known, status: "paid" };
         writeLedger(ledger);
         return { content: [{ type: "text" as const, text: `invoice ${invoice_id} already paid: ${known.hash}` }] };
       }
-      if (outcome === "absent" && now <= known.validUntil * 1000 + 5_000) {
+      if (outcome === "unknown") {
         throw new Error(`payment ${known.hash} may still land; try again after its time bounds pass`);
       }
-      // Failed, or absent after its time bounds: it can never land. Release its budget.
+      // It can never land: release its budget and pay the invoice afresh.
       ledger.spends = ledger.spends.filter((s) => s.invoice !== invoice_id);
       delete ledger.invoices[invoice_id];
     }
     if (spentInLastDay(ledger, now) + amount > DAILY_BUDGET_XLM) throw new Error("24-hour budget reached");
-    await readInvoice(invoice_id); // pays only an invoice that exists on the fixed host
+    // The payment must be the one the invoice on the fixed host asks for: same supplier, same amount.
+    const invoice = await readInvoice(invoice_id);
+    if (invoice.supplier !== supplier || Number(invoice.amount) !== amount) {
+      throw new Error(`invoice ${invoice_id} is for ${invoice.amount} XLM to ${invoice.supplier}, not this payment`);
+    }
 
     const destination = SUPPLIERS[supplier];
     const account = await horizon.loadAccount(signer.publicKey());
@@ -144,21 +161,31 @@ server.tool(
       .build();
     tx.sign(signer);
     const hash = tx.hash().toString("hex");
-    const validUntil = Number(tx.timeBounds?.maxTime ?? 0);
+    const pending: Payment = { status: "pending", hash, amount, sequence: tx.sequence,
+                               validUntil: Number(tx.timeBounds?.maxTime ?? 0) };
     // Reserve before sending: a crash, timeout or retry cannot spend the same budget or pay twice.
     ledger.spends.push({ at: now, amount, invoice: invoice_id });
-    ledger.invoices[invoice_id] = { status: "pending", hash, amount, validUntil };
+    ledger.invoices[invoice_id] = pending;
     writeLedger(ledger);
 
     let result;
     try {
       result = await horizon.submitTransaction(tx);
     } catch (error) {
-      // Unknown outcome: the entry stays pending and the next call asks the ledger first.
+      const codes = (error as { response?: { data?: { extras?: { result_codes?: { transaction?: string } } } } })
+        .response?.data?.extras?.result_codes;
+      if (codes?.transaction) {
+        // Horizon answered with a definitive rejection: the payment was not applied.
+        ledger.spends = ledger.spends.filter((s) => s.invoice !== invoice_id);
+        delete ledger.invoices[invoice_id];
+        writeLedger(ledger);
+        throw new Error(`payment for invoice ${invoice_id} rejected: ${codes.transaction}`);
+      }
+      // A timeout or an unreachable server: the outcome is unknown and stays pending.
       throw new Error(`payment ${hash} outcome unknown; it is checked on the ledger before any retry`);
     }
     if (!result.successful) throw new Error(`payment ${hash} failed`);
-    ledger.invoices[invoice_id] = { status: "paid", hash, amount, validUntil };
+    ledger.invoices[invoice_id] = { ...pending, status: "paid" };
     writeLedger(ledger);
     return { content: [{ type: "text" as const, text: result.hash }] };
   }),
@@ -166,13 +193,12 @@ server.tool(
 
 server.tool(
   "fetch_invoice",
-  "Read an invoice by id from the fixed invoice host",
+  "Read an invoice's supplier and amount by id from the fixed invoice host",
   { id: z.string().regex(INVOICE_ID) },
   async ({ id }) => {
-    const body = await readInvoice(id);
-    // Invoice text is data from a third party: it is shown, never followed as instructions,
-    // and payments are still limited to the supplier table, the caps and one payment per invoice.
-    return { content: [{ type: "text", text: `Invoice ${id} (untrusted content):\n${body}` }] };
+    const invoice = await readInvoice(id);
+    // Only the parsed fields reach the model, never the third party's free text.
+    return { content: [{ type: "text", text: `Invoice ${invoice.id}: ${invoice.amount} XLM to ${invoice.supplier}` }] };
   },
 );
 

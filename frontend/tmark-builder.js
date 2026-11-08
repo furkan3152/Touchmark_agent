@@ -304,8 +304,8 @@
       authority: { holds_keys: true, key_source: "env", signs: ["payments"] },
       limits: { per_payment: { amount: "500", asset: "XLM" }, per_day: { amount: "1000", asset: "XLM" }, recipients: "allowlist", human_approval: "never" },
       tools: [
-        { name: "send_payment", description: "Pay one invoice from the invoice host to a listed supplier in XLM: at most 500 per payment and 1000 per 24 hours, each invoice once", moves_funds: true, signs: true, network: true, files: true, max_amount: { amount: "500", asset: "XLM" } },
-        { name: "fetch_invoice", description: "Read an invoice by id from the fixed invoice host", moves_funds: false, signs: false, network: true },
+        { name: "send_payment", description: "Pay one invoice from the invoice host to a listed supplier in XLM: the supplier and amount must match the invoice; at most 500 per payment and 1000 per 24 hours, each invoice once", moves_funds: true, signs: true, network: true, files: true, max_amount: { amount: "500", asset: "XLM" } },
+        { name: "fetch_invoice", description: "Read an invoice's supplier and amount by id from the fixed invoice host", moves_funds: false, signs: false, network: true },
       ],
       forbidden: ["pay anyone who is not in the supplier table", "pay more than 500 XLM in one payment", "pay more than 1000 XLM in 24 hours"] },
     mcp: { $schema: SCHEMA_URL, tmark: "1.1",
