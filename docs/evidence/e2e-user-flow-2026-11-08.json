@@ -1,0 +1,557 @@
+{
+ "schema": "touchmark.e2e-user-flow.v1",
+ "date": "2026-11-08",
+ "site": "https://usetouchmark.app",
+ "network": "Stellar testnet",
+ "how": "Each run is the public site in a real browser (Chromium via Playwright), driven as a user: paste a GitHub folder pinned to a commit, tick the model review, wait for the result, pay for the printed report with a testnet wallet, open the report and the assay book. The wallet is a fresh testnet account funded by Friendbot; it answers the page's Freighter calls and signs with the Stellar SDK, because the Freighter extension cannot run headless. The page code is unchanged.",
+ "wallet": "GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4",
+ "verify": "python3 scripts/verify_assay.py c086fc7e6eaf64fe4a71a4f2d5540ca7e0922c645713484966b02ce3f6b584b3 2354ffda064f2e289cf7536a907d07abd4cbf0bda14aa48dfd0138d2d5a3a4c4 c9ee90c36c80698b3970f864fad12f4428a4eccf4cd53824e2ab9f502d1f4e4d 2ea1fe1149f18a8a2d8376dc93d3c1760543b2f8c8f5dea14c5e28449aeefad8 07d0111ea67f7333f8516209ef8818e357856e6fd8eaab6df591c95f09fdeb30 08514b7d5a6aab09a9e84c92fcb27daaac9092516ec8d679bcbf3cbc0cc5316b",
+ "all_checks_pass": true,
+ "runs": [
+  {
+   "what": "Safe treasury agent as shipped: the review found two real payment defects",
+   "entry": "c086fc7e6eaf64fe4a71a4f2d5540ca7e0922c645713484966b02ce3f6b584b3",
+   "audit_seconds": 510,
+   "started_utc": "2026-11-08T16:23:50Z",
+   "credential": null,
+   "wallet_signed": [
+    "3e74d6acff1a05ce6d3c3d3c1704912f1cc71d6896033c66dbdda919b0406857"
+   ],
+   "verified": {
+    "entry": "c086fc7e6eaf64fe4a71a4f2d5540ca7e0922c645713484966b02ce3f6b584b3",
+    "checks": [
+     {
+      "check": "sha256(canonical entry) == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp transaction on the ledger and successful",
+      "ok": true,
+      "detail": "a0010fd282a4e2261853478cab1bfde0f1d34cc56808288f9a2e094e5689ed31"
+     },
+     {
+      "check": "stamp memo == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp sent by the book account",
+      "ok": true,
+      "detail": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU"
+     },
+     {
+      "check": "payment successful",
+      "ok": true,
+      "detail": "3e74d6acff1a05ce6d3c3d3c1704912f1cc71d6896033c66dbdda919b0406857"
+     },
+     {
+      "check": "payment memo == tm:<entry[:20]>",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "payment to the book account, native, at least the price",
+      "ok": true,
+      "detail": "2.0000000 XLM from GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4"
+     },
+     {
+      "check": "receipt from the book account to the payer, memo == entry id",
+      "ok": true,
+      "detail": "32af3ef0f26c07aff04ca2a879d7b8a2a6aa68b3fe944e8e5961fcd967f74a15"
+     },
+     {
+      "check": "released report hashes to entry.report_sha256",
+      "ok": true,
+      "detail": "f04706b2d9984fb05d4fe1348e74ec678138c8f0ffeb31643aa3e19ec4c1b0b9"
+     }
+    ],
+    "ok": true,
+    "agent": "https://github.com/furkan3152/Touchmark_agent/examples/demo/safe-treasury-agent",
+    "commit": "2f27aebb303bd8834eb5c05eb4e62afa5c9b70db",
+    "decision": "needs_fixes",
+    "score": 62.3,
+    "findings": {
+     "critical": 0,
+     "gaps": 20,
+     "high": 0,
+     "low": 7,
+     "medium": 3,
+     "risks": 10
+    },
+    "model_review": true,
+    "account": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU",
+    "stamped_at": "2026-11-08T16:32:07Z",
+    "stamp_tx": "a0010fd282a4e2261853478cab1bfde0f1d34cc56808288f9a2e094e5689ed31",
+    "paid": true,
+    "payment_tx": "3e74d6acff1a05ce6d3c3d3c1704912f1cc71d6896033c66dbdda919b0406857",
+    "payer": "GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4",
+    "amount": "2.0000000",
+    "receipt_tx": "32af3ef0f26c07aff04ca2a879d7b8a2a6aa68b3fe944e8e5961fcd967f74a15"
+   }
+  },
+  {
+   "what": "Unsafe treasury agent: the bad agent",
+   "entry": "2354ffda064f2e289cf7536a907d07abd4cbf0bda14aa48dfd0138d2d5a3a4c4",
+   "audit_seconds": 270,
+   "started_utc": "2026-11-08T16:35:05Z",
+   "credential": null,
+   "wallet_signed": [
+    "d39f26b15a8a4fb8123b60f1b0e63840f1dc5ae04c7d6dc462f98332f055a997"
+   ],
+   "verified": {
+    "entry": "2354ffda064f2e289cf7536a907d07abd4cbf0bda14aa48dfd0138d2d5a3a4c4",
+    "checks": [
+     {
+      "check": "sha256(canonical entry) == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp transaction on the ledger and successful",
+      "ok": true,
+      "detail": "83dce9650f816929340cb15d115bb1ec8e193c01cc35b7970392a9282037ff0f"
+     },
+     {
+      "check": "stamp memo == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp sent by the book account",
+      "ok": true,
+      "detail": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU"
+     },
+     {
+      "check": "payment successful",
+      "ok": true,
+      "detail": "d39f26b15a8a4fb8123b60f1b0e63840f1dc5ae04c7d6dc462f98332f055a997"
+     },
+     {
+      "check": "payment memo == tm:<entry[:20]>",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "payment to the book account, native, at least the price",
+      "ok": true,
+      "detail": "2.0000000 XLM from GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4"
+     },
+     {
+      "check": "receipt from the book account to the payer, memo == entry id",
+      "ok": true,
+      "detail": "5d8ea42b5f6fc70e68427f3922f79f242440e7e535af1557783908fd156393f6"
+     },
+     {
+      "check": "released report hashes to entry.report_sha256",
+      "ok": true,
+      "detail": "31fa94ee0b57bf613bd78c786c788f7303d6b6987e6374c2cdec958ebd5d1c64"
+     }
+    ],
+    "ok": true,
+    "agent": "https://github.com/furkan3152/Touchmark_agent/examples/demo/unsafe-treasury-agent",
+    "commit": "2f27aebb303bd8834eb5c05eb4e62afa5c9b70db",
+    "decision": "needs_fixes",
+    "score": 57.8,
+    "findings": {
+     "critical": 0,
+     "gaps": 21,
+     "high": 3,
+     "low": 7,
+     "medium": 0,
+     "risks": 10
+    },
+    "model_review": true,
+    "account": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU",
+    "stamped_at": "2026-11-08T16:39:32Z",
+    "stamp_tx": "83dce9650f816929340cb15d115bb1ec8e193c01cc35b7970392a9282037ff0f",
+    "paid": true,
+    "payment_tx": "d39f26b15a8a4fb8123b60f1b0e63840f1dc5ae04c7d6dc462f98332f055a997",
+    "payer": "GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4",
+    "amount": "2.0000000",
+    "receipt_tx": "5d8ea42b5f6fc70e68427f3922f79f242440e7e535af1557783908fd156393f6"
+   }
+  },
+  {
+   "what": "Safe agent, first fix: the review found new gaps in the fix",
+   "entry": "c9ee90c36c80698b3970f864fad12f4428a4eccf4cd53824e2ab9f502d1f4e4d",
+   "audit_seconds": 510,
+   "started_utc": "2026-11-08T16:43:26Z",
+   "credential": null,
+   "wallet_signed": [
+    "03e96b8da9271462a4bd0a180bd75482937672ebab0e538150f976bfc57af2cd"
+   ],
+   "verified": {
+    "entry": "c9ee90c36c80698b3970f864fad12f4428a4eccf4cd53824e2ab9f502d1f4e4d",
+    "checks": [
+     {
+      "check": "sha256(canonical entry) == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp transaction on the ledger and successful",
+      "ok": true,
+      "detail": "c58df59138421b3130e6ce61341343f8940b5b9881542a877eb870719f42f2f5"
+     },
+     {
+      "check": "stamp memo == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp sent by the book account",
+      "ok": true,
+      "detail": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU"
+     },
+     {
+      "check": "payment successful",
+      "ok": true,
+      "detail": "03e96b8da9271462a4bd0a180bd75482937672ebab0e538150f976bfc57af2cd"
+     },
+     {
+      "check": "payment memo == tm:<entry[:20]>",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "payment to the book account, native, at least the price",
+      "ok": true,
+      "detail": "2.0000000 XLM from GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4"
+     },
+     {
+      "check": "receipt from the book account to the payer, memo == entry id",
+      "ok": true,
+      "detail": "8b7f81255df06f1d80988056864fd5edd50c5340a042ff4f45311bf2ddfe1b19"
+     },
+     {
+      "check": "released report hashes to entry.report_sha256",
+      "ok": true,
+      "detail": "4ea29c2ec63ea91c7c945c263131c87c9921f746514d78d44c11f70ad1fe8313"
+     }
+    ],
+    "ok": true,
+    "agent": "https://github.com/furkan3152/Touchmark_agent/examples/demo/safe-treasury-agent",
+    "commit": "8595d7c8785f964f77601998389e42cd0d62e36e",
+    "decision": "needs_fixes",
+    "score": 62.2,
+    "findings": {
+     "critical": 0,
+     "gaps": 18,
+     "high": 0,
+     "low": 1,
+     "medium": 5,
+     "risks": 6
+    },
+    "model_review": true,
+    "account": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU",
+    "stamped_at": "2026-11-08T16:51:52Z",
+    "stamp_tx": "c58df59138421b3130e6ce61341343f8940b5b9881542a877eb870719f42f2f5",
+    "paid": true,
+    "payment_tx": "03e96b8da9271462a4bd0a180bd75482937672ebab0e538150f976bfc57af2cd",
+    "payer": "GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4",
+    "amount": "2.0000000",
+    "receipt_tx": "8b7f81255df06f1d80988056864fd5edd50c5340a042ff4f45311bf2ddfe1b19"
+   }
+  },
+  {
+   "what": "Safe agent, second fix: one double-payment path left",
+   "entry": "2ea1fe1149f18a8a2d8376dc93d3c1760543b2f8c8f5dea14c5e28449aeefad8",
+   "audit_seconds": 645,
+   "started_utc": "2026-11-08T17:09:35Z",
+   "credential": null,
+   "wallet_signed": [
+    "5f96bfe01758b8085aaef000076d8a7db951e72d970e8413ed6148c63230fe7d"
+   ],
+   "verified": {
+    "entry": "2ea1fe1149f18a8a2d8376dc93d3c1760543b2f8c8f5dea14c5e28449aeefad8",
+    "checks": [
+     {
+      "check": "sha256(canonical entry) == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp transaction on the ledger and successful",
+      "ok": true,
+      "detail": "bf02e2735d47361fa0a0607249ed40c30bf9144f3c44a598078aa7d5c68c6697"
+     },
+     {
+      "check": "stamp memo == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp sent by the book account",
+      "ok": true,
+      "detail": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU"
+     },
+     {
+      "check": "payment successful",
+      "ok": true,
+      "detail": "5f96bfe01758b8085aaef000076d8a7db951e72d970e8413ed6148c63230fe7d"
+     },
+     {
+      "check": "payment memo == tm:<entry[:20]>",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "payment to the book account, native, at least the price",
+      "ok": true,
+      "detail": "2.0000000 XLM from GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4"
+     },
+     {
+      "check": "receipt from the book account to the payer, memo == entry id",
+      "ok": true,
+      "detail": "b5ed29d264fc2419ae1cf22895cc45e9e9d40aaad0dda91e5a5c62acf4677e04"
+     },
+     {
+      "check": "released report hashes to entry.report_sha256",
+      "ok": true,
+      "detail": "4f2601058c794ef829518a00b7837ea0df539666e5290e360f3bff287a468c54"
+     }
+    ],
+    "ok": true,
+    "agent": "https://github.com/furkan3152/Touchmark_agent/examples/demo/safe-treasury-agent",
+    "commit": "36ba0661272ecb25eac12fe797570985c0a9f671",
+    "decision": "needs_fixes",
+    "score": 62.9,
+    "findings": {
+     "critical": 0,
+     "gaps": 19,
+     "high": 0,
+     "low": 2,
+     "medium": 2,
+     "risks": 4
+    },
+    "model_review": true,
+    "account": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU",
+    "stamped_at": "2026-11-08T17:20:17Z",
+    "stamp_tx": "bf02e2735d47361fa0a0607249ed40c30bf9144f3c44a598078aa7d5c68c6697",
+    "paid": true,
+    "payment_tx": "5f96bfe01758b8085aaef000076d8a7db951e72d970e8413ed6148c63230fe7d",
+    "payer": "GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4",
+    "amount": "2.0000000",
+    "receipt_tx": "b5ed29d264fc2419ae1cf22895cc45e9e9d40aaad0dda91e5a5c62acf4677e04"
+   }
+  },
+  {
+   "what": "Safe agent, third fix: pass; the credential was issued on chain but the page lost the connection at 30 s (fixed, then re-run)",
+   "entry": "07d0111ea67f7333f8516209ef8818e357856e6fd8eaab6df591c95f09fdeb30",
+   "audit_seconds": 540,
+   "started_utc": "2026-11-08T17:26:49Z",
+   "credential": "Stamp it on Stellar testnet",
+   "wallet_signed": [
+    "c2736037435b4e46ff46dc23e7cc79a0dcb125b77a3f12181ae798fa1763ffe3"
+   ],
+   "credential_transactions": [
+    {
+     "function": "reg_agent",
+     "contract": "CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W",
+     "tx": "a7069a91c3e17b8aac5e86f9f155a50e43bed567c154dcb785c9f950e0d84ad3",
+     "at": "2026-11-08T17:36:07Z",
+     "successful": true
+    },
+    {
+     "function": "req_valid",
+     "contract": "CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W",
+     "tx": "9177ff0fce4ddaf29fcd3a0eb0d61da5ea02e1479b733395a0204ce30ef3490c",
+     "at": "2026-11-08T17:36:12Z",
+     "successful": true
+    },
+    {
+     "function": "respond",
+     "contract": "CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W",
+     "tx": "2ec11e4eafaedaa58953697653e9d1629f17bd9dfe063fb50629c0b26c6c54fd",
+     "at": "2026-11-08T17:36:27Z",
+     "successful": true
+    },
+    {
+     "function": "issue",
+     "contract": "CBBTOBL6XTLWYPT5GSVUA3JWNQMVMT4DGGHEGZ4NHC3V4SLXKP5AO4R5",
+     "tx": "785e1dfaf533822a70ea5598274d4291a7be7bd8c4d54edf4bd78e5f2679f6dc",
+     "at": "2026-11-08T17:36:47Z",
+     "successful": true
+    }
+   ],
+   "verified": {
+    "entry": "07d0111ea67f7333f8516209ef8818e357856e6fd8eaab6df591c95f09fdeb30",
+    "checks": [
+     {
+      "check": "sha256(canonical entry) == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp transaction on the ledger and successful",
+      "ok": true,
+      "detail": "6a813d59295cd9f494dffc763aba6f684a7236fea01fd2d76ebb3008213d7ff1"
+     },
+     {
+      "check": "stamp memo == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp sent by the book account",
+      "ok": true,
+      "detail": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU"
+     },
+     {
+      "check": "payment successful",
+      "ok": true,
+      "detail": "c2736037435b4e46ff46dc23e7cc79a0dcb125b77a3f12181ae798fa1763ffe3"
+     },
+     {
+      "check": "payment memo == tm:<entry[:20]>",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "payment to the book account, native, at least the price",
+      "ok": true,
+      "detail": "2.0000000 XLM from GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4"
+     },
+     {
+      "check": "receipt from the book account to the payer, memo == entry id",
+      "ok": true,
+      "detail": "60770ce815ab8f73bf5076d0558396d2c78b83f300e2baa88dbf96248863d47d"
+     },
+     {
+      "check": "released report hashes to entry.report_sha256",
+      "ok": true,
+      "detail": "7e8374cf627188eb430aa7a685b3f29363f9fc9314593c5825ff2f09607efeac"
+     }
+    ],
+    "ok": true,
+    "agent": "https://github.com/furkan3152/Touchmark_agent/examples/demo/safe-treasury-agent",
+    "commit": "8b78289830b65f47b45a7a4051955833095908e6",
+    "decision": "pass",
+    "score": 98.4,
+    "findings": {
+     "critical": 0,
+     "gaps": 19,
+     "high": 0,
+     "low": 2,
+     "medium": 0,
+     "risks": 2
+    },
+    "model_review": true,
+    "account": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU",
+    "stamped_at": "2026-11-08T17:35:42Z",
+    "stamp_tx": "6a813d59295cd9f494dffc763aba6f684a7236fea01fd2d76ebb3008213d7ff1",
+    "paid": true,
+    "payment_tx": "c2736037435b4e46ff46dc23e7cc79a0dcb125b77a3f12181ae798fa1763ffe3",
+    "payer": "GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4",
+    "amount": "2.0000000",
+    "receipt_tx": "60770ce815ab8f73bf5076d0558396d2c78b83f300e2baa88dbf96248863d47d"
+   }
+  },
+  {
+   "what": "Safe agent, third fix, after the credential fix: pass, credential issued and read back on the page",
+   "entry": "08514b7d5a6aab09a9e84c92fcb27daaac9092516ec8d679bcbf3cbc0cc5316b",
+   "audit_seconds": 540,
+   "started_utc": "2026-11-08T17:57:25Z",
+   "credential": "Stamp it on Stellar testnet",
+   "wallet_signed": [
+    "1b2ec7e9fc6ad1548a04b8b3c163a8e680d9fc6d68562cda31bd9ec2524e9174"
+   ],
+   "credential_transactions": [
+    {
+     "function": "req_valid",
+     "contract": "CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W",
+     "tx": "7d6795069330091fee797a36544a618333e45c1af0762449cc8f46e762c7fa53",
+     "at": "2026-11-08T18:06:57Z",
+     "successful": true
+    },
+    {
+     "function": "respond",
+     "contract": "CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W",
+     "tx": "cef43d34cb277f68bcefbf1252dc13d93a089a20c15a9b6b7945a6155d2ab4c7",
+     "at": "2026-11-08T18:07:12Z",
+     "successful": true
+    },
+    {
+     "function": "issue",
+     "contract": "CBBTOBL6XTLWYPT5GSVUA3JWNQMVMT4DGGHEGZ4NHC3V4SLXKP5AO4R5",
+     "tx": "46e373098feec41f3061780a7a23663599fd9e7877541c919e2e6b4c322387a9",
+     "at": "2026-11-08T18:07:27Z",
+     "successful": true
+    }
+   ],
+   "verified": {
+    "entry": "08514b7d5a6aab09a9e84c92fcb27daaac9092516ec8d679bcbf3cbc0cc5316b",
+    "checks": [
+     {
+      "check": "sha256(canonical entry) == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp transaction on the ledger and successful",
+      "ok": true,
+      "detail": "9b831caea2ad490d8563c25643b687064f1c8dd7a288b6aa4bb7ec47be38d5f8"
+     },
+     {
+      "check": "stamp memo == entry id",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "stamp sent by the book account",
+      "ok": true,
+      "detail": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU"
+     },
+     {
+      "check": "payment successful",
+      "ok": true,
+      "detail": "1b2ec7e9fc6ad1548a04b8b3c163a8e680d9fc6d68562cda31bd9ec2524e9174"
+     },
+     {
+      "check": "payment memo == tm:<entry[:20]>",
+      "ok": true,
+      "detail": ""
+     },
+     {
+      "check": "payment to the book account, native, at least the price",
+      "ok": true,
+      "detail": "2.0000000 XLM from GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4"
+     },
+     {
+      "check": "receipt from the book account to the payer, memo == entry id",
+      "ok": true,
+      "detail": "fcd313e644538c9c6ab54413f23673c16c91fc347a4f981fc06058c804335d57"
+     },
+     {
+      "check": "released report hashes to entry.report_sha256",
+      "ok": true,
+      "detail": "872fee9f906719d39cbc8f8b37605bbdeb9a883a9d2107e03c14e127fc2f5b21"
+     }
+    ],
+    "ok": true,
+    "agent": "https://github.com/furkan3152/Touchmark_agent/examples/demo/safe-treasury-agent",
+    "commit": "8b78289830b65f47b45a7a4051955833095908e6",
+    "decision": "pass",
+    "score": 98.6,
+    "findings": {
+     "critical": 0,
+     "gaps": 19,
+     "high": 0,
+     "low": 3,
+     "medium": 0,
+     "risks": 3
+    },
+    "model_review": true,
+    "account": "GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU",
+    "stamped_at": "2026-11-08T18:06:17Z",
+    "stamp_tx": "9b831caea2ad490d8563c25643b687064f1c8dd7a288b6aa4bb7ec47be38d5f8",
+    "paid": true,
+    "payment_tx": "1b2ec7e9fc6ad1548a04b8b3c163a8e680d9fc6d68562cda31bd9ec2524e9174",
+    "payer": "GC64GU7P3AFQR5M6C5TI4CHD6XAWBUPDNN3EZ74GZOWL7YTRADRRK6C4",
+    "amount": "2.0000000",
+    "receipt_tx": "fcd313e644538c9c6ab54413f23673c16c91fc347a4f981fc06058c804335d57"
+   }
+  }
+ ]
+}

@@ -131,6 +131,11 @@ any wallet), the server reads the payment back from Horizon, releases the report
 stamp whose memo is the entry hash. The book page shows the totals (audits, agents, findings, paid reports, XLM
 received) and links each row to its transactions. Code: [`assay_book.py`](backend/app/services/assay_book.py).
 
+End-to-end proof: on 2026-11-08 the full user flow (model review, stamp, testnet payment, receipt, report and, for
+the passing agent, the credential) ran six times on the public site with a testnet wallet; every entry checks out from
+public data with `python3 scripts/verify_assay.py --latest 10`. The record:
+[`docs/evidence/e2e-user-flow-2026-11-08.json`](docs/evidence/e2e-user-flow-2026-11-08.json).
+
 ## Declare your agent: `.tmark`
 
 A `.tmark` at the repository root states what the agent may do: network, keys and what it signs, spending limits,
