@@ -30,7 +30,7 @@
   "tools": [
     {
       "name": "send_payment",
-      "description": "Pay a listed supplier in XLM: at most 500 per payment and 1000 per day, once per request id",
+      "description": "Pay one invoice from the invoice host to a listed supplier in XLM: at most 500 per payment and 1000 per 24 hours, each invoice once",
       "moves_funds": true,
       "signs": true,
       "network": true,
@@ -51,6 +51,6 @@
   "forbidden": [
     "pay anyone who is not in the supplier table",
     "pay more than 500 XLM in one payment",
-    "pay more than 1000 XLM in one day"
+    "pay more than 1000 XLM in 24 hours"
   ]
 }
