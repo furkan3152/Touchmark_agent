@@ -6,8 +6,6 @@
   /* Small text in the spot inks: deeper cuts of red, amber and green that keep 4.5:1 on the light stock. */
   --red-ink:#b3301c;--amber-ink:#855800;--green-ink:#17634a}
 @media (prefers-color-scheme:dark){.studio{--red-ink:var(--red);--amber-ink:var(--amber);--green-ink:var(--green)}}
-.skip{position:absolute;left:12px;top:-60px;z-index:10;background:var(--ink);color:var(--paper);padding:10px 14px;border-radius:4px;font:600 13px var(--mono);text-decoration:none}
-.skip:focus{top:12px}
 .bar nav a[aria-current="page"]{color:var(--ink);border-color:var(--red)}
 .studio code{font-family:var(--mono);font-size:.9em}
 .studio p code,.studio li code,.studio h3 code{background:var(--paper-2);padding:1px 5px;border-radius:3px}
@@ -583,7 +581,6 @@ details.technical summary{font-size:12.5px}
   .s-index a{flex:1 1 30%}
 }
 @media (max-width:640px){
-  .bar .nav-wide{display:none}
   .s-hero h1{letter-spacing:-1.4px;word-spacing:.06em;font-size:40px}
   .s-card{padding:16px 18px}
   .s-cta .s-btn{flex:1 1 100%}

@@ -168,7 +168,7 @@
 .ledger{margin-top:16px;border:2px solid var(--ink);border-radius:6px;background:var(--card);padding:16px 18px}
 .ledger-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}
 .ledger-head h3{margin:0;font:600 11px var(--mono);letter-spacing:1.4px;text-transform:uppercase;color:var(--ink-soft)}
-.ledger-lead{margin:0;font:600 14px/1.45 var(--sans,inherit);color:var(--ink)}
+.ledger-lead{margin:0;font:600 14px/1.45 var(--body);color:var(--ink)}
 .ledger-langs{margin:8px 0 0;font:12.5px/1.5 var(--mono);color:var(--ink-soft)}
 .ledger-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 22px;margin-top:12px}
 .ledger-group h4{margin:0 0 6px;font:700 12px var(--mono);letter-spacing:.6px;color:var(--ink)}

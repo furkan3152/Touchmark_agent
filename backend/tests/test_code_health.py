@@ -174,3 +174,22 @@ def test_shared_definitions_have_one_source():
     assert severity.AUTHORITY_KINDS == file_map.AUTHORITY_KINDS - {"holds_or_loads_secret", "executes_code"}
     assert security.SIGNING_SCOPES is capabilities.SIGNING_SCOPES is agentic_paths._SIGNING_SCOPES
     assert (policy.PASS_SCORE, judge.Badge.CAUTION) in judge.BADGE_THRESHOLDS
+
+
+def test_every_page_has_the_same_menu_and_a_skip_link():
+    # The menu differed on four kinds of page (book, docs and reports had no Studio; the guides
+    # had no book or docs), and only the Studio had a skip link.
+    import re
+    from pathlib import Path
+    from backend.app.services import assay_render
+    frontend = Path(__file__).resolve().parents[2] / "frontend"
+    pages = {name: (frontend / name).read_text() for name in
+             ("demo.html", "studio.html", "guide.html", "guide-tmark.html", "book.html", "docs.html")}
+    pages["report page"] = assay_render.missing_page()
+    menu = lambda html: re.findall(r">([^<>]+)</a>", re.search(r"<nav[^>]*>(.*?)</nav>", html, re.S).group(1))  # noqa: E731
+    home = menu(pages["demo.html"])
+    assert home == ["How it works", "Video", "Assay book", "Docs", "Guide", "GitHub", "Studio"]
+    for name, html in pages.items():
+        assert menu(html) == home, name
+        skip = re.search(r'<a class="skip" href="#([\w-]+)"', html)
+        assert skip and f'id="{skip.group(1)}"' in html, name

@@ -55,9 +55,10 @@ def _page(title: str, body: str, *, script: bool = False) -> str:
 {scripts}</head>
 <body class="assay-page">
 <svg width="0" height="0" class="defs" aria-hidden="true"><filter id="ink"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter></svg>
+<a class="skip" href="#main">Skip to content</a>
 <header class="bar"><a class="brand" href="/" aria-label="Touchmark home"><img class="logo" src="/ui/brand/mark.svg" alt="" width="34" height="34"><span class="word">touchmark</span><span class="where">on Stellar</span></a>
-<nav><a href="/">Test an agent</a><a href="/book">Assay book</a><a href="/docs">Docs</a><a href="/guide">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a></nav></header>
-<main class="assay-main">{body}</main>
+<nav aria-label="Main"><a href="/#how" class="nav-wide">How it works</a><a href="/#video" class="nav-wide">Video</a><a href="/book">Assay book</a><a href="/docs">Docs</a><a href="/guide">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a><a href="/studio">Studio</a></nav></header>
+<main class="assay-main" id="main">{body}</main>
 <footer class="foot">Touchmark · Stellar testnet · every entry can be checked on the ledger</footer>
 </body></html>"""
 
