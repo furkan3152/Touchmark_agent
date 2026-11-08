@@ -63,7 +63,7 @@
       <pre>python3 -c "import sys,json,hashlib;e=json.load(sys.stdin)['entry'];print(hashlib.sha256(json.dumps(e,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest())"</pre>
       <ol class="steps" start="3">
         <li>Open the entry's stamp transaction: its memo is that hash, sent from the book account at the time of the audit.</li>
-        <li>For a paid report, the report JSON hashes to the entry's <code>report_sha256</code>, the payer's payment carries the memo <code>tm:&lt;entry&gt;</code>, and the receipt stamp sent back to the payer carries the entry hash.</li>
+        <li>For a paid report, the report JSON hashes to the entry's <code>report_sha256</code>, the payer's payment carries the memo <code>tm:</code> + the first 20 hex of the entry, and the receipt stamp sent back to the payer carries the entry hash.</li>
       </ol>
     </section>
   </section>

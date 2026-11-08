@@ -10,5 +10,5 @@ The agent key is read from `AGENT_SECRET_KEY` and is never returned to the model
 result is checked (`successful`) before it is reported. This folder is a demonstration fixture for
 Touchmark; it is not a production treasury.
 
-This copy also names its owner in `touchmark.json`. Its credential is issued only to that
+This copy also names its owner in its `.tmark` (`owner.stellar_account`). Its credential is issued only to that
 account, after the account signs the registration; anyone else is refused.

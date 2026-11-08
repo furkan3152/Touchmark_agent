@@ -6,8 +6,8 @@
 
 <p align="center">
   <strong>Security audits for AI agents that hold Stellar authority.</strong><br>
-  Touchmark reads an agent's code in any language, checks it against Stellar-specific criteria, has a second
-  model re-check each medium-or-higher finding, and records a passing result on Stellar as a non-transferable
+  Touchmark reads an agent's code in any language, checks it against Stellar-specific criteria, has an
+  independent model call re-check each medium-or-higher finding, and records a passing result on Stellar as a non-transferable
   credential.
 </p>
 
@@ -42,13 +42,13 @@ the maintainers' fix, not our opinion.
 
 | Set | Repositories | Detected |
 |---|---|---|
-| **Held-out: kept out of development** (Claude Haiku 5.5, medium effort) | stellar-disbursement-platform-backend, stellar/go, java-stellar-anchor-sdk, blend-contracts, soroswap/core, soroban-examples, OpenZeppelin stellar-contracts, reflector-contract, js-stellar-sdk, typescript-wallet-sdk, django-polaris | **20 of 22** in run 1, **19 of 22** with the final auditor; **21 of 22** found in at least one run |
+| **Held-out: not used to build the auditor** (Claude Haiku 5.5, medium effort; 7 cases later informed lessons, see below) | stellar-disbursement-platform-backend, stellar/go, java-stellar-anchor-sdk, blend-contracts, soroswap/core, soroban-examples, OpenZeppelin stellar-contracts, reflector-contract, js-stellar-sdk, typescript-wallet-sdk, django-polaris | **20 of 22** in run 1, **19 of 22** in run 2 (auditor at `5afdb99`); **21 of 22** found in at least one run |
 | Development: used to find and fix weaknesses | stellar-mpp-sdk, x402-stellar, asgcard-public, passkey-kit, OpenZeppelin stellar-contracts, one-way-channel, stellar-disbursement-platform-backend, django-polaris, Soneso stellar-agent-wallet | 11 of 16 with Sonnet 5.5 before the lessons; 16 of 16 re-run with Haiku 5.5 and the lessons |
 
-- A single run is not deterministic: two of the three cases the final auditor missed were found in run 1; the
+- A single run is not deterministic: two of the three cases run 2 missed were found in run 1; the
   third is a near miss in both runs (the right root cause, 32 lines from the fixed lines). Seven held-out
-  cases are covered by lessons written with that set in view; without them, 13 of 15 (run 1) and 11 of 14 (final
-  auditor) were detected.
+  cases are covered by lessons written with that set in view; without them, 13 of 15 (run 1) and 11 of 14 (run 2)
+  were detected. Later changes to scoring and rules (after `5afdb99`) have not been re-measured on this set.
 - **Fixed commits** were audited for eight cases: 6 reports no longer flag the defect's lines; the other two flag a
   different issue next to them. Every result and caveat is in the [results](research/benchmark/real/README.md#results).
 - **Cost:** about **$0.45 of model usage per audit** (Claude Haiku at medium effort, with prompt caching).
@@ -92,7 +92,7 @@ flowchart LR
 4. **Focused file review.** Each file that signs, pays, holds keys or verifies signed input gets its own review,
    with the Stellar criteria and the lessons learned from real defects that match what the file does. The model
    states each function's security invariants and checks them one by one.
-5. **Verifier.** A separate pass by a second model re-checks each medium-or-higher finding (up to 60 per audit)
+5. **Verifier.** A separate, independent model call re-checks each medium-or-higher finding (up to 60 per audit)
    at the cited line without seeing why it was raised. Model-review findings get their severity from facts (what
    is at risk, who can trigger it, which network, whether the code ships), not from the model's choice; rule
    findings carry the rule's severity, which the verifier may lower. Comments in the audited code never count as
@@ -126,7 +126,7 @@ sha256(canonical entry JSON) == memo of the stamp transaction
 entry.report_sha256          == sha256(report JSON)
 ```
 
-The full report is released for **2 XLM on testnet**: the payer sends it with the memo `tm:<entry>` (Freighter, or
+The full report is released for **2 XLM on testnet**: the payer sends it with the memo `tm:` + the first 20 hex of the entry (Freighter, or
 any wallet), the server reads the payment back from Horizon, releases the report, and sends the payer a receipt
 stamp whose memo is the entry hash. The book page shows the totals (audits, agents, findings, paid reports, XLM
 received) and links each row to its transactions. Code: [`assay_book.py`](backend/app/services/assay_book.py).
@@ -162,7 +162,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ENABLE_DEEP_REVIEW=1 DEEP_REVIEW_MODEL=claude-haiku-5-5 VERIFIER_MODEL=claude-haiku-5-5 ANTHROPIC_API_KEY=... \
   .venv/bin/python scripts/audit_agent.py <ref>                                       # full review, as on the demo
 .venv/bin/uvicorn app:app --port 8000                                               # demo at /
-.venv/bin/python -m pytest -q && cargo test --workspace
+.venv/bin/pip install -r backend/requirements-dev.txt && .venv/bin/python -m pytest -q && cargo test --workspace
 ```
 
 Run locally, the model review stops after `DEEP_REVIEW_TIMEOUT_SECONDS` (240 s by default, at most 900); raise it

@@ -53,3 +53,22 @@ def test_forwarded_address_is_only_trusted_behind_a_declared_proxy():
         assert _call(proxied, "10.0.0.1", forwarded="spoof, 198.51.100.7") == 200
     assert _call(proxied, "10.0.0.1", forwarded="other, 198.51.100.7") == 429
     assert _call(proxied, "10.0.0.1", forwarded="198.51.100.8") == 200
+
+
+def test_book_payments_and_repository_drafts_are_limited_like_the_audit():
+    # The assay claim and payment relay make the book account sign; the draft fetches a repository.
+    for path in ("/api/v1/assay/claim", "/api/v1/assay/pay/submit", "/api/v1/tmark/template"):
+        guard = StudioGuard(_ok, trust_forwarded=False, clock=lambda: 0.0)
+        statuses = []
+        for _ in range(studio_guard.PER_CLIENT_LIMIT + 1):
+            scope = {"type": "http", "method": "POST", "path": path, "client": ("198.51.100.9", 1), "headers": []}
+            sent = []
+
+            async def receive():
+                return {"type": "http.request", "body": b"{}", "more_body": False}
+
+            async def send(message, sent=sent):
+                sent.append(message)
+            asyncio.run(guard(scope, receive, send))
+            statuses.append(sent[0]["status"])
+        assert statuses[-1] == 429, path

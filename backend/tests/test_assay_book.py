@@ -248,7 +248,7 @@ def test_the_report_page_escapes_and_the_locked_page_shows_how_to_pay():
 
 
 def test_routes_are_closed_when_the_book_is_off_and_public_on_the_vercel_surface():
-    client = TestClient(api.app)
+    client = TestClient(api.app, client=("192.0.2.91", 50000))
     assert client.get("/api/v1/assay/book").json() == {"enabled": False}
     assert client.get("/api/v1/assay/entry/" + "a" * 64).status_code == 404
     assert client.post("/api/v1/assay/claim", json={"entry": "nothex"}).status_code == 422
@@ -260,10 +260,44 @@ def test_routes_are_closed_when_the_book_is_off_and_public_on_the_vercel_surface
 
 
 def test_the_docs_page_is_served_and_public():
-    client = TestClient(api.app)
+    client = TestClient(api.app, client=("192.0.2.91", 50000))
     page = client.get("/docs")
     assert page.status_code == 200 and "Touchmark <em>documentation</em>" in page.text
     for anchor in ("overview", "api", "stream", "verify", "credential", "self-host"):
         assert f'id="{anchor}"' in page.text and f'href="#{anchor}"' in page.text
     from pathlib import Path
     assert '"/docs"' in (Path(__file__).resolve().parents[2] / "app.py").read_text()
+
+
+def test_two_claims_at_once_send_one_receipt_and_record_one_payment():
+    horizon, store = Horizon(), ab.MemoryBook()
+    sha = stamped(horizon, store)["entry_sha256"]
+    op = ab.Operator(OPERATOR.secret)
+
+    async def go():
+        async with horizon.client() as client:
+            await ab._post_tx(client, pay(horizon, sha))
+            first, second = await asyncio.gather(ab.claim(sha, SETTINGS, store=store, op=op, client=client),
+                                                 ab.claim(sha, SETTINGS, store=store, op=op, client=client))
+            return first, second, await store.listing(ab.PAID)
+
+    first, second, paid = run(go())
+    assert first["paid"] and second["paid"] and first["payment_tx"] == second["payment_tx"]
+    receipts = [e for e in horizon.submitted if e.transaction.source.account_id == OPERATOR.public_key
+                and getattr(e.transaction.operations[0], "destination", None) is not None]
+    assert len(receipts) == 1 and len(paid) == 1
+
+
+def test_horizon_not_answering_is_a_503_that_says_so(monkeypatch):
+    store = ab.MemoryBook()
+    sha = stamped(Horizon(), store)["entry_sha256"]
+    monkeypatch.setattr(api.settings, "enable_assay_book", True)
+    monkeypatch.setattr(ab, "store_from_settings", lambda _settings: store)
+    monkeypatch.setattr(ab, "operator", lambda: ab.Operator(OPERATOR.secret))
+
+    async def down(*_args, **_kwargs):
+        raise httpx.ConnectError("no route")
+    monkeypatch.setattr(ab, "find_payment", down)
+    answer = TestClient(api.app, client=("192.0.2.91", 50000)).post("/api/v1/assay/claim", json={"entry": sha})
+    assert answer.status_code == 503 and "did not answer" in answer.json()["detail"]
+    assert "no route" not in answer.text

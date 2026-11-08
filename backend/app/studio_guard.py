@@ -60,6 +60,9 @@ class StudioGuard:
 
     async def __call__(self, scope, receive, send):
         guarded_order = (scope.get('path', '').startswith('/api/v1/studio/orders') and scope.get('method') == 'POST')
+        # Public POSTs that fetch a repository or make the book account sign a transaction.
+        guarded_order = guarded_order or (scope.get('method') == 'POST' and scope.get('path') in {
+            '/api/v1/tmark/template', '/api/v1/assay/claim', '/api/v1/assay/pay/prepare', '/api/v1/assay/pay/submit'})
         if scope["type"] != "http" or (not guarded_order and scope["path"] not in {
             "/api/v1/studio/policy", "/api/v1/studio/review", "/api/v1/studio/identify", "/api/v1/studio/import",
             "/api/v1/studio/discover", "/api/v1/studio/runtime", "/api/v1/studio/stellar/inspect-auth",

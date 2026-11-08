@@ -98,7 +98,7 @@ Nothing submitted is imported or executed.
    [Model review](#model-review-file-map-and-check-ledger) below. Each claim must quote
    a real line, and the model can add findings but never remove a rule finding.
 5. **Verifier** (`services/finding_verifier.py`; on by default, needs an API key). A
-   separate pass by a second model re-checks the medium-or-higher risks from source, most
+   separate, independent model call (the verifier model; by default the review's model) re-checks the medium-or-higher risks from source, most
    severe first and at most 60 per audit (`finding_verifier.selectable`).
    - Withheld context: it sees only the claim and the lines it points to, not the
      reasoning that produced it.
@@ -376,6 +376,17 @@ Configuration:
 | `DEEP_REVIEW_LIMIT_STORE`, `DEEP_REVIEW_RATE_SALT` | Allowance store (`auto`: Blob with a token, process memory only off serverless, otherwise none) and an optional key for hashing client addresses (derived from the Blob token when empty; raw addresses are never stored). |
 | `STELLAR_NETWORK`, `ALLOW_MAINNET` | Network selection. Mainnet stays off unless explicitly allowed. |
 | `ADMIN_API_KEY` | Operator API on a persistent deployment (not exposed on Vercel). |
+
+**The assay book** (`services/assay_book.py`, `ENABLE_ASSAY_BOOK`). Every finished demo audit is
+entered as a canonical JSON entry (agent, commit, decision, score, finding counts, whether the
+model review completed, and the report's SHA-256). Its SHA-256 is the `MEMO_HASH` of a
+bump-sequence transaction from the demo operator account, retried on a stale sequence; the
+report and the entry are written once to the store. A report is released for a payment of
+`ASSAY_PRICE_XLM` (2) testnet XLM to that account with the text memo `tm:` + the first 20 hex of
+the entry, read back from Horizon; the payer then receives a one-stroop receipt stamp whose memo
+is the entry hash. One create-only claim per entry means two concurrent claims send one receipt.
+`/book` shows the totals from two listings; `/api/v1/assay/*` serves the entries, the payment
+steps and paid reports. A stamp that cannot be written never fails the audit: the result says so.
 
 **Daily cost cap.** `DEEP_REVIEW_DAILY_COST_USD` is claimed in 0.25 USD create-only chunks
 (`touchmark-limits/deep-review/<day>/cost/NNN`) in the allowance store, priced from each

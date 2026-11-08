@@ -44,7 +44,7 @@ def test_every_host_the_pages_fetch_is_allowed_by_the_csp():
     from pathlib import Path
     from fastapi.testclient import TestClient
     from backend.app import api
-    csp = TestClient(api.app).get("/api/v1/health").headers["content-security-policy"]
+    csp = TestClient(api.app, client=("192.0.2.92", 50000)).get("/api/v1/health").headers["content-security-policy"]
     allowed = set(re.search(r"connect-src ([^;]+)", csp).group(1).split())
     frontend = Path(__file__).resolve().parents[2] / "frontend"
     for js in frontend.glob("*.js"):
@@ -59,3 +59,22 @@ def test_the_score_written_on_chain_is_rounded_down(value, expected):
     # A 64.6 report needs fixes; rounding it to 65 made it pass the credential contract's 65 floor.
     from backend.app.swarm.policy import chain_score
     assert chain_score(value) == expected
+
+
+def test_a_model_opinion_without_code_never_rates_itself_above_medium():
+    # The per-auditor LLM review let the model pick "critical" from the prompt and tool names alone.
+    import asyncio
+    from backend.app.config import Settings
+    from backend.app.models import AgentArtifact
+    from backend.app.swarm.economic import EconomicAuditor
+
+    class Judge:
+        async def judge(self, system, user):
+            return {"findings": [{"title": "Drains the treasury", "detail": "It could.", "severity": "critical",
+                                  "remediation": "Add caps."}]}
+
+    auditor = EconomicAuditor(Settings(), Judge())
+    from backend.app.models import SourceKind
+    artifact = AgentArtifact(source_kind=SourceKind.REPO, name="a", system_prompt="pay anyone")
+    found = asyncio.run(auditor.llm_review(artifact, []))
+    assert [f.severity for f in found] == [Severity.MEDIUM]

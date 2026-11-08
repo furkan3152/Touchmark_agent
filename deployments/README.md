@@ -3,6 +3,10 @@
 All deployments are on Stellar **testnet**. Manifests contain public addresses, WASM
 hashes and transaction hashes only; no keys.
 
+**Current:** the public demo uses [`demo-testnet.json`](demo-testnet.json) (registry `CBIZOE…`, credential
+`CBBTOB…`, operator `GCRGIG…`, which is also the assay book account). The other manifests are earlier
+deployments kept as evidence; a contract id that appears only in them is not what the demo uses today.
+
 | Manifest | What it proves |
 |---|---|
 | [`demo-testnet.json`](demo-testnet.json) | The demo's AgentRegistry and AuditCredential. Every credential issued from the demo links its transactions. `owner_flow_example` records a credential issued to an owner who signed the registration in their own wallet. |

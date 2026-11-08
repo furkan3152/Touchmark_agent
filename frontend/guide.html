@@ -148,7 +148,7 @@
             <div class="g-stage-body">
               <p class="g-stage-meta"><span>Stage D</span><span>a minute or more, by finding</span></p>
               <h3>Independent verification</h3>
-              <p>A second model re-checks each finding at the cited line and labels it: <span class="g-tag ok">Verified</span> <span class="g-tag">Partly verified</span> <span class="g-tag bad">Disputed</span> <span class="g-tag">Not verified</span>. A high pattern-rule finding blocks a pass only once it is verified.</p>
+              <p>A separate, independent model call re-checks each finding at the cited line and labels it: <span class="g-tag ok">Verified</span> <span class="g-tag">Partly verified</span> <span class="g-tag bad">Disputed</span> <span class="g-tag">Not verified</span>. A high pattern-rule finding blocks a pass only once it is verified.</p>
             </div>
           </li>
           <li class="g-stage g-stage-seal" data-stage="seal">
@@ -244,9 +244,9 @@
       <!-- 05 ------------------------------------------------------------ -->
       <section id="compare" class="g-plate" data-mascot="scanning" data-say="Before and after, side by side.">
         <header class="g-plate-head"><span class="g-num">05</span><h2>Compare two runs</h2></header>
-        <p class="g-lead">Fixed something? Under the report, <span class="g-ui">Fixed it? Test again</span> takes the fixed commit or folder. Both versions are re-checked with the deterministic rules only, so the comparison is quick and like for like, and compared finding by finding. Its scores are rules-only scores, and a finding only the model review reported is never shown as closed.</p>
+        <p class="g-lead">Fixed something? Under the report, <span class="g-ui">Fixed it? Test again</span> takes the fixed commit or folder. Both versions are re-checked with the deterministic rules only, so the comparison is quick and like for like, and compared finding by finding. Its scores are rules-only scores, a finding only the model review reported is never shown as closed, and the rules alone never give a pass: that needs the full review.</p>
         <div class="g-compare g-reveal">
-          <p class="g-compare-head"><span class="g-tag">rules only</span><span class="g-chip needs_fixes">needs_fixes 41.8</span><span class="g-arrow" aria-hidden="true">→</span><span class="g-chip pass">pass 96.1</span><span class="g-delta">(+54.3)</span></p>
+          <p class="g-compare-head"><span class="g-tag">rules only</span><span class="g-chip needs_fixes">needs_fixes 41.8</span><span class="g-arrow" aria-hidden="true">→</span><span class="g-chip needs_evidence">needs_evidence 96.1</span><span class="g-delta">(+54.3)</span></p>
           <div class="diff-cols">
             <div><h4>Closed</h4><ul class="findings small"><li class="high"><span class="sev">high</span><span class="title">The model chooses the payment destination</span></li><li class="high"><span class="sev">high</span><span class="title">A limit the .tmark declares is not enforced by the code</span></li></ul></div>
             <div><h4>Still open</h4><ul class="findings small"><li class="low"><span class="sev">low</span><span class="title">Autonomous authority over funds</span></li></ul></div>

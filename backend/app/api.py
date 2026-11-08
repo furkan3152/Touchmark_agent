@@ -1030,6 +1030,27 @@ class AssayClaimRequest(AssayEntryRequest):
     tx_hash: str = Field(default="", pattern="^([0-9a-f]{64})?$")
 
 
+def _book_errors(fn):
+    """Assay-book endpoints: a refusal is a 422 with its message; Horizon or the store not
+    answering is a 503 that says so, never a bare 500 with internals."""
+    import functools
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        from .services.assay_book import BookError
+        try:
+            return await fn(*args, **kwargs)
+        except HTTPException:
+            raise
+        except BookError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - network or store failure; logged by class only
+            logger.warning("assay book unavailable: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Stellar testnet or the book store did not answer. "
+                                                        "Try again in a minute.") from exc
+    return wrapper
+
+
 def _book_store():
     from .services.assay_book import store_from_settings
     store = store_from_settings(settings)
@@ -1039,6 +1060,7 @@ def _book_store():
 
 
 @app.get("/api/v1/assay/book")
+@_book_errors
 async def assay_book_stats() -> dict:
     """Every entry in the assay book, counted, with the latest entries and their transactions."""
     from .services.assay_book import book
@@ -1048,6 +1070,7 @@ async def assay_book_stats() -> dict:
 
 
 @app.get("/api/v1/assay/entry/{entry}")
+@_book_errors
 async def assay_entry(entry: str) -> dict:
     """The entry as stamped: sha256(canonical JSON of ``entry``) is the stamp transaction's memo."""
     from .services.assay_book import load_entry, paid_record, tx_url
@@ -1062,6 +1085,7 @@ async def assay_entry(entry: str) -> dict:
 
 
 @app.get("/api/v1/assay/report/{entry}.json")
+@_book_errors
 async def assay_report_json(entry: str) -> Response:
     """The report bytes, once paid. Their SHA-256 is the entry's report_sha256."""
     from .services.assay_book import load_entry, load_report, paid_record
@@ -1079,6 +1103,7 @@ async def assay_report_json(entry: str) -> Response:
 
 
 @app.post("/api/v1/assay/pay/prepare")
+@_book_errors
 async def assay_pay_prepare(req: AssayPrepareRequest) -> dict:
     from .services.assay_book import BookError, prepare_payment
     try:
@@ -1088,6 +1113,7 @@ async def assay_pay_prepare(req: AssayPrepareRequest) -> dict:
 
 
 @app.post("/api/v1/assay/pay/submit")
+@_book_errors
 async def assay_pay_submit(req: AssaySubmitRequest) -> dict:
     """Relay a wallet-signed payment for an entry, then release the report from the ledger."""
     from .services.assay_book import BookError, claim, submit_payment
@@ -1100,6 +1126,7 @@ async def assay_pay_submit(req: AssaySubmitRequest) -> dict:
 
 
 @app.post("/api/v1/assay/claim")
+@_book_errors
 async def assay_claim(req: AssayClaimRequest) -> dict:
     """Look for the entry's payment on Horizon; when it is there, release the report."""
     from .services.assay_book import BookError, claim
@@ -1410,7 +1437,7 @@ async def tmark_draft(req: TmarkDraftRequest) -> dict:
             raise HTTPException(status_code=422, detail="Source limit: 2 MB in total.")
         return tmark.draft_from_source(req.files, name=req.name)
     try:
-        return await asyncio.wait_for(_draft_from_reference(req.reference, req.name), timeout=90)
+        return await asyncio.wait_for(asyncio.to_thread(_in_own_loop, _draft_from_reference, req.reference, req.name), timeout=90)
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="The repository could not be read in time.") from exc
     except ValueError as exc:
@@ -1458,9 +1485,12 @@ async def demo_compare(req: DemoCompareRequest) -> dict:
     from .services.agent_resolver import audit_reference
     from .services.report_diff import compare_reports
     try:
+        # The analysers are synchronous CPU work: run each side in its own worker thread, as the
+        # audit does, so other requests (and their heartbeats) are not held up meanwhile.
         before, after = await asyncio.wait_for(asyncio.gather(
-            audit_reference(req.before, settings, network="testnet", deep=False),
-            audit_reference(req.after, settings, network="testnet", deep=False)), timeout=170)
+            asyncio.to_thread(_in_own_loop, audit_reference, req.before, settings, network="testnet", deep=False),
+            asyncio.to_thread(_in_own_loop, audit_reference, req.after, settings, network="testnet", deep=False)),
+            timeout=170)
     except asyncio.TimeoutError as exc:
         raise HTTPException(status_code=504, detail="The comparison did not finish within the demo time limit.") from exc
     except ValueError as exc:
@@ -1886,11 +1916,15 @@ if FRONTEND_DIR.exists():
         from .services import assay_render
         from .services.assay_book import load_entry, load_report, paid_record, price_xlm, store_from_settings
         store = store_from_settings(settings) if settings.enable_assay_book else None
-        record = await load_entry(store, entry) if store is not None else None
-        if record is None:
-            return HTMLResponse(assay_render.missing_page(), status_code=404)
-        paid = await paid_record(store, entry)
-        data = await load_report(store, record["entry"]["report_sha256"]) if paid else None
+        try:
+            record = await load_entry(store, entry) if store is not None else None
+            if record is None:
+                return HTMLResponse(assay_render.missing_page(), status_code=404)
+            paid = await paid_record(store, entry)
+            data = await load_report(store, record["entry"]["report_sha256"]) if paid else None
+        except Exception as exc:  # noqa: BLE001 - the store did not answer
+            logger.warning("assay report page unavailable: %s", type(exc).__name__)
+            return HTMLResponse(assay_render.unavailable_page(), status_code=503)
         if paid and data is not None:
             return HTMLResponse(assay_render.report_page(record, data, paid))
         return HTMLResponse(assay_render.locked_page(record, price_xlm(settings)))

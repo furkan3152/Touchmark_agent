@@ -41,6 +41,7 @@ ENTRIES = "assay/entries/"
 BY_ENTRY = "assay/by-entry/"
 REPORTS = "assay/reports/"
 PAID = "assay/paid/"
+CLAIMS = "assay/claims/"
 RECEIPT_AMOUNT = "0.0000001"
 DECISIONS = ("pass", "needs_fixes", "needs_evidence")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -383,11 +384,22 @@ async def claim(sha: str, settings, *, tx_hash: str = "", store=None, op: Operat
                     "message": f"No payment of {price_xlm(settings)} XLM with memo {memo_code(sha)} has reached "
                                f"{record['account'][:6]}…{record['account'][-4:]} yet. Testnet usually confirms "
                                "within ten seconds; check again."}
-        try:
-            receipt = await submit_from_operator(op, sha, pay_to=found["payer"], client=client)
-        except BookError:
-            receipt = ""  # the payment stands; the receipt stamp can be missing, never the report
-        await store.put_new(_paid_path(sha, found["payment_tx"], found["payer"], found["amount"], receipt), b"")
+        if not await store.put_new(f"{CLAIMS}{sha}.json", canonical(found)):
+            # Another request is releasing this entry at this moment: it sends the one receipt stamp.
+            for _ in range(12):
+                await asyncio.sleep(1)
+                existing = await paid_record(store, sha)
+                if existing:
+                    return _released(sha, existing)
+            # That request stopped before recording the payment: record it, without a second receipt.
+            receipt = ""
+        else:
+            try:
+                receipt = await submit_from_operator(op, sha, pay_to=found["payer"], client=client)
+            except BookError:
+                receipt = ""  # the payment stands; the receipt stamp can be missing, never the report
+        if not await paid_record(store, sha):
+            await store.put_new(_paid_path(sha, found["payment_tx"], found["payer"], found["amount"], receipt), b"")
         _CACHE.clear()
         return _released(sha, (await paid_record(store, sha)) or {**found, "receipt_tx": receipt})
     finally:

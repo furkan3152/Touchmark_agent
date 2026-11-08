@@ -21,13 +21,13 @@ matched them and all other findings: [`results/heldout`](results/heldout) (run 2
 [`results/dev-haiku`](results/dev-haiku); [`results/summary.json`](results/summary.json) holds the scores.
 
 The held-out set was run twice. **Run 1** used the auditor of 1–2 November 2026; two infrastructure defects it
-exposed were fixed during the run and the affected cases re-run (‡). **Run 2** used the final auditor (commit
-`5afdb99`) for every case. Between the runs, the auditor learned to rate an operator's own model or API bills and
+exposed were fixed during the run and the affected cases re-run (‡). **Run 2** used the auditor at commit
+`5afdb99` for every case. Between the runs, the auditor learned to rate an operator's own model or API bills and
 third-party API keys apart from funds and signing keys, to read signing and account-authority capabilities as
 Stellar ones only, to cite the call site rather than a helper, and to refuse code comments as evidence; one lesson
 (rounding direction) was added after run 1 missed `soroswap-pair-fee-floor-rounding` (◊).
 
-| | Run 1 | Run 2 (final auditor) |
+| | Run 1 | Run 2 (auditor at `5afdb99`) |
 |---|---|---|
 | Detected | **20 of 22** | **19 of 22** |
 | Detected, without the 7 cases marked † | 13 of 15 | 11 of 14 (also without ◊) |
@@ -95,7 +95,8 @@ published).
 | `test_cases.json` | the held-out set (below) |
 | `run_live.py` | audits cases through a deployment's public API and saves the reports |
 | `score_real.py` | scores report JSON files against `cases.json` (stdlib only; `--selftest`) |
-| `results/heldout/` | held-out set: vulnerable and fixed commits (Claude Haiku 5.5, medium effort) |
+| `results/heldout/` | held-out set, run 2 (auditor at `5afdb99`): vulnerable and fixed commits (Claude Haiku 5.5, medium effort) |
+| `results/heldout-run1/` | held-out set, run 1: the 20 of 22 figure |
 | `results/dev/` | development set with Claude Sonnet 5.5, before the lessons were added |
 | `results/dev-haiku/` | development set re-run with Claude Haiku 5.5 and the lessons |
 | `results/summary.json` | the scores |

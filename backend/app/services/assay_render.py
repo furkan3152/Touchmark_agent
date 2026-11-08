@@ -204,3 +204,9 @@ def missing_page() -> str:
     return _page("Not in the book · Touchmark",
                  '<section class="sheet"><h2>No such entry</h2><p>This entry is not in the assay book. '
                  '<a href="/book">See every entry</a>.</p></section>')
+
+
+def unavailable_page() -> str:
+    return _page("Try again · Touchmark",
+                 '<section class="sheet"><h2>The book did not answer</h2><p>The assay book could not be read just now. '
+                 'Reload in a minute; nothing was lost.</p></section>')

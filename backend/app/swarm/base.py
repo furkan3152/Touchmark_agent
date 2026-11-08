@@ -139,6 +139,9 @@ class BaseAuditor(ABC):
                 sev = Severity(str(item.get("severity", "low")).lower())
             except ValueError:
                 sev = Severity.LOW
+            # An opinion formed from the prompt and tool names, without reading the code, never
+            # blocks a pass on its own: severities come from facts (services/severity.py).
+            sev = min(sev, Severity.MEDIUM, key=lambda s: s.rank)
             out.append(
                 self.finding(
                     f"llm-{i + 1}",

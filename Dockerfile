@@ -7,6 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --crea
 COPY backend /app/backend
 COPY frontend /app/frontend
 COPY deployments /app/deployments
+# Media, the .tmark schema and the mascot (served from public/ by the CDN on Vercel).
+COPY public /app/public
 RUN mkdir -p /app/data && chown -R touchmark:touchmark /app/data
 USER touchmark
 EXPOSE 8000
