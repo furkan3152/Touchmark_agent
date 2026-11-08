@@ -30,14 +30,21 @@ def main(build: Path, dest: Path) -> None:
         segments.append((start, end, max(1.0, (end - start) / FAST_SECONDS)))
         cursor = end
     segments.append((cursor, total, 1.0))
-    parts = [f"[0:v]trim=start={a:.2f}:end={b:.2f},setpts=(PTS-STARTPTS)/{speed:.3f}[v{i}]"
-             for i, (a, b, speed) in enumerate(segments)]
-    graph = ";".join(parts) + ";" + "".join(f"[v{i}]" for i in range(len(segments))) + f"concat=n={len(segments)}:v=1:a=0,fps=30[out]"
+    # Each segment is encoded on its own and the pieces are joined without re-encoding: one
+    # filter graph over every segment held all their frames in memory at once.
     dest.mkdir(parents=True, exist_ok=True)
+    pieces = []
+    for i, (a, b, speed) in enumerate(segments):
+        piece = build / f"segment-{i:02d}.mp4"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{a:.2f}", "-to", f"{b:.2f}", "-i", str(raw),
+                        "-vf", f"setpts=(PTS-STARTPTS)/{speed:.3f},fps=30", "-an", "-c:v", "libx264", "-preset", "slow",
+                        "-crf", "29", "-pix_fmt", "yuv420p", str(piece)], check=True)
+        pieces.append(piece)
+    listing = build / "segments.txt"
+    listing.write_text("".join(f"file '{p.name}'\n" for p in pieces))
     video = dest / "touchmark-how-to.mp4"
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(raw), "-filter_complex", graph, "-map", "[out]",
-                    "-c:v", "libx264", "-preset", "slow", "-crf", "29", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-                    str(video)], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(listing),
+                    "-c", "copy", "-movflags", "+faststart", str(video)], check=True)
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", "1.8", "-i", str(video), "-frames:v", "1",
                     str(dest / "video-poster.png")], check=True)
     print(f"{video}: {duration(video):.1f}s, {video.stat().st_size / 1e6:.1f} MB; segments {segments}")

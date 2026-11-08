@@ -94,7 +94,7 @@ class Recorder:
         await self.page.evaluate("([s, o]) => { const el = document.querySelector(s); window.scrollTo({top: el.getBoundingClientRect().top + window.scrollY - o, behavior: 'smooth'}); }", [selector, offset])
         await self.pause(1.1)
 
-    async def wait_fast(self, selector: str, timeout: float = 300):
+    async def wait_fast(self, selector: str, timeout: float = 1200):  # a model review can take ~10 min
         """Wait for a selector; the wait is marked so the editor speeds it up."""
         start = self.now()
         await self.page.evaluate("hv.fast(true)")
@@ -128,7 +128,8 @@ async def record(url: str, out: Path) -> None:
         await r.type_into("#reference", UNSAFE)
         await r.pause(0.6)
         await page.wait_for_selector("#consent:not([disabled])", timeout=30_000)
-        await r.move_to("#consent", click=True)  # the model review runs only with consent
+        await r.move_to("#consent")
+        await page.check("#consent")  # the model review runs only with consent
         await r.pause(0.6)
         await r.move_to("#run", click=True)
         await r.pause(1.6)

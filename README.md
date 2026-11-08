@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="public/media/touchmark-how-to.mp4"><img src="frontend/brand/video-poster.jpg" width="640" alt="Watch: how to use Touchmark"></a><br>
-  <sub>▶ <a href="public/media/touchmark-how-to.mp4">How to use Touchmark</a> (2 min)</sub>
+  <sub>▶ <a href="public/media/touchmark-how-to.mp4">How to use Touchmark</a> (1½ min)</sub>
 </p>
 
 ## Why Stellar needs this
@@ -51,7 +51,8 @@ the maintainers' fix, not our opinion.
   were detected. Later changes to scoring and rules (after `5afdb99`) have not been re-measured on this set.
 - **Fixed commits** were audited for eight cases: 6 reports no longer flag the defect's lines; the other two flag a
   different issue next to them. Every result and caveat is in the [results](research/benchmark/real/README.md#results).
-- **Cost:** about **$0.45 of model usage per audit** (Claude Haiku at medium effort, with prompt caching).
+- **Cost:** about **$0.45 of model usage per audit** on these repositories (Claude Haiku at medium effort, with prompt
+  caching); about $0.08 for a one-file agent such as the demo examples.
 - Every case links the vulnerable and fixed commits, and every report is published, so each result can be checked
   line by line: **[research/benchmark/real](research/benchmark/real/README.md)**. Re-run any case with
   `run_live.py` and score it with `score_real.py`.
@@ -126,9 +127,9 @@ sha256(canonical entry JSON) == memo of the stamp transaction
 entry.report_sha256          == sha256(report JSON)
 ```
 
-The full report is released for **2 XLM on testnet**: the payer sends it with the memo `tm:` + the first 20 hex of the entry (Freighter, or
-any wallet), the server reads the payment back from Horizon, releases the report, and sends the payer a receipt
-stamp whose memo is the entry hash. The book page shows the totals (audits, agents, findings, paid reports, XLM
+The full report is released for **2 XLM on testnet**: the payer sends it with the memo `tm:` + the first 20 hex of
+the entry (Freighter, or any wallet), the server reads the payment back from Horizon, releases the report, and sends
+the payer a receipt stamp whose memo is the entry hash. The book page shows the totals (audits, agents, findings, paid reports, XLM
 received) and links each row to its transactions. Code: [`assay_book.py`](backend/app/services/assay_book.py).
 
 End-to-end proof: on 2026-11-08 the full user flow (model review, stamp, testnet payment, receipt, report and, for
