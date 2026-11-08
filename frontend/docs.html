@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Touchmark documentation: run an audit, read the decision and the score, call the API, use it in CI, declare an agent with .tmark, and verify every audit on Stellar.">
+<title>Docs · Touchmark</title>
+<link rel="icon" href="/ui/brand/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/fonts/fonts.css">
+<link rel="stylesheet" href="/ui/press.css">
+<link rel="stylesheet" href="/ui/docs.css">
+<script src="/ui/docs.js" defer></script>
+</head>
+<body class="docs-page">
+<header class="bar">
+  <a class="brand" href="/" aria-label="Touchmark home"><img class="logo" src="/ui/brand/mark.svg" alt="" width="34" height="34"><span class="word">touchmark</span><span class="where">on Stellar</span></a>
+  <nav><a href="/">Test an agent</a><a href="/book">Assay book</a><a href="/docs" aria-current="page">Docs</a><a href="/guide">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a></nav>
+</header>
+
+<div class="docs">
+  <aside class="toc" aria-label="Contents">
+    <button class="toc-toggle" type="button" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <ol id="toc-list">
+      <li class="grp">Start</li>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#quickstart">Quickstart</a></li>
+      <li class="grp">Concepts</li>
+      <li><a href="#how">How an audit works</a></li>
+      <li><a href="#decision">Decision</a></li>
+      <li><a href="#score">Score</a></li>
+      <li><a href="#severity">Severity</a></li>
+      <li><a href="#report">The report</a></li>
+      <li class="grp">Build with it</li>
+      <li><a href="#api">HTTP API</a></li>
+      <li><a href="#stream">Streaming and jobs</a></li>
+      <li><a href="#cli">Command line</a></li>
+      <li><a href="#ci">GitHub Action</a></li>
+      <li><a href="#tmark">.tmark</a></li>
+      <li class="grp">On Stellar</li>
+      <li><a href="#assay">The assay book</a></li>
+      <li><a href="#verify">Verify an audit</a></li>
+      <li><a href="#credential">Credentials</a></li>
+      <li><a href="#contracts">Contracts</a></li>
+      <li class="grp">Operate</li>
+      <li><a href="#self-host">Run it yourself</a></li>
+      <li><a href="#limits">Limits</a></li>
+      <li><a href="#privacy">What leaves your hands</a></li>
+    </ol>
+  </aside>
+
+  <main class="doc" id="main">
+    <!-- ============================================================ overview -->
+    <section id="overview">
+      <p class="kicker"><span>Docs</span><span>Stellar testnet</span></p>
+      <h1>Touchmark <em>documentation</em></h1>
+      <p class="lede">Touchmark audits AI agents that hold Stellar authority: agents that keep keys, sign XDR, pay x402 and MPP invoices, authenticate with SEP-10 or drive Soroban contracts. It reads the agent's code in any language, answers a fixed ledger of Stellar-specific checks, has a second model re-check every serious finding at the line it cites, and writes the result to Stellar where anyone can check it.</p>
+      <div class="cards">
+        <a class="card" href="/"><b>Audit in the browser</b><span>Paste a GitHub repository or folder pinned to a commit.</span></a>
+        <a class="card" href="#api"><b>Call the API</b><span>The same audit over HTTP, streamed as it runs.</span></a>
+        <a class="card" href="#ci"><b>Gate CI</b><span>The GitHub Action annotates the cited lines on every push.</span></a>
+        <a class="card" href="#verify"><b>Verify on Stellar</b><span>Recompute a hash, compare it with a transaction memo.</span></a>
+      </div>
+      <p>Touchmark accepts four kinds of reference:</p>
+      <table>
+        <thead><tr><th>Reference</th><th>Example</th><th>What is audited</th></tr></thead>
+        <tbody>
+          <tr><td>GitHub repository or folder</td><td><code>https://github.com/owner/repo/tree/&lt;commit&gt;/agent</code></td><td>The source at that commit. A branch is pinned to its current commit first.</td></tr>
+          <tr><td>Registry agent id</td><td><code>64 hex characters</code></td><td>The source the registry record binds, with its card and endpoint hashes.</td></tr>
+          <tr><td>Contract</td><td><code>C…</code></td><td>The deployed WASM, its spec and its build attestation.</td></tr>
+          <tr><td>Account</td><td><code>G…</code></td><td>Signers, thresholds, SEP-29 and SEP-1 read from Horizon.</td></tr>
+        </tbody>
+      </table>
+      <p class="note">Without source only on-chain evidence is reviewed, and such an audit can never pass. Nothing is executed: code is read, never run.</p>
+    </section>
+
+    <!-- ============================================================ quickstart -->
+    <section id="quickstart">
+      <h2>Quickstart</h2>
+      <h3>In the browser</h3>
+      <ol>
+        <li>Open <a href="/">usetouchmark.app</a> and paste a GitHub link, ideally pinned to a commit.</li>
+        <li>Tick <b>Deep review by a model</b> to add the model review and the verifier. Without it only the deterministic rules run and the source stays on the server.</li>
+        <li>Read the decision, the findings with the lines they cite, and the check ledger. Fix, then <b>Compare</b> the fixed commit.</li>
+        <li>A passing agent can be issued a <a href="#credential">credential</a> on Stellar testnet.</li>
+      </ol>
+      <h3>Over HTTP</h3>
+      <pre data-lang="bash"><code>curl -s https://usetouchmark.app/api/v1/demo/audit \
+  -H 'Content-Type: application/json' \
+  -d '{"reference": "https://github.com/furkan3152/Touchmark_agent/tree/main/examples/demo/unsafe-treasury-agent"}' \
+  | jq '{decision, score, counts, stamp: .assay.stamp_url}'</code></pre>
+      <h3>From a terminal</h3>
+      <pre data-lang="bash"><code>git clone https://github.com/furkan3152/Touchmark_agent && cd Touchmark_agent
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python scripts/audit_agent.py https://github.com/owner/repo --no-deep   # rules only, no key needed</code></pre>
+    </section>
+
+    <!-- ============================================================ how -->
+    <section id="how">
+      <h2>How an audit works</h2>
+      <p>The reference is resolved and pinned first; every step says what it proved. The deterministic rules then run on every audit. With consent, the model review follows, in this order:</p>
+      <ol class="steps">
+        <li><b>File map.</b> Every selected source file is read, with line numbers, and recorded with what it does: where it signs, pays, holds secrets, verifies signatures or authenticates callers. Each claim quotes its line; a quote that is not in the file is dropped.</li>
+        <li><b>Investigation.</b> The agent's operating model (purpose, triggers, trust boundaries, assets at risk), and an assessment of every data-flow path the rules traced.</li>
+        <li><b>Check ledger.</b> A fixed catalog of 28 checks in four groups: value movement; signing, network and submission; access, secrets and entry points; model behaviour and intent. Which checks apply follows from the capabilities observed, never from the model's choice. <code>holds</code> and <code>fails</code> must quote the deciding line.</li>
+        <li><b>Challenge.</b> The 20 fund, signing, access and model checks answered <code>holds</code> are re-examined by a pass whose only job is to find one path where the control is absent. A flipped answer becomes a finding.</li>
+        <li><b>Focused file review.</b> Each file that signs, pays, holds keys or verifies signed input gets its own review, with the Stellar criteria and the lessons from real defects that match what the file does. The model states each function's security invariants and checks them one by one.</li>
+        <li><b>Verifier.</b> A separate model call re-checks each medium-or-higher finding (up to 60 per audit) at the cited line, without seeing why it was raised: <code>confirmed</code>, <code>partial</code>, <code>refuted</code> or <code>unverifiable</code>.</li>
+      </ol>
+      <p>Data-flow rules cover Python and JavaScript/TypeScript; pattern rules cover Rust, Go and Solidity. Agents in other languages (Java, Kotlin, C#, Swift, PHP, Ruby, Dart…) are selected and mapped like any other, and the model review does the work the rules cannot. Comments in the audited code never count as controls. Tests, mocks and examples are never rated as shipped code.</p>
+    </section>
+
+    <!-- ============================================================ decision -->
+    <section id="decision">
+      <h2>Decision</h2>
+      <p>One rule, shared by the demo, the Studio, the CI action and credentials:</p>
+      <table>
+        <thead><tr><th>Decision</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill fixes">needs_fixes</span></td><td>An <b>actionable risk</b> exists, or accumulated risks pushed the score below the pass mark of 65.</td></tr>
+          <tr><td><span class="pill evidence">needs_evidence</span></td><td>No actionable risk, but the core of the agent (prompt, tools and the code that holds authority) was not fully reviewed, or a medium payment bypass was never verified.</td></tr>
+          <tr><td><span class="pill pass">pass</span></td><td>No actionable risk, with the full core surface reviewed by the model review and the verifier.</td></tr>
+        </tbody>
+      </table>
+      <p>An <b>actionable risk</b> is a high or critical risk backed by source, configuration or live evidence, or a medium bypass of a payment or security control that the verifier confirmed at the quoted line. The rules alone never give a pass: a pass needs the full review.</p>
+    </section>
+
+    <!-- ============================================================ score -->
+    <section id="score">
+      <h2>Score</h2>
+      <p>The score is an itemised list of risk points, one entry per finding, so every point can be traced:</p>
+      <pre data-lang="text"><code>cost   = severity weight × evidence × confidence × scope × verifier weight
+weight = critical 30 · high 14 · medium 6 · low 2
+evidence: confirmed 1 · inferred 0.6        scope: ×1 for one place, up to ×1.75
+verifier: confirmed 1 · partial 0.8 · unchecked 0.75
+
+score  = 100 × e^(−risk points / 100)</code></pre>
+      <ul>
+        <li>Repeats of one root cause add 30% (one missing spend control is not charged five times); a further finding of a category already charged counts half; further findings of one severity have diminishing returns.</li>
+        <li>Evidence gaps cost nothing: they limit the decision, not the score.</li>
+        <li>A confirmed critical risk holds the score at <b>39</b> or below; any other actionable risk at <b>64</b> or below, so a risky agent never looks passable.</li>
+        <li>Bands: 85 and above safe, 65 caution, 40 high risk, below 40 blocklist. The credential contract refuses scores under 65.</li>
+      </ul>
+      <p>Every report carries its breakdown under <code>result.score_breakdown</code>, and the demo shows it under <em>Why this score?</em></p>
+    </section>
+
+    <!-- ============================================================ severity -->
+    <section id="severity">
+      <h2>Severity</h2>
+      <p>A model finding does not choose its own severity. It records facts, and the severity follows from them:</p>
+      <table>
+        <thead><tr><th>Fact</th><th>Values</th></tr></thead>
+        <tbody>
+          <tr><td>What is at risk</td><td>funds, keys, account control, a service credential, the operator's own spend, a paid service not delivered, data…</td></tr>
+          <tr><td>Who can trigger it</td><td>anyone, an authenticated user, the operator only, nobody yet (the code cannot run)</td></tr>
+          <tr><td>Network</td><td>mainnet, testnet, configurable</td></tr>
+          <tr><td>Does it ship</td><td>shipped code, or tests, mocks and examples (never rated as shipped)</td></tr>
+        </tbody>
+      </table>
+      <p>A claim about funds, keys or account control is lowered when the agent has no Stellar authority and the cited file does not authenticate callers, or when the file is front-end view code with no authority capability. A contract's own files are exempt. Rule findings carry the rule's severity, which the verifier may lower; a refuted critical becomes high, never disappears.</p>
+    </section>
+
+    <!-- ============================================================ report -->
+    <section id="report">
+      <h2>The report</h2>
+      <p>Every audit produces one canonical JSON report and its SHA-256. The fields most clients need:</p>
+      <table>
+        <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>review_decision</code></td><td><code>pass</code>, <code>needs_fixes</code> or <code>needs_evidence</code></td></tr>
+          <tr><td><code>result.overall_score</code>, <code>result.score_breakdown</code></td><td>The score and every deduction behind it</td></tr>
+          <tr><td><code>findings[]</code></td><td><code>id</code>, <code>severity</code>, <code>kind</code> (<code>risk</code>, <code>evidence_gap</code>, <code>warning</code>), <code>title</code>, <code>evidence</code>, <code>remediation</code>, <code>verification</code> (<code>verdict</code>, <code>file</code>, <code>line</code>, <code>reason</code>)</td></tr>
+          <tr><td><code>deep_review.ledger.checks[]</code></td><td>Each check: <code>verdict</code> (<code>holds</code>, <code>fails</code>, <code>not_applicable</code>, <code>cannot_determine</code>, <code>unanswered</code>), the quoted line, and <code>challenged_from</code> when the challenge flipped it</td></tr>
+          <tr><td><code>deep_review.coverage</code></td><td>What was read, and every file not reviewed with the reason</td></tr>
+          <tr><td><code>repository</code></td><td>Commit, selected files, excluded scope, the <code>.tmark</code> and the ownership claim</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ============================================================ api -->
+    <section id="api">
+      <h2>HTTP API</h2>
+      <p>Base URL <code>https://usetouchmark.app</code>. JSON in and out; errors are <code>{"detail": "…"}</code> with a 4xx or 5xx status. No key is needed for the public endpoints below; they are rate limited (see <a href="#limits">Limits</a>).</p>
+
+      <div class="ep"><span class="m post">POST</span><code>/api/v1/demo/audit</code></div>
+      <p>Audit a reference. The model review runs only with consent and within the allowance; otherwise the rules run and the answer says why (<code>ai.skipped</code>).</p>
+      <table class="params">
+        <tbody>
+          <tr><td><code>reference</code></td><td>string, required</td><td>GitHub URL, agent id, <code>C…</code> or <code>G…</code></td></tr>
+          <tr><td><code>model_review_consent</code></td><td>boolean, default <code>false</code></td><td>Send the source to the model review and the verifier</td></tr>
+          <tr><td><code>tmark</code></td><td>string, optional</td><td>A <code>.tmark</code> to use as if committed. It is validated first; a 422 lists each error with its field and line</td></tr>
+        </tbody>
+      </table>
+      <p>The answer: <code>decision</code>, <code>score</code>, <code>report_sha256</code>, <code>report_json</code>, <code>source</code> (repository, revision, path), <code>risks[]</code> and <code>gaps[]</code> (summaries), <code>counts</code>, <code>breakdown</code>, <code>scope</code>, <code>tmark</code>, <code>ai</code> (what the review and the verifier did), <code>issuance</code> (whether a credential can be issued) and <code>assay</code> (the <a href="#assay">assay book</a> entry and stamp).</p>
+
+      <div class="ep"><span class="m post">POST</span><code>/api/v1/demo/audit/continue</code> · <code>/api/v1/demo/audit/cancel</code></div>
+      <p><code>{"job_id": "…"}</code>. Run the next leg of a long audit, or stop it before its next model call. See <a href="#stream">Streaming and jobs</a>.</p>
+
+      <div class="ep"><span class="m post">POST</span><code>/api/v1/demo/compare</code></div>
+      <p><code>{"before": "…", "after": "…"}</code>. Audit two versions with the deterministic rules and compare: what the fix closed, what is still open, what is new. Both sides are rules only, and the answer says so (<code>mode: rules_only</code>).</p>
+
+      <div class="ep"><span class="m get">GET</span><code>/api/v1/demo/config</code></div>
+      <p>What this deployment offers: network, contracts, whether credentials can be issued, the model review (<code>model_review.available</code>, model, verifier, limits) and the allowance left to this client.</p>
+
+      <div class="ep"><span class="m post">POST</span><code>/api/v1/tmark/check</code> · <span class="m get">GET</span><code>/api/v1/tmark/template</code> · <span class="m post">POST</span><code>/api/v1/tmark/template</code></div>
+      <p>Validate a <code>.tmark</code> (<code>{"text": "…"}</code> → <code>valid</code>, <code>errors</code>, <code>error_details</code> with field and line, <code>normalized</code>, <code>summary</code>); get a template; or draft one from a repository (<code>{"reference": "…"}</code>) or from source files (<code>{"files": {path: text}}</code>). Nothing is stored.</p>
+
+      <div class="ep"><span class="m post">POST</span><code>/api/v1/demo/credential/prepare</code> · <code>/api/v1/demo/credential</code></div>
+      <p>Issue a credential for a passing audit with the <code>issuance.ticket</code> from its result. When the repository names an owner, <code>prepare</code> returns the registration for the owner to sign in their wallet, and the signed XDR goes with the ticket.</p>
+
+      <div class="ep"><span class="m get">GET</span><code>/api/v1/assay/book</code> · <code>/api/v1/assay/entry/{entry}</code></div>
+      <p>The assay book's statistics and latest entries; one entry as stamped. See <a href="#verify">Verify an audit</a>.</p>
+
+      <div class="ep"><span class="m post">POST</span><code>/api/v1/assay/claim</code> · <code>/api/v1/assay/pay/prepare</code> · <code>/api/v1/assay/pay/submit</code> · <span class="m get">GET</span><code>/api/v1/assay/report/{entry}.json</code></div>
+      <p>Release a report for its testnet payment: look for the payment on Horizon (<code>{"entry", "tx_hash"?}</code>), prepare an unsigned payment for a wallet (<code>{"entry", "payer"}</code>), relay the signed one (<code>{"entry", "signed_xdr"}</code>), and download the report once paid (402 before).</p>
+
+      <div class="ep"><span class="m get">GET</span><code>/api/v1/health</code></div>
+      <p>Version, network and which modes are on (<code>modes.deep_review</code>).</p>
+    </section>
+
+    <!-- ============================================================ stream -->
+    <section id="stream">
+      <h2>Streaming and jobs</h2>
+      <p>A model review can take longer than one request. On a deployment that keeps jobs, an audit is a job that runs over one or more requests ("legs"); each leg saves its place. Ask for a stream to see it run:</p>
+      <pre data-lang="bash"><code>curl -sN https://usetouchmark.app/api/v1/demo/audit \
+  -H 'Accept: application/x-ndjson' -H 'Content-Type: application/json' \
+  -d '{"reference": "https://github.com/owner/repo/tree/&lt;commit&gt;", "model_review_consent": true}'</code></pre>
+      <p>Each line is one JSON event:</p>
+      <table>
+        <tbody>
+          <tr><td><code>job</code></td><td>The job id and where it stands. Keep the <code>job_id</code>.</td></tr>
+          <tr><td><code>stage</code></td><td><code>resolving</code>, <code>fetching</code>, <code>rules</code>, <code>deep_review</code> (files read), <code>verifier</code> (findings checked), <code>done</code></td></tr>
+          <tr><td><code>heartbeat</code></td><td>Every few seconds, so proxies keep the connection</td></tr>
+          <tr><td><code>result</code></td><td>The finished audit (same object as the plain answer). The stream ends.</td></tr>
+          <tr><td><code>continue</code></td><td>The leg ended; POST <code>/continue</code> with the <code>job_id</code> to run the next one</td></tr>
+          <tr><td><code>busy</code></td><td>Another request is advancing this job; try again after <code>retry_after</code> seconds</td></tr>
+          <tr><td><code>cancelled</code> · <code>error</code></td><td>The job stopped; <code>error</code> carries <code>status</code> and <code>detail</code></td></tr>
+        </tbody>
+      </table>
+      <p>Without the stream header the answer is the result itself, or a 202 with the <code>continue</code> event while the job is unfinished. <code>/continue</code> is idempotent: a finished job returns its result again, and two continues of one job never both run. Jobs expire after 24 hours.</p>
+      <p>A client that follows a job to the end: <a href="https://github.com/furkan3152/Touchmark_agent/blob/main/research/benchmark/real/run_live.py" rel="noopener"><code>research/benchmark/real/run_live.py</code></a>.</p>
+    </section>
+
+    <!-- ============================================================ cli -->
+    <section id="cli">
+      <h2>Command line</h2>
+      <pre data-lang="bash"><code># rules only: no key, nothing leaves your machine
+.venv/bin/python scripts/audit_agent.py https://github.com/owner/repo --no-deep --out report.json
+
+# full review, as on the demo
+ENABLE_DEEP_REVIEW=1 DEEP_REVIEW_MODEL=claude-haiku-5-5 VERIFIER_MODEL=claude-haiku-5-5 ANTHROPIC_API_KEY=… \
+  .venv/bin/python scripts/audit_agent.py https://github.com/owner/repo/tree/&lt;commit&gt;
+
+# audit the fix and compare
+.venv/bin/python scripts/audit_agent.py &lt;vulnerable-ref&gt; --compare &lt;fixed-ref&gt;</code></pre>
+      <table class="params">
+        <tbody>
+          <tr><td><code>--network</code></td><td><code>testnet</code> (default) or <code>mainnet</code></td></tr>
+          <tr><td><code>--purpose</code></td><td>What the agent is for, when the repository does not say</td></tr>
+          <tr><td><code>--resolve-only</code></td><td>Resolve and pin the reference, print every proof step, audit nothing</td></tr>
+          <tr><td><code>--no-deep</code></td><td>Deterministic rules only</td></tr>
+          <tr><td><code>--out</code></td><td>Write the report JSON</td></tr>
+          <tr><td><code>--compare</code></td><td>A second reference to audit and compare</td></tr>
+        </tbody>
+      </table>
+      <p>Run locally, the model review stops after <code>DEEP_REVIEW_TIMEOUT_SECONDS</code> (240 s by default, at most 900); raise it for large repositories.</p>
+    </section>
+
+    <!-- ============================================================ ci -->
+    <section id="ci">
+      <h2>GitHub Action</h2>
+      <p>The composite action runs the deterministic analysis on every push, validates the <code>.tmark</code> and annotates the cited lines. Pin both actions to a commit:</p>
+      <pre data-lang="yaml"><code>- uses: actions/checkout@&lt;commit-sha&gt;
+- uses: furkan3152/Touchmark_agent@&lt;commit-sha&gt;
+  with:
+    path: .              # folder to audit
+    fail-on: needs_fixes # fail the job on an actionable risk; never only reports
+    annotate: medium     # lowest severity annotated on the code</code></pre>
+      <p>Outputs: <code>decision</code>, <code>score</code>, <code>tmark</code> (<code>valid</code>, <code>invalid</code> or <code>missing</code>) and <code>report</code> (path of the report JSON); a summary is written to the job page. The rules alone never give a pass, so CI never shows a result that could earn a credential.</p>
+    </section>
+
+    <!-- ============================================================ tmark -->
+    <section id="tmark">
+      <h2><code>.tmark</code>: declare your agent</h2>
+      <p>A <code>.tmark</code> at the repository root states what the agent may do: network, keys and what it signs, spending limits, recipients, approval and tools. Touchmark holds the code to every claim; a declaration never closes a risk on its own. A declaration that says more than the code enforces becomes a finding: <b>authority mismatch</b>, <b>limit not enforced</b>, <b>network mismatch</b>.</p>
+      <pre data-lang="json"><code>{
+  "$schema": "https://usetouchmark.app/schemas/tmark-v1.json",
+  "tmark": "1",
+  "agent": { "name": "Treasury agent", "kind": "mcp_server", "network": "testnet",
+             "purpose": "Pays two listed suppliers in XLM on request." },
+  "owner": { "stellar_account": "G…" },
+  "authority": { "holds_keys": true, "key_source": "env", "signs": ["payments"] },
+  "limits": { "per_payment": { "amount": "500", "asset": "XLM" },
+              "recipients": "allowlist", "human_approval": "never" }
+}</code></pre>
+      <pre data-lang="bash"><code>python scripts/tmark.py init path/to/repo    # a valid draft from what the code can do
+python scripts/tmark.py check path/to/repo   # lists every error</code></pre>
+      <p>Build one in the browser with the <a href="/guide/tmark#builder">.tmark builder</a>. Every field: <a href="https://github.com/furkan3152/Touchmark_agent/blob/main/docs/TMARK.md" rel="noopener">docs/TMARK.md</a>. Schema: <a href="/schemas/tmark-v1.json"><code>/schemas/tmark-v1.json</code></a>.</p>
+    </section>
+
+    <!-- ============================================================ assay -->
+    <section id="assay">
+      <h2>The assay book</h2>
+      <p>Every audit the public demo runs is entered in the <a href="/book">assay book</a> and stamped on Stellar testnet. The entry is a small canonical JSON record: the agent (repository, commit, folder), the decision, the score, the finding counts, whether the model review completed, and the SHA-256 of the full report. Its SHA-256 is written as the <code>MEMO_HASH</code> of a transaction from the book account, a bump-sequence operation that changes nothing else.</p>
+      <div class="formula">
+        <code>sha256(canonical entry) == memo of the stamp transaction</code>
+        <code>entry.report_sha256 == sha256(report JSON)</code>
+      </div>
+      <p>The full report is released for <b>2 XLM on testnet</b>. The payer sends it with the text memo <code>tm:&lt;first 20 hex of the entry&gt;</code>, from Freighter or any wallet; the server reads the payment from Horizon (never from the browser), releases the report, and sends the payer a <b>receipt stamp</b>: a one-stroop payment whose memo is the entry hash. The payer's own account history shows both sides.</p>
+      <p>Records are written once and never changed. The book page counts every entry and links each row to its transactions.</p>
+    </section>
+
+    <!-- ============================================================ verify -->
+    <section id="verify">
+      <h2>Verify an audit</h2>
+      <p>Nothing has to be taken on trust. With an entry id from the book or from an audit's <code>assay.entry_sha256</code>:</p>
+      <pre data-lang="bash"><code>E=&lt;entry&gt;
+curl -s https://usetouchmark.app/api/v1/assay/entry/$E > entry.json
+
+# 1. the entry hashes to its id
+python3 -c "import json,hashlib;e=json.load(open('entry.json'))['entry'];print(hashlib.sha256(json.dumps(e,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest())"
+
+# 2. the stamp transaction carries that hash as its memo, from the book account
+TX=$(jq -r .stamp_tx entry.json)
+curl -s https://horizon-testnet.stellar.org/transactions/$TX | jq -r '.memo, .source_account, .created_at'
+#    (Horizon gives the memo in base64: echo &lt;memo&gt; | base64 -d | xxd -p -c 64)
+
+# 3. a paid report hashes to the entry's report_sha256
+curl -s https://usetouchmark.app/api/v1/assay/report/$E.json | sha256sum</code></pre>
+      <p>The canonical form is JSON with sorted keys, no spaces and UTF-8 text. Each step uses only public data: the entry, a public Horizon server and the report bytes.</p>
+    </section>
+
+    <!-- ============================================================ credential -->
+    <section id="credential">
+      <h2>Credentials</h2>
+      <p>A passing audit with the full review can be recorded as a non-transferable credential. Soroban contracts, not the server, decide whether a credential exists and is still valid:</p>
+      <ol>
+        <li>The agent is registered. When the repository's <code>.tmark</code> names <code>owner.stellar_account</code>, that account signs the registration in its own wallet; otherwise the credential names the demo operator and says ownership was not verified.</li>
+        <li>The approved validator writes the report hash and score to the registry.</li>
+        <li>The credential contract issues one token bound to that report and that agent version. It refuses scores below 65; it expires after at most 90 days; it can be revoked; and <code>is_current</code> re-checks expiry, revocation, the validator and the agent's current version on every read. A changed agent is no longer current.</li>
+      </ol>
+      <p>A credential vouches for what the repository says about itself, so an audit that used a <code>.tmark</code> supplied with the request cannot be credentialed: commit the declaration and audit again.</p>
+    </section>
+
+    <!-- ============================================================ contracts -->
+    <section id="contracts">
+      <h2>Contracts</h2>
+      <table>
+        <thead><tr><th>Contract</th><th>Enforces</th></tr></thead>
+        <tbody>
+          <tr><td><b>AgentRegistry</b></td><td>Owner-authorized, versioned agents; an allowlist of validators; a validator pinned per request that responds once with a score, a report URI and a non-zero report hash, only while the agent is unchanged.</td></tr>
+          <tr><td><b>AuditCredential</b></td><td>One non-transferable credential per completed validation; refuses scores under 65, a validator no longer approved and a changed agent; expiry at most 90 days; revocation is permanent.</td></tr>
+          <tr><td><b>AuditEscrow</b></td><td>Settles in a Stellar Asset Contract and pays only for the assigned validator's matching report and score; capped fees, deadlines, refunds and disputes.</td></tr>
+          <tr><td><b>AgentAccount</b></td><td>A custom account (<code>__check_auth</code>) for an agent's session keys: allowed recipients and assets, a per-call maximum, a cumulative budget, nonces, expiry, rotation and revocation.</td></tr>
+        </tbody>
+      </table>
+      <p>No contract has an upgrade function. The demo's registry and credential contracts on testnet:</p>
+      <table class="ids">
+        <tbody>
+          <tr><td>AgentRegistry</td><td><a href="https://stellar.expert/explorer/testnet/contract/CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W" rel="noopener"><code>CBIZOECNI22Y6RXANQWS7SYL2QGV2ZX2QZ4CS3GOOETFJ66SIN6YJZ6W</code></a></td></tr>
+          <tr><td>AuditCredential</td><td><a href="https://stellar.expert/explorer/testnet/contract/CBBTOBL6XTLWYPT5GSVUA3JWNQMVMT4DGGHEGZ4NHC3V4SLXKP5AO4R5" rel="noopener"><code>CBBTOBL6XTLWYPT5GSVUA3JWNQMVMT4DGGHEGZ4NHC3V4SLXKP5AO4R5</code></a></td></tr>
+          <tr><td>Operator, validator and book account</td><td><a href="https://stellar.expert/explorer/testnet/account/GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU" rel="noopener"><code>GCRGIGXMFQ632Q65TUDVPHWUIPEIDVKR4TJYIEFE6DFHMMEPGDY3VOSU</code></a></td></tr>
+        </tbody>
+      </table>
+      <p>Every deployment and its transactions: <a href="https://github.com/furkan3152/Touchmark_agent/tree/main/deployments" rel="noopener">deployments/</a>. The contracts have a self-assessed review and no external audit yet.</p>
+    </section>
+
+    <!-- ============================================================ self-host -->
+    <section id="self-host">
+      <h2>Run it yourself</h2>
+      <pre data-lang="bash"><code>python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/uvicorn app:app --port 8000          # the demo at http://localhost:8000
+.venv/bin/python -m pytest -q && cargo test --workspace</code></pre>
+      <table class="params">
+        <thead><tr><th>Variable</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>ENABLE_DEEP_REVIEW</code>, <code>ANTHROPIC_API_KEY</code></td><td>Turn on the model review and the verifier (they still run only with the visitor's consent)</td></tr>
+          <tr><td><code>DEEP_REVIEW_MODEL</code>, <code>VERIFIER_MODEL</code>, <code>…_EFFORT</code></td><td>Models and effort of the review and the verifier</td></tr>
+          <tr><td><code>DEEP_REVIEW_MAX_COST_USD_PER_AUDIT</code>, <code>DEEP_REVIEW_DAILY_COST_USD</code></td><td>Spend caps per audit and per UTC day. A reached cap ends the review cleanly and lists every unread file</td></tr>
+          <tr><td><code>DEEP_REVIEW_PRICE_*_PER_MTOK</code></td><td>Prices that turn measured usage into cost for the caps</td></tr>
+          <tr><td><code>DEEP_REVIEW_CLIENT_HOURLY_LIMIT</code>, <code>…_HOURLY_LIMIT</code>, <code>…_DAILY_LIMIT</code></td><td>Model reviews per client per hour, overall per hour and per day</td></tr>
+          <tr><td><code>BLOB_READ_WRITE_TOKEN</code></td><td>Private Vercel Blob store for jobs, allowances and the assay book. Without a durable store on serverless the model review is off</td></tr>
+          <tr><td><code>DEMO_OPERATOR_SECRET</code></td><td>Testnet key that administers the demo registry, acts as validator and stamps the assay book</td></tr>
+          <tr><td><code>ENABLE_ASSAY_BOOK</code>, <code>ASSAY_PRICE_XLM</code></td><td>Stamp every audit on testnet; the testnet price of a report (2)</td></tr>
+          <tr><td><code>ENABLE_ONCHAIN_VERIFICATION</code></td><td>Read the agent account's signers and thresholds, SEP-29 and SEP-1 from Horizon</td></tr>
+          <tr><td><code>STELLAR_NETWORK</code>, <code>ALLOW_MAINNET</code></td><td>Network selection; mainnet stays off unless explicitly allowed</td></tr>
+        </tbody>
+      </table>
+      <p>All settings: <a href="https://github.com/furkan3152/Touchmark_agent/blob/main/docs/ARCHITECTURE.md#5-deployment" rel="noopener">docs/ARCHITECTURE.md</a>.</p>
+    </section>
+
+    <!-- ============================================================ limits -->
+    <section id="limits">
+      <h2>Limits</h2>
+      <ul>
+        <li><b>A pass is not a guarantee.</b> It means no actionable risk was found in the reviewed code, not that the agent is safe.</li>
+        <li><b>Nothing is executed.</b> The audit reads code; a testnet execution probe is prototyped in <a href="https://github.com/furkan3152/Touchmark_agent/tree/main/research/testnet-probe" rel="noopener">research/testnet-probe</a>.</li>
+        <li><b>A single run is not deterministic.</b> Two runs of the model review can differ; the benchmark publishes both runs. The verifier re-checks at most 60 findings per audit.</li>
+        <li><b>Public demo.</b> Starting an audit or a comparison is limited per address per hour, the model review per client per hour, and model spend per day; past them audits run the rules only and say so.</li>
+        <li><b>Testnet by default.</b> Testnet XLM has no monetary value.</li>
+      </ul>
+      <p>Measured on real Stellar defects that maintainers fixed upstream: <a href="https://github.com/furkan3152/Touchmark_agent/blob/main/research/benchmark/real/README.md" rel="noopener">the benchmark</a>.</p>
+    </section>
+
+    <!-- ============================================================ privacy -->
+    <section id="privacy">
+      <h2>What leaves your hands</h2>
+      <ul>
+        <li>Without consent, the source stays on the server and only the deterministic rules run.</li>
+        <li>With consent, the selected source files are sent to the model provider for the review and to a second call for the verifier.</li>
+        <li>The assay book stores the report of every demo audit privately, and publishes only the entry (agent, commit, decision, score and counts). The full report is released to whoever pays for it on testnet; audit public repositories only on the demo.</li>
+        <li>No response or report carries measured tokens or cost. Client addresses are hashed for the allowance and never stored raw.</li>
+      </ul>
+      <p>Found a vulnerability? See <a href="https://github.com/furkan3152/Touchmark_agent/blob/main/SECURITY.md" rel="noopener">SECURITY.md</a>.</p>
+    </section>
+  </main>
+</div>
+<footer class="foot">Touchmark · Apache 2.0 · Stellar testnet</footer>
+</body>
+</html>

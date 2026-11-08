@@ -59,7 +59,7 @@ h1 em{font-style:italic;font-weight:600;color:var(--red);position:relative}
 .foot .logo{flex:none}
 
 @media (max-width:640px){
-  .bar{padding:16px}.bar nav{gap:14px;font-size:12px}.brand .where{display:none}
+  .bar{padding:16px;flex-wrap:wrap;gap:10px}.bar nav{gap:8px 14px;font-size:12px;flex-wrap:wrap}.brand .where{display:none}
   main{padding:0 16px 40px}
   h1{letter-spacing:-1.6px}
 }

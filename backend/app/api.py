@@ -170,6 +170,9 @@ app = FastAPI(
     version=settings.version,
     description="Stellar agent validation layer — Soroban registry and evidence-first audits.",
     lifespan=lifespan,
+    # /docs is the documentation page (frontend/docs.html); the generated reference moves here.
+    docs_url="/api/reference",
+    redoc_url=None,
 )
 app.add_middleware(StudioGuard)
 
@@ -1868,6 +1871,10 @@ if FRONTEND_DIR.exists():
     @app.get("/guide/tmark")
     async def guide_tmark_page() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "guide-tmark.html")
+
+    @app.get("/docs")
+    async def docs_page() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "docs.html")
 
     @app.get("/book")
     async def book_page() -> FileResponse:

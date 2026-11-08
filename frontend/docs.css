@@ -1,0 +1,83 @@
+/* The docs: a contents rail and one long, printed page. Plates from press.css. */
+.docs{max-width:1180px;margin:auto;padding:8px 24px 40px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px;align-items:start}
+.toc{position:sticky;top:18px;max-height:calc(100vh - 36px);overflow:auto;padding:14px 0}
+.toc ol{list-style:none;margin:0;padding:0;border-left:2px solid var(--ink)}
+.toc li a{display:block;padding:5px 14px;text-decoration:none;color:var(--ink-soft);font:500 14px/1.35 var(--body);border-left:3px solid transparent;margin-left:-2px}
+.toc li a:hover{color:var(--ink)}
+.toc li a.on{color:var(--ink);font-weight:650;border-left-color:var(--red);background:linear-gradient(90deg,var(--soft-red),transparent)}
+.toc .grp{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:1.6px;color:var(--ink);padding:16px 14px 6px}
+.toc .grp:first-child{padding-top:2px}
+.toc-toggle{display:none}
+
+.docs>*{min-width:0}
+.doc{min-width:0;max-width:780px;width:100%;margin:0;padding:0}
+.doc section{padding:8px 0 34px;border-bottom:1.5px dashed var(--line);margin-bottom:26px;scroll-margin-top:20px}
+.doc section:last-child{border-bottom:0}
+.kicker{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 18px}
+.kicker span{font:600 11px/1 var(--mono);text-transform:uppercase;letter-spacing:1.6px;padding:7px 9px;border:1.5px solid var(--ink);border-radius:3px}
+.kicker span:first-child{background:var(--ink);color:var(--paper)}
+.doc h1{font-size:clamp(40px,6vw,68px)}
+.doc h2{font:700 34px/1.1 var(--display);letter-spacing:-.8px;margin:6px 0 16px}
+.doc h2 code{font:inherit;font-family:var(--mono);font-size:.82em;letter-spacing:-1px}
+.doc h3{font:700 19px/1.3 var(--body);margin:24px 0 8px}
+.doc p,.doc li{font-size:16.5px;line-height:1.65}
+.doc p{margin:0 0 14px}
+.doc ul,.doc ol{padding-left:22px;margin:0 0 16px}.doc li{margin:0 0 8px}
+.doc a{text-decoration-color:var(--red);text-underline-offset:3px;text-decoration-thickness:1.5px}
+.doc code{font:13.5px var(--mono);background:var(--card);border:1px solid var(--line);padding:1px 5px;border-radius:3px;word-break:break-word}
+.doc .lede{font-size:19px;color:var(--ink-soft);margin-bottom:24px;max-width:none}
+.doc .note{font-size:14.5px;color:var(--ink-soft);border-left:3px solid var(--amber);padding:2px 0 2px 12px}
+
+.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 24px}
+.card{display:block;text-decoration:none;background:var(--card);border:2px solid var(--ink);border-radius:5px;padding:14px 16px;transition:transform .08s,box-shadow .08s}
+.card:hover{transform:translate(-2px,-2px);box-shadow:4px 4px 0 var(--red)}
+.card b{display:block;font:700 18px/1.2 var(--display);margin-bottom:4px}
+.card span{font-size:14px;color:var(--ink-soft)}
+
+.doc table{width:100%;border-collapse:collapse;margin:4px 0 18px;font-size:14.5px;background:var(--card);border:2px solid var(--ink);border-radius:5px;overflow:hidden;display:table}
+.doc th{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:1.3px;color:var(--ink-soft);text-align:left;padding:10px 12px;border-bottom:2px solid var(--ink);background:var(--paper)}
+.doc td{padding:10px 12px;border-bottom:1.5px dashed var(--line);vertical-align:top;line-height:1.5}
+.doc tr:last-child td{border-bottom:0}
+.doc td:first-child{white-space:nowrap}
+.doc .params td:first-child,.doc .ids td:first-child{width:1%}
+.doc .ids td:last-child code{font-size:12px;word-break:break-all}
+
+.pill{font:600 11px var(--mono);padding:3px 8px;border-radius:3px;border:1.5px solid currentColor;white-space:nowrap}
+.pill.pass{color:var(--green)}.pill.fixes{color:var(--red)}.pill.evidence{color:var(--amber)}
+
+.steps li{margin-bottom:12px}
+.formula{display:grid;gap:8px;margin:0 0 16px;padding:14px 16px;border:2px dashed var(--ink);border-radius:5px}
+.formula code{background:none;border:0;padding:0;font-size:14px}
+
+.ep{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:24px 0 8px;padding-top:4px}
+.ep code{font:600 14.5px var(--mono);background:none;border:0;padding:0}
+.m{font:700 10.5px var(--mono);letter-spacing:1px;padding:4px 7px;border-radius:3px;color:var(--paper)}
+.m.post{background:var(--red)}.m.get{background:var(--green)}
+
+.doc pre{position:relative;background:var(--ink);color:#f2ead9;border-radius:5px;padding:16px 18px;margin:0 0 18px;overflow:auto;box-shadow:5px 5px 0 var(--red)}
+.doc pre code{background:none;border:0;padding:0;color:inherit;font:13px/1.65 var(--mono);white-space:pre;word-break:normal}
+.doc pre::before{content:attr(data-lang);position:absolute;top:8px;right:72px;font:600 10px var(--mono);text-transform:uppercase;letter-spacing:1.4px;color:rgba(242,234,217,.45)}
+.copy-code{position:absolute;top:8px;right:8px;background:transparent;color:#f2ead9;border:1.5px solid rgba(242,234,217,.45);border-radius:3px;font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:1px;padding:4px 8px;cursor:pointer}
+.copy-code:hover{border-color:#f2ead9}
+
+@media (prefers-color-scheme:dark){.doc pre{background:#0b1020}}
+@media (max-width:900px){
+  .docs{grid-template-columns:minmax(0,1fr);gap:0;padding:0 16px 32px}
+  .toc{position:sticky;top:0;z-index:5;max-height:none;background:var(--paper);padding:8px 0;border-bottom:2px solid var(--ink);margin:0 -16px 18px;padding:8px 16px}
+  .toc-toggle{display:flex;width:100%;justify-content:space-between;align-items:center;background:var(--card);border:2px solid var(--ink);border-radius:4px;padding:10px 12px;font:600 12px var(--mono);text-transform:uppercase;letter-spacing:1.4px;color:var(--ink);cursor:pointer}
+  .toc-toggle::after{content:"+";font-size:18px;color:var(--red)}
+  .toc-toggle[aria-expanded="true"]::after{content:"−"}
+  .toc ol{display:none;margin-top:10px;max-height:60vh;overflow:auto}
+  .toc.open ol{display:block}
+  .cards{grid-template-columns:1fr}
+  .doc h2{font-size:28px}
+  .doc table{display:block;overflow-x:auto}
+  .doc td:first-child{white-space:normal}
+  .doc pre::before{display:none}
+}
+@media (max-width:900px){
+  .doc code{overflow-wrap:anywhere}
+  .formula code{white-space:normal;overflow-wrap:anywhere}
+  .doc pre{max-width:100%}
+  .ep code{overflow-wrap:anywhere}
+}

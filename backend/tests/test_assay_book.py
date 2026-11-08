@@ -257,3 +257,13 @@ def test_routes_are_closed_when_the_book_is_off_and_public_on_the_vercel_surface
     from pathlib import Path
     source = (Path(__file__).resolve().parents[2] / "app.py").read_text()
     assert '"/book"' in source and '"/report/"' in source and '"/api/v1/assay/"' in source
+
+
+def test_the_docs_page_is_served_and_public():
+    client = TestClient(api.app)
+    page = client.get("/docs")
+    assert page.status_code == 200 and "Touchmark <em>documentation</em>" in page.text
+    for anchor in ("overview", "api", "stream", "verify", "credential", "self-host"):
+        assert f'id="{anchor}"' in page.text and f'href="#{anchor}"' in page.text
+    from pathlib import Path
+    assert '"/docs"' in (Path(__file__).resolve().parents[2] / "app.py").read_text()
