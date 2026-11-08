@@ -33,6 +33,10 @@ async def public_surface_only(request, call_next):
                            '/api/v1/studio/delivery/pilot', '/api/v1/studio/capsule/import', '/api/v1/studio/capsule/export',
                            '/.well-known/stellar.toml', '/api/v1/studio/ai/check',
                            '/api/v1/studio/checkout', '/api/v1/studio/checkout/prepare'})
+    # The operator console (frontend/index.html and its app.js) belongs to a persistent operator
+    # deployment (/operator there); its API is not public, so neither is the page.
+    if path in {"/ui/", "/ui/index.html", "/ui/app.js", "/ui/styles.css", "/ui/tokens.css"}:
+        allowed = False
     if not allowed:
         return JSONResponse({"detail": "This deployment exposes the public audit Studio only."}, status_code=404)
     if os.environ.get('VERCEL') == '1':

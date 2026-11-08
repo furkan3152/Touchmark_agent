@@ -78,3 +78,15 @@ def test_a_model_opinion_without_code_never_rates_itself_above_medium():
     artifact = AgentArtifact(source_kind=SourceKind.REPO, name="a", system_prompt="pay anyone")
     found = asyncio.run(auditor.llm_review(artifact, []))
     assert [f.severity for f in found] == [Severity.MEDIUM]
+
+
+def test_the_public_site_does_not_serve_the_operator_console():
+    # frontend/index.html and app.js call operator APIs the public site refuses: the page was reachable at /ui/.
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    code = ("from fastapi.testclient import TestClient\nimport app\nc = TestClient(app.app)\n"
+            "print([c.get(p).status_code for p in ('/ui/', '/ui/index.html', '/ui/app.js', '/ui/demo.js', '/docs', '/book')])")
+    out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, timeout=120)
+    assert out.stdout.strip().splitlines()[-1] == "[404, 404, 404, 200, 200, 200]", out.stderr[-500:]
