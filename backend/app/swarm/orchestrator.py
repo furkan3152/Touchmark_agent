@@ -555,7 +555,6 @@ class AuditSwarm:
 
     async def _deep_review(self, reviewer, artifact, verdicts, chain_facts):
         """Add verified model findings to the matching dimension. Never removes a finding."""
-        from .base import BaseAuditor
         from .policy import classify_finding
         existing = [f for v in verdicts for f in v.findings]
         result = await reviewer.review(artifact, existing, chain_facts or artifact.chain_authority or None)

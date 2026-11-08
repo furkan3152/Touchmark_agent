@@ -603,7 +603,7 @@ class IngestionService:
         return AgentArtifact(
             source_kind=SourceKind.ENDPOINT,
             source_ref=req.endpoint_url,
-            name=meta.get("name", f"endpoint-agent"),
+            name=meta.get("name", "endpoint-agent"),
             description=meta.get("description", "Black-box endpoint agent."),
             declared_capabilities=[c for c in capabilities if c],
             system_prompt=meta.get("systemPrompt", meta.get("instructions", "")),

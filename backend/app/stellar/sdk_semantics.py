@@ -45,7 +45,6 @@ PY_RESPONSE_FIELDS: dict[str, dict[str, frozenset[str]]] = {
                  **{v: frozenset(_SIM_9 + ("state_changes",))
                     for v in ("12.0.0", "13.1.0", "14.0.0", "15.0.0", "16.0.0")}},
 }
-PY_VERIFIED = ("9.0.0", "10.0.0", "11.0.0", "12.0.0", "13.1.0", "14.0.0", "15.0.0", "16.0.0")
 #: Names every pydantic model answers to (methods and v1 compatibility shims).
 PY_MODEL_ATTRS = frozenset({"dict", "json", "copy", "schema", "schema_json", "parse_obj", "parse_raw",
                             "construct", "validate", "fields", "__fields__", "__dict__", "__class__"})

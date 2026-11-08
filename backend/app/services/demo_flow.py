@@ -23,6 +23,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import Settings
+from ..stellar.networks import NETWORKS, TESTNET
 from .agent_resolver import audit_reference
 from ..swarm.policy import chain_score as _chain_score
 
@@ -31,7 +32,7 @@ MANIFEST = ROOT / "deployments/demo-testnet.json"
 LOCAL_KEY = ROOT / "data/demo-operator.json"
 TICKET_TTL = 30 * 60
 CREDENTIAL_DAYS = 90
-EXPLORER = "https://stellar.expert/explorer/testnet"
+EXPLORER = NETWORKS[TESTNET].explorer
 NO_ENDPOINT = hashlib.sha256(b"agentveritas.demo.no-endpoint").digest()
 
 

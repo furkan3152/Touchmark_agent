@@ -1331,9 +1331,3 @@ def asset_findings(rules: AssetRules, make) -> list:
     return findings
 
 
-def probe(artifact: AgentArtifact) -> dict[str, list]:
-    """Raw results of each rule (used by corpus tooling)."""
-    rules = AssetRules(artifact)
-    return {"A1": rules.bad_strkeys(), "A1b": rules.mpp_constants(), "A2": rules.asset_is_account(),
-            "A3": rules.null_payee(), "A4": rules.native_fallback(), "A5": rules.dual_parse(),
-            "A6": rules.code_only_checks()}

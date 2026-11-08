@@ -604,7 +604,6 @@ async def audit_repository(root: str | Path, *, name: str, purpose: str, setting
     lockset = _read_lockset(root)
     if contract_facts:
         chain["contract"] = contract_facts
-    tm = (declared.get("tmark") or {}).get("parsed")
     # The owner comes from what the repository commits, never from a supplied declaration.
     owner_tm = committed_parsed
     has_committed_tmark = bool(committed_tmark)

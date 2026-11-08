@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..config import Settings
 from .assurance import ArchitectureManifest, build_assurance
-from ..models import AgentArtifact, AuditTier, EvidenceGrade, Severity, SourceKind, ToolSpec
+from ..models import AgentArtifact, AuditTier, SourceKind, ToolSpec
 from ..reporting.generator import canonical_json, report_to_dict
 from ..swarm import AuditSwarm
 from ..stellar.identity import is_valid_stellar_address

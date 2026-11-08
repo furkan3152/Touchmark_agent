@@ -12,6 +12,7 @@ from stellar_sdk import Asset,Keypair,Network,Server,TransactionBuilder
 from stellar_sdk.client.requests_client import RequestsClient
 from ..swarm.llm import LlmClient
 from ..reporting.generator import canonical_json
+from ..stellar.networks import NETWORKS, TESTNET
 
 class ExecutionBroker:
     def __init__(self,spec,settings,capsule,*,journal=None):
@@ -22,7 +23,7 @@ class ExecutionBroker:
         self.action_rules={action:[allowed[c.id] for c in capsule.capabilities if c.action==action and c.id in allowed] for action in self.actions}
         self.action_counts={}
         self.payer,self.recipient=Keypair.random(),Keypair.random()
-        self.server=Server('https://horizon-testnet.stellar.org',client=RequestsClient(num_retries=0,request_timeout=12,post_timeout=20))
+        self.server=Server(NETWORKS[TESTNET].horizon_url,client=RequestsClient(num_retries=0,request_timeout=12,post_timeout=20))
         self.events=[];self.responses={};self.payments=0;self.spent=0;self.model_calls=0
         self.workflow=None;self.fault_used=False;self.start=0
         self.public_accounts={'payer':self.payer.public_key,'recipient':self.recipient.public_key}

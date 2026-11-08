@@ -39,7 +39,6 @@ _RULE_TWINS = {
     "security-path-secret-to-model": {"secret-exposure"},
     "security-path-secret-handled-by-model": {"secret-exposure"},
     "security-path-controls-not-enforced": {"unauthorized-payment", "control-bypass", "economic-loss"},
-    "security-path-secret-via-model": {"secret-exposure"},
     "security-path-secret-to-exfiltration": {"secret-exposure"},
     "security-path-untrusted-account-control": {"account-takeover", "control-bypass"},
     "security-retry-may-pay-twice": {"replay-or-idempotency", "reliability-failure"},

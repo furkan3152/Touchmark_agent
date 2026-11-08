@@ -126,3 +126,28 @@ def test_credential_issuance_streams_heartbeats_until_the_result(monkeypatch):
     assert events[-1]["data"]["token_id"] == "t" * 64
     plain = client.post("/api/v1/demo/credential", json={"ticket": "y" * 40})
     assert plain.status_code == 200 and plain.json()["ticket"] == "y" * 40
+
+
+def test_testnet_endpoints_are_defined_once():
+    # The RPC host, Horizon, the explorer and the passphrase lived in six modules; one drifted
+    # (the checkout's RPC host) and the Studio could not pay. They now come from stellar/networks.py.
+    import re
+    from pathlib import Path
+    app = Path(__file__).resolve().parents[2] / "backend/app"
+    pattern = re.compile(r"horizon-testnet\.stellar\.org|stellar\.expert/explorer/testnet|"
+                         r"soroban-rpc\.testnet\.stellar\.gateway\.fm|\"Test SDF Network ; September 2015\"")
+    allowed = {"stellar/networks.py", "stellar/canonical.py"}  # the definition, and the reference catalog the rules read
+    offenders = [str(p.relative_to(app)) for p in app.rglob("*.py")
+                 if str(p.relative_to(app)) not in allowed and pattern.search(p.read_text())]
+    assert offenders == []
+
+
+def test_the_book_jobs_and_allowance_choose_their_store_by_one_rule(monkeypatch):
+    from backend.app.config import Settings
+    from backend.app.services import assay_book, audit_jobs
+    from backend.app.services.rate_limit import BlobStore
+    blob = Settings(blob_read_write_token="vercel_blob_rw_abc_def")
+    assert isinstance(assay_book.store_from_settings(blob), BlobStore)
+    assert isinstance(audit_jobs.job_store_from_settings(blob), BlobStore)
+    off = Settings(deep_review_limit_store="none", blob_read_write_token="vercel_blob_rw_abc_def")
+    assert assay_book.store_from_settings(off) is None and audit_jobs.job_store_from_settings(off) is None

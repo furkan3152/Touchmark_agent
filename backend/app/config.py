@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     stateless_studio: bool = False
-    app_name: str = "Touchmark Stellar"
     version: str = "0.3.0-stellar"
     admin_api_key: str = ""
     admin_rate_limit_per_minute: int = 60
@@ -154,17 +153,14 @@ class Settings(BaseSettings):
     # If empty, resolved from the asset type in the deployment manifest.
     escrow_asset_code: str = ""
     enable_audit_escrow: bool = False
-    # The backend never signs transactions; this only exposes the prepared calls.
+    # Escrow, registry and agent-account calls are prepared for the user's wallet to sign. The
+    # server signs only its own operator transactions: demo credentials, the assay book and
+    # official order fulfilment.
     external_signing_required: bool = True
 
-    # SEP web-session and anchor modules are independent of the core.
-    sep1_domain: str = ""
+    # SEP web-session modules are independent of the core.
     sep10_web_auth_endpoint: str = ""
     sep45_web_auth_endpoint: str = ""
-    enable_anchor_payments: bool = False
-    sep24_transfer_server: str = ""
-    sep31_transfer_server: str = ""
-    sep38_quote_server: str = ""
 
     # Report publishing and compliance.
     pinata_jwt: str = ""

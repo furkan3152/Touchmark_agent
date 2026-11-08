@@ -1051,12 +1051,6 @@ _PY_OPERATOR_KEY = re.compile(r"\bKeypair\.from_secret\(\s*(?:os\.(?:environ|get
                               r"self\.(?:secret|config|settings)\w*|[A-Z][A-Z0-9_]*(?:SECRET|SEED|KEY)\w*)")
 
 
-def _region(src: _Source, pos: int) -> tuple[int, int]:
-    """The top-level declaration that holds ``pos``: from the last top-level head before it to
-    the next one."""
-    return src.region(pos)
-
-
 #: A same-file function, by name: `function f(`, `const f = (...) =>`, `const f = async function`.
 _JS_DEF = re.compile(r"\bfunction\s*\*?\s*(?P<a>[\w$]+)\s*\(|\b(?:const|let|var)\s+(?P<b>[\w$]+)\s*(?::[^=;\n]{0,160})?=\s*"
                      r"(?:async\s+)?(?:function\b|\([^)]{0,400}\)\s*(?::[^=;{]{0,160})?=>|[\w$]+\s*=>)")

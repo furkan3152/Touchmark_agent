@@ -202,7 +202,7 @@ async def main(*, resume_published=False):
             if not lease or lease['id'] != state['order_id'] or lease['report_sha256'] != publication['report_sha256']:
                 raise ValueError('The verified publication has no matching frozen order lease.')
             store._checkpoint(lease['id'], lease['lease_token'], 'settling', publication=publication, release=True)
-    result = await run_order_once(store, 'actual-private-order-pilot', settings=settings,
+    await run_order_once(store, 'actual-private-order-pilot', settings=settings,
         executor=forbidden_new_work if resume_published else audit_engagement,
         publisher=forbidden_new_work if resume_published else publisher.publish,
         chain_adapter=adapter, lease_seconds=180)

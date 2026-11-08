@@ -33,9 +33,11 @@ from decimal import Decimal, InvalidOperation
 
 import httpx
 
-HORIZON = "https://horizon-testnet.stellar.org"
-PASSPHRASE = "Test SDF Network ; September 2015"
-EXPLORER = "https://stellar.expert/explorer/testnet"
+from ..stellar.networks import NETWORKS, TESTNET
+
+HORIZON = NETWORKS[TESTNET].horizon_url
+PASSPHRASE = NETWORKS[TESTNET].passphrase
+EXPLORER = NETWORKS[TESTNET].explorer
 SCHEMA = "touchmark.assay-entry.v1"
 ENTRIES = "assay/entries/"
 BY_ENTRY = "assay/by-entry/"
@@ -77,12 +79,14 @@ _memory = MemoryBook()
 
 
 def store_from_settings(settings):
-    token = getattr(settings, "blob_read_write_token", "")
-    if token:
-        from .rate_limit import BlobStore
-        return BlobStore(token)
-    import os
-    return None if os.environ.get("VERCEL") == "1" else _memory
+    """The same durable store as audit jobs and the model-review allowance (one rule,
+    services/rate_limit.limiter_from_settings): Vercel Blob when configured, process memory
+    off serverless, otherwise none (the book is then off)."""
+    from .rate_limit import BlobStore, limiter_from_settings
+    store = limiter_from_settings(settings).store
+    if isinstance(store, BlobStore):
+        return store
+    return _memory if store is not None else None
 
 
 # ------------------------------------------------------------------ entries

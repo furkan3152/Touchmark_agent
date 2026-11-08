@@ -89,7 +89,7 @@ async def reconcile_order_refund(order_id: str, token: str, store, *, transport=
     quote, state = await _bound_snapshot(store._private(order_id), transport=transport, snapshot_reader=snapshot_reader)
     status = state['job'].get('state')
     with store._connect(write=True) as db:
-        row = store._authorized(db, order_id, token)
+        store._authorized(db, order_id, token)  # raises unless the token owns the order
         if status == ['Refunded']:
             db.execute("""UPDATE audit_orders SET status='refunded',paid=0,checked_ledger=?,
                 lease_token=NULL,lease_until=NULL,retryable=0,failure_code=NULL,updated_at=? WHERE id=?""",

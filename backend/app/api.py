@@ -10,7 +10,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import get_settings
+from .stellar.networks import NETWORKS, TESTNET
 from .stellar.ownership import canonical_message, verify_owner
 from .ingestion import IngestionService, IngestRequest
 from .ingestion.templates import list_templates
@@ -31,6 +32,7 @@ from .studio_guard import StudioGuard
 from .services.studio_intake import AddressRequest, GitHubRequest, identify_address, import_github_bundle
 
 logger = logging.getLogger("touchmark.api")
+_TESTNET = NETWORKS[TESTNET]
 
 
 class _NoStorePaths(logging.Filter):
@@ -229,7 +231,8 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self' https://soroban-rpc.testnet.stellar.gateway.fm; "
+        "img-src 'self' data: https://fastapi.tiangolo.com; "
+        f"connect-src 'self' {_TESTNET.rpc_url}; "
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     )
     if request.url.path.startswith("/api/"):
@@ -475,7 +478,6 @@ def require_pilot_key(authorization: str, *, ai: bool = False) -> None:
 from .services.audit_product import EngagementRequest, catalogue, build_plan, audit_engagement, normalize
 from .services.report_delivery import DeliveryRequest, deliver_report, pilot_evidence
 from .services.testnet_checkout import CheckoutRequest, CheckoutStepRequest, prepare_checkout, prepare_checkout_step
-from pydantic import ConfigDict
 
 
 class CapsuleImportRequest(BaseModel):
@@ -675,7 +677,7 @@ async def stellar_info() -> Response:
     from .services.report_delivery import pilot_evidence
     import json
     pilot = pilot_evidence()
-    lines = ['VERSION="2.7.0"', 'NETWORK_PASSPHRASE="Test SDF Network ; September 2015"',
+    lines = ['VERSION="2.7.0"', f'NETWORK_PASSPHRASE="{_TESTNET.passphrase}"',
              '', '[DOCUMENTATION]', 'ORG_DESCRIPTION="Touchmark official agent audit Testnet pilot."',
              'ORG_GITHUB="furkan3152"', '', '[TOUCHMARK]',
              'STATUS="testnet_pilot"', 'INDEPENDENT_OPERATORS=false',
@@ -837,21 +839,6 @@ async def studio_review(req: ReviewRequest, authorization: str = Header(default=
 @app.post("/api/v1/studio/identify")
 async def studio_identify(req: AddressRequest) -> dict:
     return await identify_address(req)
-
-
-class ResolveRequest(BaseModel):
-    reference: str = Field(min_length=10, max_length=300)
-    network: Literal["testnet", "mainnet"] = "testnet"
-
-
-@app.post("/api/v1/studio/resolve")
-async def studio_resolve(req: ResolveRequest) -> dict:
-    """Read-only: what an agent reference resolves to and what each step proves."""
-    from .services.agent_resolver import AgentResolver
-    try:
-        return await AgentResolver(settings, req.network).resolve(req.reference)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 _demo_issuance: dict[str, deque] = defaultdict(deque)

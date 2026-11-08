@@ -26,7 +26,6 @@ from .textscan import find_signals, scan
 
 
 
-# 9-dimension behavioural fingerprint (AgentAuditor style)
 FINGERPRINT_DIMENSIONS = (
     "activity_volume",
     "counterparty_diversity",

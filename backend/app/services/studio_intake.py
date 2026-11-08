@@ -85,7 +85,6 @@ async def import_github_bundle(request: GitHubRequest) -> dict:
     import asyncio
     import base64
     from hashlib import sha1
-    from pathlib import PurePosixPath
     from .discovery import discover_project, safe_source_path
     from .studio import ReviewRequest
     from .blueprint import parse_blueprint

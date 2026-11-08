@@ -18,11 +18,12 @@ from stellar_sdk import Account, Address, Keypair, Network, SorobanServer, StrKe
 from stellar_sdk.soroban_rpc import SimulateTransactionResponse
 
 from ..reporting.generator import canonical_json
+from ..stellar.networks import NETWORKS, TESTNET
 from .audit_product import EngagementRequest, TierID, build_plan, normalize
 
 # Public Testnet provider. Every quote still attests network, code and bindings;
 # never fail over a signed submission implicitly to another network/provider.
-RPC_URL = 'https://soroban-rpc.testnet.stellar.gateway.fm'
+RPC_URL = NETWORKS[TESTNET].rpc_url
 PASSPHRASE = Network.TESTNET_NETWORK_PASSPHRASE
 PILOT_PATH = Path(__file__).resolve().parents[3] / 'deployments/testnet-audit-delivery-2026-10-15.json'
 PRICES = {'quick': '1000000', 'standard': '10000000', 'deep': '30000000'}

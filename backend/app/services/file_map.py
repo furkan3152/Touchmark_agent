@@ -20,7 +20,6 @@ check ledger (services/audit_ledger.py) uses to decide which checks apply.
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from dataclasses import dataclass, field
 
@@ -400,5 +399,3 @@ class FileMapper:
         return fmap
 
 
-def summary_json(fmap: FileMap) -> str:
-    return json.dumps(fmap.pack(), ensure_ascii=False)

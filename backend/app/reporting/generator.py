@@ -135,7 +135,7 @@ def render_markdown(report: AuditReport, artifact: AgentArtifact) -> str:
     add("")
     add(f"**Trust Score: {report.overall_score}/100 · Badge: {BADGE_LABEL[report.badge.value]}**")
     add("")
-    add(f"| Field | Value |")
+    add("| Field | Value |")
     add("|---|---|")
     add(f"| Job ID | `{report.job_id}` |")
     add(f"| Agent ID | `{report.agent_id}` |")

@@ -7,7 +7,6 @@ This implementation uses Stellar/Soroban transaction sinks.
 
 from __future__ import annotations
 
-import ast
 import posixpath
 import re
 from dataclasses import dataclass
@@ -51,12 +50,6 @@ _FINANCIAL_SINK_RE = re.compile(
     r"\.(?:transfer|send_transaction|sign_transaction|submit_transaction|"
     r"invoke_contract|invoke_host_function|authorize_entry|sign_auth_entry)\s*\(|"
     r"\b(?:submit_transaction|invoke_contract|token\.transfer)\s*\(",
-    re.I,
-)
-_CONTROL_RE = re.compile(
-    r"authori[sz]|authenticat|verify_signature|require_auth|allowlist|whitelist|validate|"
-    r"schema|sanitize|spend_limit|max_(?:amount|spend)|daily_(?:cap|limit)|"
-    r"human_(?:approval|oversight)|idempoten|sequence|nonce|replay|policyerror|require\s*\(",
     re.I,
 )
 _SECRET_NAME_RE = re.compile(
