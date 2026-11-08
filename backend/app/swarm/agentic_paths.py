@@ -15,6 +15,7 @@ from functools import lru_cache
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, FindingKind, Severity
 from ..services.lockfiles import Lockset, below, spec_admits
 from ..stellar.canonical import NETWORK_MARKERS
+from .capabilities import SIGNING_SCOPES
 from .consolidate import stable_id
 from .jsflow import X402_V1_CAPS
 
@@ -69,7 +70,7 @@ _EXFIL_SINK_RE = re.compile(
 _IMPLEMENTATION_SUFFIXES = (
     ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".rs", ".go", ".sol",
 )
-_SIGNING_SCOPES = {"sign:tx", "write:wallet", "wallet", "transfer", "spend"}
+_SIGNING_SCOPES = SIGNING_SCOPES
 
 
 @dataclass(frozen=True)

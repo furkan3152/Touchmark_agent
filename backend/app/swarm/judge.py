@@ -21,13 +21,13 @@ from ..models import (
     Severity,
     SwarmMemberStats,
 )
-from .capabilities import executes_code
+from .capabilities import SIGNING_SCOPES, executes_code
 from .llm import LlmClient
 from .policy import PASS_SCORE, actionable_risks, assurance_level, audit_surface_coverage, warnings
 
 BADGE_THRESHOLDS: tuple[tuple[float, Badge], ...] = (
     (85.0, Badge.SAFE),
-    (65.0, Badge.CAUTION),
+    (PASS_SCORE, Badge.CAUTION),
     (40.0, Badge.HIGH_RISK),
 )
 #: Score ceilings. A confirmed critical risk keeps the report at 39 or below, any other
@@ -271,7 +271,7 @@ class SynthesisJudge:
             for tool in artifact.tools
             if tool.requires_signature
             or any(
-                scope in ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
+                scope in SIGNING_SCOPES
                 for scope in tool.scopes
             )
         ]

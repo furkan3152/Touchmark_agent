@@ -151,3 +151,26 @@ def test_the_book_jobs_and_allowance_choose_their_store_by_one_rule(monkeypatch)
     assert isinstance(audit_jobs.job_store_from_settings(blob), BlobStore)
     off = Settings(deep_review_limit_store="none", blob_read_write_token="vercel_blob_rw_abc_def")
     assert assay_book.store_from_settings(off) is None and audit_jobs.job_store_from_settings(off) is None
+
+
+def test_the_throttle_and_the_allowance_identify_a_client_alike(monkeypatch):
+    from types import SimpleNamespace
+    from backend.app import api
+    from backend.app.studio_guard import StudioGuard
+    monkeypatch.setenv("VERCEL", "1")
+    headers = {"x-real-ip": "203.0.113.7", "x-forwarded-for": "198.51.100.1, 203.0.113.9"}
+    request = SimpleNamespace(headers=headers, client=SimpleNamespace(host="10.0.0.1"))
+    scope = {"headers": [(k.encode(), v.encode()) for k, v in headers.items()], "client": ("10.0.0.1", 1)}
+    assert api._demo_client(request) == StudioGuard(None)._client(scope) == "203.0.113.7"
+    monkeypatch.delenv("VERCEL")
+    monkeypatch.delenv("TRUST_PROXY_HEADERS", raising=False)
+    assert api._demo_client(request) == StudioGuard(None)._client(scope) == "10.0.0.1"
+
+
+def test_shared_definitions_have_one_source():
+    from backend.app.services import file_map, severity
+    from backend.app.swarm import agentic_paths, capabilities, judge, policy, security
+    # Stellar authority is the map's authority without a bare secret or a shell (see severity.py).
+    assert severity.AUTHORITY_KINDS == file_map.AUTHORITY_KINDS - {"holds_or_loads_secret", "executes_code"}
+    assert security.SIGNING_SCOPES is capabilities.SIGNING_SCOPES is agentic_paths._SIGNING_SCOPES
+    assert (policy.PASS_SCORE, judge.Badge.CAUTION) in judge.BADGE_THRESHOLDS

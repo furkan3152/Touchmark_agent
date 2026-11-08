@@ -74,10 +74,13 @@ class MemoryStore:
             return True
 
     async def delete(self, paths: list[str]) -> None:
-        self.paths.difference_update(paths)
+        with self._lock:
+            self.paths.difference_update(paths)
 
     async def delete_prefix(self, prefix: str) -> None:
-        self.paths = {p for p in self.paths if not p.startswith(prefix)}
+        # In place and under the lock: a claim on another thread is never lost to a rebind.
+        with self._lock:
+            self.paths.difference_update([p for p in self.paths if p.startswith(prefix)])
 
 
 class BlobStore:

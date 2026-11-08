@@ -18,6 +18,9 @@ import re
 from ..models import AgentArtifact, ToolSpec
 from .codeflow import CodeProfile, analyse_code
 
+#: Tool scopes that grant signing or spending authority.
+SIGNING_SCOPES = frozenset({"sign:tx", "write:wallet", "wallet", "transfer", "spend"})
+
 _IMPLEMENTATION = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".mts", ".cts")
 _SIGNING_SCOPE_WORDS = ("sign", "wallet", "transfer", "spend", "payment", "account")
 #: Capabilities that exercise authority. Building an unsigned operation (payment or

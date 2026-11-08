@@ -12,6 +12,26 @@ GLOBAL_LIMIT = 300
 MAX_TRACKED_CLIENTS = 10_000
 
 
+def trust_proxy_headers() -> bool:
+    """Proxy headers name the client only behind a trusted proxy: on Vercel, or when the operator
+    says so (TRUST_PROXY_HEADERS=true)."""
+    return bool(os.environ.get("VERCEL")) or os.environ.get("TRUST_PROXY_HEADERS", "").lower() == "true"
+
+
+def client_address(header, peer: str, *, trust_forwarded: bool) -> str:
+    """Who the client is, by one rule for the request throttle and the model-review allowance.
+
+    Behind the trusted proxy (Vercel): ``x-real-ip``, else the last ``x-forwarded-for`` hop,
+    which the proxy appends. Elsewhere the socket peer, since headers can be forged.
+    ``header(name)`` returns a request header or None."""
+    if trust_forwarded:
+        real = (header("x-real-ip") or "").strip()
+        forwarded = (header("x-forwarded-for") or "").split(",")[-1].strip()
+        if real or forwarded:
+            return (real or forwarded)[:64]
+    return (peer or "unknown")[:64]
+
+
 class StudioGuard:
     """Per-client limit so one caller cannot exhaust capacity for everyone, plus a
     process-wide ceiling. Counters live in this process only; serverless instances
@@ -22,21 +42,14 @@ class StudioGuard:
     def __init__(self, app, *, trust_forwarded=None, clock=time.monotonic):
         self.app = app
         self.clock = clock
-        self.trust_forwarded = (bool(os.environ.get("VERCEL")) or os.environ.get("TRUST_PROXY_HEADERS", "").lower() == "true"
-                                if trust_forwarded is None else trust_forwarded)
+        self.trust_forwarded = trust_proxy_headers() if trust_forwarded is None else trust_forwarded
         self.requests = deque(maxlen=GLOBAL_LIMIT)
         self.clients: dict[str, deque] = {}
 
     def _client(self, scope):
-        if self.trust_forwarded:
-            for key, value in scope.get("headers", []):
-                if key == b"x-forwarded-for":
-                    # The last entry is the one appended by the trusted proxy.
-                    forwarded = value.decode("latin-1").split(",")[-1].strip()
-                    if forwarded:
-                        return forwarded[:64]
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         client = scope.get("client")
-        return client[0] if client else "unknown"
+        return client_address(headers.get, client[0] if client else "", trust_forwarded=self.trust_forwarded)
 
     def _allow(self, client):
         now = self.clock()

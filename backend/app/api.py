@@ -846,15 +846,11 @@ _demo_issuance_all: deque = deque()
 
 
 def _demo_client(request: Request) -> str:
-    """The visitor's address as Vercel reports it (x-real-ip, else the last x-forwarded-for
-    hop, which Vercel sets); elsewhere the socket peer. Headers are trusted only on Vercel.
+    """The visitor's address, by the same rule as the request throttle (studio_guard.client_address).
     The model-review allowance stores only an HMAC of it (services/rate_limit.py)."""
-    if os.environ.get("VERCEL"):
-        real = request.headers.get("x-real-ip", "").strip()
-        forwarded = request.headers.get("x-forwarded-for", "").split(",")[-1].strip()
-        if real or forwarded:
-            return (real or forwarded)[:64]
-    return (request.client.host if request.client else "unknown")[:64]
+    from .studio_guard import client_address, trust_proxy_headers
+    return client_address(request.headers.get, request.client.host if request.client else "",
+                          trust_forwarded=trust_proxy_headers())
 
 
 def _demo_issuance_allowed(client: str) -> bool:

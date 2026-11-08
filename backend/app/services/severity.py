@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import re
 
+from .file_map import AUTHORITY_KINDS as _MAP_AUTHORITY_KINDS
+
 LEVELS = ["low", "medium", "high", "critical"]
 
 ASSETS = {
@@ -72,9 +74,10 @@ FACTOR_SCHEMA = {
 
 
 #: An agent that can do any of these holds Stellar authority.
-AUTHORITY_KINDS = {"moves_value", "signs_transactions", "submits_transactions", "signs_raw_bytes",
-                   "builds_from_external_xdr", "changes_account_authority", "invokes_contract",
-                   "verifies_incoming_payment"}
+#: Stellar authority: the file map's authority kinds (services/file_map.py) without the two that
+#: are not authority over Stellar funds or accounts by themselves. A secret may be an API key and
+#: a shell is not a Stellar key; findings about those keep their own assets (service_credential).
+AUTHORITY_KINDS = frozenset(_MAP_AUTHORITY_KINDS - {"holds_or_loads_secret", "executes_code"})
 #: Claims that need Stellar authority somewhere in the agent, and what each falls to without it.
 AUTHORITY_ASSETS = {"funds": "correctness", "funds_locked_or_delayed": "correctness",
                     "account_control": "data_exposure", "keys_or_secrets": "service_credential"}

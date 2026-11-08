@@ -1342,7 +1342,7 @@ def reviewer_from_settings(settings) -> DeepReviewer | None:
     # the SDK timeout is only a backstop behind the per-call timeout.
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=settings.deep_review_call_timeout_seconds + 15,
                             max_retries=0)
-    mode = getattr(settings, "deep_review_mode", "classic")
+    mode = settings.deep_review_mode
     mapper = None
     if mode == "ledger":
         from .file_map import FileMapper

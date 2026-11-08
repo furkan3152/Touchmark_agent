@@ -34,9 +34,9 @@ from .architecture import architecture_findings
 from .agentic_paths import analyse_agentic_paths
 from .hardening import analyse_hardening
 from .network_rules import network_findings
-from .capabilities import judged_by_code, authority_only_declared, code_enforced_spend_limit, declared_outside_scope, executes_code
+from .capabilities import (SIGNING_SCOPES, authority_only_declared, code_enforced_spend_limit, declared_outside_scope,
+                           executes_code, judged_by_code)
 
-SIGNING_SCOPES = ("sign:tx", "write:wallet", "wallet", "transfer", "spend")
 ISOLATION_SIGNALS = ("sandbox", "docker", "firecracker", "isolat", "tee", "enclave")
 
 
