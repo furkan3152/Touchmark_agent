@@ -100,3 +100,29 @@ def test_hidden_elements_with_a_display_rule_stay_hidden():
     for cls in ("book-strip", "assay"):
         assert re.search(rf"\.{cls}\{{[^}}]*display:(flex|grid)", css)
         assert re.search(rf"\.{cls}\[hidden\][^{{]*\{{display:none\}}", css), cls
+
+
+def test_credential_issuance_streams_heartbeats_until_the_result(monkeypatch):
+    # Four Soroban transactions take about a minute; unstreamed, a proxy cut the request at ~30 s
+    # and the user saw a failure while the credential was being issued.
+    import json
+    import time as _time
+    from fastapi.testclient import TestClient
+    from backend.app import api
+    from backend.app.services import demo_flow
+
+    async def slow_issue(ticket, signed_xdr=""):
+        _time.sleep(0.35)  # synchronous, like the Soroban client: must not block the event loop
+        return {"token_id": "t" * 64, "ticket": ticket}
+    monkeypatch.setattr(demo_flow, "issue_demo_credential", slow_issue)
+    monkeypatch.setattr(api, "HEARTBEAT_SECONDS", 0.1)
+    monkeypatch.setattr(api, "_demo_issuance_allowed", lambda client: True)
+    client = TestClient(api.app, client=("192.0.2.93", 50000))
+    response = client.post("/api/v1/demo/credential", json={"ticket": "x" * 40},
+                           headers={"Accept": "application/x-ndjson"})
+    events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    kinds = [e["type"] for e in events]
+    assert "heartbeat" in kinds and kinds[-1] == "result"
+    assert events[-1]["data"]["token_id"] == "t" * 64
+    plain = client.post("/api/v1/demo/credential", json={"ticket": "y" * 40})
+    assert plain.status_code == 200 and plain.json()["ticket"] == "y" * 40

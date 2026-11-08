@@ -932,7 +932,21 @@
         }
         button.textContent = "Writing to Stellar testnet…";
       }
-      const cred = await post("/api/v1/demo/credential", { ticket: current.issuance.ticket, signed_xdr: signed });
+      // Four Soroban transactions take about a minute: the answer streams heartbeats meanwhile.
+      // If the connection is cut anyway, ask once more: the server reads an issued credential back.
+      const issueOnce = async () => {
+        const outcome = await streamLeg("/api/v1/demo/credential", { ticket: current.issuance.ticket, signed_xdr: signed }, () => {});
+        if (outcome.kind !== "result") throw failure(502);
+        return outcome.data;
+      };
+      let cred;
+      try { cred = await issueOnce(); }
+      catch (error) {
+        if (error.kind !== "server" && error.kind !== "network") throw error;
+        button.textContent = "Reading the credential back from the ledger…";
+        await new Promise((resolve) => setTimeout(resolve, 15000));
+        cred = await issueOnce();
+      }
       $("cred-idle").hidden = true;
       $("cred-done").hidden = false;
       $("token").textContent = cred.token_id;

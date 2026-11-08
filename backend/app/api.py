@@ -1520,18 +1520,30 @@ async def demo_credential_prepare(req: DemoPrepareRequest) -> dict:
 
 
 @app.post("/api/v1/demo/credential")
-async def demo_credential(req: "DemoCredentialRequestModel", request: Request) -> dict:
-    """Issue the Testnet AuditCredential for a passing demo audit (server-signed ticket required)."""
+async def demo_credential(req: "DemoCredentialRequestModel", request: Request):
+    """Issue the Testnet AuditCredential for a passing demo audit (server-signed ticket required).
+
+    Registration, request, response and issue are four Soroban transactions, about 40-60 s in
+    all: longer than a proxy keeps an idle connection. With ``Accept: application/x-ndjson`` the
+    answer streams heartbeats until the ``result`` (or ``error``) line, as the audit does. The
+    chain calls run in a worker thread, so they never hold up other requests. Issuing again
+    for the same report reads the credential back from the ledger instead of issuing twice."""
     from .services.demo_flow import DemoError, issue_demo_credential
     if not _demo_issuance_allowed(_demo_client(request)):
         raise HTTPException(status_code=429, detail="Too many credential requests; try again in a few minutes.")
-    try:
-        return await issue_demo_credential(req.ticket, req.signed_xdr)
-    except DemoError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 - chain failures are reported, not hidden
-        logging.getLogger(__name__).warning("demo issuance failed: %s", exc)
-        raise HTTPException(status_code=502, detail="The Testnet transaction failed; nothing was issued. Try again.") from exc
+
+    async def run(started: float, abandoned, announce) -> dict:
+        try:
+            data = await asyncio.to_thread(_in_own_loop, issue_demo_credential, req.ticket, req.signed_xdr)
+        except DemoError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - chain failures are reported, not hidden
+            logging.getLogger(__name__).warning("demo issuance failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=502, detail="The Testnet transaction failed; nothing was issued. "
+                                                        "Try again.") from exc
+        return {"type": "result", "data": data}
+
+    return await _respond(run, request)
 
 
 @app.post("/api/v1/studio/import")
