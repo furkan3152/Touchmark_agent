@@ -24,7 +24,7 @@ from stellar_sdk import SorobanServer
 from ..reporting.generator import canonical_json
 from .report_delivery import DeliveryRequest, decode_report
 from . import testnet_checkout as checkout
-from ..swarm.policy import PASS_SCORE
+from ..swarm.policy import PASS_SCORE, chain_score
 
 STEPS = ('respond', 'submit', 'complete', 'issue')
 TERMINAL = {'confirmed', 'observed', 'failed'}
@@ -42,12 +42,12 @@ def _decision(result) -> str:
 def credential_eligible(result, score=None) -> bool:
     """Payment settles for every delivered audit; a credential only for a pass.
 
-    Without an explicit registry score, the rounded score of the canonical report is used.
+    Without an explicit registry score, the canonical report's score rounded down is used.
     """
     if score is None:
         try:
             value = json.loads(result['report_json'])['result']['overall_score']
-            score = int(round(value)) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+            score = chain_score(value)
         except (KeyError, TypeError, ValueError):
             score = 0
     return _decision(result) == 'pass' and score >= PASS_SCORE
@@ -310,7 +310,7 @@ class TestnetOrderSettlement:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 100:
             raise ValueError('The report must contain a finite audit score between zero and one hundred.')
         # Existing registry ABI stores u32; retain original score and conversion in receipt.
-        return quote, raw, digest, int(round(value)), value
+        return quote, raw, digest, chain_score(value), value
 
     @staticmethod
     def credential_eligible(result, score) -> bool:

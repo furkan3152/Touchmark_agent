@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import Settings
 from .agent_resolver import audit_reference
+from ..swarm.policy import chain_score as _chain_score
 
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "deployments/demo-testnet.json"
@@ -179,7 +180,7 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True,
     source = resolution.get("source", {})
     score = round(float(report["result"]["overall_score"]), 1)
     reviewed = (report.get("deep_review") or {}).get("status") == "completed"
-    chain_score = int(score)  # the registry stores whole points (u32); never rounded up
+    chain_score = _chain_score(score)  # the registry stores whole points (u32); never rounded up
     out = {
         "reference": reference, "decision": result["decision"], "score": score,
         "report_sha256": result["report_sha256"], "report_json": result["report_json"],

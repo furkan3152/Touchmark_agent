@@ -14,6 +14,7 @@ from stellar_sdk import StrKey, scval
 
 from ..config import Settings
 from ..models import Attestation, Badge
+from ..swarm.policy import chain_score
 
 
 class InvocationParametersError(ValueError):
@@ -128,7 +129,7 @@ class Attestor:
                 [
                     ("validator", "Address", validator_address),
                     ("req_id", "BytesN<32>", normalized_request),
-                    ("score", "u32", int(round(score))),
+                    ("score", "u32", chain_score(score)),
                     ("rep_uri", "String", report_uri),
                     ("rep_hash", "BytesN<32>", normalized_hash),
                 ],

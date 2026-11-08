@@ -3,7 +3,7 @@
 (() => {
   const byId = (id) => document.getElementById(id);
   const TESTNET = "Test SDF Network ; September 2015";
-  const RPC = "https://soroban-testnet.stellar.org";
+  const RPC = "https://soroban-rpc.testnet.stellar.gateway.fm"; // the host the server uses and the CSP allows
   const node = (tag,text,className) => {const value=document.createElement(tag);if(text !== undefined)value.textContent=text;if(className)value.className=className;return value;};
   let engagement = null, planned = null, checkout = null, prepared = null, signed = null;
   let working = false, revision = 0;
@@ -111,10 +111,11 @@
       if(transaction.expires_at<=Date.now()/1000)throw new Error("The signed transaction expired. Refresh ledger state before preparing a replacement.");
       const wallet=await walletState();assertCurrent(token);if(wallet.address!==checkout.quote.requester)throw new Error("Wallet account changed. Refresh the quote before submitting.");
       byId("checkout-submit").hidden=true;signed=null;
-      if(transaction.step==="refund")window.dispatchEvent(new CustomEvent("touchmark:refund-pending",{detail:{order_id:transaction.request_id}}));
       const sent=await rpc("sendTransaction",{transaction:signedXdr});assertCurrent(token);
       if(sent.hash!==transaction.transaction_hash)throw new Error("The returned transaction hash differs from the prepared transaction. Inspect ledger state before continuing.");
       if(!["PENDING","DUPLICATE"].includes(sent.status))throw new Error(`Transaction submission returned ${sent.status}. Refresh ledger state; payment is not confirmed.`);
+      // Only now is a refund on its way: the order view may say so.
+      if(transaction.step==="refund")window.dispatchEvent(new CustomEvent("touchmark:refund-pending",{detail:{order_id:transaction.request_id}}));
       message("Transaction submitted. Waiting for ledger confirmation…");
       let confirmed=false;
       for(let attempt=0;attempt<8;attempt++){

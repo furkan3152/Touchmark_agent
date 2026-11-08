@@ -156,6 +156,17 @@ _STATIC_ATTACK = re.compile(r"^security-a-\d+$")
 PASS_SCORE = 65.0
 
 
+def chain_score(value: float) -> int:
+    """The whole-point score written on chain (the registry and escrow store a u32).
+
+    Always rounded down: a report at 64.6 needs fixes, and rounding it to 65 would let the
+    credential contract (which accepts 65 and up) treat it as passing."""
+    import math
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return 0
+    return max(0, min(100, math.floor(value)))
+
+
 def classify_finding(finding: Finding) -> Finding:
     """Attach the policy kind. Static attack hypotheses were never executed."""
     if finding.kind is FindingKind.EVIDENCE_GAP:

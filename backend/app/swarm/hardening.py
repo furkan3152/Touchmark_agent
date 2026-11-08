@@ -18,12 +18,12 @@ from collections import Counter
 from ..models import AgentArtifact, Dimension, EvidenceGrade, Finding, Severity
 from .asset_rules import AssetRules, asset_findings
 from .consolidate import stable_id
+from .paths import is_testlike
 from .codeflow import unparse
 from .sdk_rules import hardening_evidence
 from .source_index import EXAMPLE_PATH
 
 _CODE = (".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx", ".rs", ".go", ".sol")
-_TESTLIKE = re.compile(r"(^|/)(tests?|spec|fixtures?|examples?|mocks?|__tests__)/|(test|spec|mock|fixture|example)", re.I)
 
 # --------------------------------------------------------------------------- hidden text
 #: Characters that render as nothing or reorder text: Unicode tags (ASCII smuggling),
@@ -419,7 +419,7 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     # Tool descriptions are instructions to the model; a poisoned one runs with the user's trust.
     poisoned = []
     for name, text in code.items():
-        if _TESTLIKE.search(name):
+        if is_testlike(name):
             continue
         for line, desc in _tool_descriptions(name, text):
             for what, pattern in _POISON:
@@ -448,7 +448,7 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
         leaked += find_credentials(name, text.encode("utf-8", "ignore"))
     leaked = list(dict.fromkeys(leaked))
     if leaked:
-        test_only = all(_TESTLIKE.search(item.split(":", 1)[0]) for item in leaked)
+        test_only = all(is_testlike(item.split(":", 1)[0]) for item in leaked)
         # A CLI identity's account and network are unknown here (ledger triage raises it);
         # on its own it is reported at medium.
         cli_only = all(CLI_SEED_PHRASE in item for item in leaked)
@@ -581,7 +581,7 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     # markup, so a crafted reply runs script in the page (and in a wallet page, reaches keys).
     sinks = []
     for name, text in files.items():
-        if not name.lower().endswith((".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".vue", ".svelte")) or _TESTLIKE.search(name):
+        if not name.lower().endswith((".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".vue", ".svelte")) or is_testlike(name):
             continue
         for m in _HTML_SINK.finditer(text):
             value = (m.group("rhs") or m.group("arg") or m.group("react") or "").strip()
@@ -601,7 +601,7 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     # A secret that falls back to a fixed value: unset in production, the shipped default is the key.
     defaults = []
     for name, text in files.items():
-        if _TESTLIKE.search(name) and not re.search(r"(^|/)docker-compose[^/]*\.ya?ml$", name):
+        if is_testlike(name) and not re.search(r"(^|/)docker-compose[^/]*\.ya?ml$", name):
             continue
         for m in _DEFAULT_SECRET.finditer(text):
             var = m.group("a") or m.group("b") or m.group("c")
@@ -615,7 +615,7 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     reused = []
     places = {d.split(" ", 1)[0] for d in defaults}  # file:line already reported
     for name, text in code.items():
-        if _TESTLIKE.search(name):
+        if is_testlike(name):
             continue
         mpp_defaults, mpp_reuse = _mppx_secrets(name, text)
         for d in mpp_defaults:
@@ -637,7 +637,7 @@ def analyse_hardening(artifact: AgentArtifact, auditor: str) -> list[Finding]:
     for name, line, snippet, expiry in rust_expiration_hits(code):
         findings.append(_finding(
             stable_id("security-auth-expiration-wide", name, snippet),
-            expiry.severity.downgrade(1) if _TESTLIKE.search(name) else expiry.severity,
+            expiry.severity.downgrade(1) if is_testlike(name) else expiry.severity,
             "Signed authorizations stay valid longer than needed",
             "A signed Soroban authorization entry can be submitted by whoever holds it until its "
             f"signature_expiration_ledger; {expiry.note}.",

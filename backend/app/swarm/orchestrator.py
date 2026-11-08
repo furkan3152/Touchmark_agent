@@ -507,12 +507,11 @@ class AuditSwarm:
                                   f"{r.get('line', '')}, and every cited place is example or test code: "
                                   f"{str(r.get('reason', ''))[:240]}",
                         "confidence": min(f.confidence, 0.3)})
-                elif refuted and (_STRUCTURAL.search(f.id) or _KEEPS_SEVERITY.search(f.id)):
-                    # Structural facts and fund-control rules stay risks when refuted: lowered one level,
-                    # and (fund controls) never below medium, as before.
-                    lowered = f.severity.downgrade(1)
-                    if lowered.rank > Severity.MEDIUM.rank and not _STRUCTURAL.search(f.id):
-                        lowered = Severity.MEDIUM
+                elif refuted and _KEEPS_SEVERITY.search(f.id):
+                    # A refuted fund-control rule stays a risk, lowered one level and capped at medium:
+                    # a refuted finding never blocks a pass on its own. (Refuted structural facts were
+                    # handled above.)
+                    lowered = min(f.severity.downgrade(1), Severity.MEDIUM, key=lambda s: s.rank)
                     f = f.model_copy(update={
                         "severity": lowered,
                         "detail": f.detail + f" Independent verification disputes this finding ({r.get('file', '')}:"

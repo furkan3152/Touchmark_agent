@@ -28,6 +28,7 @@ from .escrow import (
     InvocationPreparationBlocked,
 )
 from .store import Store
+from ..swarm.policy import chain_score
 
 
 class AuditPipeline:
@@ -180,7 +181,7 @@ class AuditPipeline:
             try:
                 if job.report or report.report_uri:
                     await self.escrow.submit_deliverable(
-                        job.escrow, report.report_uri, int(round(report.overall_score))
+                        job.escrow, report.report_uri, chain_score(report.overall_score)
                     )
                 await self.escrow.settle(job.escrow, payouts)
             except InvocationPreparationBlocked as exc:

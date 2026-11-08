@@ -9,6 +9,7 @@ from ..models import FindingKind, AgentArtifact, Dimension, EvidenceGrade, Findi
 from ..stellar.wasm_profile import (AUTH, AUTH_CALLS, CALL, DELEGATED_SIGNERS, EXECUTABLE_TAG, EXTERNAL_REF,
                                     HOST_ENTRY_POINTS, PUT_DATA, SDK_EXPORTS, UPGRADE)
 from .base import BaseAuditor
+from .paths import is_testlike
 
 
 #: Where a comment or literal can start: line or block comment, raw string, string, char.
@@ -189,7 +190,11 @@ def contract_sources(artifact: AgentArtifact) -> dict[str, str]:
 
 
 #: Test, example and script paths: a seed there is presumed a throwaway key.
-_TEST_PATH = re.compile(r"(^|/)(tests?|spec|fixtures?|examples?|scripts)/|test|spec|smoke|example|fixture", re.I)
+_SCRIPT_DIRS = frozenset({"scripts"})
+
+
+def _test_path(path: str) -> bool:
+    return is_testlike(path, extra_dirs=_SCRIPT_DIRS)
 
 
 def _seed_severity(exposure: dict | None, places: list[str]) -> tuple[Severity, list[str]]:
@@ -209,7 +214,7 @@ def _seed_severity(exposure: dict | None, places: list[str]) -> tuple[Severity, 
             by_place.setdefault(where, {})[item.get("public_key", "")] = item
     worst, notes = Severity.INFO, []
     for place, item in ((p, i) for p in dict.fromkeys(places) for i in (list(by_place.get(p, {}).values()) or [{}])):
-        test = bool(_TEST_PATH.search(place.rsplit(":", 1)[0]))
+        test = _test_path(place.rsplit(":", 1)[0])
         main, testnet = item.get("mainnet") or {}, item.get("testnet") or {}
         key = f"{item.get('public_key', '')[:8]}…"
         if item.get("declared"):
@@ -268,7 +273,7 @@ class StellarNativeAuditor(BaseAuditor):
         seed_locations = ([f"{n}:{line} (S{s[1:5]}…redacted)" for n, line, s in seeds] + committed)[:5]
         # Committed entries read 'path:line (S…redacted)'; a path may contain spaces.
         places = [f"{n}:{line}" for n, line, _ in seeds] + [c.rsplit(" (S", 1)[0] for c in committed]
-        test_only = bool(places) and all(_TEST_PATH.search(p.rsplit(":", 1)[0]) for p in places)
+        test_only = bool(places) and all(_test_path(p.rsplit(":", 1)[0]) for p in places)
         seeds = seeds or committed
         if seeds:
             severity, notes = _seed_severity(artifact.raw_metadata.get("seed_exposure"), places)

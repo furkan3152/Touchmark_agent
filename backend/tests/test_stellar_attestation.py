@@ -48,7 +48,7 @@ def test_prepared_attestation_matches_rust_abi_and_has_no_fake_tx(settings, run,
     assert invocation["function"] == "respond"
     assert invocation["contract_id"] == CONTRACT
     assert invocation["arguments"] == {
-        "validator": VALIDATOR, "req_id": "11" * 32, "score": 88,
+        "validator": VALIDATOR, "req_id": "11" * 32, "score": 87,  # rounded down (policy.chain_score)
         "rep_uri": "ipfs://report", "rep_hash": "33" * 32,
     }
     # Check checked-in Rust ABI, not another hand-maintained Python signature.
@@ -59,7 +59,7 @@ def test_prepared_attestation_matches_rust_abi_and_has_no_fake_tx(settings, run,
     args = [xdr.SCVal.from_xdr(p["scval_xdr"]) for p in invocation["parameters"]]
     assert scval.from_address(args[0]).address == VALIDATOR
     assert scval.from_bytes(args[1]) == bytes.fromhex("11" * 32)
-    assert scval.from_uint32(args[2]) == 88
+    assert scval.from_uint32(args[2]) == 87
     assert scval.from_string(args[3]) == b"ipfs://report"
     assert scval.from_bytes(args[4]) == bytes.fromhex("33" * 32)
     assert invocation["network"] == "testnet"
