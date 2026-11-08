@@ -230,6 +230,10 @@ async def run_demo_audit(reference: str, settings: Settings, *, ai: bool = True,
                                      "when the model review is available.")
     elif not out["issuance"]["eligible"]:
         out["issuance"]["reason"] = "Only a passing audit can be credentialed; the contract enforces score >= 65."
+    if settings.enable_assay_book:
+        # Every finished audit is entered on Stellar testnet (services/assay_book.py).
+        from .assay_book import stamp
+        out["assay"] = await stamp(out, report, result["report_json"], settings)
     return out
 
 

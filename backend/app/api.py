@@ -1006,6 +1006,106 @@ class DemoJobRequest(BaseModel):
     job_id: str = Field(min_length=10, max_length=64)
 
 
+# ------------------------------------------------------------------ the assay book
+_HEX64_PATTERN = "^[0-9a-f]{64}$"
+
+
+class AssayEntryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    entry: str = Field(pattern=_HEX64_PATTERN)
+
+
+class AssayPrepareRequest(AssayEntryRequest):
+    payer: str = Field(min_length=56, max_length=56)
+
+
+class AssaySubmitRequest(AssayEntryRequest):
+    signed_xdr: str = Field(min_length=20, max_length=20_000)
+
+
+class AssayClaimRequest(AssayEntryRequest):
+    tx_hash: str = Field(default="", pattern="^([0-9a-f]{64})?$")
+
+
+def _book_store():
+    from .services.assay_book import store_from_settings
+    store = store_from_settings(settings)
+    if store is None or not settings.enable_assay_book:
+        raise HTTPException(status_code=404, detail="The assay book is not enabled on this deployment.")
+    return store
+
+
+@app.get("/api/v1/assay/book")
+async def assay_book_stats() -> dict:
+    """Every entry in the assay book, counted, with the latest entries and their transactions."""
+    from .services.assay_book import book
+    if not settings.enable_assay_book:
+        return {"enabled": False}
+    return await book(settings)
+
+
+@app.get("/api/v1/assay/entry/{entry}")
+async def assay_entry(entry: str) -> dict:
+    """The entry as stamped: sha256(canonical JSON of ``entry``) is the stamp transaction's memo."""
+    from .services.assay_book import load_entry, paid_record, tx_url
+    store = _book_store()
+    record = await load_entry(store, entry)
+    if record is None:
+        raise HTTPException(status_code=404, detail="No such entry in the assay book.")
+    paid = await paid_record(store, entry)
+    return {**record, "stamp_url": tx_url(record["stamp_tx"]), "paid": bool(paid),
+            "how_to_verify": "sha256 of the canonical JSON (sorted keys, no spaces) of `entry` equals the "
+                             "memo hash of `stamp_tx`, sent from `account` on Stellar testnet."}
+
+
+@app.get("/api/v1/assay/report/{entry}.json")
+async def assay_report_json(entry: str) -> Response:
+    """The report bytes, once paid. Their SHA-256 is the entry's report_sha256."""
+    from .services.assay_book import load_entry, load_report, paid_record
+    store = _book_store()
+    record = await load_entry(store, entry)
+    if record is None:
+        raise HTTPException(status_code=404, detail="No such entry in the assay book.")
+    if not await paid_record(store, entry):
+        raise HTTPException(status_code=402, detail="This report is released for a testnet payment.")
+    data = await load_report(store, record["entry"]["report_sha256"])
+    if data is None:
+        raise HTTPException(status_code=404, detail="The report is not stored.")
+    return Response(data, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="touchmark-{entry[:12]}.json"'})
+
+
+@app.post("/api/v1/assay/pay/prepare")
+async def assay_pay_prepare(req: AssayPrepareRequest) -> dict:
+    from .services.assay_book import BookError, prepare_payment
+    try:
+        return await prepare_payment(req.entry, req.payer, settings, store=_book_store())
+    except BookError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/assay/pay/submit")
+async def assay_pay_submit(req: AssaySubmitRequest) -> dict:
+    """Relay a wallet-signed payment for an entry, then release the report from the ledger."""
+    from .services.assay_book import BookError, claim, submit_payment
+    store = _book_store()
+    try:
+        tx_hash = await submit_payment(req.entry, req.signed_xdr, settings, store=store)
+        return await claim(req.entry, settings, tx_hash=tx_hash, store=store)
+    except BookError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/assay/claim")
+async def assay_claim(req: AssayClaimRequest) -> dict:
+    """Look for the entry's payment on Horizon; when it is there, release the report."""
+    from .services.assay_book import BookError, claim
+    try:
+        return await claim(req.entry, settings, tx_hash=req.tx_hash, store=_book_store())
+    except BookError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.post("/api/v1/demo/audit")
 async def demo_audit(req: "DemoAuditRequestModel", request: Request):
     """Audit a GitHub repository, folder or agent reference: the deterministic analysers, plus
@@ -1768,6 +1868,25 @@ if FRONTEND_DIR.exists():
     @app.get("/guide/tmark")
     async def guide_tmark_page() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "guide-tmark.html")
+
+    @app.get("/book")
+    async def book_page() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "book.html")
+
+    @app.get("/report/{entry}")
+    async def report_page(entry: str) -> Response:
+        from fastapi.responses import HTMLResponse
+        from .services import assay_render
+        from .services.assay_book import load_entry, load_report, paid_record, price_xlm, store_from_settings
+        store = store_from_settings(settings) if settings.enable_assay_book else None
+        record = await load_entry(store, entry) if store is not None else None
+        if record is None:
+            return HTMLResponse(assay_render.missing_page(), status_code=404)
+        paid = await paid_record(store, entry)
+        data = await load_report(store, record["entry"]["report_sha256"]) if paid else None
+        if paid and data is not None:
+            return HTMLResponse(assay_render.report_page(record, data, paid))
+        return HTMLResponse(assay_render.locked_page(record, price_xlm(settings)))
 
     @app.get("/operator")
     async def operator_console() -> FileResponse:

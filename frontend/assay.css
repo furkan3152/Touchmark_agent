@@ -1,0 +1,137 @@
+/* The assay book: the entry stamp on a result, the payment ticket, the printed report and the
+   book itself. Same plates as press.css: cream stock, two spot inks, halftone, rubber stamps. */
+.assay-main{max-width:1060px}
+.assay-page h1{font-size:clamp(30px,4.6vw,52px);letter-spacing:-1.4px;margin:0 0 12px;word-break:break-word}
+.seal-copy h1{font-size:clamp(26px,3.4vw,40px);letter-spacing:-1px;line-height:1.08}
+.assay-page h1 a{text-decoration:none;border-bottom:3px solid var(--red)}
+.kicker{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}
+.kicker span{font:600 11px/1 var(--mono);text-transform:uppercase;letter-spacing:1.6px;padding:7px 9px;border:1.5px solid var(--ink);border-radius:3px}
+.kicker span:first-child{background:var(--ink);color:var(--paper)}
+.quiet{color:var(--ink-soft);font-size:14px}
+.assay-page code,.assay code,.book code{font:13px var(--mono);word-break:break-all}
+.button,.paywall button:not(.copy),.assay button:not(.copy){display:inline-flex;align-items:center;gap:8px;background:var(--ink);color:var(--paper);border:2px solid var(--ink);border-radius:4px;padding:12px 20px;font:650 15px var(--body);cursor:pointer;text-decoration:none;box-shadow:4px 4px 0 var(--red);transition:transform .08s,box-shadow .08s}
+.button:hover,.paywall button:not(.copy):hover,.assay button:not(.copy):hover{transform:translate(-1px,-1px);box-shadow:5px 5px 0 var(--red)}
+.button.ghost,.paywall button.ghost,.assay button.ghost{background:transparent;color:var(--ink);box-shadow:3px 3px 0 var(--ink)}
+.paywall button:disabled,.assay button:disabled{opacity:.6;cursor:wait}
+.copy{border:1.5px dashed var(--ink);background:transparent;color:var(--ink);border-radius:3px;padding:3px 8px;margin-left:8px;cursor:pointer;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:1px}
+
+/* ---------- the seal (report and locked page) ---------- */
+.seal-sheet{display:grid;grid-template-columns:1fr auto;gap:28px;align-items:center;background:var(--card);border:2px solid var(--ink);border-radius:6px;padding:30px 32px;margin:10px 0 26px;box-shadow:7px 7px 0 var(--ink);position:relative}
+.seal-meta{font:13px var(--mono);color:var(--ink-soft);margin:0 0 18px}
+.tally{list-style:none;display:flex;flex-wrap:wrap;gap:10px;margin:0;padding:0}
+.tally li{border:1.5px solid var(--line);border-radius:4px;padding:8px 12px;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:1px;color:var(--ink-soft);background:var(--paper)}
+.tally b{display:block;font:700 26px/1 var(--display);color:var(--ink);letter-spacing:0;text-transform:none;margin-bottom:4px}
+.tally .sev-critical b{color:var(--red)}.tally .sev-high b{color:var(--amber)}
+.seal-mark{position:relative;width:200px;height:200px;flex:none;margin-right:58px}
+.seal-ring{position:absolute;inset:0;border-radius:50%;border:6px double var(--stamp,var(--red));color:var(--stamp,var(--red));display:flex;flex-direction:column;align-items:center;justify-content:center;transform:rotate(-9deg);
+  background:radial-gradient(circle,color-mix(in srgb,var(--stamp,var(--red)) 26%,transparent) 1.4px,transparent 1.8px) 0 0/8px 8px;filter:url(#ink)}
+.seal-word{font:700 13px var(--mono);text-transform:uppercase;letter-spacing:2.4px}
+.seal-score{font:800 74px/.9 var(--display);letter-spacing:-3px}
+.seal-of{font:600 11px var(--mono);letter-spacing:1.6px}
+.seal-punch{position:absolute;right:-74px;bottom:-46px}
+.tone-pass{--stamp:var(--green)}.tone-needs_evidence{--stamp:var(--amber)}
+
+/* ---------- report sheets ---------- */
+.sheet{background:var(--card);border:2px solid var(--ink);border-radius:6px;padding:24px 28px;margin:0 0 22px}
+.sheet>details>summary{cursor:pointer;list-style:none}.sheet>details>summary::-webkit-details-marker{display:none}
+.sheet>details>summary h2{display:inline}.sheet>details>summary::after{content:" +";font:700 22px var(--mono);color:var(--red)}
+.sheet>details[open]>summary::after{content:" −"}
+.sheet h2,.proof h2{font:700 28px/1.1 var(--display);margin:0 0 16px;letter-spacing:-.6px}
+.sheet h2 small{font:600 12px var(--mono);color:var(--ink-soft);letter-spacing:1px;margin-left:8px;vertical-align:middle}
+.slips{list-style:none;margin:0;padding:0;display:grid;gap:12px}
+.slip{border:1.5px solid var(--line);border-left:6px solid var(--ink-soft);border-radius:4px;padding:14px 16px;background:var(--paper)}
+.slip header{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.slip header b{font:650 17px/1.3 var(--body)}
+.slip p{margin:8px 0 0;font-size:14.5px;color:var(--ink-soft)}
+.slip .loc{display:inline-block;margin-top:8px;background:var(--card);border:1px solid var(--line);padding:2px 7px;border-radius:3px}
+.slip .fix span{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:1.2px;color:var(--green);margin-right:8px}
+.slip .verdict{font:12px var(--mono)}.slip .v-confirmed{color:var(--green)}.slip .v-refuted{color:var(--red)}
+.slip .badge{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:1.2px;padding:3px 7px;border-radius:3px;border:1.5px solid currentColor}
+.slip.sev-critical{border-left-color:var(--red)}.slip.sev-critical .badge{color:var(--red);background:var(--soft-red)}
+.slip.sev-high{border-left-color:var(--amber)}.slip.sev-high .badge{color:var(--amber);background:var(--soft-amber)}
+.slip.sev-medium .badge{color:var(--ink)}.slip.sev-low,.slip.sev-info{border-left-color:var(--green)}
+.slips.small .slip header b{font-size:15px}
+.fails{margin:0;padding-left:20px}.fails li{margin:0 0 12px}.fails p{margin:4px 0 0;color:var(--ink-soft);font-size:14px}
+.actions{display:flex;gap:14px;flex-wrap:wrap;margin:26px 0}
+
+/* ---------- proof ---------- */
+.proof{border:2px dashed var(--ink);border-radius:6px;padding:24px 28px;margin:0 0 22px;background:transparent}
+.proof dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 18px;margin:0 0 16px;font-size:14px}
+.proof dt{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:1.2px;color:var(--ink-soft);padding-top:3px}
+.proof dd{margin:0;word-break:break-all}
+.proof .steps{margin:0;padding-left:20px;font-size:14px;color:var(--ink-soft)}.proof .steps li{margin:0 0 6px}
+
+/* ---------- the payment ticket ---------- */
+.paywall{position:relative;background:var(--card);border:2px solid var(--ink);border-radius:6px;padding:28px 32px;margin:0 0 26px;box-shadow:7px 7px 0 var(--red)}
+.paywall::before,.paywall::after{content:"";position:absolute;top:50%;width:24px;height:24px;border-radius:50%;background:var(--paper);border:2px solid var(--ink);transform:translateY(-50%)}
+.paywall::before{left:-13px}.paywall::after{right:-13px}
+.paywall h2{font:700 34px/1.05 var(--display);letter-spacing:-.8px;margin:0 0 10px}
+.paywall h2 em{color:var(--red);font-style:italic}
+.paywall p{max-width:640px;color:var(--ink-soft)}
+.pay-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:18px 0}
+.pay-row .or{font:12px var(--mono);color:var(--ink-soft)}
+.manual{display:grid;grid-template-columns:max-content 1fr;gap:8px 16px;margin:0 0 16px;padding:14px 16px;border:1.5px dashed var(--line);border-radius:4px}
+.manual dt{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:1.2px;color:var(--ink-soft);padding-top:2px}
+.manual dd{margin:0;display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.check-row{display:flex;gap:10px;flex-wrap:wrap}
+.check-row input{flex:1;min-width:220px;border:2px solid var(--ink);border-radius:4px;padding:10px 12px;background:var(--paper);font:13px var(--mono)}
+.status{font:600 14px var(--body);min-height:1.4em;margin:12px 0 0}
+.status.bad{color:var(--red)}.status.good{color:var(--green)}
+
+/* ---------- the entry on a demo result ---------- */
+.assay{display:grid;grid-template-columns:auto 1fr;gap:26px;align-items:start;background:var(--card);border:2px solid var(--ink);border-radius:6px;padding:24px 28px;margin:22px 0;box-shadow:6px 6px 0 var(--ink)}
+.entry-stamp{width:150px;height:150px;border-radius:50%;border:5px double var(--red);color:var(--red);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;transform:rotate(-8deg);
+  background:radial-gradient(circle,rgba(226,67,42,.24) 1.3px,transparent 1.7px) 0 0/7px 7px;filter:url(#ink)}
+.entry-stamp small{font:600 10px var(--mono);letter-spacing:1.8px;text-transform:uppercase}
+.entry-stamp b{font:800 26px/1.1 var(--display);letter-spacing:-.5px}
+.assay h3{font:700 26px/1.1 var(--display);margin:0 0 8px}
+.assay p{margin:0 0 10px;color:var(--ink-soft);font-size:15px}
+.assay .facts{display:flex;flex-wrap:wrap;gap:8px 18px;font:12.5px var(--mono);margin:0 0 14px}
+.assay .facts a{text-decoration-color:var(--red);text-underline-offset:3px}
+.assay .paywall{margin:16px 0 0;box-shadow:5px 5px 0 var(--red);padding:22px 24px}
+.assay .paywall h2{font-size:26px}
+.assay .released{border:2px solid var(--green);border-radius:4px;padding:14px 16px;background:var(--soft-green)}
+.assay .released b{color:var(--green)}
+
+/* ---------- the book ---------- */
+.book-hero{display:grid;grid-template-columns:1.2fr .8fr;gap:30px;align-items:end;margin:18px 0 30px}
+.book-hero .lede{max-width:600px}
+.book-hero .punch-wrap{justify-self:end}
+.counters{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:0 0 18px}
+.counter{background:var(--card);border:2px solid var(--ink);border-radius:5px;padding:16px 18px;position:relative}
+.counter b{display:block;font:800 46px/1 var(--display);letter-spacing:-1.5px}
+.counter span{display:block;font:600 11px/1.35 var(--mono);text-transform:uppercase;letter-spacing:1.2px;color:var(--ink-soft);margin-top:8px}
+.counter.date b{font-size:30px;letter-spacing:-.6px}
+.counter.hot{box-shadow:5px 5px 0 var(--red)}
+.counter.hot b{color:var(--red)}
+.split{display:flex;height:16px;border:2px solid var(--ink);border-radius:3px;overflow:hidden;margin:6px 0 8px;background:var(--paper)}
+.split i{display:block;height:100%}
+.split .s-pass{background:var(--green)}.split .s-needs_fixes{background:var(--red)}.split .s-needs_evidence{background:var(--amber)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font:12px var(--mono);color:var(--ink-soft);margin:0 0 26px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.book-table{width:100%;border-collapse:collapse;background:var(--card);border:2px solid var(--ink);border-radius:6px;overflow:hidden;font-size:14px}
+.book-table th{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:1.2px;color:var(--ink-soft);text-align:left;padding:12px 14px;border-bottom:2px solid var(--ink);background:var(--paper)}
+.book-table td{padding:12px 14px;border-bottom:1.5px dashed var(--line);vertical-align:top}
+.book-table tr:last-child td{border-bottom:0}
+.book-table .agent{font-weight:650;word-break:break-word}
+.book-table .agent small{display:block;font:12px var(--mono);color:var(--ink-soft);font-weight:400}
+.pill{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:1px;padding:3px 7px;border-radius:3px;border:1.5px solid currentColor;white-space:nowrap}
+.pill.pass{color:var(--green)}.pill.needs_fixes{color:var(--red)}.pill.needs_evidence{color:var(--amber)}
+.pill.paid{color:var(--ink);background:var(--soft-amber)}
+.book-table a{font:12.5px var(--mono);text-decoration-color:var(--red);text-underline-offset:3px}
+.book-empty{padding:28px;text-align:center;color:var(--ink-soft)}
+.verify-box{margin:30px 0}
+.verify-box pre{background:var(--ink);color:var(--paper);padding:16px 18px;border-radius:5px;overflow:auto;font:12.5px/1.6 var(--mono);margin:10px 0}
+.book-strip{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:18px 0 0;padding:12px 16px;border:1.5px dashed var(--ink);border-radius:4px;font:13px var(--mono)}
+.book-strip b{font:800 22px/1 var(--display);color:var(--red);margin-right:4px}
+.book-strip a{margin-left:auto;font-weight:600;text-decoration-color:var(--red);text-underline-offset:3px}
+
+@media (max-width:760px){
+  .seal-sheet{grid-template-columns:1fr;padding:22px}.seal-mark{width:170px;height:170px;justify-self:center;margin:6px 60px 30px 0}.seal-score{font-size:60px}
+  .assay{grid-template-columns:1fr;padding:20px}.entry-stamp{width:120px;height:120px}
+  .paywall{padding:22px 20px}.paywall h2{font-size:26px}
+  .counters{grid-template-columns:repeat(2,1fr)}.counter b{font-size:36px}
+  .book-hero{grid-template-columns:1fr}.book-hero .punch-wrap{display:none}
+  .book-table thead{display:none}.book-table tr{display:block;border-bottom:2px solid var(--ink)}.book-table td{display:block;border:0;padding:6px 14px}
+  .proof dl,.manual{grid-template-columns:1fr}
+}

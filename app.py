@@ -19,6 +19,8 @@ async def public_surface_only(request, call_next):
     path = request.url.path
     allowed = (path in {"/", "/studio", "/guide", "/guide/tmark", "/api/v1/health"}
                or path.startswith(("/ui/", "/media/", "/schemas/", "/mascot/"))
+               # The assay book: every audit stamped on Stellar testnet (backend/app/services/assay_book.py).
+               or path == "/book" or path.startswith(("/report/", "/api/v1/assay/"))
                or path in {"/api/v1/tmark/check", "/api/v1/tmark/template", "/api/v1/ops/allowance-check"}
                or path in {"/api/v1/demo/config", "/api/v1/demo/audit", "/api/v1/demo/credential", "/api/v1/demo/compare",
                            "/api/v1/demo/credential/prepare", "/api/v1/demo/audit/continue",

@@ -11,10 +11,12 @@
 <link rel="stylesheet" href="/ui/demo.css">
 <link rel="stylesheet" href="/ui/mascot.css">
 <link rel="stylesheet" href="/ui/studio-cta.css">
+<link rel="stylesheet" href="/ui/assay.css">
 <script src="/ui/vendor/freighter-api-6.0.1.min.js" defer></script>
 <script src="/ui/hero.js" defer></script>
 <script src="/ui/mascot.js" defer></script>
 <script src="/ui/tmark-builder.js" defer></script>
+<script src="/ui/assay.js" defer></script>
 <script src="/ui/demo.js" defer></script>
 <script src="/ui/studio-cta.js" defer></script>
 </head>
@@ -31,7 +33,7 @@
 
 <header class="bar">
   <a class="brand" href="/" aria-label="Touchmark home"><svg class="logo" width="34" height="34"><use href="#mark"/></svg><span class="word">touchmark</span><span class="where">on Stellar</span></a>
-  <nav><a href="#how">How it works</a><a href="#video">Video</a><a href="/guide">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a><a href="/studio">Studio</a></nav>
+  <nav><a href="#how">How it works</a><a href="#video">Video</a><a href="/book">Assay book</a><a href="/guide">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a><a href="/studio">Studio</a></nav>
 </header>
 
 <main>
@@ -93,6 +95,7 @@
       </details>
     </div>
   </form>
+  <p class="book-strip" id="book-strip" hidden><span><b id="strip-entries">0</b>audits stamped on Stellar testnet</span><span><b id="strip-paid">0</b>reports paid for</span><a href="/book">Open the assay book →</a></p>
 
   <p id="error" class="error" role="alert" hidden></p>
 
@@ -196,6 +199,16 @@
         </div>
       </article>
     </div>
+
+    <section class="assay" id="assay" hidden aria-labelledby="assay-title">
+      <div class="entry-stamp" aria-hidden="true"><small>Assay book</small><b id="assay-no">entered</b><small>Stellar testnet</small></div>
+      <div>
+        <h3 id="assay-title">Entered in the assay book</h3>
+        <p id="assay-note">This audit is stamped on Stellar testnet: the SHA-256 of its entry is the memo of a transaction from the book account, so anyone can check that it ran, when, and what it found.</p>
+        <p class="facts" id="assay-facts"></p>
+        <div id="assay-pay"></div>
+      </div>
+    </section>
 
     <aside class="studio-slip" id="studio-slip" aria-labelledby="studio-slip-title">
       <span class="studio-slip-punch" data-tm-mascot="pointing" data-tm-size="104" data-tm-decorative></span>

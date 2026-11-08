@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Every audit Touchmark runs, stamped on Stellar testnet and open to check.">
+<title>The assay book · Touchmark</title>
+<link rel="icon" href="/ui/brand/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/fonts/fonts.css">
+<link rel="stylesheet" href="/ui/press.css">
+<link rel="stylesheet" href="/ui/mascot.css">
+<link rel="stylesheet" href="/ui/assay.css">
+<script src="/ui/mascot.js" defer></script>
+<script src="/ui/book.js" defer></script>
+</head>
+<body class="assay-page book">
+<svg width="0" height="0" class="defs" aria-hidden="true"><filter id="ink"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter></svg>
+<header class="bar">
+  <a class="brand" href="/" aria-label="Touchmark home"><img class="logo" src="/ui/brand/mark.svg" alt="" width="34" height="34"><span class="word">touchmark</span><span class="where">on Stellar</span></a>
+  <nav><a href="/">Test an agent</a><a href="/book" aria-current="page">Assay book</a><a href="/guide">Guide</a><a href="https://github.com/furkan3152/Touchmark_agent" rel="noopener">GitHub</a></nav>
+</header>
+
+<main class="assay-main">
+  <section class="book-hero">
+    <div>
+      <p class="kicker"><span>Assay book</span><span>Stellar testnet</span></p>
+      <h1>Every audit,<br><em>on the ledger.</em></h1>
+      <p class="lede">Each audit Touchmark runs is entered here and stamped on Stellar testnet: the SHA-256 of the entry is the memo of a transaction from the book account. Count them, open any of them, and check them yourself.</p>
+    </div>
+    <div class="punch-wrap"><span data-tm-mascot="scanning" data-tm-size="190" data-tm-decorative></span></div>
+  </section>
+
+  <p id="book-off" class="sheet" hidden>The assay book is not enabled on this deployment.</p>
+
+  <section id="book" aria-live="polite">
+    <div class="counters">
+      <div class="counter hot"><b id="c-entries">–</b><span>audits stamped on testnet</span></div>
+      <div class="counter"><b id="c-agents">–</b><span>agents audited</span></div>
+      <div class="counter"><b id="c-findings">–</b><span>critical and high findings</span></div>
+      <div class="counter"><b id="c-paid">–</b><span id="c-paid-label">reports paid for</span></div>
+    </div>
+    <div class="counters">
+      <div class="counter"><b id="c-reviewed">–</b><span>with the model review and verifier</span></div>
+      <div class="counter"><b id="c-score">–</b><span>average score</span></div>
+      <div class="counter"><b id="c-payers">–</b><span>paying wallets</span></div>
+      <div class="counter date"><b id="c-since">–</b><span id="c-since-label">first entry</span></div>
+    </div>
+    <div class="split" id="split" role="img" aria-label="Decisions"></div>
+    <p class="legend" id="legend"></p>
+
+    <table class="book-table">
+      <thead><tr><th>When</th><th>Agent</th><th>Decision</th><th>Findings</th><th>On the ledger</th><th>Report</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="6" class="book-empty">Reading the book…</td></tr></tbody>
+    </table>
+
+    <section class="proof verify-box">
+      <h2>Check any entry yourself</h2>
+      <p class="quiet">Nothing here needs to be taken on trust. Every row links to its transactions on a public explorer; the book account is <a id="acct" rel="noopener" target="_blank">…</a>.</p>
+      <ol class="steps">
+        <li>Fetch an entry: <code>curl -s https://usetouchmark.app/api/v1/assay/entry/&lt;entry&gt;</code></li>
+        <li>Hash its <code>entry</code> object as canonical JSON (sorted keys, no spaces):</li>
+      </ol>
+      <pre>python3 -c "import sys,json,hashlib;e=json.load(sys.stdin)['entry'];print(hashlib.sha256(json.dumps(e,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest())"</pre>
+      <ol class="steps" start="3">
+        <li>Open the entry's stamp transaction: its memo is that hash, sent from the book account at the time of the audit.</li>
+        <li>For a paid report, the report JSON hashes to the entry's <code>report_sha256</code>, the payer's payment carries the memo <code>tm:&lt;entry&gt;</code>, and the receipt stamp sent back to the payer carries the entry hash.</li>
+      </ol>
+    </section>
+  </section>
+</main>
+<footer class="foot">Touchmark · Stellar testnet · testnet XLM has no monetary value</footer>
+</body>
+</html>

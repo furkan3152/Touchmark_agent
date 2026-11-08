@@ -114,6 +114,23 @@ Details, limits and the decision rule: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 | Accounts | Signers and thresholds read from Horizon; SEP-29 memo-required destinations; SEP-1 identity |
 | Agent surface | Prompt injection reaching a privileged call, secrets returned to the model, cross-tenant lookups, unauthenticated routes |
 
+## Every audit on the ledger: the assay book
+
+Every audit the demo runs is entered in the **[assay book](https://usetouchmark.app/book)** and stamped on Stellar
+testnet. The entry (agent, commit, decision, score, finding counts, and the SHA-256 of the full report) is hashed,
+and that hash is the `MEMO_HASH` of a transaction from the book account. Anyone can count the audits, open any of
+them and check them without trusting the server:
+
+```
+sha256(canonical entry JSON) == memo of the stamp transaction
+entry.report_sha256          == sha256(report JSON)
+```
+
+The full report is released for **2 XLM on testnet**: the payer sends it with the memo `tm:<entry>` (Freighter, or
+any wallet), the server reads the payment back from Horizon, releases the report, and sends the payer a receipt
+stamp whose memo is the entry hash. The book page shows the totals (audits, agents, findings, paid reports, XLM
+received) and links each row to its transactions. Code: [`assay_book.py`](backend/app/services/assay_book.py).
+
 ## Declare your agent: `.tmark`
 
 A `.tmark` at the repository root states what the agent may do: network, keys and what it signs, spending limits,

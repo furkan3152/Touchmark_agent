@@ -740,6 +740,7 @@
     $("why-box").open = data.decision !== "pass";
 
     $("report-hash").textContent = data.report_sha256;
+    renderAssay(data.assay);
     $("cred-done").hidden = true;
     $("cred-idle").hidden = false;
     inlineError("cred-error", "");
@@ -757,6 +758,54 @@
       : issuance.reason || (issuance.enabled ? "" : "Credential issuance is not configured on this deployment.");
     $("issue").textContent = issuance.owner ? "Sign with Freighter and issue to my account" : "Stamp it on Stellar testnet";
     $("diff").hidden = true; inlineError("diff-error", "");
+  }
+
+  // ------------------------------------------------------------------ the assay book
+  /** The audit's entry in the assay book (services/assay_book.py): the stamp on Stellar
+   *  testnet, and the ticket that releases the printed report for a testnet payment. */
+  function renderAssay(assay) {
+    const box = $("assay");
+    box.hidden = !assay || assay.status === "off";
+    if (box.hidden) return;
+    const facts = $("assay-facts"); facts.textContent = "";
+    const pay = $("assay-pay"); pay.textContent = "";
+    if (assay.status !== "stamped") {
+      $("assay-no").textContent = "pending";
+      $("assay-note").textContent = `This audit could not be stamped on Stellar testnet this time: ${assay.reason || "the ledger did not answer"}. The result above is complete.`;
+      return;
+    }
+    $("assay-no").textContent = assay.entry_sha256.slice(0, 8);
+    $("assay-note").textContent = "This audit is stamped on Stellar testnet: the SHA-256 of its entry is the memo of a transaction from the book account, so anyone can check that it ran, when, and what it found.";
+    const link = (href, text) => el("a", { href, target: "_blank", rel: "noopener", text });
+    facts.append(link(assay.stamp_url, `stamp tx ${assay.stamp_tx.slice(0, 10)}…`),
+      link(assay.entry_url, `entry ${assay.entry_sha256.slice(0, 12)}…`),
+      link(assay.account_url, `book account ${assay.account.slice(0, 6)}…${assay.account.slice(-4)}`),
+      el("a", { href: "/book", text: "the whole book →" }));
+    if (window.TouchmarkAssay) {
+      const ticket = TouchmarkAssay.ticket(assay.payment, assay.entry_sha256);
+      pay.append(ticket);
+      TouchmarkAssay.mount(ticket, {
+        onReleased(result) {
+          pay.textContent = "";
+          const done = el("div", { class: "released" },
+            el("b", { text: "Paid and released. " }), "Your payment is on the ledger and the report is yours. ",
+            el("a", { href: result.report_url, text: "Open the printed report →" }));
+          if (result.receipt_url) done.append(el("br"), link(result.receipt_url, "Receipt stamp sent to your wallet"));
+          pay.append(done);
+          if (punch) punch.flash("success", 2400, { tone: "risk" });
+          loadBookStrip();
+        },
+      });
+    }
+  }
+
+  function loadBookStrip() {
+    fetch("/api/v1/assay/book").then((r) => (r.ok ? r.json() : null)).then((book) => {
+      if (!book || !book.enabled) return;
+      $("strip-entries").textContent = book.stats.entries;
+      $("strip-paid").textContent = book.stats.paid_reports;
+      $("book-strip").hidden = false;
+    }).catch(() => {});
   }
 
   // ------------------------------------------------------------------ the audit
@@ -965,6 +1014,7 @@
     save(new Blob([current.report_json], { type: "application/json" }), `touchmark-${current.report_sha256.slice(0, 12)}.json`);
   });
 
+  loadBookStrip();
   // Consent is needed only where the model review can run; say so when it cannot.
   fetch("/api/v1/demo/config").then((r) => r.ok ? r.json() : null).then(applyConfig).catch(() => applyConfig(null));
 
