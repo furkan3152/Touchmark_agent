@@ -519,9 +519,9 @@
   // ------------------------------------------------------------------ the report
   const STAMP_WORDS = { pass: "Touchmarked", needs_fixes: "Not yet", needs_evidence: "Show more" };
   const VERDICTS = {
-    confirmed: "Verified: a second model confirmed this in the code",
+    confirmed: "Verified: an independent check confirmed this in the code",
     partial: "Partly verified: real, but narrower or less severe",
-    refuted: "Disputed: a second model could not confirm this",
+    refuted: "Disputed: an independent check could not confirm this",
     unverifiable: "Not verified: the cited code could not be checked",
   };
 
