@@ -206,7 +206,7 @@ score  = 100 × e^(−risk points / 100)</code></pre>
       <p>Validate a <code>.tmark</code> (<code>{"text": "…"}</code> → <code>valid</code>, <code>errors</code>, <code>error_details</code> with field and line, <code>normalized</code>, <code>summary</code>); get a template; or draft one from a repository (<code>{"reference": "…"}</code>) or from source files (<code>{"files": {path: text}}</code>). Nothing is stored.</p>
 
       <div class="ep"><span class="m post">POST</span><code>/api/v1/demo/credential/prepare</code> · <code>/api/v1/demo/credential</code></div>
-      <p>Issue a credential for a passing audit with the <code>issuance.ticket</code> from its result. When the repository names an owner, <code>prepare</code> returns the registration for the owner to sign in their wallet, and the signed XDR goes with the ticket.</p>
+      <p>Issue a credential for a passing audit with the <code>issuance.ticket</code> from its result. When the repository names an owner, <code>prepare</code> returns the registration for the owner to sign in their wallet, and the signed XDR goes with the ticket. Issuing takes four Soroban transactions, about a minute: send <code>Accept: application/x-ndjson</code> to receive heartbeats until the <code>result</code> line. Issuing again for the same report reads the credential back from the ledger.</p>
 
       <div class="ep"><span class="m get">GET</span><code>/api/v1/assay/book</code> · <code>/api/v1/assay/entry/{entry}</code></div>
       <p>The assay book's statistics and latest entries; one entry as stamped. See <a href="#verify">Verify an audit</a>.</p>

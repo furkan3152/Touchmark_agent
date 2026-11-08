@@ -805,7 +805,7 @@ async def _run_and_package(artifact: AgentArtifact, settings: Settings, reviewer
     payload["priority_finding_ids"] = [f.id for f in actionable_risks(report.findings)]
     payload["judge_notes"].extend(notes)
     if verifier is not None:
-        # A second model re-checked each risk from source before the decision. It annotates
+        # A separate model call re-checked each risk from source before the decision. It annotates
         # every finding; a rule finding it refutes with a quoted line was lowered one level
         # (swarm/orchestrator.py, _apply_disputes).
         verification = report.verification

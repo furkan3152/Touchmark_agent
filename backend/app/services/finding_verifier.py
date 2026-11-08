@@ -1,4 +1,4 @@
-"""Independent verification of findings: a second model re-checks each claim from source.
+"""Independent verification of findings: a separate model call re-checks each claim from source.
 
 The verifier sees only the claim (title and severity) and the lines it points to, not
 the reasoning or attack scenario that produced it. It reads the code with its own tools

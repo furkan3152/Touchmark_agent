@@ -350,6 +350,8 @@ connection, and finally one of `result` (the same object as the plain JSON answe
 `cancelled` or `error` (`status`, `detail`). `POST /api/v1/demo/audit/continue` with the
 `job_id` runs the next leg, or returns the result of a finished job;
 `POST /api/v1/demo/audit/cancel` stops the job before its next model call.
+`POST /api/v1/demo/credential` streams the same way (heartbeats, then `result` or `error`): its four
+Soroban transactions take about a minute, longer than a proxy keeps an idle connection.
 `POST /api/v1/demo/compare` is rules-only on both sides and says so (`mode: rules_only`).
 `/api/v1/health` reports the model review (`modes.deep_review`) apart from the optional AI
 second opinion (`modes.ai_second_opinion`; `modes.llm` is kept for older clients).

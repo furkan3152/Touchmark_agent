@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     # The file map reads every file once and records structure, not judgements: low effort suffices.
     deep_review_map_model: str = ""
     deep_review_map_effort: str = Field(default="low", pattern="^(low|medium|high|xhigh|max)$")
-    # Independent re-check of each finding by a second model (services/finding_verifier.py).
+    # Independent re-check of each finding by a separate model call (services/finding_verifier.py).
     # On by default (it still needs an API key): a medium payment bypass that no verifier
     # checked holds back a pass, so without it a model-reviewed agent can never pass.
     # The model review costs money per audit. On the public demo it is limited per client per
