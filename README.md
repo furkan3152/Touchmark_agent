@@ -132,8 +132,19 @@ stamp whose memo is the entry hash. The book page shows the totals (audits, agen
 received) and links each row to its transactions. Code: [`assay_book.py`](backend/app/services/assay_book.py).
 
 End-to-end proof: on 2026-11-08 the full user flow (model review, stamp, testnet payment, receipt, report and, for
-the passing agent, the credential) ran six times on the public site with a testnet wallet; every entry checks out from
-public data with `python3 scripts/verify_assay.py --latest 10`. The record:
+the passing agent, the credential) ran six times on the public site with a testnet wallet. Check it without trusting
+the site:
+
+```bash
+python3 scripts/verify_assay.py --ledger --latest 10   # every entry, and the book's totals counted from the ledger
+pip install stellar-sdk && python3 scripts/verify_assay.py --verify-archive docs/evidence/e2e-user-flow-2026-11-08.json
+```
+
+`--ledger` lists every stamp, payment and receipt of the book account straight from Horizon, checks that the site
+publishes each stamped entry and that its totals match the ledger's. The record keeps all 25 transactions as signed
+envelopes, so after a testnet reset `--verify-archive` still proves offline that the book account signed them. What it
+cannot prove: that a report is correct (each finding cites a line in a public commit, which anyone can read), or that
+a payer is a distinct person (the six runs were made from one test wallet, as the record says). Record:
 [`docs/evidence/e2e-user-flow-2026-11-08.json`](docs/evidence/e2e-user-flow-2026-11-08.json).
 
 ## Declare your agent: `.tmark`

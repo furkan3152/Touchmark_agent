@@ -328,6 +328,11 @@ curl -s https://horizon-testnet.stellar.org/transactions/$TX \
 # 3. a paid report hashes to the entry's report_sha256
 curl -s https://usetouchmark.app/api/v1/assay/report/$E.json | sha256sum</code></pre>
       <p>The canonical form is JSON with sorted keys, no spaces and UTF-8 text. Each step uses only public data: the entry, a public Horizon server and the report bytes.</p>
+      <p>All of it, for every entry, in one script that needs only Python: <a href="https://github.com/furkan3152/Touchmark_agent/blob/main/scripts/verify_assay.py" rel="noopener"><code>scripts/verify_assay.py</code></a>.</p>
+      <pre data-lang="bash"><code>python3 scripts/verify_assay.py --ledger --latest 10   # entries, and the book's totals counted from the ledger
+python3 scripts/verify_assay.py --latest 10 --json --archive &gt; proof.json
+pip install stellar-sdk &amp;&amp; python3 scripts/verify_assay.py --verify-archive proof.json   # offline, after a testnet reset</code></pre>
+      <p><code>--ledger</code> lists every stamp, payment and receipt of the book account from Horizon, checks that the site publishes each stamped entry, and that the totals on <a href="/book">the book</a> match the ledger: an entry the site hid, or a figure it inflated, fails. What the ledger cannot prove: that a report is right (each finding cites a line in a public commit, so anyone can read it), or that two payers are two people.</p>
     </section>
 
     <!-- ============================================================ credential -->

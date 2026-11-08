@@ -301,3 +301,74 @@ def test_horizon_not_answering_is_a_503_that_says_so(monkeypatch):
     answer = TestClient(api.app, client=("192.0.2.91", 50000)).post("/api/v1/assay/claim", json={"entry": sha})
     assert answer.status_code == 503 and "did not answer" in answer.json()["detail"]
     assert "no route" not in answer.text
+
+
+def _verifier():
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[2] / "scripts/verify_assay.py"
+    spec = importlib.util.spec_from_file_location("verify_assay", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ledger_world(monkeypatch, *, site_hides=False, site_stats=None):
+    """A book account with two stamps, one paid; the site and Horizon as the verifier reads them."""
+    v = _verifier()
+    book, payer = OPERATOR.public_key, PAYER.public_key
+    e1, e2 = "a" * 64, "b" * 64
+    b64 = lambda hexs: base64.b64encode(bytes.fromhex(hexs)).decode()  # noqa: E731
+    ops = [
+        {"type": "bump_sequence", "transaction_hash": "1" * 64, "paging_token": "1",
+         "transaction": {"source_account": book, "memo_type": "hash", "memo": b64(e1), "successful": True}},
+        {"type": "bump_sequence", "transaction_hash": "2" * 64, "paging_token": "2",
+         "transaction": {"source_account": book, "memo_type": "hash", "memo": b64(e2), "successful": True}},
+        {"type": "payment", "from": payer, "to": book, "asset_type": "native", "amount": "2.0000000",
+         "transaction_hash": "3" * 64, "paging_token": "3",
+         "transaction": {"source_account": payer, "memo_type": "text", "memo": "tm:" + e1[:20], "successful": True}},
+        {"type": "payment", "from": book, "to": payer, "asset_type": "native", "amount": "0.0000001",
+         "transaction_hash": "4" * 64, "paging_token": "4",
+         "transaction": {"source_account": book, "memo_type": "hash", "memo": b64(e1), "successful": True}},
+    ]
+
+    def get_json(url):
+        if "/operations" in url:
+            return 200, {"_embedded": {"records": ops}}
+        for e, tx in ((e1, "1" * 64), (e2, "2" * 64)):
+            if url.endswith(f"/api/v1/assay/entry/{e}"):
+                return (404, None) if (site_hides and e == e2) else (200, {"stamp_tx": tx})
+        return 404, None
+    monkeypatch.setattr(v, "get_json", get_json)
+    stats = site_stats or {"entries": 2, "paid_reports": 1, "xlm_received": "2"}
+    return v.ledger_audit("https://site", "https://horizon", book, stats, "2")
+
+
+def test_the_book_counted_from_the_ledger_agrees_with_the_site(monkeypatch):
+    out = _ledger_world(monkeypatch)
+    assert out["ok"] and out["stamps"] == 2 and out["paid_entries"] == 1 and out["xlm_for_reports"] == "2"
+
+
+@pytest.mark.parametrize("kw", [{"site_hides": True},
+                                {"site_stats": {"entries": 3, "paid_reports": 1, "xlm_received": "2"}},
+                                {"site_stats": {"entries": 2, "paid_reports": 2, "xlm_received": "4"}}])
+def test_a_hidden_entry_or_an_inflated_figure_fails_the_ledger_check(monkeypatch, kw):
+    assert not _ledger_world(monkeypatch, **kw)["ok"]
+
+
+def test_archived_envelopes_verify_offline_and_a_forgery_does_not(tmp_path):
+    v = _verifier()
+    tx = (TransactionBuilder(Account(OPERATOR.public_key, 7), ab.PASSPHRASE, base_fee=100)
+          .add_hash_memo(bytes.fromhex("c" * 64)).append_bump_sequence_op(0).set_timeout(60).build())
+    tx.sign(OPERATOR)
+    good = {"hash": tx.hash_hex(), "envelope_xdr": tx.to_xdr(), "ledger": 1, "created_at": "now"}
+    path = tmp_path / "proof.json"
+    path.write_text(json.dumps({"results": [{"archive": [good]}]}))
+    assert v.verify_archive(str(path)) == 0
+    # Signed by someone else, or a hash that is not this envelope's: both fail.
+    other = (TransactionBuilder(Account(OPERATOR.public_key, 7), ab.PASSPHRASE, base_fee=100)
+             .add_hash_memo(bytes.fromhex("c" * 64)).append_bump_sequence_op(0).set_timeout(60).build())
+    other.sign(PAYER)
+    for forged in ({**good, "hash": "d" * 64}, {**good, "envelope_xdr": other.to_xdr(), "hash": other.hash_hex()}):
+        path.write_text(json.dumps({"results": [{"archive": [forged]}]}))
+        assert v.verify_archive(str(path)) == 1

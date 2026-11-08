@@ -3,6 +3,9 @@
 
     python3 scripts/verify_assay.py <entry> [<entry> ...] [--site URL] [--horizon URL] [--json]
     python3 scripts/verify_assay.py --latest 10
+    python3 scripts/verify_assay.py --ledger                 # count the book from the ledger, not the site
+    python3 scripts/verify_assay.py --latest 10 --json --archive > proof.json
+    python3 scripts/verify_assay.py --verify-archive proof.json   # offline, needs: pip install stellar-sdk
 
 For each entry it checks, without trusting the server's word for anything it can recompute:
 
@@ -14,7 +17,16 @@ For each entry it checks, without trusting the server's word for anything it can
      transaction sends that payer one stroop from the book account with the entry id as memo,
      and the released report's bytes hash to the entry's report_sha256.
 
-Standard library only. Exits 1 if any check fails.
+--ledger enumerates every stamp, receipt and incoming payment of the book account straight from
+Horizon, checks that each stamped entry is published by the site with that stamp, and compares
+the ledger's totals with the statistics the site shows. An entry missing from the site, or a
+total that disagrees, fails.
+
+--archive keeps each transaction as the ledger returned it (signed envelope and result XDR).
+Testnet is reset from time to time; --verify-archive then still proves offline that each
+envelope hashes to its transaction id and carries a valid signature of its source account.
+
+Standard library only (except --verify-archive). Exits 1 if any check fails.
 """
 from __future__ import annotations
 
@@ -48,11 +60,19 @@ def canonical(obj) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
+def archived(horizon: str, tx_hash: str) -> dict | None:
+    status, tx = get_json(f"{horizon}/transactions/{tx_hash}")
+    if status != 200 or not tx:
+        return None
+    return {k: tx.get(k) for k in ("hash", "ledger", "created_at", "source_account", "memo_type", "memo",
+                                   "successful", "envelope_xdr", "result_xdr")}
+
+
 def memo_hex(tx: dict) -> str:
     return base64.b64decode(tx["memo"]).hex() if tx.get("memo_type") == "hash" else ""
 
 
-def verify(entry: str, site: str, horizon: str, row: dict | None, price: str) -> dict:
+def verify(entry: str, site: str, horizon: str, row: dict | None, price: str, archive: bool = False) -> dict:
     out = {"entry": entry, "checks": [], "ok": True}
 
     def check(name: str, passed: bool, detail: str = ""):
@@ -78,6 +98,8 @@ def verify(entry: str, site: str, horizon: str, row: dict | None, price: str) ->
         out["stamped_at"] = stamp["created_at"]
         out["stamp_tx"] = rec["stamp_tx"]
 
+    if archive and out.get("stamp_tx"):
+        out["archive"] = [a for a in [archived(horizon, out["stamp_tx"])] if a]
     if not rec.get("paid"):
         out["paid"] = False
         return out
@@ -104,10 +126,97 @@ def verify(entry: str, site: str, horizon: str, row: dict | None, price: str) ->
             out["receipt_tx"] = receipt_tx
     else:
         check("payment transaction listed in the book", False, "not among the latest rows; pass --latest N")
+    if archive:
+        out.setdefault("archive", []).extend(a for a in (archived(horizon, t) for t in (out.get("payment_tx"), out.get("receipt_tx")) if t) if a)
     status, body = get(f"{site}/api/v1/assay/report/{entry}.json")
     check("released report hashes to entry.report_sha256",
           status == 200 and hashlib.sha256(body).hexdigest() == e.get("report_sha256"), e.get("report_sha256", ""))
     return out
+
+
+def ledger_audit(site: str, horizon: str, account: str, stats: dict, price: str) -> dict:
+    """The book counted from the ledger: every stamp, receipt and payment of the book account."""
+    stamps, receipts, payments, cursor = [], [], [], ""
+    for _ in range(200):  # 200 pages of 200 operations at most
+        status, page = get_json(f"{horizon}/accounts/{account}/operations?order=asc&limit=200&join=transactions"
+                                + (f"&cursor={cursor}" if cursor else ""))
+        records = ((page or {}).get("_embedded") or {}).get("records") or []
+        for op in records:
+            tx = op.get("transaction") or {}
+            if not op.get("transaction_successful", tx.get("successful", True)):
+                continue
+            if op["type"] == "bump_sequence" and tx.get("source_account") == account and tx.get("memo_type") == "hash":
+                stamps.append({"entry": memo_hex(tx), "tx": op["transaction_hash"], "at": tx.get("created_at")})
+            elif op["type"] == "payment" and op.get("from") == account and tx.get("memo_type") == "hash":
+                receipts.append({"entry": memo_hex(tx), "tx": op["transaction_hash"], "to": op.get("to")})
+            elif (op["type"] == "payment" and op.get("to") == account and op.get("asset_type") == "native"
+                  and tx.get("memo_type") == "text" and str(tx.get("memo", "")).startswith("tm:")):
+                payments.append({"memo": tx["memo"], "tx": op["transaction_hash"], "from": op.get("from"),
+                                 "amount": op.get("amount")})
+        if len(records) < 200:
+            break
+        cursor = records[-1]["paging_token"]
+    out = {"account": account, "checks": [], "ok": True, "stamps": len(stamps), "receipts": len(receipts),
+           "payments": len(payments)}
+
+    def check(name, passed, detail=""):
+        out["checks"].append({"check": name, "ok": bool(passed), "detail": detail})
+        out["ok"] = out["ok"] and bool(passed)
+
+    missing = []
+    for st in stamps:
+        status, rec = get_json(f"{site}/api/v1/assay/entry/{st['entry']}")
+        if status != 200 or not rec or rec.get("stamp_tx") != st["tx"]:
+            missing.append(st["entry"])
+    check("every stamp on the ledger is published by the site, with that stamp", not missing,
+          f"{len(stamps) - len(missing)} of {len(stamps)}" + (f"; missing {', '.join(m[:12] for m in missing)}" if missing else ""))
+    stamped = {st["entry"] for st in stamps}
+    paid = {}
+    for p in payments:  # a payment counts for the entry its memo names, once, at the price or more
+        entry = next((e for e in stamped if "tm:" + e[:20] == p["memo"]), None)
+        if entry and Decimal(p["amount"]) >= Decimal(price) and entry not in paid:
+            paid[entry] = p
+    xlm = sum((Decimal(p["amount"]) for p in paid.values()), Decimal(0))
+    out.update(paid_entries=len(paid), xlm_for_reports=format(xlm.normalize(), "f") if xlm else "0",
+               payers=len({p["from"] for p in paid.values()}))
+    check("the site's audit count matches the ledger", stats.get("entries") == len(stamps),
+          f"site {stats.get('entries')}, ledger {len(stamps)}")
+    check("the site's paid-report count matches the ledger", stats.get("paid_reports") == len(paid),
+          f"site {stats.get('paid_reports')}, ledger {len(paid)}")
+    check("the site's XLM received matches the ledger",
+          Decimal(str(stats.get("xlm_received", "0"))) == xlm, f"site {stats.get('xlm_received')}, ledger {out['xlm_for_reports']}")
+    check("every paid entry has a receipt stamp to its payer",
+          all(any(r["entry"] == e and r["to"] == p["from"] for r in receipts) for e, p in paid.items()),
+          f"{len(receipts)} receipts")
+    return out
+
+
+def verify_archive(path: str, passphrase: str = "Test SDF Network ; September 2015") -> int:
+    """Offline: every archived envelope hashes to its id and is signed by its source account."""
+    from stellar_sdk import Keypair, TransactionEnvelope
+    doc = json.loads(open(path).read())
+    items = [a for r in doc.get("results", doc.get("runs", [])) for a in ((r.get("verified") or r).get("archive") or [])]
+    items += [a for r in doc.get("runs", []) for a in (r.get("credential_archive") or [])]
+    bad = 0
+    for a in items:
+        env = TransactionEnvelope.from_xdr(a["envelope_xdr"], passphrase)
+        tx = env.transaction
+        source = tx.source.account_id if hasattr(tx.source, "account_id") else tx.source
+        key = Keypair.from_public_key(source)
+        signed = any(_verifies(key, env.hash(), sig.signature) for sig in env.signatures)
+        ok = env.hash_hex() == a["hash"] and signed
+        bad += not ok
+        print(f"{'✓' if ok else '✗'} {a['hash'][:16]}… ledger {a.get('ledger')} {a.get('created_at')} signed by {source[:6]}…{source[-4:]}")
+    print(f"{len(items) - bad} of {len(items)} archived transactions verified offline")
+    return 0 if items and not bad else 1
+
+
+def _verifies(key, data: bytes, signature: bytes) -> bool:
+    try:
+        key.verify(data, signature)
+        return True
+    except Exception:  # noqa: BLE001 - a signature of another key, or none
+        return False
 
 
 def main(argv=None) -> int:
@@ -117,20 +226,35 @@ def main(argv=None) -> int:
     ap.add_argument("--site", default="https://usetouchmark.app")
     ap.add_argument("--horizon", default="https://horizon-testnet.stellar.org")
     ap.add_argument("--json", action="store_true", help="print one JSON document")
+    ap.add_argument("--ledger", action="store_true", help="count the book from the ledger and compare with the site")
+    ap.add_argument("--archive", action="store_true", help="keep each transaction's signed envelope and result")
+    ap.add_argument("--verify-archive", metavar="FILE", help="offline: check the envelopes archived in FILE")
     args = ap.parse_args(argv)
+    if args.verify_archive:
+        return verify_archive(args.verify_archive)
     _, book = get_json(f"{args.site}/api/v1/assay/book")
     rows = {r["entry_sha256"]: r for r in (book or {}).get("latest", [])}
     entries = list(args.entries) + [r["entry_sha256"] for r in (book or {}).get("latest", [])[: args.latest]]
-    results = [verify(e, args.site, args.horizon, rows.get(e), (book or {}).get("price_xlm", "2")) for e in dict.fromkeys(entries)]
+    results = [verify(e, args.site, args.horizon, rows.get(e), (book or {}).get("price_xlm", "2"), args.archive)
+               for e in dict.fromkeys(entries)]
+    ledger = (ledger_audit(args.site, args.horizon, (book or {}).get("account", ""), (book or {}).get("stats") or {},
+                           (book or {}).get("price_xlm", "2")) if args.ledger else None)
     if args.json:
-        print(json.dumps({"site": args.site, "horizon": args.horizon, "results": results}, indent=1))
+        print(json.dumps({"site": args.site, "horizon": args.horizon, "results": results,
+                          **({"ledger": ledger} if ledger else {})}, indent=1))
     else:
         for r in results:
             print(f"{'OK  ' if r['ok'] else 'FAIL'} {r['entry'][:16]}… {r.get('agent', '')} {r.get('decision', '')} "
                   f"{r.get('score', '')}{'  paid' if r.get('paid') else ''}")
             for c in r["checks"]:
                 print(f"     {'✓' if c['ok'] else '✗'} {c['check']}" + (f"  ({c['detail']})" if c["detail"] else ""))
-    return 0 if results and all(r["ok"] for r in results) else 1
+    if ledger and not args.json:
+        print(f"{'OK  ' if ledger['ok'] else 'FAIL'} the book counted from the ledger: {ledger['stamps']} stamps, "
+              f"{ledger['paid_entries']} paid reports, {ledger['xlm_for_reports']} XLM, {ledger['payers']} payers")
+        for c in ledger["checks"]:
+            print(f"     {'✓' if c['ok'] else '✗'} {c['check']}" + (f"  ({c['detail']})" if c["detail"] else ""))
+    checked = results + ([ledger] if ledger else [])
+    return 0 if checked and all(r["ok"] for r in checked) else 1
 
 
 if __name__ == "__main__":
