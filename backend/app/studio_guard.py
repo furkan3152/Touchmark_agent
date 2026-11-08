@@ -3,6 +3,7 @@
 from collections import deque
 import os
 import time
+import weakref
 
 from starlette.responses import JSONResponse
 
@@ -32,6 +33,17 @@ def client_address(header, peer: str, *, trust_forwarded: bool) -> str:
     return (peer or "unknown")[:64]
 
 
+#: Every guard in the process, so tests can start each case with an empty window (reset_all).
+_GUARDS: "weakref.WeakSet[StudioGuard]" = weakref.WeakSet()
+
+
+def reset_all() -> None:
+    """Forget every request seen so far (tests: one case must not spend another's allowance)."""
+    for guard in list(_GUARDS):
+        guard.clients.clear()
+        guard.requests.clear()
+
+
 class StudioGuard:
     """Per-client limit so one caller cannot exhaust capacity for everyone, plus a
     process-wide ceiling. Counters live in this process only; serverless instances
@@ -40,6 +52,7 @@ class StudioGuard:
     whose edge overwrites the header)."""
 
     def __init__(self, app, *, trust_forwarded=None, clock=time.monotonic):
+        _GUARDS.add(self)
         self.app = app
         self.clock = clock
         self.trust_forwarded = trust_proxy_headers() if trust_forwarded is None else trust_forwarded

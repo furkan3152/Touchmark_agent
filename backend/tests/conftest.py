@@ -88,3 +88,12 @@ def _rules_judged_alone(request, monkeypatch):
         return
     from backend.app.swarm.orchestrator import AuditSwarm
     monkeypatch.setattr(AuditSwarm, "_require_deep_review", lambda self, artifact, verdicts, record: verdicts)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_request_window():
+    """The API's request throttle counts per client per minute across the whole process; a suite
+    that runs fast could otherwise spend a later test's allowance (an occasional 429)."""
+    from backend.app import studio_guard
+    studio_guard.reset_all()
+    yield
