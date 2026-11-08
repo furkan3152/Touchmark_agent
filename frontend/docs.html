@@ -321,8 +321,9 @@ python3 -c "import json,hashlib;e=json.load(open('entry.json'))['entry'];print(h
 
 # 2. the stamp transaction carries that hash as its memo, from the book account
 TX=$(jq -r .stamp_tx entry.json)
-curl -s https://horizon-testnet.stellar.org/transactions/$TX | jq -r '.memo, .source_account, .created_at'
-#    (Horizon gives the memo in base64: echo &lt;memo&gt; | base64 -d | xxd -p -c 64)
+curl -s https://horizon-testnet.stellar.org/transactions/$TX | jq -r '.source_account, .created_at'
+curl -s https://horizon-testnet.stellar.org/transactions/$TX \
+  | python3 -c "import sys,json,base64;print(base64.b64decode(json.load(sys.stdin)['memo']).hex())"   # equals the entry id
 
 # 3. a paid report hashes to the entry's report_sha256
 curl -s https://usetouchmark.app/api/v1/assay/report/$E.json | sha256sum</code></pre>
