@@ -1,6 +1,6 @@
 // Demo fixture: an MCP treasury agent with deliberate, typical mistakes.
 // The model chooses the recipient and amount of a payment signed with the agent's key,
-// and the URL the server fetches. AgentVeritas should refuse to credential it.
+// and the URL the server fetches. Touchmark should refuse to credential it.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Asset, Horizon, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";

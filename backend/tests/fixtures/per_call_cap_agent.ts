@@ -1,6 +1,6 @@
-// Demo fixture: the same MCP treasury agent with the controls AgentVeritas looks for.
+// Demo fixture: the same MCP treasury agent with the controls Touchmark looks for.
 // Recipients come from a fixed supplier table, amounts are capped in the schema, and
-// invoices are read from one fixed host. AgentVeritas should pass and credential it.
+// invoices are read from one fixed host. Touchmark should pass and credential it.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Asset, Horizon, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
