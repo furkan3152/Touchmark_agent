@@ -15,6 +15,7 @@
   <a href="https://usetouchmark.app"><img src="https://img.shields.io/badge/Live_demo-usetouchmark.app-1d2b4f?style=for-the-badge" alt="Live demo"></a>
   <img src="https://img.shields.io/badge/Stellar-Testnet-e2432a?style=for-the-badge&logo=stellar&logoColor=white" alt="Stellar testnet">
   <a href="https://github.com/furkan3152/Touchmark_agent/actions/workflows/verify.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/Touchmark_agent/verify.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
+  <a href="https://github.com/furkan3152/Touchmark_agent/actions/workflows/ledger.yml"><img src="https://img.shields.io/github/actions/workflow/status/furkan3152/Touchmark_agent/ledger.yml?branch=main&style=for-the-badge&label=Ledger%20proof" alt="Ledger proof"></a>
   <img src="https://img.shields.io/badge/License-Apache_2.0-1f7a5a?style=for-the-badge" alt="License">
 </p>
 
@@ -118,7 +119,8 @@ Details, limits and the decision rule: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 ## Every audit on the ledger: the assay book
 
 Every audit the demo runs is entered in the **[assay book](https://usetouchmark.app/book)** and stamped on Stellar
-testnet. The entry (agent, commit, decision, score, finding counts, and the SHA-256 of the full report) is hashed,
+testnet. The entry (agent, commit, decision, score, finding counts, the commit of this repository the auditor ran
+from, and the SHA-256 of the full report) is hashed,
 and that hash is the `MEMO_HASH` of a transaction from the book account. Anyone can count the audits, open any of
 them and check them without trusting the server:
 
@@ -140,6 +142,10 @@ the site:
 python3 scripts/verify_assay.py --ledger --latest 10   # every entry, and the book's totals counted from the ledger
 pip install stellar-sdk && python3 scripts/verify_assay.py --verify-archive docs/evidence/e2e-user-flow-2026-11-08.json
 ```
+
+The book page has a button that does the per-entry check in the visitor's browser: it hashes each entry with Web
+Crypto and reads the transactions from Horizon, not from this site. The same check runs every day from GitHub's
+runners in the [Ledger proof](.github/workflows/ledger.yml) workflow.
 
 `--ledger` lists every stamp, payment and receipt of the book account straight from Horizon, checks that the site
 publishes each stamped entry and that its totals match the ledger's. The record keeps all 25 transactions as signed
@@ -168,6 +174,9 @@ Soroban contracts, not the server, decide whether a credential exists and is sti
 registration in their own wallet; only an approved validator can complete a validation; the credential binds the
 report hash and the agent's version, so a changed agent is no longer current. Scores below 65 are refused;
 credentials expire after at most 90 days, cannot be transferred and can be revoked; no contract is upgradeable.
+The contracts on testnet are built from this repository: the build is reproducible, and
+`python scripts/verify_contracts.py` compares each contract's code hash on the ledger with the deployment manifest
+and with the WASM built from `contracts/`. CI runs it on every push.
 Contracts: `agent-registry`, `audit-credential`, `audit-escrow`, and `agent-account`, a custom account that gives
 an agent session keys limited by recipient, asset, per-call maximum and budget.
 

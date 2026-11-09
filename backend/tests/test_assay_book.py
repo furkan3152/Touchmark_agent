@@ -158,6 +158,20 @@ def test_entry_names_round_trip(decision):
     assert parsed["score"] == 58.3 and parsed["high"] == 1 and parsed["model_review"] is True
 
 
+def test_an_entry_names_the_commit_the_auditor_ran_from(monkeypatch):
+    out, report, _ = audited()
+    monkeypatch.delenv("VERCEL_GIT_COMMIT_SHA", raising=False)
+    assert ab.entry_for(out, report)["auditor"] == ""
+    monkeypatch.setenv("VERCEL_GIT_COMMIT_SHA", "c" * 40)
+    entry = ab.entry_for(out, report, audited_at=1_800_000_000)
+    assert entry["auditor"] == "c" * 40
+    # The bytes that are hashed keep a whole-number score as 98.0, which a browser cannot rebuild
+    # from parsed JSON; the entry route therefore serves them as stamped.
+    entry["score"] = 98.0
+    assert b'"score":98.0' in ab.canonical(entry)
+    assert hashlib.sha256(ab.canonical(entry)).hexdigest() == ab.entry_hash(entry)
+
+
 # ------------------------------------------------------------------ payment
 def test_payment_releases_the_report_and_sends_a_receipt_stamp():
     horizon, store = Horizon(), ab.MemoryBook()
@@ -286,6 +300,16 @@ def test_two_claims_at_once_send_one_receipt_and_record_one_payment():
     receipts = [e for e in horizon.submitted if e.transaction.source.account_id == OPERATOR.public_key
                 and getattr(e.transaction.operations[0], "destination", None) is not None]
     assert len(receipts) == 1 and len(paid) == 1
+
+
+def test_the_entry_route_serves_the_stamped_bytes(monkeypatch):
+    horizon, store = Horizon(), ab.MemoryBook()
+    sha = stamped(horizon, store)["entry_sha256"]
+    monkeypatch.setattr(api.settings, "enable_assay_book", True)
+    monkeypatch.setattr(ab, "store_from_settings", lambda _settings: store)
+    body = TestClient(api.app, client=("192.0.2.93", 50000)).get(f"/api/v1/assay/entry/{sha}").json()
+    assert hashlib.sha256(body["canonical"].encode()).hexdigest() == sha == body["entry_sha256"]
+    assert json.loads(body["canonical"]) == body["entry"]
 
 
 def test_horizon_not_answering_is_a_503_that_says_so(monkeypatch):

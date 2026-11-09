@@ -49,6 +49,8 @@
     <div class="split" id="split" role="img" aria-label="Decisions"></div>
     <p class="legend" id="legend"></p>
 
+    <p class="verify-bar"><button type="button" class="button ghost" id="verify-all" hidden>Verify these rows in my browser</button> <span id="verify-result" class="quiet" role="status"></span></p>
+
     <table class="book-table">
       <thead><tr><th>When</th><th>Agent</th><th>Decision</th><th>Findings</th><th>On the ledger</th><th>Report</th></tr></thead>
       <tbody id="rows"><tr><td colspan="6" class="book-empty">Reading the book…</td></tr></tbody>
@@ -56,7 +58,7 @@
 
     <section class="proof verify-box">
       <h2>Check any entry yourself</h2>
-      <p class="quiet">Nothing here needs to be taken on trust. Every row links to its transactions on a public explorer; the book account is <a id="acct" rel="noopener" target="_blank">…</a>.</p>
+      <p class="quiet">Nothing here needs to be taken on trust. The button above the table hashes each entry in your browser and reads its transactions from Horizon, not from this site. Every row links to its transactions on a public explorer; the book account is <a id="acct" rel="noopener" target="_blank">…</a>.</p>
       <ol class="steps">
         <li>Fetch an entry: <code>curl -s https://usetouchmark.app/api/v1/assay/entry/&lt;entry&gt;</code></li>
         <li>Hash its <code>entry</code> object as canonical JSON (sorted keys, no spaces):</li>

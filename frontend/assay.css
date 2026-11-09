@@ -118,6 +118,10 @@
 .pill{font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:1px;padding:3px 7px;border-radius:3px;border:1.5px solid currentColor;white-space:nowrap}
 .pill.pass{color:var(--green)}.pill.needs_fixes{color:var(--red)}.pill.needs_evidence{color:var(--amber)}
 .pill.paid{color:var(--ink);background:var(--soft-amber)}
+.verify-bar{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:0 0 14px}
+.verify-bar button{padding:8px 14px;font-size:13px}
+.book-table .check{font:12px var(--mono);margin-top:4px}
+.book-table .check.ok{color:var(--green)}.book-table .check.bad{color:var(--red)}
 .book-table a{font:12.5px var(--mono);text-decoration-color:var(--red);text-underline-offset:3px}
 .book-empty{padding:28px;text-align:center;color:var(--ink-soft)}
 .verify-box{margin:30px 0}

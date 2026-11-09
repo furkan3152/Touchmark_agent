@@ -2,8 +2,8 @@
 released for a testnet payment that anyone can trace.
 
 An entry is a small canonical JSON record of one audit: what was audited (repository, commit,
-folder), the decision, the score, the finding counts, whether the model review completed, and
-the SHA-256 of the full report. The entry's SHA-256 is written to Stellar testnet as the
+folder), the decision, the score, the finding counts, whether the model review completed, the
+commit of this repository the auditor ran from, and the SHA-256 of the full report. The entry's SHA-256 is written to Stellar testnet as the
 MEMO_HASH of a transaction from the demo operator account (a bump-sequence operation, which
 changes nothing else). So for every entry:
 
@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -112,6 +113,7 @@ def entry_for(out: dict, report: dict, *, audited_at: int | None = None) -> dict
         "files": int(out.get("files") or 0),
         "model_review": review.get("status") == "completed",
         "model": review.get("model", "") if review.get("status") == "completed" else "",
+        "auditor": os.environ.get("VERCEL_GIT_COMMIT_SHA", ""),
         "audited_at": int(audited_at if audited_at is not None else time.time()),
     }
 

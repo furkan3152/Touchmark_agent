@@ -232,7 +232,7 @@ async def add_security_headers(request: Request, call_next):
         "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "img-src 'self' data: https://fastapi.tiangolo.com; "
-        f"connect-src 'self' {_TESTNET.rpc_url}; "
+        f"connect-src 'self' {_TESTNET.rpc_url} {_TESTNET.horizon_url}; "
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     )
     if request.url.path.startswith("/api/"):
@@ -1072,13 +1072,14 @@ async def assay_book_stats() -> dict:
 @_book_errors
 async def assay_entry(entry: str) -> dict:
     """The entry as stamped: sha256(canonical JSON of ``entry``) is the stamp transaction's memo."""
-    from .services.assay_book import load_entry, paid_record, tx_url
+    from .services.assay_book import canonical, load_entry, paid_record, tx_url
     store = _book_store()
     record = await load_entry(store, entry)
     if record is None:
         raise HTTPException(status_code=404, detail="No such entry in the assay book.")
     paid = await paid_record(store, entry)
-    return {**record, "stamp_url": tx_url(record["stamp_tx"]), "paid": bool(paid),
+    return {**record, "canonical": canonical(record["entry"]).decode(),
+            "stamp_url": tx_url(record["stamp_tx"]), "paid": bool(paid),
             "how_to_verify": "sha256 of the canonical JSON (sorted keys, no spaces) of `entry` equals the "
                              "memo hash of `stamp_tx`, sent from `account` on Stellar testnet."}
 
