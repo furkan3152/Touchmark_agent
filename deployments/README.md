@@ -7,6 +7,10 @@ hashes and transaction hashes only; no keys.
 `CBBTOB…`, operator `GCRGIG…`, which is also the assay book account). The other manifests are earlier
 deployments kept as evidence; a contract id that appears only in them is not what the demo uses today.
 
+Both sets that are in use are listed, with what each is for, in the site's
+[`stellar.toml`](https://usetouchmark.app/.well-known/stellar.toml) (SEP-1): the demo's contracts and the assay book
+account, and the paid-order contracts from [`testnet-audit-delivery-2026-10-15.json`](testnet-audit-delivery-2026-10-15.json).
+
 | Manifest | What it proves |
 |---|---|
 | [`demo-testnet.json`](demo-testnet.json) | The demo's AgentRegistry and AuditCredential. Every credential issued from the demo links its transactions. `owner_flow_example` records a credential issued to an owner who signed the registration in their own wallet. |

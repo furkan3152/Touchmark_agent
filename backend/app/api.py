@@ -673,19 +673,35 @@ async def studio_ai_check(authorization: str = Header(default=''), x_ai_review_k
 
 @app.get('/.well-known/stellar.toml', response_class=PlainTextResponse)
 async def stellar_info() -> Response:
-    # Publish only integrations that exist. No invented web-auth or anchor URL.
+    # Publish only what exists: no web-auth or anchor URL. Two contract sets are live on testnet:
+    # the public demo's (deployments/demo-testnet.json) and the paid order pilot's.
+    from .services.demo_flow import manifest
     from .services.report_delivery import pilot_evidence
     import json
-    pilot = pilot_evidence()
-    lines = ['VERSION="2.7.0"', f'NETWORK_PASSPHRASE="{_TESTNET.passphrase}"',
-             '', '[DOCUMENTATION]', 'ORG_DESCRIPTION="Touchmark official agent audit Testnet pilot."',
-             'ORG_GITHUB="furkan3152"', '', '[TOUCHMARK]',
-             'STATUS="testnet_pilot"', 'INDEPENDENT_OPERATORS=false',
-             'CREDENTIAL_STANDARD="custom_nontransferable_audit_record"']
+    demo, pilot = manifest(), pilot_evidence()
+    q = json.dumps
+    lines = ['VERSION="2.7.0"', f'NETWORK_PASSPHRASE="{_TESTNET.passphrase}"']
+    if demo.get('operator'):
+        lines.append(f'ACCOUNTS=[{q(demo["operator"])}]')
+    lines += ['', '[DOCUMENTATION]', 'ORG_NAME="Touchmark"', 'ORG_URL="https://usetouchmark.app"',
+              'ORG_DESCRIPTION="Security audits for AI agents with Stellar authority. Testnet pilot."',
+              'ORG_GITHUB="furkan3152"', '', '[TOUCHMARK]',
+              'STATUS="testnet_pilot"', 'INDEPENDENT_OPERATORS=false',
+              'CREDENTIAL_STANDARD="custom_nontransferable_audit_record"']
+    if demo.get('operator'):
+        lines += ['# Signs every assay-book stamp and receipt, and receives report payments.',
+                  f'ASSAY_BOOK_ACCOUNT={q(demo["operator"])}']
+    contracts = demo.get('contracts', {})
+    if contracts:
+        lines.append('# Used by the public demo at usetouchmark.app to register agents and issue credentials.')
+        for name in ('registry', 'credential'):
+            if isinstance(contracts.get(name), dict):
+                lines.append(f'DEMO_{name.upper()}_CONTRACT={q(contracts[name].get("id", ""))}')
     if pilot.get('available'):
+        lines.append('# Used by paid Studio orders: the escrow holds the payment until the report is delivered.')
         for name, value in pilot['evidence'].get('contracts', {}).items():
             if name in {'registry', 'escrow', 'credential'} and isinstance(value, dict):
-                lines.append(name.upper() + '_CONTRACT=' + json.dumps(value.get('id', '')))
+                lines.append(f'ORDER_{name.upper()}_CONTRACT={q(value.get("id", ""))}')
     return PlainTextResponse('\n'.join(lines) + '\n', headers={'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'public, max-age=300', 'X-Content-Type-Options': 'nosniff'})
 

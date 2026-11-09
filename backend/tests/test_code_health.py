@@ -193,3 +193,21 @@ def test_every_page_has_the_same_menu_and_a_skip_link():
         assert menu(html) == home, name
         skip = re.search(r'<a class="skip" href="#([\w-]+)"', html)
         assert skip and f'id="{skip.group(1)}"' in html, name
+
+
+def test_stellar_toml_lists_the_contracts_the_demo_uses():
+    # It listed only the paid-order pilot's contracts, so the demo's credential contract and the
+    # assay book account could not be found from the domain (SEP-1).
+    import tomllib
+    from fastapi.testclient import TestClient
+    from backend.app import api
+    from backend.app.services.demo_flow import manifest
+    toml = tomllib.loads(TestClient(api.app, client=("192.0.2.94", 50000)).get("/.well-known/stellar.toml").text)
+    demo = manifest()
+    assert toml["ACCOUNTS"] == [demo["operator"]]
+    assert toml["DOCUMENTATION"]["ORG_URL"] == "https://usetouchmark.app"
+    section = toml["TOUCHMARK"]
+    assert section["ASSAY_BOOK_ACCOUNT"] == demo["operator"]
+    assert section["DEMO_REGISTRY_CONTRACT"] == demo["contracts"]["registry"]["id"]
+    assert section["DEMO_CREDENTIAL_CONTRACT"] == demo["contracts"]["credential"]["id"]
+    assert {"ORDER_REGISTRY_CONTRACT", "ORDER_ESCROW_CONTRACT", "ORDER_CREDENTIAL_CONTRACT"} <= set(section)
