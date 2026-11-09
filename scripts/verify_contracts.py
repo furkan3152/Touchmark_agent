@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that the contracts the demo uses on Stellar testnet are built from this repository.
 
-    cargo build --workspace --target wasm32v1-none --release --locked
+    scripts/build_contracts.sh
     python scripts/verify_contracts.py            # ledger == manifest == this source
     python scripts/verify_contracts.py --ledger   # ledger == manifest only (no Rust toolchain)
 

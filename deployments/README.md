@@ -28,7 +28,7 @@ To check that the contracts on the ledger are built from this repository (ledger
 manifest and local build all equal):
 
 ```bash
-cargo build --workspace --target wasm32v1-none --release --locked
+scripts/build_contracts.sh
 python scripts/verify_contracts.py
 ```
 

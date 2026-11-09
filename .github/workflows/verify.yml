@@ -37,7 +37,7 @@ jobs:
       - run: rustup show
       - run: cargo fmt --all --check
       - run: cargo test --workspace --locked
-      - run: cargo build --workspace --target wasm32v1-none --release --locked
+      - run: scripts/build_contracts.sh
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
