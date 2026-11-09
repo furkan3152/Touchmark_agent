@@ -24,6 +24,14 @@ The remaining `*-2026-10-15.json` files record earlier pilots (official orders, 
 sampling, private report storage). They are kept for the record, and the code reads some
 of them.
 
+To check that the contracts on the ledger are built from this repository (ledger code hash,
+manifest and local build all equal):
+
+```bash
+cargo build --workspace --target wasm32v1-none --release --locked
+python scripts/verify_contracts.py
+```
+
 To check a manifest, open its contract and transaction hashes on a testnet explorer, or
 re-read the ledger:
 
